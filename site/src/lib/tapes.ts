@@ -31,8 +31,12 @@ export type Tape = {
   treat?: "snow" | "frame";
 };
 
-/** The hero's sleeve. */
-export type Sleeve = { title: string; by: string; kind: string; line: string; shot: string; tweaks: string[] };
+/** The hero's sleeve: its screenshot and where it plays on the front, the changes it suggests on the back, and where
+ * its printed "Remix me" button goes. Each place's icon is the `d` of a 256-unit SVG path. */
+export type Sleeve = {
+  title: string; by: string; kind: string; line: string; shot: string; tweaks: string[];
+  places: { label: string; icon: string }[]; remix: string;
+};
 
 const INK = "#1b1a17";
 const PAPER = "#f2ecda";
@@ -87,8 +91,9 @@ function image(src: string) {
   });
 }
 
-/** A screenshot filling a box, cropped to it, with what a remix did to it. */
-function shot(ctx: CanvasRenderingContext2D, img: HTMLImageElement | undefined, x: number, y: number, w: number, h: number, treat?: Tape["treat"]) {
+/** A screenshot filling a box, cropped to it, with what a remix did to it. `top` is how much of the picture's top to
+ * leave out (a window's own bar). */
+function shot(ctx: CanvasRenderingContext2D, img: HTMLImageElement | undefined, x: number, y: number, w: number, h: number, treat?: Tape["treat"], top = 0) {
   ctx.save();
   ctx.fillStyle = INK;
   ctx.fillRect(x, y, w, h);
@@ -105,10 +110,11 @@ function shot(ctx: CanvasRenderingContext2D, img: HTMLImageElement | undefined, 
   ctx.rect(bx, by, bw, bh);
   ctx.clip();
   if (img) {
-    const scale = Math.max(bw / img.width, bh / img.height);
+    const [sy, sh] = [img.height * top, img.height * (1 - top)];
+    const scale = Math.max(bw / img.width, bh / sh);
     const dw = img.width * scale;
-    const dh = img.height * scale;
-    ctx.drawImage(img, bx + (bw - dw) / 2, by + (bh - dh) / 2, dw, dh);
+    const dh = sh * scale;
+    ctx.drawImage(img, 0, sy, img.width, sh, bx + (bw - dw) / 2, by + (bh - dh) / 2, dw, dh);
   }
   if (treat === "snow") {
     // A winter night: colder, darker, and snowing.
@@ -145,79 +151,106 @@ function tag(ctx: CanvasRenderingContext2D, text: string, right: number, middle:
   ctx.fillText(text, right - w + 12, middle + 12);
 }
 
-// The sleeve's front, back and spine, at 800 pixels to its 1.05 units of width.
-function sleeveFront(sleeve: Sleeve) {
-  const { canvas, ctx } = sheet(800, 1448);
+// The sleeve's front, back and spine, laid out at 800 units to its 1.05 of width and drawn at 1.28 pixels a unit,
+// so its small print stays sharp at the size the hero shows it.
+const SLEEVE_SCALE = 1.28;
+function sleeveSheet(width: number) {
+  const page = sheet(Math.round(width * SLEEVE_SCALE), Math.round(1448 * SLEEVE_SCALE));
+  page.ctx.scale(SLEEVE_SCALE, SLEEVE_SCALE);
+  return page;
+}
+
+/** The front's "Remix me" button, in the front's units: also where a click on the sleeve follows its link. */
+const REMIX_BUTTON = { x: 56, y: 1280, w: 688, h: 112 };
+
+function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined) {
+  const { canvas, ctx } = sleeveSheet(800);
   ctx.fillStyle = LABEL;
   ctx.fillRect(0, 0, 800, 1448);
   ctx.fillStyle = INK;
-  font(ctx, "italic 800", 54, SANS);
-  ctx.fillText(sleeve.by, 60, 140);
-  font(ctx, "900", 170, SANS, sleeve.title, 680);
-  ctx.fillText(sleeve.title, 52, 300);
+  font(ctx, "italic 800", 48, SANS);
+  ctx.fillText(sleeve.by, 56, 110);
   ctx.fillStyle = RED;
   font(ctx, "700", 30, MONO);
   ctx.textAlign = "right";
-  ctx.fillText(sleeve.kind.toUpperCase(), 740, 90);
+  ctx.fillText(sleeve.kind.toUpperCase(), 744, 104);
   ctx.textAlign = "left";
-  font(ctx, "700", 30, MONO);
-  ctx.fillText("T‑120 · HI‑FI", 60, 420);
-  ctx.fillStyle = "#1f7a42";
-  ctx.font = `52px ${MARKER}`;
-  ctx.save();
-  ctx.translate(60, 560);
-  ctx.rotate(-0.05);
-  ctx.fillText("turn me over →", 0, 0);
-  ctx.restore();
-  bands(ctx, WARM, 0, 700, 800, 450);
+  ctx.fillStyle = INK;
+  font(ctx, "900", 150, SANS, sleeve.title, 688);
+  ctx.fillText(sleeve.title, 50, 250);
+  // The game itself, without the window's bar across its top.
+  ctx.fillRect(56, 290, 688, 430);
+  shot(ctx, img, 64, 298, 672, 414, undefined, 0.09);
+  bands(ctx, WARM, 0, 760, 800, 140);
   ctx.fillStyle = INK;
   ctx.beginPath();
-  ctx.moveTo(800, 640);
-  ctx.lineTo(800, 1210);
-  ctx.lineTo(470, 925);
+  ctx.moveTo(800, 730);
+  ctx.lineTo(800, 930);
+  ctx.lineTo(650, 830);
   ctx.fill();
-  font(ctx, "italic 800", 46, SANS, sleeve.line, 680);
-  ctx.fillText(sleeve.line, 60, 1280);
-  ctx.fillStyle = MAGENTA;
-  ctx.save();
-  ctx.translate(450, 1385);
-  ctx.rotate(-0.06);
-  ctx.font = `56px ${MARKER}`;
-  ctx.fillText("remix me!", 0, 0);
-  ctx.restore();
+  font(ctx, "italic 800", 42, SANS, sleeve.line, 688);
+  ctx.fillText(sleeve.line, 56, 990);
+  // Where it plays: each place's icon over its name.
+  ctx.fillStyle = RED;
+  font(ctx, "700", 24, MONO);
+  ctx.fillText("PLAYS ON", 58, 1058);
+  sleeve.places.forEach((place, i) => {
+    const x = 56 + i * 170;
+    ctx.save();
+    ctx.translate(x, 1082);
+    ctx.scale(84 / 256, 84 / 256);
+    ctx.fillStyle = INK;
+    ctx.fill(new Path2D(place.icon));
+    ctx.restore();
+    ctx.fillStyle = INK;
+    font(ctx, "700", 28, SANS);
+    ctx.fillText(place.label, x + 2, 1206);
+  });
+  // The call to remix it, printed as a button.
+  const b = REMIX_BUTTON;
+  ctx.fillStyle = "#c23a20";
+  ctx.beginPath();
+  ctx.roundRect(b.x, b.y, b.w, b.h, 18);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  font(ctx, "900", 54, SANS);
+  ctx.fillText("Remix me →", b.x + b.w / 2, b.y + 74);
+  ctx.textAlign = "left";
   return canvas;
 }
 
-function sleeveBack(sleeve: Sleeve, img: HTMLImageElement | undefined) {
-  const { canvas, ctx } = sheet(800, 1448);
+function sleeveBack(sleeve: Sleeve) {
+  const { canvas, ctx } = sleeveSheet(800);
   ctx.fillStyle = LABEL;
   ctx.fillRect(0, 0, 800, 1448);
-  ctx.fillStyle = RED;
-  font(ctx, "700", 30, MONO);
-  ctx.fillText("SIDE B · REMIX ME", 60, 110);
   ctx.fillStyle = INK;
-  ctx.fillRect(56, 156, 688, 438);
-  shot(ctx, img, 64, 164, 672, 422);
-  font(ctx, "900", 96, SANS, sleeve.title, 680);
-  ctx.fillText(sleeve.title, 56, 730);
+  font(ctx, "900", 110, SANS, sleeve.title, 688);
+  ctx.fillText(sleeve.title, 52, 170);
   font(ctx, "italic 800", 44, SANS);
-  ctx.fillText(`by ${sleeve.by.replace(/^Made by /, "")}`, 60, 792);
+  ctx.fillText(`by ${sleeve.by.replace(/^Made by /, "")}`, 58, 236);
+  ctx.fillStyle = RED;
+  font(ctx, "700", 26, MONO);
+  ctx.fillText("IDEAS FOR YOUR REMIX", 58, 360);
   const inks = [MAGENTA, "#1f7a42", RED];
   sleeve.tweaks.forEach((tweak, i) => {
     ctx.fillStyle = inks[i % inks.length];
     ctx.save();
-    ctx.translate(60, 900 + i * 92);
+    ctx.translate(58, 460 + i * 110);
     ctx.rotate(i % 2 ? 0.02 : -0.025);
-    font(ctx, "", 50, MARKER, tweak, 680);
+    font(ctx, "", 56, MARKER, tweak, 680);
     ctx.fillText(tweak, 0, 0);
     ctx.restore();
   });
+  ctx.fillStyle = INK;
+  font(ctx, "italic 800", 40, SANS);
+  ctx.fillText("Remix it with Lamp. No code.", 58, 1120);
   bands(ctx, WARM, 0, 1240, 800, 208);
   return canvas;
 }
 
 function sleeveSpine(sleeve: Sleeve) {
-  const { canvas, ctx } = sheet(220, 1448);
+  const { canvas, ctx } = sleeveSheet(220);
   ctx.fillStyle = INK;
   ctx.fillRect(0, 0, 220, 1448);
   bands(ctx, WARM, 0, 0, 220, 300);
@@ -424,7 +457,7 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
     const box = canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(((event.clientX - box.left) / box.width) * 2 - 1, -((event.clientY - box.top) / box.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
-    return raycaster.intersectObjects(objects, true)[0]?.object;
+    return raycaster.intersectObjects(objects, true)[0];
   };
 
   /** Calls `act` for a press, or `move` as the pointer moves, over the canvas but not on a link or a button. */
@@ -496,7 +529,7 @@ export async function mountSleeve(host: HTMLElement) {
   if (!s) return;
   const spine = s.texture(sleeveSpine(sleeve));
   const box = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(1.05, 1.9, 0.3, 3, 0.025), [
-    spine, spine, s.flat(INK), s.flat(INK), s.texture(sleeveFront(sleeve)), s.texture(sleeveBack(sleeve, img)),
+    spine, spine, s.flat(INK), s.flat(INK), s.texture(sleeveFront(sleeve, img)), s.texture(sleeveBack(sleeve)),
   ]));
   // On its own, it only casts its shadow: catching its own would shade its front with the slightest error.
   box.receiveShadow = false;
@@ -504,8 +537,9 @@ export async function mountSleeve(host: HTMLElement) {
   sleeveGroup.add(box);
   s.scene.add(sleeveGroup);
 
-  // Clicked, it turns over: a turn and a half, landing on whichever side it wasn't on, with a hop.
-  // The button that turns it (for a keyboard) says which way up it is.
+  // Clicked, it turns over: a turn and a half, landing on whichever side it wasn't on, with a hop. A click on the
+  // front's printed "Remix me" button follows its link instead. The button that turns it (for a keyboard) says which
+  // way up it is.
   const button = host.querySelector<HTMLButtonElement>("[data-turn]");
   let spin = 0;
   let hop = 0;
@@ -516,7 +550,17 @@ export async function mountSleeve(host: HTMLElement) {
     back = !back;
     button?.setAttribute("aria-pressed", String(back));
   };
-  s.on("click", (event) => { if (s.hit(event, [box])) turn(); });
+  const onRemix = (found: ThreeTypes.Intersection | undefined) => {
+    if (!found?.uv || found.face?.materialIndex !== 4) return false;
+    const [x, y] = [found.uv.x * 800, (1 - found.uv.y) * 1448];
+    const b = REMIX_BUTTON;
+    return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+  };
+  s.on("click", (event) => {
+    const found = s.hit(event, [box]);
+    if (onRemix(found)) open(sleeve.remix, "_blank", "noopener");
+    else if (found) turn();
+  });
   s.on("pointermove", (event) => s.hand(!!s.hit(event, [box])));
   button?.addEventListener("click", turn);
 
@@ -537,50 +581,79 @@ export async function mountSleeve(host: HTMLElement) {
   );
 }
 
-// MARK: The stack
+// MARK: The shelf
 
-const STACK_BLEED = { x: 0.12, y: 0.3 };
+const STACK_BLEED = { x: 0.06, y: 0.12 };
 
+/** A number from 0 to 1 that's always the same for the same tape, so the piles are untidy the same way each time. */
+const wobble = (i: number, salt: number) => {
+  const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+// The shelf: every starter's tape with its remix on top of it, and a few blank ones, in piles side by side, as many
+// piles as the shelf's shape takes (more on a wide screen, two on a phone). Only their spines are drawn up front; a
+// tape's top, with its screenshot, is drawn the first time it's chosen.
 export async function mountStack(host: HTMLElement) {
   const tapes = JSON.parse(host.dataset.tapes!) as Tape[];
-  const [THREE, shots] = await Promise.all([
-    three(),
-    Promise.all(tapes.map((tape) => (tape.shot ? image(tape.shot) : Promise.resolve(undefined)))),
-    fontsReady(),
-  ]);
-  const s = stage(THREE, host, { wall: -1.6, reach: 6, bleed: STACK_BLEED });
+  const [THREE] = await Promise.all([three(), fontsReady()]);
+  const s = stage(THREE, host, { wall: -1.6, reach: 10, bleed: STACK_BLEED });
   if (!s) return;
-  const [W, H, D, GAP] = [3.4, 0.46, 1.9, 0.07];
+  const [W, H, D, GAP, AISLE] = [3.4, 0.46, 1.9, 0.06, 0.55];
   const side = s.flat("#1f1d19");
   const back = s.flat("#2c2a25");
   const stack = new THREE.Group();
   s.scene.add(stack);
 
-  // A little untidy, as a real stack is.
-  const jitter = [0.1, -0.08, 0.14, -0.05, 0.06];
   const meshes = tapes.map((tape, i) => {
     const mesh = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(W, H, D, 3, 0.035), [
-      side, side, s.texture(tapeTop(tape, shots[i])), back, s.texture(tapeSpine(tape)), back,
+      side, side, back, back, s.texture(tapeSpine(tape)), back,
     ]));
-    const home = { x: jitter[i % jitter.length], y: ((tapes.length - 1) / 2 - i) * (H + GAP), z: 0, rx: 0, ry: jitter[(i + 2) % jitter.length] * 0.3, rz: 0 };
     stack.add(mesh);
     // Turned about the upright first, so a tape tipped up to show its top still spins like a record, and turning it
     // back by the stack's own lean holds it square to the viewer.
     mesh.rotation.order = "YXZ";
-    mesh.position.set(home.x, home.y, home.z);
-    return { mesh, home, now: { ...home }, spins: 0 };
+    const home = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 };
+    return { tape, mesh, home, now: { ...home }, spins: 0, drawn: false };
   });
+
+  // Lays the tapes out in `piles` piles, filled one after another from the bottom up, each tape a little off true.
+  let size = { width: 0, height: 0 };
+  const layout = (piles: number) => {
+    const tall = Math.ceil(meshes.length / piles);
+    size = { width: piles * W + (piles - 1) * AISLE, height: tall * (H + GAP) };
+    meshes.forEach((tape, i) => {
+      const [pile, level] = [Math.floor(i / tall), i % tall];
+      Object.assign(tape.home, {
+        x: (pile - (piles - 1) / 2) * (W + AISLE) + (wobble(i, 1) - 0.5) * 0.3,
+        y: -size.height / 2 + H / 2 + level * (H + GAP),
+        ry: (wobble(i, 2) - 0.5) * 0.12,
+      });
+    });
+  };
 
   let chosen = -1;
   let hovered = -1;
   const choose = (i: number) => {
-    if (chosen === i) chosen = -1;
-    else {
-      chosen = i;
-      meshes[i].spins += 1;
+    if (chosen === i) {
+      chosen = -1;
+      return;
+    }
+    chosen = i;
+    const tape = meshes[i];
+    tape.spins += 1;
+    if (!tape.drawn) {
+      tape.drawn = true;
+      const shot = tape.tape.shot;
+      (shot ? image(shot) : Promise.resolve(undefined)).then((img) => {
+        (tape.mesh.material as ThreeTypes.Material[])[2] = s.texture(tapeTop(tape.tape, img));
+      });
     }
   };
-  const which = (event: MouseEvent) => meshes.findIndex(({ mesh }) => mesh === s.hit(event, meshes.map(({ mesh }) => mesh)));
+  const which = (event: MouseEvent) => {
+    const object = s.hit(event, meshes.map(({ mesh }) => mesh))?.object;
+    return meshes.findIndex(({ mesh }) => mesh === object);
+  };
   s.on("click", (event) => {
     const i = which(event);
     if (i >= 0) choose(i);
@@ -590,27 +663,28 @@ export async function mountStack(host: HTMLElement) {
     hovered = which(event);
     s.hand(hovered >= 0);
   });
-  host.querySelectorAll<HTMLButtonElement>("[data-tape]").forEach((button) => {
-    button.addEventListener("click", () => choose(Number(button.dataset.tape)));
-  });
 
   let tilt = { x: 0, y: 0 };
+  // How far in front of the piles a chosen tape is held: near enough to fill about two thirds of the shelf.
+  let held = 2;
   s.run(
     (aspect, tan) => {
-      // The whole stack fits the host, and so does a chosen tape held up close in front of it, which may only rise
-      // into the bleed above and below.
-      s.camera.position.set(0, 0, Math.max(3.6 / (2 * tan), 4.6 / (2 * tan * aspect), 2.2 + 2.4 / (2 * tan * (1 + STACK_BLEED.y)), 2.2 + 4 / (2 * tan * aspect)));
+      layout(aspect > 2.3 ? 5 : aspect > 1.6 ? 4 : aspect > 1 ? 3 : 2);
+      const distance = Math.max((size.height * 1.08) / (2 * tan), (size.width * 1.06) / (2 * tan * aspect));
+      const near = Math.max(2.3 / (2 * tan * 0.68), 4 / (2 * tan * aspect * 0.62));
+      held = Math.max(0, distance - near);
+      s.camera.position.set(0, 0, distance);
     },
     (dt, time) => {
       const p = reduced ? { x: 0, y: 0 } : s.pointer;
-      tilt = { x: ease(tilt.x, 0.14 + p.y * 0.18, dt, 4), y: ease(tilt.y, p.x * 0.32, dt, 4) };
+      tilt = { x: ease(tilt.x, 0.08 + p.y * 0.1, dt, 4), y: ease(tilt.y, p.x * 0.16, dt, 4) };
       stack.rotation.set(tilt.x, tilt.y, 0);
       meshes.forEach((tape, i) => {
         const up = chosen === i;
         const near = hovered === i && !up;
         // Chosen, it flies out, spins once and shows its top; the rest sit back a little.
         const target = up
-          ? { x: 0, y: 0.05 + (reduced ? 0 : Math.sin(time * 1.6) * 0.03), z: 2.2, rx: Math.PI / 2 - 0.22 - tilt.x, ry: tape.spins * Math.PI * 2 - tilt.y, rz: -0.05 }
+          ? { x: 0, y: (reduced ? 0 : Math.sin(time * 1.6) * 0.03), z: held, rx: Math.PI / 2 - 0.22 - tilt.x, ry: tape.spins * Math.PI * 2 - tilt.y, rz: -0.05 }
           : { ...tape.home, z: chosen >= 0 ? -0.3 : near ? 0.35 : 0, rx: near ? -0.12 : 0, ry: tape.home.ry + tape.spins * Math.PI * 2 };
         const speed = up ? 4.5 : 6;
         for (const key of ["x", "y", "z", "rx", "ry", "rz"] as const) tape.now[key] = ease(tape.now[key], target[key], dt, reduced ? 14 : speed);

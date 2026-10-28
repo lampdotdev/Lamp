@@ -5,8 +5,11 @@ import ChangeStory from "../components/ChangeStory.astro";
 import { together } from "../lib/text";
 import { DOWNLOAD_URL } from "../lib/download";
 import type { Sleeve, Tape } from "../lib/tapes";
+import { STARTERS } from "../lib/starters";
 import newYork from "../assets/starters/newyork.png";
-import homeHQ from "../assets/starters/homehq.png";
+import laptopFill from "@phosphor-icons/core/assets/fill/laptop-fill.svg?raw";
+import controllerFill from "@phosphor-icons/core/assets/fill/game-controller-fill.svg?raw";
+import tvFill from "@phosphor-icons/core/assets/fill/television-simple-fill.svg?raw";
 import phone from "@phosphor-icons/core/assets/duotone/device-mobile-duotone.svg?raw";
 import laptop from "@phosphor-icons/core/assets/duotone/laptop-duotone.svg?raw";
 import tv from "@phosphor-icons/core/assets/duotone/television-simple-duotone.svg?raw";
@@ -25,24 +28,35 @@ import picture from "@phosphor-icons/core/assets/duotone/image-duotone.svg?raw";
 const pitch = "Start from an app or a game someone made. Say what to change and watch it change while it runs. Then put it on your TV.";
 const description = `Remixable software. ${pitch} No code.`;
 
-// The screenshots the 3D tapes print on their labels (lib/tapes.ts).
-const shot = async (src: ImageMetadata) => (await getImage({ src, width: 1200, format: "webp" })).src;
-const [newYorkShot, homeHQShot] = await Promise.all([shot(newYork), shot(homeHQ)]);
+// The screenshots the 3D tapes print on their labels (lib/tapes.ts), one for each starter.
+const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { eager: true, import: "default" });
+const shot = async (id: string) => (await getImage({ src: pictures[`../assets/starters/${id}.png`], width: 1000, format: "webp" })).src;
+const shots = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => [starter.id, await shot(starter.id)])));
 
-// New York's sleeve in the hero, with the changes its starter suggests on the back.
+/** The `d` of each path in one of Phosphor's icons, joined, to draw on a canvas. */
+const iconPath = (svg: string) => [...svg.matchAll(/ d="([^"]+)"/g)].map((match) => match[1]).join(" ");
+
+// New York's sleeve in the hero: its screenshot and where it plays on the front, the changes its starter suggests on
+// the back, and its printed "Remix me" going to its repository, whose page shows it and says how to remix it.
 const sleeve: Sleeve = {
-  title: "New York", by: "Made by Mr.doob", kind: "Game · 3D", line: "Walk, drive, bike or fly", shot: newYorkShot,
-  tweaks: ["make it a snowy winter night", "make it a lot more fun", "move the city to the Moon"],
+  title: "New York", by: "Made by Mr.doob", kind: "Game · 3D", line: "Walk, drive, bike or fly", shot: shots.newyork,
+  tweaks: ["Make it a snowy winter night", "Make it a lot more fun", "Move the city to the Moon"],
+  places: [
+    { label: "Mac", icon: iconPath(laptopFill) },
+    { label: "Xbox", icon: iconPath(controllerFill) },
+    { label: "TV", icon: iconPath(tvFill) },
+  ],
+  remix: "https://github.com/lampdotdev/newyork",
 };
 
-// The shelf: each original, a remix of it beside it, and a blank tape.
-const tapes: Tape[] = [
-  { look: "original", stripes: "warm", title: "Home HQ", caption: "THE ORIGINAL · AN APP FOR THE FAMILY", shot: homeHQShot },
-  { look: "marker", title: "On the kitchen frame", caption: "REMIXED BY YOU", side: "B1", ink: "#b8264f", shot: homeHQShot, treat: "frame" },
-  { look: "original", stripes: "cool", title: "New York", caption: "THE ORIGINAL · A GAME BY MR.DOOB", side: "A1", shot: newYorkShot },
-  { look: "marker", title: "Snowy winter night", caption: "REMIXED BY YOUR FRIEND", side: "B2", ink: "#1f7a42", shot: newYorkShot, treat: "snow" },
-  { look: "blank", title: "your idea here…", caption: "" },
-];
+// The shelf: every starter, the original with a remix of it on top, and a blank tape every few pairs. Originals
+// alternate their sleeves' two printings; remixes are written on in the marker colors, in turn.
+const inks = ["#b8264f", "#1f7a42", "#a8361f"];
+const tapes: Tape[] = STARTERS.flatMap((starter, i): Tape[] => [
+  { look: "original", stripes: i % 2 ? "cool" : "warm", title: starter.name, caption: `THE ORIGINAL · BY ${starter.by.toUpperCase()}`, side: `A${i + 1}`, shot: shots[starter.id] },
+  { look: "marker", title: starter.remix, caption: `REMIX OF ${starter.name.toUpperCase()}`, side: `B${i + 1}`, ink: inks[i % inks.length], shot: shots[starter.id], treat: starter.treat },
+  ...(i % 5 === 4 ? [{ look: "blank", title: "your idea here…", caption: "" } as Tape] : []),
+]);
 
 // What Lamp can put something on today, as people name their things, from what a visitor most likely has to what
 // they least likely have. Only what a kind of app or a shipped device integration really reaches
@@ -90,15 +104,17 @@ const devices = [
             </figcaption>
             <Image src={newYork} alt="New York: a yellow taxi on a Manhattan avenue at golden hour" widths={[420, 840]} sizes="420px" loading="eager" class="block h-auto w-full border-y-2 border-tape" />
             <div class="stripe-warm h-20" aria-hidden="true"></div>
-            <p class="px-7 pt-4 pb-2 text-xl font-extrabold italic">Walk, drive, bike or fly</p>
+            <p class="px-7 pt-4 text-xl font-extrabold italic">Walk, drive, bike or fly</p>
+            <p class="px-7 pb-2 text-base font-bold">Plays on {sleeve.places.map((place) => place.label).join(", ")}</p>
             <div id="sleeve-back" class="px-7 pb-5">
-              <p class="font-mono text-xs font-bold text-[#a8361f]">ON THE BACK</p>
+              <p class="font-mono text-xs font-bold text-[#a8361f]">IDEAS FOR YOUR REMIX</p>
               <ul class="mt-1 font-marker text-lg leading-snug text-[#b8264f]">
-                {sleeve.tweaks.map((tweak) => <li>{tweak[0].toUpperCase() + tweak.slice(1)}</li>)}
+                {sleeve.tweaks.map((tweak) => <li>{tweak}</li>)}
               </ul>
             </div>
           </figure>
         </div>
+        <a href={sleeve.remix} class="remix-link tape-button tape-button-paper">Remix New York</a>
         <button type="button" class="tape-control" data-turn aria-pressed="false" aria-controls="sleeve-back">Turn New York's sleeve over</button>
       </div>
     </div>
@@ -115,49 +131,25 @@ const devices = [
       </div>
     </section>
 
-    <!-- From the shelf: the stack of tapes, in 3D once lib/tapes.ts has drawn it. A tape that's clicked flies out and
-         shows the screenshot on its label. The originals have printed spines, the remixes beside them are written on
-         in marker, and the last is blank. -->
-    <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
-      <div class="tape-host order-last h-[26rem] min-w-0 flex-[1_1_37.5rem] sm:h-[34rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
-        <div class="tape-fallback flex h-full flex-col justify-center gap-2">
-          <div class="flex min-h-21 items-stretch border-2 border-l-0 border-tape bg-[#f7f2e3]">
-            <span class="stripe-warm-across w-[calc(var(--edge)+30%)] min-w-24" aria-hidden="true"></span>
-            <span class="flex flex-1 flex-col justify-center px-5 py-3">
-              <span class="text-[2.125rem] leading-none font-black tracking-[-0.03em]">Home HQ</span>
-              <span class="text-[13px] font-bold tracking-[0.15em]">THE ORIGINAL · AN APP FOR THE FAMILY</span>
-            </span>
-          </div>
-          <div class="spine">
-            <span class="spine-label">
-              <span class="font-marker text-[1.375rem] leading-tight text-[#b8264f] sm:text-[1.875rem]">On the kitchen frame</span>
-              <span class="text-[13px] font-bold tracking-wider">REMIXED BY YOU</span>
-            </span>
-          </div>
-          <div class="spine gap-5 text-paper">
-            <span class="stripe-cool h-12 w-[6.875rem] shrink-0" aria-hidden="true"></span>
-            <span class="flex flex-1 flex-col">
-              <span class="text-[1.75rem] leading-none font-black tracking-[0.02em] uppercase">New York</span>
-              <span class="text-xs font-bold tracking-[0.15em] text-[#cfc8b2]">THE ORIGINAL · A GAME BY MR.DOOB</span>
-            </span>
-          </div>
-          <div class="spine">
-            <span class="spine-label">
-              <span class="font-marker text-[1.375rem] leading-tight text-[#1f7a42] sm:text-[1.875rem]">Snowy winter night</span>
-              <span class="text-[13px] font-bold tracking-wider">REMIXED BY YOUR FRIEND</span>
-            </span>
-          </div>
-          <div class="spine">
-            <span class="spine-label spine-lined">
-              <span class="font-marker text-[1.375rem] leading-tight text-[#6f6857] sm:text-[1.875rem]">your idea here…</span>
-            </span>
-          </div>
-        </div>
-        {tapes.map((tape, i) => tape.shot && <button type="button" class="tape-control" data-tape={i}>Show what's on {tape.title}</button>)}
-      </div>
-      <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
+    <!-- From the shelf: piles of tapes, in 3D once lib/tapes.ts has drawn them, every starter's original with a remix
+         of it on top. A tape that's clicked flies out and shows the screenshot on its label. Without WebGL, and for
+         screen readers, the same tapes as a list. -->
+    <section id="shelf" class="mx-auto flex max-w-[80rem] flex-col gap-6 px-4 pt-24 pb-16 sm:px-6">
+      <div class="flex flex-wrap items-end justify-between gap-x-16 gap-y-5">
         <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>
-        <p class="max-w-[36ch] text-xl leading-normal">{together("Start from something someone made, or something a friend shared. Your version goes on the shelf right beside the original.")}</p>
+        <p class="max-w-[38ch] text-xl leading-normal">{together("Start from something someone made, or something a friend shared. Your version goes on the shelf right beside the original.")}</p>
+      </div>
+      <div class="tape-host h-[44rem] sm:h-[38rem]" data-tape-stack data-tapes={JSON.stringify(tapes)}>
+        <ul class="tape-fallback grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] content-start gap-2 py-6">
+          {
+            tapes.map((tape) => (
+              <li class:list={["flex min-h-14 flex-col justify-center px-4 py-2", tape.look === "marker" ? "bg-[#f7f2e3] ring-1 ring-tape/20" : "bg-[#26241f] text-paper"]}>
+                <span class:list={[tape.look === "original" ? "text-lg font-black" : "font-marker text-lg", tape.look === "marker" && "text-[#b8264f]"]}>{tape.title}</span>
+                {tape.caption && <span class="text-[11px] font-bold tracking-wider">{tape.caption}</span>}
+              </li>
+            ))
+          }
+        </ul>
       </div>
     </section>
 
@@ -204,18 +196,11 @@ const devices = [
   .tape-page {
     --stripe-0: #1f8a4a; --stripe-1: #7cbf3a; --stripe-2: #f6b81c; --stripe-3: #f08a1c; --stripe-4: #e2402a;
     --stripe-5: #d23778;
-    /* How far it is from the content's edge to the window's, so the tapes can run off the page. */
-    --edge: calc(max(0px, (100vw - 80rem) / 2) + 1rem);
     background-image: radial-gradient(rgb(60 40 10 / 0.07) 1px, transparent 1.4px), radial-gradient(rgb(60 40 10 / 0.05) 1px, transparent 1.4px);
     background-size: 5px 5px, 9px 9px;
     background-position: 0 0, 3px 4px;
   }
-  @media (width >= 40rem) {
-    .tape-page { --edge: calc(max(0px, (100vw - 80rem) / 2) + 1.5rem); }
-  }
   .stripe-warm { background: linear-gradient(180deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
-  .stripe-warm-across { background: linear-gradient(90deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
-  .stripe-cool { background: linear-gradient(180deg, var(--stripe-0) 0 33.3%, var(--stripe-2) 0 66.6%, var(--stripe-4) 0); }
   .beam { background: linear-gradient(90deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
 
   /* The hero's field: the stripes on the slant, magenta at the top left through to green at the bottom right. The
@@ -237,8 +222,6 @@ const devices = [
   /* The 3D tapes run past their host's box, letting the pointer through (lib/tapes.ts). Once they're drawn, the flat version stays only for screen readers,
      and the buttons that turn the tapes over (otherwise unseen) show when a keyboard reaches them. */
   .tape-host { position: relative; }
-  /* The stack keeps to its column, so a tape held up in front of it has room on both sides. */
-  [data-tape-stack] { --edge: 0px; }
   .tape-host :global(.tape-canvas) { position: absolute; pointer-events: none; }
   .tape-host.is-3d > .tape-fallback, .tape-control {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
@@ -266,13 +249,10 @@ const devices = [
   /* On the dark last section, in the yellow of the lamp's light. */
   .tape-button-lit { background: var(--stripe-2); color: var(--color-tape); }
 
-  .spine {
-    display: flex; align-items: center; gap: 1rem; min-height: 5.25rem;
-    padding: 0.5rem 1.125rem 0.5rem calc(var(--edge) + 1.125rem); background: #26241f;
+  /* The sleeve's link to remix it: under the flat sleeve, and once the 3D one is drawn (whose printed button
+     follows it), seen only when a keyboard reaches it. */
+  .remix-link { position: absolute; bottom: 1rem; left: 50%; translate: -50% 0; z-index: 1; }
+  .tape-host.is-3d > .remix-link:not(:focus-visible) {
+    width: 1px; height: 1px; padding: 0; min-height: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
   }
-  .spine-label {
-    flex: 1; display: flex; flex-direction: column; align-items: center; padding: 0.5rem 1.125rem;
-    background: #f7f2e3; color: var(--color-tape); border-radius: 2px; text-align: center;
-  }
-  .spine-lined { background-image: repeating-linear-gradient(180deg, transparent 0 22px, rgb(42 111 176 / 0.35) 22px 23px); }
 </style>

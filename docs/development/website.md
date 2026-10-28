@@ -7,11 +7,13 @@ parts; the last is a wish shared as a link, `WishLink` in the app). Its
 homepage sells remixable software and is dressed as home video: cream paper, tape labels, and the stripes on their
 sleeves. The stripes are green to magenta, in that order, never blue or purple (the hero widens the deep magentas and
 reds under its words). They're the hero's whole field, on the slant, with plain white words kept to the bands they
-read on; elsewhere they sit beside headings (a tab above each), never on a heading's letters. "Change it live" plays
-an app changing as it's asked (`ChangeStory.astro`) on an old television set, with its chat beside it. New York's
-sleeve in the hero and the tape stack in "From the shelf" are three.js (`src/lib/tapes.ts`), drawn from canvases in
-the page's fonts: they're lit with soft shadows, lean toward the pointer and turn over to show a screenshot when
-clicked, on a canvas that runs past its box (so nothing is cropped) and lets the pointer through, over a flat HTML
+read on; elsewhere they sit beside headings (a tab above each), never on a heading's letters. "Change it live" shows
+the making, not the app in use: a plain Mac window changing as it's asked from Lamp's chat beside it
+(`ChangeStory.astro`). New York's sleeve in the hero (its screenshot, where it plays and a "Remix me" button that
+goes to its repository on the front, the changes it suggests on the back) and the piles of tapes in "From the shelf"
+(every starter in `src/lib/starters.ts`, each with a remix of it on top) are three.js (`src/lib/tapes.ts`), drawn
+from canvases in the page's fonts: they're lit with soft shadows, lean toward the pointer and turn over or fly out
+to show a screenshot when clicked, on a canvas that runs past its box (so nothing is cropped) and lets the pointer through, over a flat HTML
 version kept for screen readers and browsers without WebGL. The device icons are Phosphor's duotone set, with the
 fill in the sleeve's colors. Apps and games get the same weight on it, and
 every example is a real starter (`Resources/Starters`), with the pictures and changes it ships with; the devices it

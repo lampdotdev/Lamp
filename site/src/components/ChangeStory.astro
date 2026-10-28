@@ -1,221 +1,132 @@
 ---
-// The homepage's "Change it while you're using it": one app changed four times from its chat, as a story that loops.
-// It isn't a recording: the steps come quicker than they would, and the chat shows only what was asked and what
-// came of it. A recipes app becomes a plan for the week (a big change), gains a shopping list (something it does),
-// then gets a cosier look and bigger photos (two tweaks). Each change goes in the way it does in Lamp: colored light
-// rises from the bottom of the window while it's made, then a band of white sweeps up with the new version behind it.
-// Last, Lamp uses the app rather than changing it: its pointer swaps one dinner and adds another, as it does when it
-// tries an app, with the window lit and nothing rebuilt.
-// The app plays on an old television set's screen (a cabinet with a curved, glassy screen, two knobs and a speaker),
-// so it sits in the homepage's world of tapes; the chat floats beside the set. The screen is drawn in its own width
-// (cqw), so it's the same picture at every size; the photos are drawn by an image model, as the ideas page's
-// pictures are. Without motion, the finished app sits beside the whole chat.
-import { Image } from "astro:assets";
-import type { ImageMetadata } from "astro";
-import pasta from "../assets/story/pasta.jpg";
-import curry from "../assets/story/curry.jpg";
-import tacos from "../assets/story/tacos.jpg";
-import salmon from "../assets/story/salmon.jpg";
-import risotto from "../assets/story/risotto.jpg";
-import stirfry from "../assets/story/stirfry.jpg";
-import pizza from "../assets/story/pizza.jpg";
+// The homepage's "Change it live": an app being made on the Mac, changed three times from Lamp's chat beside it, as
+// a story that loops. It's the making that's shown, not the app in use: a plain window on the Mac, its chat beside
+// it. A scoreboard for game night gains a round timer (something it does), turns into an arcade (a whole new look),
+// and shows who's winning (a tweak). Each change goes in the way it does in Lamp: colored light rises from the
+// bottom of the window while it's made, then a band of white sweeps up with the new version behind it. Last, Lamp
+// uses the app rather than changing it: its pointer gives a player a point and starts the round, with the window lit
+// and nothing rebuilt. It isn't a recording: the steps come quicker than they would, and the chat shows only what
+// was asked and what came of it.
+// The window is drawn in its own width (cqw), so it's the same picture at every size. Without motion, the finished
+// app sits beside the whole chat.
 
-type Dish = { photo: ImageMetadata; name: string; time: string };
-const recipes: Dish[] = [
-  { photo: tacos, name: "Fish tacos", time: "25 min" },
-  { photo: pasta, name: "Lemon spaghetti", time: "20 min" },
-  { photo: curry, name: "Chicken curry", time: "40 min" },
-  { photo: stirfry, name: "Veggie stir-fry", time: "15 min" },
-  { photo: salmon, name: "Salmon and greens", time: "30 min" },
-  { photo: risotto, name: "Mushroom risotto", time: "35 min" },
+type Player = { name: string; score: number; color: string; move?: string; then?: number };
+const players: Player[] = [
+  { name: "Maya", score: 12, color: "#d23778" },
+  { name: "Priya", score: 10, color: "#f08a1c" },
+  { name: "Leo", score: 9, color: "#1f8a4a", move: "leo", then: 10 },
+  { name: "Sam", score: 7, color: "#e2402a" },
 ];
-const week = ["Mon", "Tue", "Wed", "Thu", "Fri"].map((day, index) => ({ day, ...recipes[index] }));
-// What Lamp does when it uses the app: Wednesday's curry becomes the risotto, and Saturday, empty until then, gets a
-// pizza. `use` names the move that changes a card, and which shopping goes with it.
-const bigWeek = [
-  ...week.map((dish) => ({ ...dish, use: dish.day === "Wed" ? "wed" : undefined, then: dish.day === "Wed" ? recipes[5] : undefined })),
-  { day: "Sat", photo: undefined, name: "", time: "", use: "sat", then: { photo: pizza, name: "Pizza night", time: "30 min" } },
-];
-const shopping = [
-  { item: "Tortillas", got: false },
-  { item: "Limes", got: true },
-  { item: "Spaghetti", got: true },
-  { item: "Lemons", got: false },
-  { item: "Chicken thighs", got: false, out: "wed" },
-  { item: "Coconut milk", got: false, out: "wed" },
-  { item: "Noodles", got: false },
-  { item: "Salmon fillets", got: false },
-  { item: "Green beans", got: false },
-  { item: "Arborio rice", got: false, in: "wed" },
-  { item: "Mushrooms", got: false, in: "wed" },
-  { item: "Pizza dough", got: false, in: "sat" },
-  { item: "Mozzarella", got: false, in: "sat" },
-] as { item: string; got: boolean; out?: string; in?: string }[];
+const top = Math.max(...players.map((player) => player.score));
 
-// What's asked and what Lamp says once it's done, one pair for each change.
+// What's asked and what Lamp says once it's done, one pair for each change; the last is Lamp using the app.
 const chat = [
-  { ask: "Turn my recipes into a plan for the week.", done: "Done: a dinner for each weeknight." },
-  { ask: "Add a shopping list for the week.", done: "Added. It fills itself from the plan." },
-  { ask: "Make it feel cosier.", done: "Warmer colors and a softer type." },
-  { ask: "Bigger photos, please.", done: "Done." },
-  { ask: "Swap the curry for the risotto, and add pizza on Saturday.", done: "Done: risotto on Wednesday, pizza on Saturday.", uses: true },
-] as { ask: string; done: string; uses?: boolean }[];
+  { ask: "Add a round timer.", done: "Added: two minutes a round, with a buzzer at the end." },
+  { ask: "Make it look like an arcade.", done: "Done: neon on black, in arcade type." },
+  { ask: "Show who's winning.", done: "The leader gets a star, and everyone a bar." },
+  { ask: "Give Leo a point and start the round.", done: "Done: Leo's on 10, and the clock's running." },
+];
 
-// The five versions of the app, plain to cosy. `cosy` is the warm look; `list` the shopping list beside the week.
+// The four versions of the app. `timer` adds the round timer, `arcade` the new look, `lead` the star and the bars.
 const states = [
-  { kind: "recipes" },
-  { kind: "week", list: false, cosy: false, big: false },
-  { kind: "week", list: true, cosy: false, big: false },
-  { kind: "week", list: true, cosy: true, big: false },
-  { kind: "week", list: true, cosy: true, big: true },
-] as const;
-const serif = "font-[ui-serif,'New_York',Georgia,serif]";
+  { timer: false, arcade: false, lead: false },
+  { timer: true, arcade: false, lead: false },
+  { timer: true, arcade: true, lead: false },
+  { timer: true, arcade: true, lead: true },
+];
+const last = states.length - 1;
 ---
 
 <div data-story class="relative">
   <p class="sr-only">
-    An app's window beside its chat. A recipes app becomes a plan for the week, gains a shopping list, then gets a
-    cosier look and bigger photos, one request at a time. Then Lamp uses the app itself, swapping one dinner and
-    adding another.
+    An app being made on the Mac, with Lamp's chat beside it. A scoreboard for game night gains a round timer, turns
+    into an arcade and shows who's winning, one request at a time. Then Lamp uses the app itself, giving a player a
+    point and starting the round.
   </p>
 
-  <div aria-hidden="true" class="relative sm:w-[68%] lg:w-[72%]">
-  <div class="tv-cabinet flex items-stretch gap-[2.4%] rounded-[clamp(1rem,3vw,2.25rem)] p-[3%] pr-[2.2%]">
-  <div data-window class="@container relative aspect-[16/10] min-w-0 flex-1 overflow-hidden rounded-[3cqw] bg-white select-none">
+  <div data-window aria-hidden="true" class="@container relative aspect-[16/10] overflow-hidden rounded-[1.4cqw] bg-white shadow-[0_30px_70px_-20px_rgba(0,0,0,0.7)] ring-1 ring-white/10 select-none sm:w-[69%] lg:w-[72%]">
     {
       states.map((state, index) => (
-        <div data-state={index} class:list={["absolute inset-0 flex flex-col", index > 0 && "invisible", state.kind === "week" && state.cosy ? "bg-[#f7efe2]" : "bg-white"]}>
-          <div class:list={["flex h-[5cqw] shrink-0 items-center gap-[0.9cqw] px-[1.8cqw]", state.kind === "week" && state.cosy ? "bg-[#efe3cf]" : "bg-[#f3f3f5]"]}>
-            <span class="ml-[1.2cqw] text-[1.45cqw] font-semibold text-black/60">{state.kind === "recipes" ? "Recipes" : "Dinners"}</span>
+        <div data-state={index} class:list={["absolute inset-0 flex flex-col", index > 0 && "invisible", state.arcade ? "bg-[#121110] text-white" : "bg-white text-ink"]}>
+          <div class:list={["flex h-[5cqw] shrink-0 items-center gap-[0.9cqw] px-[1.8cqw]", state.arcade ? "bg-[#1d1b18]" : "bg-[#f3f3f5]"]}>
+            <span class="size-[1.15cqw] rounded-full bg-[#ff5f57]" />
+            <span class="size-[1.15cqw] rounded-full bg-[#febc2e]" />
+            <span class="size-[1.15cqw] rounded-full bg-[#28c840]" />
+            <span class:list={["ml-[1cqw] text-[1.45cqw] font-semibold", state.arcade ? "text-white/60" : "text-black/60"]}>Game Night</span>
           </div>
 
-          {state.kind === "recipes" ? (
-            <div class="flex flex-1 flex-col px-[3.5cqw] pt-[2.8cqw]">
-              <div class="flex items-center justify-between">
-                <p class="text-[3cqw] font-bold tracking-tight text-ink">Recipes</p>
-                <span class="w-[22cqw] rounded-full bg-black/5 px-[1.6cqw] py-[0.7cqw] text-[1.3cqw] text-black/40">Search</span>
-              </div>
-              <div class="mt-[2.4cqw] grid grid-cols-3 gap-[2cqw]">
-                {recipes.map((dish) => (
-                  <div>
-                    <Image src={dish.photo} alt="" loading="eager" width={320} densities={[1, 2]} class="aspect-[16/9] w-full rounded-[1cqw] object-cover" />
-                    <p class="mt-[0.9cqw] text-[1.5cqw] font-semibold text-ink">{dish.name}</p>
-                    <p class="text-[1.25cqw] text-black/45">{dish.time}</p>
-                  </div>
+          <div class="flex min-h-0 flex-1 gap-[3cqw] px-[3.5cqw] pt-[2.8cqw] pb-[3cqw]">
+            <div class="flex min-w-0 flex-1 flex-col">
+              <p class:list={state.arcade ? "font-mono text-[3cqw] font-bold tracking-[0.08em] text-[#f6b81c] uppercase [text-shadow:0_0_1.2cqw_rgba(246,184,28,0.7)]" : "text-[3cqw] font-bold tracking-tight"}>Game Night</p>
+              <p class:list={["text-[1.4cqw]", state.arcade ? "font-mono text-[#7cbf3a] uppercase" : "text-black/45"]}>Round 3</p>
+              <ul class="mt-[2.8cqw] flex flex-col gap-[1.8cqw]">
+                {players.map((player, rank) => (
+                  <li class:list={["relative flex items-center gap-[1.6cqw] overflow-hidden px-[1.4cqw] py-[1.7cqw]", state.arcade ? "rounded-[0.4cqw] ring-[0.2cqw] ring-[#d23778]/70" : "rounded-[1.2cqw] bg-black/[0.03]"]}>
+                    {state.lead && <span class="absolute inset-y-0 left-0 opacity-25" style={`width: ${(player.score / top) * 100}%; background: ${player.color}`} />}
+                    <span class:list={["relative flex size-[4cqw] shrink-0 items-center justify-center text-[1.8cqw] font-bold text-white", state.arcade ? "rounded-[0.4cqw] font-mono" : "rounded-full"]} style={`background: ${player.color}`}>{player.name[0]}</span>
+                    <span class:list={["relative flex-1 text-[1.9cqw] font-semibold", state.arcade && "font-mono text-[#7cbf3a] uppercase"]}>
+                      {player.name}
+                      {state.lead && rank === 0 && <span class="ml-[1cqw] rounded-[0.3cqw] bg-[#f6b81c] px-[0.6cqw] py-[0.15cqw] text-[1.2cqw] font-bold text-[#121110]">★ 1ST</span>}
+                    </span>
+                    <span class:list={["relative w-[5cqw] text-right text-[3cqw] font-bold tabular-nums", state.arcade && "font-mono text-[#f6b81c] [text-shadow:0_0_1cqw_rgba(246,184,28,0.6)]"]}>
+                      {player.move && index === last ? <><span data-use-out={player.move}>{player.score}</span><span data-use-in={player.move}>{player.then}</span></> : player.score}
+                    </span>
+                    <span class="relative flex gap-[0.8cqw]">
+                      <span class:list={["flex size-[3.4cqw] items-center justify-center text-[2cqw] leading-none", state.arcade ? "rounded-[0.4cqw] ring-[0.2cqw] ring-white/40" : "rounded-full ring-[0.15cqw] ring-black/20"]}>−</span>
+                      <span data-card={index === last ? player.move : undefined} data-label={player.move && `Giving ${player.name} a point`} class:list={["flex size-[3.4cqw] items-center justify-center text-[2cqw] leading-none", state.arcade ? "rounded-[0.4cqw] bg-[#7cbf3a] text-[#121110]" : "rounded-full bg-ink text-white"]}>+</span>
+                    </span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
-          ) : (
-            <div class="flex min-h-0 flex-1">
-              <div class="flex flex-1 flex-col px-[3.5cqw] pt-[2.8cqw] pb-[3cqw]">
-                <p class:list={["text-[3cqw] font-bold tracking-tight", state.cosy ? `${serif} text-[#5a2e1b]` : "text-ink"]}>This week</p>
-                <p class:list={["text-[1.4cqw]", state.cosy ? "text-[#9a6a4f]" : "text-black/45"]}>
-                  {state.big ? <><span data-use-out="sat">Five</span><span data-use-in="sat">Six</span></> : "Five"} dinners, planned from your recipes
+            {state.timer && (
+              <div class:list={["flex w-[24cqw] shrink-0 flex-col items-center self-start px-[2cqw] py-[2.4cqw]", state.arcade ? "rounded-[0.4cqw] bg-black ring-[0.2cqw] ring-[#e2402a]/70" : "rounded-[1.4cqw] bg-[#f5f5f7]"]}>
+                <p class:list={["text-[1.4cqw] font-semibold", state.arcade ? "font-mono text-[#e2402a] uppercase" : "text-black/50"]}>Round timer</p>
+                <p class:list={["mt-[0.6cqw] text-[6cqw] leading-none font-bold tabular-nums", state.arcade ? "font-mono text-[#ff6a4d] [text-shadow:0_0_1.6cqw_rgba(226,64,42,0.8)]" : ""]}>
+                  {index === last ? <><span data-use-out="timer">2:00</span><span data-use-in="timer">1:58</span></> : "2:00"}
                 </p>
-                <div class:list={["mt-[2.4cqw] min-h-0 flex-1", state.big ? "grid grid-cols-6 gap-[1.2cqw]" : "flex flex-col gap-[1.1cqw]"]}>
-                  {(state.big ? bigWeek : week).map((dish) =>
-                    state.big ? (
-                      <div data-card={dish.use} class="relative min-h-0 overflow-hidden rounded-[1.4cqw] shadow-[0_0.6cqw_1.6cqw_rgba(90,46,27,0.18)]">
-                        {[dish, dish.then].map((shown, layer) => shown && (
-                          <div data-layer={layer === 0 ? "before" : "after"} class="absolute inset-0 transition-opacity duration-500">
-                            {shown.photo ? (
-                              <>
-                                <Image src={shown.photo} alt="" loading="eager" width={320} densities={[1, 2]} class="absolute inset-0 size-full object-cover" />
-                                <div class="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/70 to-transparent px-[1.1cqw] pt-[4cqw] pb-[1.1cqw] text-white">
-                                  <p class="text-[1.1cqw] font-bold tracking-wide uppercase opacity-80">{dish.day}</p>
-                                  <p class={`text-[1.4cqw] leading-tight font-semibold ${serif}`}>{shown.name}</p>
-                                </div>
-                              </>
-                            ) : (
-                              /* An empty day, waiting for a dinner. */
-                              <div class="flex size-full flex-col items-center justify-center gap-[0.8cqw] rounded-[1.4cqw] border-[0.2cqw] border-dashed border-[#c2562f]/40 bg-white/50 text-[#c2562f]">
-                                <p class="text-[1.1cqw] font-bold tracking-wide uppercase">{dish.day}</p>
-                                <span class="text-[3cqw] leading-none font-light">+</span>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div class:list={["flex items-center gap-[1.6cqw]", state.cosy ? "rounded-[1.4cqw] bg-white p-[0.7cqw] shadow-[0_0.4cqw_1.2cqw_rgba(90,46,27,0.12)]" : "border-b border-black/6 pb-[1.1cqw] last:border-0"]}>
-                        <p class:list={["w-[4.5cqw] text-[1.25cqw] font-bold tracking-wide uppercase", state.cosy ? "text-[#c2562f]" : "text-black/40"]}>{dish.day}</p>
-                        <Image src={dish.photo} alt="" loading="eager" width={160} densities={[1, 2]} class="size-[6.2cqw] rounded-[0.9cqw] object-cover" />
-                        <div>
-                          <p class:list={["text-[1.6cqw] leading-tight font-semibold", state.cosy ? `${serif} text-[#5a2e1b]` : "text-ink"]}>{dish.name}</p>
-                          <p class:list={["text-[1.25cqw]", state.cosy ? "text-[#9a6a4f]" : "text-black/45"]}>{dish.time}</p>
-                        </div>
-                      </div>
-                    ),
-                  )}
-                </div>
+                <span data-card={index === last ? "timer" : undefined} data-label="Starting the round" class:list={["mt-[1.6cqw] px-[2.4cqw] py-[0.8cqw] text-[1.5cqw] font-semibold", state.arcade ? "rounded-[0.4cqw] bg-[#e2402a] font-mono text-white uppercase" : "rounded-full bg-ink text-white"]}>
+                  {index === last ? <><span data-use-out="timer">Start</span><span data-use-in="timer">Pause</span></> : "Start"}
+                </span>
               </div>
-              {state.list && (
-                <div class:list={["w-[24cqw] shrink-0 px-[2.2cqw] pt-[2.8cqw]", state.cosy ? "bg-[#efe3cf]" : "bg-[#f5f5f7]"]}>
-                  <p class:list={["text-[1.9cqw] font-bold tracking-tight", state.cosy ? `${serif} text-[#5a2e1b]` : "text-ink"]}>Shopping list</p>
-                  <ul class="mt-[1.4cqw] flex flex-col gap-[1cqw]">
-                    {shopping.filter((line) => state.big || !line.in).map((line) => (
-                      <li data-use-out={state.big ? line.out : undefined} data-use-in={line.in} class:list={["flex items-center gap-[1cqw] text-[1.35cqw]", line.got ? "text-black/35 line-through" : state.cosy ? "text-[#5a2e1b]" : "text-ink"]}>
-                        <span class:list={["flex size-[1.6cqw] shrink-0 items-center justify-center rounded-full", line.got ? (state.cosy ? "bg-[#c2562f]" : "bg-[#1f8a4a]") : "ring-[0.15cqw] ring-black/25"]}>
-                          {line.got && <svg viewBox="0 0 12 12" class="size-[1cqw] fill-none stroke-white stroke-[2]"><path d="M2.5 6.2 5 8.5 9.5 3.5" /></svg>}
-                        </span>
-                        {line.item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
       ))
     }
     <!-- While a change is made: light in the stripes' colors rising from the bottom edge. -->
     <div data-glow class="pointer-events-none absolute inset-x-0 bottom-0 h-[40%] opacity-0 transition-opacity duration-700 [background:radial-gradient(60%_90%_at_20%_100%,rgba(31,138,74,0.55),transparent_70%),radial-gradient(50%_80%_at_50%_100%,rgba(210,55,120,0.5),transparent_70%),radial-gradient(60%_90%_at_80%_100%,rgba(240,138,28,0.55),transparent_70%)] blur-[3cqw]"></div>
     <!-- While Lamp uses the app: the window lit, a pill saying so, and Lamp's pointer with what it's doing. -->
-    <div data-handover class="pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 shadow-[inset_0_0_0_0.35cqw_rgba(207,98,12,0.9),inset_0_0_3cqw_rgba(255,153,56,0.45)] transition-opacity duration-500">
-      <p class="absolute top-[6.5cqw] left-1/2 -translate-x-1/2 rounded-full bg-[#1d1d1f]/85 px-[1.8cqw] py-[0.7cqw] text-[1.3cqw] font-semibold whitespace-nowrap text-white backdrop-blur">Lamp is trying Dinners</p>
+    <div data-handover class="pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 shadow-[inset_0_0_0_0.35cqw_rgba(240,138,28,0.9),inset_0_0_3cqw_rgba(240,138,28,0.45)] transition-opacity duration-500">
+      <p class="absolute top-[6.5cqw] left-1/2 -translate-x-1/2 rounded-full bg-[#1d1d1f]/85 px-[1.8cqw] py-[0.7cqw] text-[1.3cqw] font-semibold whitespace-nowrap text-white backdrop-blur">Lamp is trying Game Night</p>
     </div>
     <div data-pointer class="pointer-events-none absolute top-[60%] left-[55%] z-10 opacity-0 transition-[top,left,opacity] duration-[900ms] ease-[cubic-bezier(0.45,0,0.2,1)]">
       <svg viewBox="0 0 24 24" class="size-[3cqw] -translate-x-[15%] -translate-y-[5%] drop-shadow-[0_0.3cqw_0.6cqw_rgba(0,0,0,0.35)]"><path d="M5 3 L19 12 L12.5 13.5 L9.5 20 Z" fill="#1d1d1f" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
       <span data-pointer-label class="absolute top-[2.6cqw] left-[2cqw] rounded-full bg-[#c23a20] px-[1.2cqw] py-[0.5cqw] text-[1.2cqw] font-semibold whitespace-nowrap text-white shadow-[0_0.3cqw_0.8cqw_rgba(0,0,0,0.25)]"></span>
-      <span data-tap class="absolute -top-[1.5cqw] -left-[1.5cqw] size-[3cqw] rounded-full bg-[#cf620c]/40 opacity-0"></span>
+      <span data-tap class="absolute -top-[1.5cqw] -left-[1.5cqw] size-[3cqw] rounded-full bg-[#f08a1c]/50 opacity-0"></span>
     </div>
     <!-- As it goes in: a band of white sweeping up, a soft shadow just ahead of it. -->
     <div data-band class="pointer-events-none absolute inset-x-0 top-full h-[24%] opacity-0 [background:linear-gradient(to_bottom,rgba(0,0,0,0),rgba(0,0,0,0.06)_25%,rgba(255,255,255,0.95)_45%,#fff_55%,rgba(255,255,255,0))]"></div>
-    <!-- The screen's glass over all of it: faint scan lines, a darker rim, and a sheen across the top. -->
-    <div class="tv-glass pointer-events-none absolute inset-0 z-30 rounded-[inherit]"></div>
-  </div>
-  <!-- The set's side: two knobs over a speaker. -->
-  <div class="flex w-[8.5%] shrink-0 flex-col items-center gap-[12%] pt-[3%]">
-    <span class="tv-knob aspect-square w-[78%] rounded-full"></span>
-    <span class="tv-knob aspect-square w-[62%] rounded-full"></span>
-    <span class="tv-speaker mt-auto mb-[8%] h-[34%] w-[70%] rounded-[0.4rem]"></span>
-  </div>
-  </div>
-  <!-- Its feet. -->
-  <div class="flex justify-between px-[12%]">
-    <span class="h-3 w-[10%] rounded-b-md bg-[#141210]"></span>
-    <span class="h-3 w-[10%] rounded-b-md bg-[#141210]"></span>
-  </div>
   </div>
 
-  <!-- The chat beside the app, as in Lamp: what's asked on the right in red, what Lamp says on the left. It
-       stands beside the set (over its foot on a phone), and keeps its size, scrolling to what was said last. -->
-  <div aria-hidden="true" class="relative z-20 mx-4 -mt-8 flex h-72 flex-col rounded-[22px] bg-white/80 p-4 text-[15px] leading-snug shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] ring-1 ring-black/10 backdrop-blur-xl select-none sm:absolute sm:top-[7%] sm:right-0 sm:bottom-[3%] sm:mx-0 sm:mt-0 sm:h-auto sm:w-[30%] lg:w-[25%]">
-    <div data-messages class="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:none]">
+  <!-- Lamp's chat beside the app, as in Lamp: what's asked on the right in red, what Lamp says on the left. It stands
+       beside the window (under it on a phone), and keeps its size, scrolling to what was said last. -->
+  <div aria-hidden="true" class="relative z-20 mx-4 -mt-8 flex h-72 flex-col rounded-[22px] bg-[#f7f2e3] p-4 text-[15px] leading-snug text-tape shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] select-none sm:absolute sm:top-[4%] sm:right-0 sm:bottom-[4%] sm:mx-0 sm:mt-0 sm:h-auto sm:w-[28%] lg:w-[25%]">
+    <p class="flex items-center gap-2 border-b border-tape/10 pb-3 text-[13px] font-bold"><span class="lamp-dot size-2.5 rounded-full"></span>Lamp · Game Night</p>
+    <div data-messages class="flex min-h-0 flex-1 flex-col overflow-y-auto pt-3 [scrollbar-width:none]">
       <div class="mt-auto flex flex-col gap-3">
       {
         chat.flatMap((pair, index) => [
           <p data-step={index} data-role="ask" class="story-message ml-8 self-end rounded-2xl bg-[#c23a20] px-3.5 py-2 text-white">{pair.ask}</p>,
-          <p data-step={index} data-role="done" class="story-message mr-6 text-ink">{pair.done}</p>,
+          <p data-step={index} data-role="done" class="story-message mr-6">{pair.done}</p>,
         ])
       }
-      <p data-changing class="story-message flex items-center gap-2 text-muted"><span class="size-2 animate-pulse rounded-full bg-[#cf620c]"></span>Changing it…</p>
-      <p data-using class="story-message flex items-center gap-2 text-muted"><span class="size-2 animate-pulse rounded-full bg-[#cf620c]"></span>Trying the app…</p>
+      <p data-changing class="story-message flex items-center gap-2 text-tape/60"><span class="size-2 animate-pulse rounded-full bg-[#f08a1c]"></span>Changing it…</p>
+      <p data-using class="story-message flex items-center gap-2 text-tape/60"><span class="size-2 animate-pulse rounded-full bg-[#f08a1c]"></span>Trying the app…</p>
       </div>
     </div>
     <!-- The message box, with the talk button the app has beside it; here neither does anything. -->
-    <div class="mt-3 flex items-center justify-between rounded-full bg-white py-2.5 pr-3 pl-4 text-muted ring-1 ring-black/10">
+    <div class="mt-3 flex items-center justify-between rounded-full bg-white py-2.5 pr-3 pl-4 text-tape/55 ring-1 ring-tape/10">
       Ask for a change
       <svg viewBox="0 0 24 24" class="size-5 shrink-0 fill-none stroke-current stroke-[1.7] [stroke-linecap:round]"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" /></svg>
     </div>
@@ -223,22 +134,8 @@ const serif = "font-[ui-serif,'New_York',Georgia,serif]";
 </div>
 
 <style>
-  /* The set: dark plastic catching a little light from the top left, and the screen's glass. */
-  .tv-cabinet {
-    background: linear-gradient(145deg, #3a342d 0%, #24201c 45%, #171512 100%);
-    box-shadow: inset 0 2px 0 rgb(255 255 255 / 0.08), inset 0 -3px 0 rgb(0 0 0 / 0.4), 0 30px 60px -20px rgb(0 0 0 / 0.7);
-  }
-  .tv-glass {
-    background:
-      linear-gradient(160deg, rgb(255 255 255 / 0.16) 0%, rgb(255 255 255 / 0.04) 28%, transparent 40%),
-      repeating-linear-gradient(180deg, rgb(0 0 0 / 0.045) 0 1px, transparent 1px 3px);
-    box-shadow: inset 0 0 4cqw rgb(0 0 0 / 0.35), inset 0 0 0 0.35cqw rgb(0 0 0 / 0.55);
-  }
-  .tv-knob {
-    background: radial-gradient(circle at 35% 30%, #5b544b, #26221d 70%);
-    box-shadow: 0 2px 4px rgb(0 0 0 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.12);
-  }
-  .tv-speaker { background: repeating-linear-gradient(180deg, #0e0d0b 0 3px, #2e2924 3px 7px); }
+  /* Lamp's own mark in the chat's header: a dot in the stripes. */
+  .lamp-dot { background: conic-gradient(#1f8a4a, #f6b81c, #f08a1c, #e2402a, #d23778, #1f8a4a); }
 
   /* A message takes no room until it's said, then comes up into place. */
   .story-message { display: none; }
@@ -247,14 +144,10 @@ const serif = "font-[ui-serif,'New_York',Georgia,serif]";
   @keyframes story-say { from { opacity: 0; transform: translateY(8px); } }
   @media (prefers-reduced-motion: reduce) { .story-message[data-shown] { animation: none; } }
 
-  /* What Lamp's use of the app changes, shown once it has done each move. */
+  /* What Lamp's use of the app changes, shown once it has made each move. */
   [data-use-in] { display: none; }
-  [data-story][data-wed] [data-use-out="wed"], [data-story][data-sat] [data-use-out="sat"] { display: none; }
-  [data-story][data-wed] li[data-use-in="wed"], [data-story][data-sat] li[data-use-in="sat"] { display: flex; animation: story-say 0.45s both; }
-  [data-story][data-sat] span[data-use-in="sat"] { display: inline; }
-  [data-layer="after"] { opacity: 0; }
-  [data-story][data-wed] [data-card="wed"] [data-layer="after"], [data-story][data-sat] [data-card="sat"] [data-layer="after"] { opacity: 1; }
-  [data-story][data-wed] [data-card="wed"] [data-layer="before"], [data-story][data-sat] [data-card="sat"] [data-layer="before"] { opacity: 0; }
+  [data-story][data-move-leo] [data-use-out="leo"], [data-story][data-move-timer] [data-use-out="timer"] { display: none; }
+  [data-story][data-move-leo] [data-use-in="leo"], [data-story][data-move-timer] [data-use-in="timer"] { display: inline; }
   [data-story][data-handing] [data-handover] { opacity: 1; }
 </style>
 
@@ -272,19 +165,19 @@ const serif = "font-[ui-serif,'New_York',Georgia,serif]";
     const pointer = story.querySelector<HTMLElement>("[data-pointer]")!;
     const label = story.querySelector<HTMLElement>("[data-pointer-label]")!;
     const tap = story.querySelector<HTMLElement>("[data-tap]")!;
+    // Lamp's moves on the finished app, in the order they're made: each a control marked data-card.
+    const moves = [...states[states.length - 1].querySelectorAll<HTMLElement>("[data-card]")].filter((card) => card.dataset.card);
     const said = (step: number, role: string) => story.querySelector<HTMLElement>(`[data-step="${step}"][data-role="${role}"]`)!;
     const show = (element: HTMLElement, shown: boolean) => {
       element.toggleAttribute("data-shown", shown);
       if (shown) messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
     };
-    // Lamp's moves on the app, each shown once done: Wednesday's swap, then Saturday's new dinner.
-    const done = (move: string, made: boolean) => story.toggleAttribute(`data-${move}`, made);
+    const done = (move: string, made: boolean) => story.toggleAttribute(`data-move-${move}`, made);
     const only = (index: number) => states.forEach((state, i) => { state.style.visibility = i === index ? "visible" : "hidden"; state.style.clipPath = ""; state.style.opacity = ""; });
 
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
       only(states.length - 1);
-      done("wed", true);
-      done("sat", true);
+      moves.forEach((card) => done(card.dataset.card!, true));
       story.querySelectorAll<HTMLElement>("[data-step]").forEach((message) => show(message, true));
       continue;
     }
@@ -310,16 +203,16 @@ const serif = "font-[ui-serif,'New_York',Georgia,serif]";
       only(index);
     };
 
-    // Lamp's pointer goes to the middle of a card in the window, says what it's doing there, and taps.
-    const tapOn = async (move: string, words: string) => {
-      const card = states[states.length - 1].querySelector<HTMLElement>(`[data-card="${move}"]`)!.getBoundingClientRect();
+    // Lamp's pointer goes to the middle of a control in the window, says what it's doing there, and taps.
+    const tapOn = async (card: HTMLElement) => {
+      const spot = card.getBoundingClientRect();
       const box = view.getBoundingClientRect();
-      label.textContent = words;
-      pointer.style.left = `${card.left - box.left + card.width / 2}px`;
-      pointer.style.top = `${card.top - box.top + card.height / 2}px`;
+      label.textContent = card.dataset.label ?? "";
+      pointer.style.left = `${spot.left - box.left + spot.width / 2}px`;
+      pointer.style.top = `${spot.top - box.top + spot.height / 2}px`;
       await pause(1100);
       tap.animate([{ opacity: 0.9, transform: "scale(0.4)" }, { opacity: 0, transform: "scale(1.6)" }], { duration: 500, easing: "ease-out" });
-      done(move, true);
+      done(card.dataset.card!, true);
       await pause(1100);
     };
 
@@ -332,8 +225,7 @@ const serif = "font-[ui-serif,'New_York',Georgia,serif]";
       pointer.style.top = "60%";
       pointer.style.opacity = "1";
       await pause(500);
-      await tapOn("wed", "Swapping the curry");
-      await tapOn("sat", "Adding pizza");
+      for (const card of moves) await tapOn(card);
       pointer.style.opacity = "0";
       story.toggleAttribute("data-handing", false);
       show(using, false);
@@ -343,8 +235,7 @@ const serif = "font-[ui-serif,'New_York',Georgia,serif]";
     const play = async () => {
       for (;;) {
         only(0);
-        done("wed", false);
-        done("sat", false);
+        moves.forEach((card) => done(card.dataset.card!, false));
         story.querySelectorAll<HTMLElement>(".story-message").forEach((message) => show(message, false));
         messages.scrollTop = 0;
         await pause(1800);
