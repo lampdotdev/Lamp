@@ -51,13 +51,17 @@ enum NextStep {
         if let cached = cache[turn] { return cached }
 
         let conversation = conversationText(lines.filter { $0.kind == .user || $0.kind == .agent }.suffix(historyLimit))
-        let request = "\(prompt)\nThe app is \(project.platform.target.identity.phrase) called \(project.name).\n\nHere is the conversation:\n\(conversation)"
+        // A game is always offered more fun (`GameFun`), unless the person just asked for it.
+        let fun = GameFun.offered(for: project) && !GameFun.asked(lines.last { $0.kind == .user }?.text ?? "")
+        let request = "\(prompt)\nThe app is \(project.platform.target.identity.phrase) called \(project.name)."
+            + (fun ? " It's a game: unless a more specific next step is plain (a fix or an idea Lamp just mentioned), suggest exactly \"\(GameFun.title)\"." : "")
+            + "\n\nHere is the conversation:\n\(conversation)"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
                                                          model: await AppAI.helperModel()),
               let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = object["suggestion"] as? String,
-              let suggestion = normalize(raw) else { return nil }
+              let suggestion = normalize(raw) else { return fun ? GameFun.title : nil }
         cache[turn] = suggestion
         return suggestion
     }

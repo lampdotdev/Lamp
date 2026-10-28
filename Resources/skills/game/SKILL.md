@@ -1,6 +1,6 @@
 ---
 name: game
-description: Games, 2D or 3D, made either way - the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page, in 2D or with three.js, for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game.
+description: Games, 2D or 3D, made either way - what makes one fun and playtesting it, the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page, in 2D or with three.js, for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game.
 ---
 
 # Games
@@ -31,6 +31,31 @@ The tools Lamp has for games:
   Canvas, and its controls, sound and saves with Android's own APIs.
 - **An integration's device** (Roku…): what its integration declares; read the device-integrations skill.
 - **Apple Watch**: Lamp has no game help there.
+
+## Fun
+
+A game is for fun, and fun is designed from the first build, not added at the end:
+
+- **A clear core loop.** One thing the player does again and again (jump, aim, steer, match) that feels good on its
+  own, and a reason to do it once more: a score to beat, the next level, something new just ahead.
+- **Quick feedback.** Every action answers at once, in sight and sound: a hit flashes and pops, a coin chimes and
+  leaps to the score, a landing squashes. This is the game's juice: particles, a little screen shake on the big
+  moments (never on every frame, and less on a TV across the room), a tween in place of a jump cut, a short freeze on
+  a big hit.
+- **A learning curve.** The first minute teaches by playing, never by a page of rules; then it gets harder in steps the
+  player feels coming, with a breather after each rise.
+- **Variety.** New enemies, places, rules or tools keep coming, so the tenth minute isn't the first again.
+- **Surprise and delight the player frequently.** Small things nobody asked for: a character that waves back, a
+  secret, a joke in a name, a combo that does something special, weather that changes, a celebration that's over the
+  top. Many small ones beat one big one.
+
+Everything in it is made in code: 3D models from three.js shapes (the 3d-game skill), music and effects from
+`sound` (below), pictures from `make_art` or drawn in code. Nothing is downloaded from the web, so the game opens
+anywhere with no network, and is the person's to share without a license to check.
+
+When asked to make a game more fun, play it first and find what's flat (a loop that doesn't pull, a curve that's
+too easy or too hard, an action that answers with nothing), then work on those four: the loop and the curve, the
+juice, the surprises, and the variety. Keep what the person likes about it, and its controls.
 
 ## The frame loop
 
@@ -76,7 +101,9 @@ B (or Esc, or Back) is the game's own back or cancel; Menu pauses.
 Every game has sound: a short effect (under a second) for each thing the player does or meets, and music only when it
 suits, quiet (0.3 to 0.4) under effects at 0.6 to 0.8. Settings or the pause menu turn sound and music on and off.
 
-- Web: `sound` in lamp-game.js, effects made in code with `sound.tone` unless the person gave files.
+- Web: `sound` in lamp-game.js, effects made in code with `sound.tone` unless the person gave files. Music is made in
+  code too: a loop of a few bars written out note by note into `sound.samples` (a bass line, chords, a melody, in one
+  key) and played with `sound.music`, a calmer one for menus and a livelier one for play.
 - Swift: files the person gave go in Assets/ (.wav, .m4a or .mp3) and play with an
   `AVAudioPlayer(contentsOf: LampAssets.url(name)!)` made once and `prepareToPlay()`ed, a few of them for an effect
   that overlaps itself; music is one looping (`numberOfLoops = -1`). With no files, make effects in code: one
@@ -137,7 +164,15 @@ move. Shapes and colors made in code, well lit, look better than mismatched mode
 and large, over the game (SwiftUI over a SpriteView; HTML over the canvas in a page).
 
 After changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches flicker a
-single picture hides. Play it the way the person would before you finish: a game that only looks right isn't done.
+single picture hides.
+
+## Playtesting
+
+Play it the way the person would before you finish: a game that only looks right isn't done. Web: Lamp's preview
+plays the game from a script of the controller's moves (`use_app` with `stick`, `button` and `wait`), with the same
+random numbers each time, so the same moves after a change show exactly what it changed. Play a whole round: start,
+learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there always something
+to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and play it again.
 
 ## A game and the wish's other apps
 

@@ -137,7 +137,7 @@ enum Publish {
         let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
         try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
 
-        try Data(withCreditBar(html, credits: credits, open: open, suggestions: RemixSuggestions.load(project) ?? RemixOffer.fallback,
+        try Data(withCreditBar(html, credits: credits, open: open, suggestions: RemixSuggestions.shown(project) ?? RemixOffer.fallback,
                                name: project.name, about: AppDescription.description(of: project)).utf8).write(to: index)
         try Data(readme(for: project, credits: chain, url: url, open: open).utf8).write(to: site.appendingPathComponent("README.md"))
         // Served as files are, with nothing taken out for Jekyll (folders that start with _ included).

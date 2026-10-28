@@ -28,6 +28,15 @@ enum RemixSuggestions {
         return ideas
     }
 
+    /// What the remix panel and a published page offer: the kept suggestions, or nil for the panel's own. A game's
+    /// end with more fun (`GameFun`), in place of the last, unless one of them already asks for it.
+    static func shown(_ project: LampProject) -> [RemixIdea]? {
+        let kept = load(project)
+        guard GameFun.offered(for: project) else { return kept }
+        let ideas = kept ?? RemixOffer.fallback
+        return ideas.contains { GameFun.asked($0.text) } ? ideas : Array(ideas.prefix(count - 1)) + [GameFun.idea]
+    }
+
     /// Writes suggestions when the kept ones are missing or stale. Quiet when the helper can't answer: the panel has
     /// its own.
     static func refresh(_ project: LampProject) async {

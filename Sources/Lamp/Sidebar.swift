@@ -61,7 +61,7 @@ enum Sidebar {
             // wish's Share Link when it has one.
             "LampHost": Edition.bundleID,
             "LampAbout": AppDescription.description(of: project) ?? "",
-            "LampSuggestions": (RemixSuggestions.load(project) ?? []).map(\.plist),
+            "LampSuggestions": (RemixSuggestions.shown(project) ?? []).map(\.plist),
             "LampShareLink": WishLink.kept(for: project)?.url.absoluteString ?? "",
         ]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)

@@ -571,6 +571,12 @@ against Microsoft's manifest. Microsoft's license is the person's to accept, in 
 nothing of Microsoft's is passed on. Intel Macs make and play games, but can't put them on an Xbox (LLVM publishes no
 such build).
 
+Every game is offered **Make it a lot more fun** (`GameFun`) wherever Lamp offers a change: a game starter's card
+(after its three), the next request suggested in the message box, and the remix panel's and a published page's ideas
+(`RemixSuggestions.shown`). Chosen or typed in a few words, the request carries a note naming what it asks for (a
+better loop and difficulty curve, juice, surprises, playtesting in the preview), sent with it to every engine
+(`Store.turn`); what makes a game fun is said once, in the game skill's "Fun" and "Playtesting".
+
 ## Web apps
 
 A web app (`Platform.webApp`, `Targets/WebAppTarget.swift`) is what `make_app_for` makes of an app made with web: the

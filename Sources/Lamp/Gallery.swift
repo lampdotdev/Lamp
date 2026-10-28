@@ -322,6 +322,12 @@ enum Gallery {
             option("Remind me to plan at 8", "bell"),
         ])],
         offer: true)),
+        // A game starter's, which ends with the change every game is offered (`GameFun`).
+        ask("A game starter's first changes", Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Make New York yours", options: [
+            option("Make it a snowy winter night", "snowflake"), option("Add taxi fares against the clock", "flag.checkered"),
+            option("Move the city to the Moon", "moon.fill"), option(GameFun.title, GameFun.symbol),
+        ])],
+        offer: true)),
         // Lamp's card before the agent changes one of the person's devices (`device_permission`): only theirs to answer.
         ask("A device of the person's", DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")),
         // The same for a device Lamp only found on the network, which may not be theirs.

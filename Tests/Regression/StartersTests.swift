@@ -42,6 +42,11 @@ final class StartersTests: XCTestCase {
         XCTAssertNil(Talk.waiting(in: [card]))
         // Just the offer and its changes: a line under it pushed them down in the wand's narrow panel.
         XCTAssertNil(card.ask?.questions.first?.detail)
+        // A game's card ends with more fun, and choosing it is a request the note goes with.
+        let game = try XCTUnwrap(Starters.card(for: starter, moreFun: true)?.ask)
+        XCTAssertEqual(game.questions.first?.options.map(\.title).last, GameFun.title)
+        XCTAssertTrue(GameFun.asked(Talk.message(for: game, answers: [GameFun.title])))
+        XCTAssertFalse(GameFun.asked("Add a level select, a boss at the end of each world, and make the menus more fun to look at"))
         XCTAssertNil(Starters.parse("name: No front matter", folder: starters))
     }
 
