@@ -5,6 +5,21 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.26.0
+
+- Games change while you play them. New pictures, models and sounds appear in place, a change to the game's code
+  puts you back where you were (the level, your position, the camera, the score), and a change made during a match
+  waits for a pause or for you to press Reload. On an iPhone, Android, a TV or an Xbox, the game picks up where you
+  left off after Lamp installs the change.
+- Games and screens open on the Mac in about a second, and no longer need Apple's developer tools unless they read
+  your own things like your calendar or photos.
+- Open a wish from GitHub: File → Open from GitHub… takes a repository's address, and the wish's credits say where it
+  came from.
+- Adding a starter wish opens it.
+- Your Devices tells the devices you've set up apart from ones Lamp only found on your network, which may be a
+  neighbor's, and every found device offers Set Up….
+- A game made inside a wish has the wish's chat beside it.
+
 ## 0.25.0
 
 - Apps build again with Xcode 26. Since 0.24.0 they only built with the Xcode 27 preview.
