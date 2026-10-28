@@ -42,9 +42,11 @@ final class StartersTests: XCTestCase {
         XCTAssertNil(Talk.waiting(in: [card]))
         // Just the offer and its changes: a line under it pushed them down in the wand's narrow panel.
         XCTAssertNil(card.ask?.questions.first?.detail)
-        // Choosing a short "more fun" change is a request the note goes with; a long one that mentions fun isn't.
+        // Choosing "more fun" for the whole game is a request the note goes with; one that scopes or refuses it isn't.
         XCTAssertTrue(GameFun.asked(Talk.message(for: try XCTUnwrap(card.ask), answers: ["Make it a lot more fun"])))
-        XCTAssertFalse(GameFun.asked("Add a level select, a boss at the end of each world, and make the menus more fun to look at"))
+        XCTAssertTrue(GameFun.asked("make Dodge Lab more fun!", name: "Dodge Lab"))
+        XCTAssertFalse(GameFun.asked("Make the menu more fun, leave gameplay unchanged"))
+        XCTAssertFalse(GameFun.asked("Do not make it more fun; only fix the crash"))
         XCTAssertNil(Starters.parse("name: No front matter", folder: starters))
     }
 

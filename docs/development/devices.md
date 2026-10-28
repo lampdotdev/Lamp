@@ -571,10 +571,11 @@ against Microsoft's manifest. Microsoft's license is the person's to accept, in 
 nothing of Microsoft's is passed on. Intel Macs make and play games, but can't put them on an Xbox (LLVM publishes no
 such build).
 
-A short request for a game to be more fun ("Make it a lot more fun", one of New York's first changes, or the person's own
-words) carries a note naming what it asks for (a better loop and difficulty curve, juice, surprises, playtesting in the
-preview), sent with it to every engine (`GameFun`, `Store.turn`); what makes a game fun is said once, in the game
-skill's "Fun" and "Playtesting".
+A request for a wish's game to be more fun as a whole ("Make it a lot more fun", one of New York's first changes, or the
+person's own words for it; not one that scopes or refuses it) carries a note naming what it asks for (a better loop and
+difficulty curve, juice, surprises, playtesting in the preview), sent with it to every engine, whether it starts a turn
+or is handed to one with Send Now (`GameFun`, `Store.turn`, `Store.handOver`); what makes a game fun is said once, in the
+game skill's "Fun" and "Playtesting".
 
 ## Web apps
 
