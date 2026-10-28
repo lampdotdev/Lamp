@@ -12,7 +12,8 @@
 #   ./build.sh && scripts/publish-starters.sh                    every starter
 #   scripts/publish-starters.sh newyork hours                    some, by folder name
 #   scripts/publish-starters.sh --new <folder> <wish folder>     a new starter: makes its repository from a wish on
-#                                                                this Mac (Resources/Starters/<folder>/starter.md first)
+#                                                                this Mac (Resources/Starters/<folder>/starter.md first),
+#                                                                which the team that makes starters (TEAM) can push to
 #   scripts/publish-starters.sh --dry-run [...]                  stages and says what it would do, without GitHub
 #
 # Run it after changing Lamp's own files, before the release that ships the change; a repository that's the same
@@ -33,6 +34,8 @@ if [[ "${1:-}" == "--new" ]]; then
 fi
 only=("$@")
 ACCOUNT="$(sed -n 's/.*static let account = "\(.*\)".*/\1/p' Sources/Lamp/Starters.swift)"
+# The team in that account whose members push to every starter's repository; a new repository is given to it.
+TEAM=starters
 
 APP=(build/Lamp\ Dev*.app(N/om[1]))
 [[ -n "${APP[1]:-}" ]] || { echo "Build Lamp Dev first (./build.sh)." >&2; exit 1; }
@@ -94,6 +97,8 @@ for tree in "$WORK"/trees/*(N/); do
     "$GIT" "${signed[@]}" clone -q "https://github.com/$repo.git" "$clone"
   else
     gh repo create "$repo" --public >/dev/null
+    gh api -X PUT "orgs/$ACCOUNT/teams/$TEAM/repos/$repo" -f permission=push >/dev/null \
+      || echo "$repo: couldn't give the $TEAM team push access; do it on GitHub" >&2
     (cd "$clone" && "$GIT" init -q -b main)
   fi
   # The staged tree in place of what's there: one commit of the difference, or none.

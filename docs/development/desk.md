@@ -156,8 +156,8 @@ with its panel open.
 
 **Changing a starter.** Its repository is the starter; Lamp pins a commit of it. A change is best made in Lamp Dev,
 where it's played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>), ask
-for the change, then File → Send Changes Back…, which opens a pull request on the repository (with push access, Put on
-GitHub puts it there directly). A change made in a clone and pushed is as good. Once the repository has moved on,
+for the change, then File → Send Changes Back…, which opens a pull request on the repository (a member of the account's
+starters team, which has push access to every starter's repository, can Put on GitHub to it directly). A change made in a clone and pushed is as good. Once the repository has moved on,
 `scripts/pull-starters.sh [<folder>]` moves the pin to its latest commit and fetches the tree: look at what changed
 (`git -C Resources/Starters/<folder>/tree log`, or the repository), run `scripts/check-starters.sh <folder>` and
 `swift test --filter StartersTests`, and commit the starter.md. When the icon's design (icon.json) changed, draw the
@@ -187,8 +187,8 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
    them.
 4. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --new <folder> <the wish's folder>`, signed in
    with `gh` to an account that can make repositories in lampdotdev. It makes the public repository (and a game's
-   page) from the wish as Put on GitHub would, and fills in the starter's `repository:` and `commit:`, fetching the
-   tree. Then its pictures: take `preview.png` as above, and paint and draw the icon into the tree with
+   page) from the wish as Put on GitHub would, gives the account's starters team push access to it (the team whose
+   members make and change starters), and fills in the starter's `repository:` and `commit:`, fetching the tree. Then its pictures: take `preview.png` as above, and paint and draw the icon into the tree with
    `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1 OPENROUTER_API_KEY=… swift test --filter
    StarterIconsTests`, look at the artwork it picked, and run `scripts/publish-starters.sh <folder>` again to put them
    up (the README shows them).
