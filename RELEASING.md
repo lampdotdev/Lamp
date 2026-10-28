@@ -135,10 +135,12 @@ gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 `.github/workflows/nightly.yml` builds, signs, notarizes and publishes **Lamp Nightly** from every push to `main` (and
 on demand with `gh workflow run nightly.yml`): a separate app from Lamp, with its own name, icon, bundle id, folders and
 update feed ("Lamp Nightly" in docs/development/lamp-dev-and-instances.md), so people who want every change early run
-it beside the Lamp they rely on. It's one rolling pre-release, tagged `nightly`: the tag moves to the commit and the
-release's `Lamp-Nightly-<version>.dmg`, `sparkle.json`, title and notes are replaced each time, so the release is
-published once and only edited after that, and whatever listens for releases (the Slack subscription) hears of it
-once. The version is the last release plus the commits since it as `build.sh` names a build from source
+it beside the Lamp they rely on. It's one rolling pre-release, tagged `nightly`: the tag moves to the commit, the
+release's `sparkle.json`, title and notes are replaced each time and `Lamp-Nightly-<version>.dmg` is added, so the
+release is published once and only edited after that, and whatever listens for releases (the Slack subscription) hears
+of it once. The release keeps its newest three DMGs, and the feed names the one it signed
+(`/download/nightly/<file>`): the feed is cached for a quarter of an hour and an update window may stay open longer,
+and the DMG an offer names must still be there to verify. The version is the last release plus the commits since it as `build.sh` names a build from source
 (`0.24.0+37`), and the build number `0.24.0.37`, so Sparkle orders the nightlies among themselves. A push that is a
 release tag itself makes no nightly. The notes list the commits since the last release.
 
