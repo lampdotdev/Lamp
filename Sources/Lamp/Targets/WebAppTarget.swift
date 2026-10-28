@@ -36,7 +36,8 @@ extension Target {
                        marker: ScreenKit.webAppPage.marker,
                        // Its folder holds a TV app's page and script: it's asked whether it's a web app first.
                        refines: .tv,
-                       shareRefusal: "Lamp doesn't share web apps yet."),
+                       // Its page and the Swift beside it travel in a shared file (`ScreenFiles`).
+                       shareRefusal: nil),
         part: Part(folder: "WebApp", family: "web-app", word: "web-app", menu: ("Web App", "globe"), rules: { Agent.screenPrompt(part: $0, alone: $1) },
                    // How its places are given beside the wish's other apps, and how it reaches them.
                    wishRule: Agent.Rules.screenAmongApps) { dir, wish in

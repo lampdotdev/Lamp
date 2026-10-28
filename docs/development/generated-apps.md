@@ -267,7 +267,8 @@ is what lost people's work.
 A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`, its card `GitHubRepoCards` and
 `RepoCard`, from the chat's Share menu): the shared file's contents (`Sharing.export`, so the same checks and the same
 credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
-the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`), the shared file itself, a
+the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`; for a page, the app around it,
+`ScreenKit.paths`), the shared file itself, a
 README whose remix link is the wish's Share Link when it has one, and an MIT license by choice, never offered when
 something the wish is based on is share-alike. The README promises `./build.sh` only for a kind whose script builds
 with Apple's tools and nothing of Lamp's (`Recipe.buildsAlone`: the Mac app's; an app for the Mac and the iPhone is
