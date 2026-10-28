@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/appcast.xml", "destination": "/api/appcast" },
+    { "source": "/nightly/appcast.xml", "destination": "/api/appcast?stream=nightly" },
     { "source": "/download/:tag", "destination": "/api/download?tag=:tag" },
     { "source": "/engines.json", "destination": "/api/engines" }
   ]

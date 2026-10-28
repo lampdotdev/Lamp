@@ -1,21 +1,24 @@
 import Foundation
 
-/// Which Lamp this is: the release people install, or the development build made from source. They are
-/// separate apps on the Mac: different name and icon, bundle id, folders, ports, URL scheme and Keychain
-/// entries, so running the one you're working on never touches the one you use. Everything that names
-/// Lamp on disk or on the network goes through here. Built-in choice: build.sh (FLAVOR=dev, the default)
-/// and release.sh (FLAVOR=release) set the bundle id, which this reads. A development build from a worktree is
-/// an instance of its own, named after the worktree (`instance`), so builds from two worktrees run at once.
+/// Which Lamp this is: the release people install, Lamp Nightly (a release from every change merged, for people
+/// who want them early), or the development build made from source. They are separate apps on the Mac: different
+/// name and icon, bundle id, folders, ports, URL scheme and Keychain entries, so running one never touches another.
+/// Everything that names Lamp on disk or on the network goes through here. Built-in choice: build.sh (FLAVOR=dev,
+/// the default) and release.sh (FLAVOR=release, or nightly) set the bundle id, which this reads. A development build
+/// from a worktree is an instance of its own, named after the worktree (`instance`), so builds from two worktrees
+/// run at once. A nightly is a release in everything but its name, feed and folders: optimized, signed, notarized,
+/// updating itself from its own feed.
 enum Edition {
     static let bundleID = Bundle.main.bundleIdentifier ?? "dev.lamp.host"
     static let isDev = bundleID == "dev.lamp.host.dev" || bundleID.hasPrefix("dev.lamp.host.dev.")
+    static let isNightly = bundleID == "dev.lamp.host.nightly"
     /// A development build from one worktree among others (scripts/instance.sh, build.sh): named after its
     /// worktree, with its own folders, ports, scheme and prefixes, so two can run at once. Empty for the plain
     /// Lamp Dev, and for the release.
     static let instance: String = isDev && bundleID.hasPrefix("dev.lamp.host.dev.") ? String(bundleID.dropFirst("dev.lamp.host.dev.".count)) : ""
 
     /// What the app is called where a name appears: window title, folders.
-    static let name = isDev ? "Lamp Dev" + (instance.isEmpty ? "" : " " + instance) : "Lamp"
+    static let name = isDev ? "Lamp Dev" + (instance.isEmpty ? "" : " " + instance) : isNightly ? "Lamp Nightly" : "Lamp"
 
     /// The names of every Lamp's folder on this Mac (under Application Support, and "<name> Apps" under
     /// Applications): the release's, the plain development build's, and each instance's. What one Lamp closes to
@@ -24,7 +27,7 @@ enum Edition {
         let support = home.appendingPathComponent("Library/Application Support")
         let instances = ((try? FileManager.default.contentsOfDirectory(atPath: support.path)) ?? [])
             .filter { $0.hasPrefix("Lamp Dev ") && !$0.hasSuffix("-fresh-start") }
-        return Array(Set(["Lamp", "Lamp Dev", name] + instances)).sorted()
+        return Array(Set(["Lamp", "Lamp Nightly", "Lamp Dev", name] + instances)).sorted()
     }
 
     static var bugReportEndpoint: URL {
@@ -52,9 +55,10 @@ enum Edition {
     /// the sandbox opens the caches folder to every command.
     static let sharedCachesFolder = home.appendingPathComponent("Library/Caches/Lamp")
 
-    /// An instance's four ports come from its name, in a range of their own above the two fixed sets, so two
-    /// worktrees' builds seldom collide; the apps learn them at install (`Template.installValues`).
-    private static let firstPort: UInt16 = instance.isEmpty ? (isDev ? 47821 : 47811) : 48000 + slot(of: instance) * 4
+    /// An instance's four ports come from its name, in a range of their own above the three fixed sets (the
+    /// release's, the nightly's, Lamp Dev's), so two worktrees' builds seldom collide; the apps learn them at install
+    /// (`Template.installValues`).
+    private static let firstPort: UInt16 = instance.isEmpty ? (isDev ? 47821 : isNightly ? 47831 : 47811) : 48000 + slot(of: instance) * 4
 
     /// Where an instance's ports go among the others', from its name.
     private static func slot(of instance: String) -> UInt16 {
@@ -85,9 +89,10 @@ enum Edition {
         /// Every one of them, for the sandbox to close.
         var all: [Int] { [server, console, bridge, control, tvConsole, tvBridge, tvControl] }
     }
-    static let androidPorts = androidPorts(isDev: isDev, instance: instance)
+    static let androidPorts = androidPorts(isDev: isDev, instance: instance, isNightly: isNightly)
 
-    static func androidPorts(isDev: Bool, instance: String) -> AndroidPorts {
+    static func androidPorts(isDev: Bool, instance: String, isNightly: Bool = false) -> AndroidPorts {
+        if isNightly { return AndroidPorts(server: 47835, console: 47838, control: 47836, tvConsole: 47888, tvControl: 47890) }
         guard isDev else { return AndroidPorts(server: 47815, console: 47818, control: 47816, tvConsole: 47880, tvControl: 47882) }
         guard !instance.isEmpty else { return AndroidPorts(server: 47825, console: 47828, control: 47826, tvConsole: 47884, tvControl: 47886) }
         // A range of each for the instances, a pair for each emulator's two: instances whose names land on different
@@ -101,6 +106,7 @@ enum Edition {
     /// Lamp's; nil for a folder that isn't a Lamp's.
     static func androidPorts(folder name: String) -> AndroidPorts? {
         if name == "Lamp" { return androidPorts(isDev: false, instance: "") }
+        if name == "Lamp Nightly" { return androidPorts(isDev: false, instance: "", isNightly: true) }
         if name == "Lamp Dev" { return androidPorts(isDev: true, instance: "") }
         guard name.hasPrefix("Lamp Dev ") else { return nil }
         return androidPorts(isDev: true, instance: String(name.dropFirst("Lamp Dev ".count)))
@@ -108,9 +114,10 @@ enum Edition {
     /// The ports a TV app's phone page is served on, one app to a port while its page is served (`PhoneSites`), so each
     /// app's page is an origin of its own in the phone's browser and one app's page can never read what another's
     /// keeps. Sixteen of each Lamp's own, in a range clear of the others'.
-    static let phonePagePorts = phonePagePorts(isDev: isDev, instance: instance)
+    static let phonePagePorts = phonePagePorts(isDev: isDev, instance: instance, isNightly: isNightly)
 
-    static func phonePagePorts(isDev: Bool, instance: String) -> ClosedRange<UInt16> {
+    static func phonePagePorts(isDev: Bool, instance: String, isNightly: Bool = false) -> ClosedRange<UInt16> {
+        if isNightly { return 47892...47907 }
         guard isDev else { return 47840...47855 }
         guard !instance.isEmpty else { return 47860...47875 }
         let start = 50100 + slot(of: instance) * 16
@@ -124,11 +131,11 @@ enum Edition {
 
     /// lamp://edit?app=… (lamp-dev:// for the development build, lamp-dev-<instance>:// for an instance),
     /// registered in Info.plist by build.sh.
-    static let urlScheme = isDev ? "lamp-dev" + (instance.isEmpty ? "" : "-" + instance) : "lamp"
+    static let urlScheme = isDev ? "lamp-dev" + (instance.isEmpty ? "" : "-" + instance) : isNightly ? "lamp-nightly" : "lamp"
     /// The bundle id of every app this Lamp builds: dev.lamp.app.<slug>, dev.lamp.dev.app.<slug>, or
     /// dev.lamp.dev.<instance>.app.<slug>.
-    static let appBundlePrefix = isDev ? "dev.lamp.dev." + (instance.isEmpty ? "" : instance + ".") + "app." : "dev.lamp.app."
+    static let appBundlePrefix = isDev ? "dev.lamp.dev." + (instance.isEmpty ? "" : instance + ".") + "app." : isNightly ? "dev.lamp.nightly.app." : "dev.lamp.app."
     /// Distributed notifications between Lamp and its apps carry this prefix, so one Lamp's apps don't hear
     /// another's.
-    static let notificationPrefix = isDev ? "dev.lamp.dev." + (instance.isEmpty ? "" : instance + ".") : "dev.lamp."
+    static let notificationPrefix = isDev ? "dev.lamp.dev." + (instance.isEmpty ? "" : instance + ".") : isNightly ? "dev.lamp.nightly." : "dev.lamp."
 }

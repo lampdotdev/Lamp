@@ -14,7 +14,11 @@ set -euo pipefail
 VERSION="${1:?usage: ./release.sh <version>}"
 HERE="${0:A:h}"
 DIST="$HERE/dist"
-DMG="$DIST/Lamp-$VERSION.dmg"
+# FLAVOR=nightly makes Lamp Nightly (build.sh): its own app and DMG names, beside Lamp's.
+FLAVOR="${FLAVOR:-release}"
+NAME="Lamp"; DMG_STEM="Lamp"
+if [[ "$FLAVOR" == nightly ]]; then NAME="Lamp Nightly"; DMG_STEM="Lamp-Nightly"; fi
+DMG="$DIST/$DMG_STEM-$VERSION.dmg"
 NOTARY_PROFILE="${NOTARY_PROFILE:-forge-notary}"
 
 if [[ -z "${SIGN_IDENTITY:-}" ]]; then
@@ -30,9 +34,10 @@ echo "Signing as: $SIGN_IDENTITY"
 # 1. Build + sign the app (hardened runtime, entitlements, secure timestamp)
 rm -rf "$DIST" && mkdir -p "$DIST"
 # Builds into dist/, not build/, so a release never replaces the Lamp you run day to day.
-FLAVOR=release BUILD_DIR="$DIST/build" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
-mv "$DIST/build/Lamp.app" "$DIST/" && rmdir "$DIST/build"
-codesign --verify --deep --strict "$DIST/Lamp.app"
+FLAVOR="$FLAVOR" BUILD_DIR="$DIST/build" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
+# The build folder also holds what build.sh made on the way (a nightly's icon), so it goes whole, not with rmdir.
+mv "$DIST/build/$NAME.app" "$DIST/" && rm -rf "$DIST/build"
+codesign --verify --deep --strict "$DIST/$NAME.app"
 
 notarize() {
   xcrun notarytool submit "$1" --keychain-profile "$NOTARY_PROFILE" --wait | tee "$DIST/notary.log"
@@ -43,18 +48,18 @@ notarize() {
 # 2. Notarize the app itself and staple its ticket, so Lamp.app opens without a network check
 #    even after it's copied out of the DMG.
 if [[ "${SKIP_NOTARIZE:-}" != 1 ]]; then
-  ditto -c -k --keepParent "$DIST/Lamp.app" "$DIST/Lamp-notarize.zip"
+  ditto -c -k --keepParent "$DIST/$NAME.app" "$DIST/Lamp-notarize.zip"
   notarize "$DIST/Lamp-notarize.zip"
   rm "$DIST/Lamp-notarize.zip"
-  xcrun stapler staple "$DIST/Lamp.app"
+  xcrun stapler staple "$DIST/$NAME.app"
 fi
 
 # 3. Package as a DMG with a drag-to-Applications layout: Lamp, an arrow and Applications over the night
 #    sky (scripts/dmg-settings.py). dmgbuild writes the window's layout without Finder, so CI gets it too.
 python3 -m venv "$DIST/.venv"
 "$DIST/.venv/bin/pip" install --quiet --disable-pip-version-check dmgbuild==1.6.7
-"$DIST/.venv/bin/dmgbuild" -s "$HERE/scripts/dmg-settings.py" -D app="$DIST/Lamp.app" \
-  -D background="$HERE/Resources/DMG/background.tiff" Lamp "$DMG"
+"$DIST/.venv/bin/dmgbuild" -s "$HERE/scripts/dmg-settings.py" -D app="$DIST/$NAME.app" \
+  -D background="$HERE/Resources/DMG/background.tiff" "$NAME" "$DMG"
 rm -rf "$DIST/.venv"
 codesign --force --timestamp -s "$SIGN_IDENTITY" "$DMG"
 
@@ -69,8 +74,8 @@ xcrun stapler staple "$DMG"
 
 # 5. Verify Gatekeeper accepts both, with the tickets stapled
 spctl --assess --type open --context context:primary-signature -v "$DMG"
-spctl --assess --type execute -v "$DIST/Lamp.app"
-xcrun stapler validate "$DIST/Lamp.app"
+spctl --assess --type execute -v "$DIST/$NAME.app"
+xcrun stapler validate "$DIST/$NAME.app"
 echo
 echo "Release ready: $DMG"
 echo "Publish:  gh release create v$VERSION \"$DMG\" --title \"Lamp $VERSION\" --generate-notes"

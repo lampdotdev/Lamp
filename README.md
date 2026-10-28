@@ -30,7 +30,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 ## Download
 
-Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases)): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
+Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases)): open the DMG and drag Lamp to Applications. To get every change as soon as it's merged, install **Lamp Nightly** from the newest `nightly-…` pre-release there: a separate app, signed and notarized the same way, that updates itself with each nightly and lives beside Lamp without touching it. To cut a release, see [RELEASING.md](RELEASING.md).
 
 ## Setup
 
