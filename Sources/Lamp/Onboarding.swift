@@ -958,6 +958,35 @@ enum SettingsMenu {
             if !on, item.action != nil { item.action = nil }
         }
     }
+
+    /// Opens Settings on a tab, in front of whatever the person is using, from wherever it's asked: a sheet of Lamp's
+    /// own, the chat beside another app, a menu. Sending `showSettingsWindow:` down the responder chain does nothing
+    /// when Lamp isn't the app in front (the chat beside an app is another app's), so Lamp comes forward and its own
+    /// Settings menu item is pressed, as the person would; while the welcome holds Settings back, nothing opens.
+    @MainActor static func show(tab: String? = nil) {
+        if let tab { UserDefaults.standard.set(tab, forKey: "settingsTab") }
+        NSApp.activate()
+        guard let menu = NSApp.mainMenu?.items.first?.submenu,
+              let index = menu.items.firstIndex(where: { $0.title.hasPrefix("Settings") && $0.action != nil }) else { return }
+        menu.performActionForItem(at: index)
+        // The window takes a moment to exist the first time. macOS lets Lamp come forward only when the app in front hands
+        // it over, which the app around the chat doesn't, so the window is put in front of it regardless: the person's
+        // next click in it makes Lamp the app in front, as a setup sheet's does.
+        var tries = 0
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                tries += 1
+                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.contains("Settings") == true && $0.isVisible }) {
+                    NSApp.activate()
+                    window.makeKeyAndOrderFront(nil)
+                    window.orderFrontRegardless()
+                } else if tries < 25 {
+                    return
+                }
+                timer.invalidate()
+            }
+        }
+    }
 }
 
 /// Hands back the window a view is in.

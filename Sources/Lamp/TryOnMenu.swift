@@ -276,9 +276,7 @@ extension Store {
             return
         case "settings":
             // Every device Lamp knows, with where its setup stands, is in Settings → Building.
-            NSApp.activate()
-            UserDefaults.standard.set("building", forKey: "settingsTab")
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            SettingsMenu.show(tab: "building")
             return
         case "look":
             refreshDevices()
