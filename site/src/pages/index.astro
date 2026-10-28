@@ -98,7 +98,8 @@ const shelf = [
       </div>
 
       <!-- New York's sleeve, in 3D once lib/tapes.ts has drawn it: it leans toward the pointer and turns over when
-           clicked. Until then, and without WebGL, the same sleeve flat. -->
+           clicked. Until then, and without WebGL, the same sleeve flat, with what's on its back under it; once it's
+           drawn, that flat sleeve stays for screen readers, front and back. -->
       <div class="tape-host h-[36rem] min-w-0 flex-[1_1_30rem] sm:h-[44rem]" data-tape-sleeve data-sleeve={JSON.stringify(sleeve)}>
         <div class="tape-fallback flex h-full items-center justify-center">
           <figure class="flex w-full max-w-[26rem] -rotate-2 flex-col overflow-hidden border-2 border-tape bg-[#f7f2e3] text-tape shadow-[10px_10px_0_var(--color-tape)]">
@@ -108,10 +109,16 @@ const shelf = [
             </figcaption>
             <Image src={newYork} alt="New York: a yellow taxi on a Manhattan avenue at golden hour" widths={[420, 840]} sizes="420px" loading="eager" class="block h-auto w-full border-y-2 border-tape" />
             <div class="stripe-warm h-20" aria-hidden="true"></div>
-            <p class="px-7 pt-4 pb-5 text-xl font-extrabold italic">Walk, drive, bike or fly</p>
+            <p class="px-7 pt-4 pb-2 text-xl font-extrabold italic">Walk, drive, bike or fly</p>
+            <div id="sleeve-back" class="px-7 pb-5">
+              <p class="font-mono text-xs font-bold text-[#a8361f]">ON THE BACK</p>
+              <ul class="mt-1 font-marker text-lg leading-snug text-[#b8264f]">
+                {sleeve.tweaks.map((tweak) => <li>{tweak[0].toUpperCase() + tweak.slice(1)}</li>)}
+              </ul>
+            </div>
           </figure>
         </div>
-        <button type="button" class="tape-control" data-turn>Turn New York's sleeve over</button>
+        <button type="button" class="tape-control" data-turn aria-pressed="false" aria-controls="sleeve-back">Turn New York's sleeve over</button>
       </div>
     </div>
     </section>

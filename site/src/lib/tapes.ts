@@ -506,15 +506,20 @@ export async function mountSleeve(host: HTMLElement) {
   s.scene.add(sleeveGroup);
 
   // Clicked, it turns over: a turn and a half, landing on whichever side it wasn't on, with a hop.
+  // The button that turns it (for a keyboard) says which way up it is.
+  const button = host.querySelector<HTMLButtonElement>("[data-turn]");
   let spin = 0;
   let hop = 0;
+  let back = false;
   const turn = () => {
     spin += Math.PI * 3;
     hop = 1;
+    back = !back;
+    button?.setAttribute("aria-pressed", String(back));
   };
   s.on("click", (event) => { if (s.hit(event, [box])) turn(); });
   s.on("pointermove", (event) => s.hand(!!s.hit(event, [box])));
-  host.querySelector<HTMLButtonElement>("[data-turn]")?.addEventListener("click", turn);
+  button?.addEventListener("click", turn);
 
   let rotation = { x: 0, y: -0.35 };
   let spun = 0;
