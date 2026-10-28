@@ -35,7 +35,7 @@ const sleeve: Sleeve = {
   tweaks: ["make it a snowy winter night", "taxi fares against the clock", "move the city to the Moon"],
 };
 
-// The stack beside "Record over it": each original, a remix of it, and a blank tape.
+// The stack beside "Change it live": each original, a remix of it, and a blank tape.
 const tapes: Tape[] = [
   { look: "original", stripes: "warm", title: "Home HQ", caption: "THE ORIGINAL · AN APP FOR THE FAMILY", shot: homeHQShot },
   { look: "marker", title: "On the kitchen frame", caption: "REMIXED BY YOU", side: "B1", ink: "#b8264f", shot: homeHQShot, treat: "frame" },
@@ -61,11 +61,24 @@ const devices = [
   { name: "Photo frames", icon: picture },
 ];
 
+// The shelf's stripes, in a box 100 wide and 100 tall that's stretched over the space beside the gallery and out to
+// the window's left edge: each runs straight down to the bend, then sweeps out to the left, the last one on the right
+// staying put and the rest fanning out off the page.
+const floor = ["#f6b81c", "#f08a1c", "#e2402a", "#d23778", "#5a2d8c", "#2c3592", "#1f6fc4", "#1f8a4a"].map((color, i, all) => {
+  const [width, start, bend] = [7, 30, 50];
+  const anchor = start + width * all.length;
+  const flare = (x: number) => anchor + (x - anchor) * 3.5;
+  const [left, right] = [start + width * i, start + width * (i + 1)];
+  const d = `M${left} 0 L${left} ${bend} C${left} ${bend + 26} ${flare(left)} ${bend + 30} ${flare(left)} 100`
+    + ` L${flare(right)} 100 C${flare(right)} ${bend + 30} ${right} ${bend + 26} ${right} ${bend} L${right} 0 Z`;
+  return { color, d };
+});
+
 // The shelf: three starters, one of each kind, each with the change its starter suggests first.
 const shelf = [
-  { image: homeHQ, by: "by Lamp", name: "Home HQ", tweak: "put it on the photo frame", stripe: "stripe-cool", ink: "text-[#2a6fb0]" },
-  { image: newYork, by: "by Mr.doob", name: "New York", tweak: "move it to the Moon", stripe: "stripe-warm", ink: "text-[#b8264f]" },
-  { image: remote, by: "by Lamp", name: "Universal Remote", tweak: "add a bedtime button", stripe: "stripe-warm", ink: "text-[#b8264f]", tall: true },
+  { image: homeHQ, by: "by Lamp", name: "Home HQ", tweak: "put it on the photo frame", stripe: "stripe-cool", ink: "text-[#8fc2ff]" },
+  { image: newYork, by: "by Mr.doob", name: "New York", tweak: "move it to the Moon", stripe: "stripe-warm", ink: "text-[#ff8fb8]" },
+  { image: remote, by: "by Lamp", name: "Universal Remote", tweak: "add a bedtime button", stripe: "stripe-warm", ink: "text-[#ff8fb8]", tall: true },
 ];
 ---
 
@@ -73,8 +86,8 @@ const shelf = [
   <main class="tape-page overflow-x-clip bg-paper text-tape">
     <!-- Hero: plain white type on the sleeve's stripes, run diagonally across the whole window like a film
          maker's box. The pale bands are kept to the corners, so the words only ever sit on ones they read on. -->
-    <section id="top" class="technicolor">
-    <div class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-10 px-4 pt-32 pb-16 text-white sm:px-6 sm:pt-40 sm:pb-20">
+    <section id="top" class="technicolor overflow-hidden">
+    <div class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-10 px-4 pt-28 pb-12 text-white sm:px-6 sm:pt-28 sm:pb-12">
       <div class="flex min-w-0 flex-[1_1_32rem] flex-col items-start gap-7">
         <h1 class="mb-2 text-[clamp(3.25rem,8.4vw,8rem)] leading-[0.9] font-black tracking-[-0.05em]">Remixable software.</h1>
         <p class="max-w-[30ch] text-2xl leading-[1.4] font-semibold">{together(pitch)}</p>
@@ -86,7 +99,7 @@ const shelf = [
 
       <!-- New York's sleeve, in 3D once lib/tapes.ts has drawn it: it leans toward the pointer and turns over when
            clicked. Until then, and without WebGL, the same sleeve flat. -->
-      <div class="tape-host h-[34rem] min-w-0 flex-[1_1_26rem] sm:h-[40rem]" data-tape-sleeve data-sleeve={JSON.stringify(sleeve)}>
+      <div class="tape-host h-[36rem] min-w-0 flex-[1_1_30rem] sm:h-[44rem]" data-tape-sleeve data-sleeve={JSON.stringify(sleeve)}>
         <div class="tape-fallback flex h-full items-center justify-center">
           <figure class="flex w-full max-w-[26rem] -rotate-2 flex-col overflow-hidden border-2 border-tape bg-[#f7f2e3] text-tape shadow-[10px_10px_0_var(--color-tape)]">
             <figcaption class="flex flex-col gap-1 px-7 pt-6 pb-4">
@@ -103,11 +116,11 @@ const shelf = [
     </div>
     </section>
 
-    <!-- Side B: the stack of tapes, in 3D once lib/tapes.ts has drawn it. A tape that's clicked flies out and shows
+    <!-- Change it live: the stack of tapes, in 3D once lib/tapes.ts has drawn it. A tape that's clicked flies out and shows
          the screenshot on its label. The originals have printed spines; the remixes are written on in marker, and
          the last is blank. -->
     <section id="remix" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
-      <div class="tape-host order-last h-[26rem] min-w-0 flex-[1_1_37.5rem] [margin-left:calc(-1*var(--edge))] sm:h-[34rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
+      <div class="tape-host order-last h-[26rem] min-w-0 flex-[1_1_37.5rem] sm:h-[34rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
         <div class="tape-fallback flex h-full flex-col justify-center gap-2">
           <div class="flex min-h-21 items-stretch border-2 border-l-0 border-tape bg-[#f7f2e3]">
             <span class="stripe-warm-across w-[calc(var(--edge)+30%)] min-w-24" aria-hidden="true"></span>
@@ -144,14 +157,50 @@ const shelf = [
         {tapes.map((tape, i) => tape.shot && <button type="button" class="tape-control" data-tape={i}>Show what's on {tape.title}</button>)}
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
-        <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Record over it. Keep the original.</h2>
+        <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Change it live.</h2>
         <p class="max-w-[36ch] text-xl leading-normal">{together("Everything opens running. Ask for a change in the chat beside it, and it changes in front of you. The first version stays on the shelf.")}</p>
+      </div>
+    </section>
+
+    <!-- From the shelf: real starters, each with the change it suggests, on the dark of a tape's box. -->
+    <section id="shelf" class="bg-tape text-paper">
+      <div class="mx-auto flex max-w-[80rem] flex-wrap gap-x-16 gap-y-12 px-4 py-28 sm:px-6">
+        <div class="flex min-w-0 flex-[1_1_22rem] flex-col gap-6">
+          <h2 class="text-[clamp(3.5rem,7vw,6.5rem)] leading-[0.9] font-black tracking-[-0.045em] text-white">From the shelf</h2>
+          <p class="max-w-[30ch] text-xl leading-normal text-[#e6dfca]">{together("Start from one of these, or from anything someone shares with you.")}</p>
+          <!-- The space under the words, beside the gallery, holds the sleeve's stripes: straight down, then sweeping
+               out toward the viewer as they run off the bottom of the section and the window's left edge. -->
+          <svg class="-mb-28 mt-6 min-h-64 w-[calc(100%+var(--edge))] flex-1 [margin-left:calc(-1*var(--edge))] max-lg:hidden" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            {floor.map((stripe) => <path d={stripe.d} fill={stripe.color} />)}
+          </svg>
+        </div>
+        <ul class="flex min-w-0 flex-[1_1_34rem] flex-col gap-10">
+          {
+            shelf.map((item) => (
+              <li class="grid grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] items-center gap-6 max-sm:grid-cols-1">
+                {item.tall ? (
+                  <div class="flex aspect-[16/10] justify-center overflow-hidden bg-[#2e2b26]">
+                    <Image src={item.image} alt="" widths={[300, 600]} sizes="300px" class="mt-3.5 h-[130%] w-auto" />
+                  </div>
+                ) : (
+                  <Image src={item.image} alt="" widths={[400, 800]} sizes="(min-width: 1024px) 400px, 100vw" class="aspect-[16/10] w-full object-cover" />
+                )}
+                <div class="flex flex-col gap-1.5">
+                  <span class:list={[item.stripe, "mb-2 h-2.5 w-16"]} aria-hidden="true"></span>
+                  <h3 class="text-3xl leading-none font-black tracking-[-0.03em]">{item.name}</h3>
+                  <span class="text-base font-bold text-[#cfc8b2] italic">{item.by}</span>
+                  <span class:list={["font-marker text-xl", item.ink]}>{item.tweak}</span>
+                </div>
+              </li>
+            ))
+          }
+        </ul>
       </div>
     </section>
 
     <!-- What it runs on, like the back of a box. -->
     <section id="devices" class="mx-auto flex max-w-[80rem] flex-col gap-10 px-4 py-24 sm:px-6">
-      <h2 class="chip-heading max-w-[16ch] text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Runs on what's already in the house.</h2>
+      <h2 class="chip-heading max-w-[16ch] text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Runs on what's already yours.</h2>
       <ul class="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-x-8 gap-y-7">
         {
           devices.map((device, i) => (
@@ -163,30 +212,6 @@ const shelf = [
         }
       </ul>
       <p class="max-w-[52ch] text-xl leading-normal">{together("Developer mode on the TV, the maker's sign-in and certificates, finding the box on your Wi‑Fi: Lamp walks you through the part where people usually give up.")}</p>
-    </section>
-
-    <!-- On the shelf: real starters, each with the change it suggests. -->
-    <section id="shelf" class="mx-auto flex max-w-[80rem] flex-col gap-10 px-4 pt-12 pb-28 sm:px-6">
-      <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">On the shelf</h2>
-      <ul class="grid grid-cols-[repeat(auto-fit,minmax(18.75rem,1fr))] gap-9">
-        {
-          shelf.map((item) => (
-            <li class="flex flex-col gap-1.5">
-              {item.tall ? (
-                <div class="flex aspect-[16/10] justify-center overflow-hidden bg-tape">
-                  <Image src={item.image} alt="" widths={[300, 600]} sizes="300px" class="mt-3.5 h-[130%] w-auto" />
-                </div>
-              ) : (
-                <Image src={item.image} alt="" widths={[400, 800]} sizes="(min-width: 1024px) 400px, 100vw" class="aspect-[16/10] w-full object-cover" />
-              )}
-              <span class:list={[item.stripe, "mb-3 h-3"]} aria-hidden="true"></span>
-              <h3 class="text-3xl leading-none font-black tracking-[-0.03em]">{item.name}</h3>
-              <span class="text-base font-bold italic">{item.by}</span>
-              <span class:list={["font-marker text-xl", item.ink]}>{item.tweak}</span>
-            </li>
-          ))
-        }
-      </ul>
     </section>
 
     <!-- The lamp's light falls across the last section, in the sleeve's stripes. -->
@@ -250,10 +275,12 @@ const shelf = [
       var(--stripe-4) 0 60%, var(--stripe-5) 0 72%, var(--stripe-6) 0 84%, var(--stripe-7) 0);
   }
 
-  /* The 3D tapes take their host's whole box. Once they're drawn, the flat version stays only for screen readers,
+  /* The 3D tapes run past their host's box, letting the pointer through (lib/tapes.ts). Once they're drawn, the flat version stays only for screen readers,
      and the buttons that turn the tapes over (otherwise unseen) show when a keyboard reaches them. */
   .tape-host { position: relative; }
-  .tape-host :global(.tape-canvas) { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-y; }
+  /* The stack keeps to its column, so a tape held up in front of it has room on both sides. */
+  [data-tape-stack] { --edge: 0px; }
+  .tape-host :global(.tape-canvas) { position: absolute; pointer-events: none; }
   .tape-host.is-3d > .tape-fallback, .tape-control {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
   }

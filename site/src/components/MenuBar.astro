@@ -14,15 +14,15 @@ const links = [
 
 <!--
   A bar across the top of every page, on the homepage's paper, over whatever scrolls under it, with a rule under
-  it like the edge of a label. The name on the left with the lamp's light under it, in the sleeve's stripes; a few
-  links and Download on the right. What it covers is --menu-height (global.css): pages start below it, and the
+  it like the edge of a label. The name on the left, sitting in the corner of a short, thick L in the sleeve's
+  stripes; a few links and Download on the right. What it covers is --menu-height (global.css): pages start below it, and the
   ideas page's filters stay under it.
 -->
 <header class="fixed inset-x-0 top-0 z-40 border-b-2 border-tape bg-paper/92 backdrop-blur-md">
   <nav aria-label="Lamp" class="mx-auto flex h-16 max-w-[80rem] items-center justify-between gap-4 px-4 sm:h-[4.5rem] sm:px-6">
-    <a href="/" class="flex items-end gap-2.5 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-tape">
-      <span class="lamp-mark h-[30px] w-10" aria-hidden="true"></span>
-      <span class="text-[30px] leading-[0.9] font-black tracking-[-0.05em]">lamp</span>
+    <a href="/" class="relative block h-[46px] w-[118px] shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-tape">
+      <span class="lamp-l absolute inset-0" aria-hidden="true"></span>
+      <span class="absolute bottom-[17px] left-[25px] text-[31px] leading-[0.74] font-black tracking-[-0.05em]">lamp</span>
     </a>
     <div class="flex items-center gap-1 sm:gap-2">
       {
@@ -52,10 +52,10 @@ const links = [
 </header>
 
 <style>
-  /* The lamp's light: a cone in the sleeve's stripes. */
-  .lamp-mark {
-    clip-path: polygon(30% 0, 70% 0, 100% 100%, 0 100%);
-    background: linear-gradient(90deg, #2a8fd0 0 16.6%, #1e9c8c 0 33.3%, #f5b82e 0 50%, #ef8a2b 0 66.6%, #e04a2f 0 83.3%, #c8325e 0);
+  /* The L: an upright as thick as its foot is tall, and a foot that runs under the whole name. */
+  .lamp-l {
+    clip-path: polygon(0 0, 19px 0, 19px calc(100% - 14px), 100% calc(100% - 14px), 100% 100%, 0 100%);
+    background: linear-gradient(150deg, #f6b81c 0 14%, #f08a1c 0 28%, #e2402a 0 42%, #d23778 0 56%, #5a2d8c 0 70%, #2c3592 0 84%, #1f6fc4 0);
   }
 </style>
 

@@ -1,12 +1,18 @@
-// The homepage's tapes in 3D (index.astro): New York's sleeve in the hero, and the stack of tapes beside "Record
-// over it". They lean toward the pointer, and turn over when clicked to show what's on them: a screenshot on the
+// The homepage's tapes in 3D (index.astro): New York's sleeve in the hero, and the stack of tapes beside "Change it
+// live". They lean toward the pointer, and turn over when clicked to show what's on them: a screenshot on the
 // tape's label. Every picture on them is drawn here on a 2D canvas in the page's own fonts, so they print like the
 // rest of the page. The page's HTML version of each stays under the canvas, for anyone without WebGL and for
 // screen readers; the canvas only takes over once it's drawn.
 
 import type * as ThreeTypes from "three";
 
-type Three = typeof ThreeTypes;
+type Three = typeof ThreeTypes & { RoundedBoxGeometry: typeof import("three/examples/jsm/geometries/RoundedBoxGeometry.js").RoundedBoxGeometry };
+
+/** three.js and the rounded box the tapes are made of, loaded once the page is up. */
+async function three(): Promise<Three> {
+  const [core, { RoundedBoxGeometry }] = await Promise.all([import("three"), import("three/examples/jsm/geometries/RoundedBoxGeometry.js")]);
+  return { ...core, RoundedBoxGeometry };
+}
 
 /** One tape in the stack, as index.astro describes it. */
 export type Tape = {
@@ -346,7 +352,12 @@ function tapeTop(tape: Tape, img: HTMLImageElement | undefined) {
 
 // MARK: Staging
 
-function stage(THREE: Three, host: HTMLElement) {
+// A scene lit from the upper left, with an unseen wall behind it that catches the tapes' shadows, so they cast them
+// on the page. `reach` is how far the shadows need to go. The canvas runs past its host by `bleed` (a share of the
+// host's width and height on each side), so a tape that flies out or hops isn't cut off at the host's edges; the
+// tapes stay the size the host gives them. The canvas lets the pointer through to whatever it overlaps, and only a
+// press on a tape is the tapes'.
+function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: number; reach: number; bleed: { x: number; y: number } }) {
   let renderer: ThreeTypes.WebGLRenderer;
   try {
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -355,19 +366,51 @@ function stage(THREE: Three, host: HTMLElement) {
   }
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setClearColor(0x000000, 0);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   const canvas = renderer.domElement;
   canvas.setAttribute("aria-hidden", "true");
   canvas.className = "tape-canvas";
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+  const FOV = 30;
+  const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 100);
+  Object.assign(canvas.style, {
+    left: `${-bleed.x * 100}%`, top: `${-bleed.y * 100}%`, width: `${(1 + 2 * bleed.x) * 100}%`, height: `${(1 + 2 * bleed.y) * 100}%`,
+  });
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
   const texture = (source: HTMLCanvasElement) => {
     const map = new THREE.CanvasTexture(source);
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = anisotropy;
-    return new THREE.MeshBasicMaterial({ map });
+    return new THREE.MeshStandardMaterial({ map, roughness: 0.62, metalness: 0 });
   };
-  const flat = (color: string) => new THREE.MeshBasicMaterial({ color });
+  const flat = (color: string) => new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0 });
+
+  // An even light all round and a key light from the upper left. three.js counts light in physical units, where a
+  // face lit at 1 shows its color divided by π, so the two add up to about π on a face turned to the key light: the
+  // print shows its own colors there, neither washed out nor grey, and the faces turned away fall into shade.
+  scene.add(new THREE.AmbientLight(0xffffff, 1.7));
+  const sun = new THREE.DirectionalLight(0xfff6ea, 1.75);
+  sun.position.set(-2.6, 3.6, 6);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -reach, right: reach, top: reach, bottom: -reach, near: 0.5, far: 20 });
+  sun.shadow.camera.updateProjectionMatrix();
+  sun.shadow.radius = 6;
+  sun.shadow.blurSamples = 16;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.02;
+  scene.add(sun);
+  const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(reach * 4, reach * 4), new THREE.ShadowMaterial({ opacity: 0.3 }));
+  backdrop.position.z = wall;
+  backdrop.receiveShadow = true;
+  scene.add(backdrop);
+  /** Makes a mesh cast shadows, and catch those of the others. */
+  const solid = <T extends ThreeTypes.Mesh>(mesh: T) => {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  };
 
   // Where the pointer is, from -1 to 1 across the host's own box.
   const pointer = { x: 0, y: 0 };
@@ -385,13 +428,34 @@ function stage(THREE: Three, host: HTMLElement) {
     return raycaster.intersectObjects(objects, true)[0]?.object;
   };
 
-  const run = (fit: (aspect: number) => void, frame: (dt: number, time: number) => void) => {
+  /** Calls `act` for a press, or `move` as the pointer moves, over the canvas but not on a link or a button. */
+  const on = (type: "click" | "pointermove", act: (event: MouseEvent) => void) => {
+    document.addEventListener(type, (event) => {
+      const box = canvas.getBoundingClientRect();
+      const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+      if (inside && !(event.target as Element | null)?.closest?.("a, button, input")) act(event);
+      else if (type === "pointermove") act(new MouseEvent("pointermove", { clientX: -1e6, clientY: -1e6 }));
+    });
+  };
+  let pointing = false;
+  /** Shows the hand while the pointer is over a tape. */
+  const hand = (over: boolean) => {
+    if (over === pointing) return;
+    pointing = over;
+    document.documentElement.style.cursor = over ? "pointer" : "";
+  };
+
+  const run = (fit: (aspect: number, tan: number) => void, frame: (dt: number, time: number) => void) => {
     const resize = () => {
       const { width, height } = host.getBoundingClientRect();
       if (!width || !height) return;
-      renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      fit(camera.aspect);
+      const [w, h] = [width * (1 + 2 * bleed.x), height * (1 + 2 * bleed.y)];
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      // The camera is placed to fit the host, then widened to take in the bleed around it.
+      const tan = Math.tan((FOV * Math.PI) / 360);
+      fit(width / height, tan);
+      camera.fov = (Math.atan(tan * (1 + 2 * bleed.y)) * 360) / Math.PI;
       camera.updateProjectionMatrix();
     };
     new ResizeObserver(resize).observe(host);
@@ -418,7 +482,7 @@ function stage(THREE: Three, host: HTMLElement) {
     host.classList.add("is-3d");
   };
 
-  return { THREE, scene, camera, canvas, texture, flat, pointer, hit, run };
+  return { THREE, scene, camera, canvas, texture, flat, solid, pointer, hit, on, hand, run };
 }
 
 /** Eases `value` toward `target`, by how long the frame took. */
@@ -428,29 +492,18 @@ const ease = (value: number, target: number, dt: number, speed = 7) => value + (
 
 export async function mountSleeve(host: HTMLElement) {
   const sleeve = JSON.parse(host.dataset.sleeve!) as Sleeve;
-  const [THREE, img] = await Promise.all([import("three"), image(sleeve.shot), fontsReady()]);
-  const s = stage(THREE, host);
+  const [THREE, img] = await Promise.all([three(), image(sleeve.shot), fontsReady()]);
+  const s = stage(THREE, host, { wall: -0.75, reach: 3, bleed: { x: 0.15, y: 0.2 } });
   if (!s) return;
   const spine = s.texture(sleeveSpine(sleeve));
-  const box = new THREE.Mesh(new THREE.BoxGeometry(1.05, 1.9, 0.3), [
+  const box = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(1.05, 1.9, 0.3, 3, 0.025), [
     spine, spine, s.flat(INK), s.flat(INK), s.texture(sleeveFront(sleeve)), s.texture(sleeveBack(sleeve, img)),
-  ]);
+  ]));
+  // On its own, it only casts its shadow: catching its own would shade its front with the slightest error.
+  box.receiveShadow = false;
   const sleeveGroup = new THREE.Group();
   sleeveGroup.add(box);
   s.scene.add(sleeveGroup);
-
-  // A soft shadow on the stripes under it.
-  const { canvas: blob, ctx } = sheet(256, 256);
-  const glow = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
-  glow.addColorStop(0, "rgb(20 12 40 / 0.45)");
-  glow.addColorStop(1, "rgb(20 12 40 / 0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 256, 256);
-  const shadowMap = new THREE.CanvasTexture(blob);
-  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.5), new THREE.MeshBasicMaterial({ map: shadowMap, transparent: true, depthWrite: false }));
-  shadow.position.set(0, -1.12, 0);
-  shadow.rotation.x = -Math.PI / 2.4;
-  s.scene.add(shadow);
 
   // Clicked, it turns over: a turn and a half, landing on whichever side it wasn't on, with a hop.
   let spin = 0;
@@ -459,16 +512,15 @@ export async function mountSleeve(host: HTMLElement) {
     spin += Math.PI * 3;
     hop = 1;
   };
-  s.canvas.addEventListener("click", (event) => { if (s.hit(event, [box])) turn(); });
-  s.canvas.addEventListener("pointermove", (event) => { s.canvas.style.cursor = s.hit(event, [box]) ? "pointer" : ""; });
+  s.on("click", (event) => { if (s.hit(event, [box])) turn(); });
+  s.on("pointermove", (event) => s.hand(!!s.hit(event, [box])));
   host.querySelector<HTMLButtonElement>("[data-turn]")?.addEventListener("click", turn);
 
   let rotation = { x: 0, y: -0.35 };
   let spun = 0;
   s.run(
-    (aspect) => {
-      const tan = Math.tan((s.camera.fov * Math.PI) / 360);
-      s.camera.position.set(0, 0, Math.max(2.5 / (2 * tan), 1.7 / (2 * tan * aspect)));
+    (aspect, tan) => {
+      s.camera.position.set(0, 0, Math.max(2.15 / (2 * tan), 1.45 / (2 * tan * aspect)));
     },
     (dt, time) => {
       const tilt = reduced ? { x: 0, y: 0 } : s.pointer;
@@ -477,21 +529,22 @@ export async function mountSleeve(host: HTMLElement) {
       hop = ease(hop, 0, dt, 2.5);
       sleeveGroup.rotation.set(rotation.x, rotation.y + spun, Math.sin(spun) * 0.12);
       sleeveGroup.position.y = (reduced ? 0 : Math.sin(time * 1.3) * 0.04) + Math.sin(hop * Math.PI) * 0.35;
-      shadow.scale.setScalar(1 - Math.sin(hop * Math.PI) * 0.3);
     },
   );
 }
 
 // MARK: The stack
 
+const STACK_BLEED = { x: 0.12, y: 0.3 };
+
 export async function mountStack(host: HTMLElement) {
   const tapes = JSON.parse(host.dataset.tapes!) as Tape[];
   const [THREE, shots] = await Promise.all([
-    import("three"),
+    three(),
     Promise.all(tapes.map((tape) => (tape.shot ? image(tape.shot) : Promise.resolve(undefined)))),
     fontsReady(),
   ]);
-  const s = stage(THREE, host);
+  const s = stage(THREE, host, { wall: -1.6, reach: 6, bleed: STACK_BLEED });
   if (!s) return;
   const [W, H, D, GAP] = [3.4, 0.46, 1.9, 0.07];
   const side = s.flat("#1f1d19");
@@ -502,11 +555,14 @@ export async function mountStack(host: HTMLElement) {
   // A little untidy, as a real stack is.
   const jitter = [0.1, -0.08, 0.14, -0.05, 0.06];
   const meshes = tapes.map((tape, i) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), [
+    const mesh = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(W, H, D, 3, 0.035), [
       side, side, s.texture(tapeTop(tape, shots[i])), back, s.texture(tapeSpine(tape)), back,
-    ]);
+    ]));
     const home = { x: jitter[i % jitter.length], y: ((tapes.length - 1) / 2 - i) * (H + GAP), z: 0, rx: 0, ry: jitter[(i + 2) % jitter.length] * 0.3, rz: 0 };
     stack.add(mesh);
+    // Turned about the upright first, so a tape tipped up to show its top still spins like a record, and turning it
+    // back by the stack's own lean holds it square to the viewer.
+    mesh.rotation.order = "YXZ";
     mesh.position.set(home.x, home.y, home.z);
     return { mesh, home, now: { ...home }, spins: 0 };
   });
@@ -521,26 +577,25 @@ export async function mountStack(host: HTMLElement) {
     }
   };
   const which = (event: MouseEvent) => meshes.findIndex(({ mesh }) => mesh === s.hit(event, meshes.map(({ mesh }) => mesh)));
-  s.canvas.addEventListener("click", (event) => {
+  s.on("click", (event) => {
     const i = which(event);
     if (i >= 0) choose(i);
     else chosen = -1;
   });
-  s.canvas.addEventListener("pointermove", (event) => {
+  s.on("pointermove", (event) => {
     hovered = which(event);
-    s.canvas.style.cursor = hovered >= 0 ? "pointer" : "";
+    s.hand(hovered >= 0);
   });
-  s.canvas.addEventListener("pointerleave", () => { hovered = -1; });
   host.querySelectorAll<HTMLButtonElement>("[data-tape]").forEach((button) => {
     button.addEventListener("click", () => choose(Number(button.dataset.tape)));
   });
 
   let tilt = { x: 0, y: 0 };
   s.run(
-    (aspect) => {
-      const tan = Math.tan((s.camera.fov * Math.PI) / 360);
-      // The whole stack, and a chosen tape held up close in front of it, both fit.
-      s.camera.position.set(0, 0, Math.max(3.4 / (2 * tan), 4.4 / (2 * tan * aspect), 2.2 + 2.3 / (2 * tan), 2.2 + 3.9 / (2 * tan * aspect)));
+    (aspect, tan) => {
+      // The whole stack fits the host, and so does a chosen tape held up close in front of it, which may only rise
+      // into the bleed above and below.
+      s.camera.position.set(0, 0, Math.max(3.6 / (2 * tan), 4.6 / (2 * tan * aspect), 2.2 + 2.4 / (2 * tan * (1 + STACK_BLEED.y)), 2.2 + 4 / (2 * tan * aspect)));
     },
     (dt, time) => {
       const p = reduced ? { x: 0, y: 0 } : s.pointer;
