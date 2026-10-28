@@ -26,7 +26,8 @@ if [[ "${1:-}" == "--check" ]]; then
   failed=0
   for tree in "$WORK"/trees/*(N/); do
     folder="${tree:t}"
-    (cd "$WORK/copy" && STAGE_STARTERS=1 "$BIN" --pull-starter "$folder" "$tree")
+    # A staged tree names no commit (only the repository knows it), which the pull would point out each time.
+    (cd "$WORK/copy" && STAGE_STARTERS=1 "$BIN" --pull-starter "$folder" "$tree" | grep -v "^Careful: this wish doesn't say" || true)
     if diff -rq -x Prebuilt -x Prebuilt.zip "Resources/Starters/$folder" "$WORK/copy/Resources/Starters/$folder"; then
       echo "$folder: unchanged"
     else

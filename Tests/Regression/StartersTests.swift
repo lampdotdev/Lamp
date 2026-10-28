@@ -109,8 +109,10 @@ final class StartersTests: XCTestCase {
             defer { try? fm.removeItem(at: package.folder) }
             let copy = work.appendingPathComponent("starter")
             try fm.copyItem(at: folder, to: copy)
+            // Staged from the starter as it is, the wish names its starter without the commit the publish gives it
+            // (only the repository knows that), which the pull is right to point out.
             let notes = try StarterRepos.pull(package, into: copy)
-            XCTAssertEqual(notes, [], folder.lastPathComponent)
+            XCTAssertEqual(notes.filter { !$0.hasPrefix("Careful: this wish doesn't say") }, [], folder.lastPathComponent)
             func files(_ dir: URL) -> [String: Data] {
                 var found: [String: Data] = [:]
                 for case let file as URL in fm.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator()

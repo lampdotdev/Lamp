@@ -140,7 +140,28 @@ enum StarterRepos {
         try fm.createDirectory(at: standIn.dir, withIntermediateDirectories: true)
         let staged = work.appendingPathComponent("staged")
         try Upstream.stage(package, for: standIn, into: staged)
+        // A game's Native.swift is Lamp's own until the wish changes it (`GameKit.native`, written for a game that has
+        // none): the starter keeps one only when it's its own.
+        let native = staged.appendingPathComponent(GameFiles.native)
+        if let lamps = GameKit.native?.text, (try? String(contentsOf: native, encoding: .utf8)) == lamps {
+            try fm.removeItem(at: native)
+            let sources = native.deletingLastPathComponent()
+            if (try? fm.contentsOfDirectory(atPath: sources.path))?.isEmpty == true { try fm.removeItem(at: sources) }
+        }
         var notes: [String] = []
+        // A wish that began from an older version of the starter than this one would take back what changed in the
+        // starter since: said first, for the person to look for in the change.
+        let shipped = Starters.read(starter)
+        let link = package.credits?.remixOf.last { $0.starter == starter.lastPathComponent }
+        if let shipped, let now = shipped.commit {
+            if let began = link?.commit, began != now {
+                notes.append("Careful: this wish began from \(shipped.name) at \(began.prefix(7)), and the starter here is at \(now.prefix(7)). "
+                             + "What changed in the starter since is taken back unless the wish has it too: look for it in the change, or open the starter from GitHub again and make the change there.")
+            } else if link?.commit == nil {
+                notes.append("Careful: this wish doesn't say which version of \(shipped.name) it began from, so it may be older than the starter here. "
+                             + "Look for anything taken back in the change.")
+            }
+        }
 
         for folder in pulledFolders {
             let from = staged.appendingPathComponent(folder), to = starter.appendingPathComponent(folder)
