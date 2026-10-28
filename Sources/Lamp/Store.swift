@@ -253,6 +253,12 @@ struct AppUsage: Codable {
     var agentCost: Double?
 
     var totalCost: Double { cost + (agentCost ?? 0) }
+
+    /// This usage and another's together.
+    func adding(_ other: AppUsage) -> AppUsage {
+        AppUsage(calls: calls + other.calls, cost: cost + other.cost,
+                 agentRuns: (agentRuns ?? 0) + (other.agentRuns ?? 0), agentCost: (agentCost ?? 0) + (other.agentCost ?? 0))
+    }
 }
 
 struct LogLine: Identifiable, Codable, Equatable {
@@ -548,6 +554,50 @@ final class Store: ObservableObject {
     }
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
+    /// What was last heard of each repository wishes come from, by address (`AppUpdates`).
+    @Published var updateChecks: [String: AppUpdates.Check] = [:]
+    /// Copies an update was prepared in that are going, by the app they went into: a message sent to one meanwhile goes
+    /// to that app (`AppUpdates`).
+    @Published var retiringCopies: [String: String] = [:]
+    /// Messages to a copy that's going, as requests to another app, and no longer answers to the copy's questions.
+    /// Every file one names inside the copy's folder goes to the waiting files first, as `keptForLater` keeps a waiting
+    /// request's: its own attached files (`kept`), a file picked from inside the copy, the picture of what it pointed
+    /// at. Files elsewhere are named as they were. Throws, naming the file, when one inside the copy can't be copied:
+    /// the copy holds the only copy of it, so it mustn't go on by a path the copy's deletion would empty.
+    func forwarded(_ messages: [QueuedMessage], from copy: LampProject) throws -> [QueuedMessage] {
+        // Standardizing drops /private from a path that exists (the copy's folder) and keeps it on one that doesn't (a
+        // file already gone), so both are compared without it.
+        func plain(_ url: URL) -> String {
+            let path = url.standardizedFileURL.path
+            return path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
+        }
+        let inside = plain(copy.dir) + "/"
+        func out(_ file: URL) throws -> URL {
+            guard plain(file).hasPrefix(inside) else { return file }
+            let folder = waitingFiles.appendingPathComponent(UUID().uuidString)
+            let kept = folder.appendingPathComponent(file.lastPathComponent)
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: file, to: kept)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                throw Sharing.ImportError("Lamp couldn't keep “\(file.lastPathComponent)” from a message to the update.")
+            }
+            return kept
+        }
+        return try messages.map { message in
+            let own = message.kept.map { copy.dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
+            var pointed = message.pointed
+            if let picture = pointed?.url { pointed?.picture = try out(picture).path }
+            return QueuedMessage(text: message.text, attachments: try (message.attachments + own).map(out), pointed: pointed)
+        }
+    }
+    /// Where a message sent to `project` goes.
+    func queueTarget(for project: LampProject) -> LampProject {
+        retiringCopies[project.id].flatMap { id in projects.first { $0.id == id } } ?? project
+    }
+    /// Wishes whose update is being set up (saved, copied, fetched), before its copy holds the job (`AppUpdates`).
+    @Published var preparingUpdates: Set<String> = []
     @Published var queued: [String: [QueuedMessage]] = [:]
     /// The turn in progress for each app. A new app's first turn stays here after it finishes, until the next
     /// message, for its chapters (`Chapters.segments`).
@@ -814,7 +864,10 @@ final class Store: ObservableObject {
     func isRunning(_ message: String, for project: LampProject) -> Bool { turns[project.id]?.messages.contains(message) ?? false }
 
     /// Takes the app for a span of work. Nil when something else has it.
-    private func begin(_ project: LampProject) -> Turn? {
+    /// Whether `turn` still holds the app: no Stop, delete or other owner has taken its place.
+    func holds(_ turn: Turn, _ id: String) -> Bool { turns[id] === turn }
+
+    func begin(_ project: LampProject) -> Turn? {
         guard turns[project.id] == nil else { return nil }
         let turn = Turn()
         turns[project.id] = turn
@@ -2700,7 +2753,7 @@ final class Store: ObservableObject {
     }
 
     /// Renames while the app is marked busy, so nothing else starts on it meanwhile.
-    private func performRename(_ project: LampProject, to rawName: String) async -> LampProject {
+    func performRename(_ project: LampProject, to rawName: String) async -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) && !$0.isNewline }
         guard !name.isEmpty, name != project.name || project.untitled,
               let current = projects.first(where: { $0.id == project.id }) else { return project }
@@ -2788,6 +2841,10 @@ final class Store: ObservableObject {
     /// Makes a copy of an app to try a variation on: "<name> copy", with the same code, history and
     /// icon artwork on a different background, so the two tell apart at a glance. Then builds it.
     func duplicate(_ project: LampProject) async {
+        guard AppUpdates.mayDuplicate(project) else {
+            log(project, .status, "This update can be kept with Keep Both once you've reviewed it.")
+            return
+        }
         guard project.scaffolded, !project.untitled, begin(project) != nil else { return }
         let fm = FileManager.default
         let name = uniqueName("\(project.name) copy")
@@ -2978,7 +3035,7 @@ final class Store: ObservableObject {
     }
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
-    private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
+    func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
         // A wish's other parts carry its name, and are no other app holding it.
         // A newer Lamp's wish keeps its name too: its installed copy is found by it.
         let taken = Set(projects.filter { $0.id != id && ($0.partOf == nil || $0.partOf != id) }.map { $0.name.lowercased() }
@@ -3008,7 +3065,7 @@ final class Store: ObservableObject {
     func chooseRepository() {
         let alert = NSAlert()
         alert.messageText = "Open a wish from GitHub"
-        alert.informativeText = "Paste the address of a repository Lamp put on GitHub."
+        alert.informativeText = "Paste the address of a repository on GitHub: a wish Lamp put there, or a project Lamp can make into an app."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.placeholderString = "https://github.com/someone/wish"
         alert.accessoryView = field
@@ -3035,6 +3092,15 @@ final class Store: ObservableObject {
             let folder = RepoImport.cloneFolder()
             do {
                 let tree = try await RepoImport.clone(source, into: folder)
+                // Someone's own project, not a wish: the agent can make it into one, which then gets its updates as
+                // any wish does (`AppUpdates`). A wish's own update that finds no wish there is an error as before.
+                if target == nil, !RepoImport.holdsWish(tree) {
+                    // The commit fetched, so the app is made from exactly the version the person opened.
+                    let commit = RepoImport.repository(of: tree)?.commit
+                    try? FileManager.default.removeItem(at: folder)
+                    offerToAdapt(source, commit: commit)
+                    return
+                }
                 if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
                 importApp(from: tree, updating: target)
             } catch {
@@ -3042,6 +3108,33 @@ final class Store: ObservableObject {
                 NSAlert(error: error).runModal()
             }
         }
+    }
+
+    /// A project on GitHub that isn't a wish: Make App starts a wish whose first request is to make the project into an
+    /// app, which the agent does as with any project it's pointed at (keeping a copy for reference and crediting the
+    /// commit it was made from, `Agent.Rules`), with what the person would like changed. The request names the version
+    /// opened (`AppUpdates.adaptRequest`), and Lamp credits that commit itself, so the app's first update is measured
+    /// from what it was made from.
+    private func offerToAdapt(_ source: RepoImport.Source, commit: String?) {
+        let alert = NSAlert()
+        alert.messageText = "Make this into an app?"
+        alert.informativeText = "\(source.name) isn't a Lamp app yet. \(Builder.engine.title) can make it into one, using your plan or credits, "
+            + "and you'll get its updates later with one click. Not every project can become an app."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "What would you like to change? (optional)"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "Make App")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let change = field.stringValue.trimmed
+        create(from: .typed)
+        guard let project = selected else { return }
+        if let commit {
+            try? Credits.add(Credits(upstream: [Credits.Source(name: source.name, author: source.owner, url: source.url, commit: commit)]), to: project)
+        }
+        updateDraft(Draft(text: AppUpdates.adaptRequest(source, commit: commit, change: change)), for: project)
+        SidebarServer.shared.send(project)
     }
 
     /// Puts the app's .lampapp file on the clipboard with its picture, ready to paste into a message: a chat
@@ -3133,6 +3226,13 @@ final class Store: ObservableObject {
         /// That app was changed here since it arrived: Update then merges the new code into those changes with git, the
         /// agent settling only what conflicts (`mergeUpdate`), rather than putting it in their place.
         var changedHere = false
+        /// An update the agent prepared in a copy of `existing` (`AppUpdates`): Update puts the copy's files in place of
+        /// the wish's, since the copy already has the wish's changes, rather than merging again; Keep Both keeps the copy
+        /// itself, and Cancel throws it away.
+        var prepared: AppUpdates.Job? = nil
+        var copy: String? = nil
+        /// The copy's version when its review was made: a copy changed since isn't what was reviewed.
+        var copyHead: String? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3243,6 +3343,7 @@ final class Store: ObservableObject {
     func cancelImport() {
         importRequest = nil
         if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
+        if let copy = pendingImport?.copy { Task { await discardPreparedCopy(copy, movingQueuedTo: nil) } }
         pendingImport = nil
     }
 
@@ -3250,6 +3351,14 @@ final class Store: ObservableObject {
         guard let pending = pendingImport else { return }
         importRequest = nil
         pendingImport = nil
+        if pending.copy != nil {
+            try? FileManager.default.removeItem(at: pending.package.folder)
+            Task {
+                guard let held = await holdPreparedCopy(for: pending) else { return }
+                await keepPreparedCopy(held.copy, hold: held.hold)
+            }
+            return
+        }
         finishImport(pending.package, request: pending.request)
     }
 
@@ -3275,7 +3384,30 @@ final class Store: ObservableObject {
         Task {
             // Looked at again now that the update owns the wish: a turn that ran while the review waited may have
             // changed it since the sheet said. Changed here, the new code is brought in rather than put in place.
-            let changed = pending.changedHere ? true : await changedSinceArrival(project)
+            // A prepared update already has the wish's changes: it's put in place, unless the wish changed again since.
+            // A prepared update's copy is held from its check until it's put in place and deleted, so what goes in is
+            // what was reviewed, and a request sent to the copy meanwhile waits and goes to this wish.
+            var copyHold: (copy: LampProject, hold: Turn)?
+            if pending.prepared != nil {
+                guard let held = await holdPreparedCopy(for: pending) else {
+                    finish(project)
+                    try? FileManager.default.removeItem(at: pending.package.folder)
+                    return
+                }
+                copyHold = held
+            }
+            defer { if let copyHold, holds(copyHold.hold, copyHold.copy.id) { finish(copyHold.copy) } }
+            if let job = pending.prepared {
+                let stale = AppUpdates.isStale(job, head: await Versions.head(project), unsaved: await Versions.hasUnsavedChanges(project))
+                if stale {
+                    finish(project)
+                    try? FileManager.default.removeItem(at: pending.package.folder)
+                    if let copyHold, holds(copyHold.hold, copyHold.copy.id) { finish(copyHold.copy) }
+                    await preparedUpdateIsStale(project, job: job, copy: pending.copy)
+                    return
+                }
+            }
+            let changed = pending.prepared != nil ? false : pending.changedHere ? true : await changedSinceArrival(project)
             if changed {
                 await mergeUpdate(pending.package, into: project)
                 return
@@ -3283,7 +3415,8 @@ final class Store: ObservableObject {
             defer { finish(project) }
             let package = pending.package
             defer { try? FileManager.default.removeItem(at: package.folder) }
-            let before = "Before updating from a shared file"
+            let before = pending.prepared != nil ? "Before update" : "Before updating from a shared file"
+            let creditsKept = Credits.load(project)
             var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
             if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
             guard kept else {
@@ -3346,6 +3479,10 @@ final class Store: ObservableObject {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
                 let notIn = await installParts(of: package, into: project)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be put in place.") }
+                // The copy's credits name the wish it was copied from; the wish keeps its own, moved on to the update.
+                if let job = pending.prepared {
+                    try Credits.arrive(AppUpdates.credits(afterUpdating: creditsKept, with: package.credits, job: job), in: project)
+                }
             } catch {
                 let iconBack = await putBack()
                 // A part the file brought, or changed in kind, goes back with the files (`followRestored`), and the list
@@ -3357,7 +3494,7 @@ final class Store: ObservableObject {
                 return
             }
             if await Versions.hasUnsavedChanges(project) {
-                guard await Versions.save(project, message: "Updated from a shared file") else {
+                guard await Versions.save(project, message: pending.prepared != nil ? "Updated" : "Updated from a shared file") else {
                     let iconBack = await putBack()
                     await followRestored(project)
                     setApps(project, appsBefore)
@@ -3370,8 +3507,13 @@ final class Store: ObservableObject {
                 log(project, .status, "You already have this version.")
                 return
             }
+            // In place: the copy it was prepared in has done its work.
+            if let job = pending.prepared {
+                updateChecks[AppUpdates.key(job.url)]?.tip = job.target
+                if let copy = pending.copy { await discardPreparedCopy(copy, movingQueuedTo: project) }
+            }
             // The same code with a new icon picture still gets built, which is what draws and installs the icon.
-            log(project, .status, "Updated from a shared file. Building it now…")
+            log(project, .status, pending.prepared != nil ? "Your app is updated. Building it now…" : "Updated from a shared file. Building it now…")
             if await build(project) == nil {
                 await installReportingCrash(project)
             } else {
@@ -3505,7 +3647,7 @@ final class Store: ObservableObject {
     /// update can put the whole wish back and a fresh import can say so.
     /// `onlyNew` makes only the parts the wish has no folder for, as a merge asks (`Upstream.Merged.newParts`): an
     /// app of the same family already here is never taken for one of them, since its files were merged in place.
-    private func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
+    func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
         var notIn: [String] = []
         func failed(_ kind: Platform) {
             let name = Parts.name(of: kind)
@@ -3561,6 +3703,19 @@ final class Store: ObservableObject {
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
     func send(_ prompt: String, attachments: [URL] = [], pointed: PointedAt? = nil, answering card: UUID? = nil, to project: LampProject) {
+        // A copy going away with its update: the message goes to the app it went into, as a request of its own (the
+        // copy's question isn't that app's to answer).
+        let target = queueTarget(for: project)
+        if target.id != project.id {
+            // Its files inside the copy are kept first; one that can't be is said, not sent by a path that's going.
+            do {
+                let message = try forwarded([QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)], from: project)[0]
+                return send(message.text, attachments: message.attachments, pointed: message.pointed, to: target)
+            } catch {
+                log(target, .error, error.localizedDescription + " Your message wasn't sent: send it again here.")
+                return
+            }
+        }
         // Waiting for setup, or for the person's Reload (`pause`), can outlast this run, and the files may be
         // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
         // has them after a relaunch.
@@ -3986,6 +4141,7 @@ final class Store: ObservableObject {
                 owner.sentFrom = head
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
+            await settleUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value
@@ -4035,7 +4191,7 @@ final class Store: ObservableObject {
     }
 
     /// Marks the app idle again, then starts anything queued while it was busy.
-    private func finish(_ project: LampProject) {
+    func finish(_ project: LampProject) {
         settleDecided(project)
         if let turn = turns[project.id], turn.reloadedWhileAway, turn.reloadedByPerson, away.carriesOn(project.id) {
             queueCarryOn(project)
@@ -4115,6 +4271,8 @@ final class Store: ObservableObject {
     /// for the app to close (HeldInstalls says why a running app is never replaced). False when it waits.
     @discardableResult
     private func installIcon(_ project: LampProject) async -> Bool {
+        // An update waiting for its review keeps its new icon in its folder until it's kept (`swapIn` refuses it too).
+        guard AppUpdates.mayOpen(wish(of: project)) else { return false }
         // An app that is only its widget is never something the person has open: when it's running, it's
         // out of sight, waiting to say the widget was placed. It's quit like a build quits an app, gets
         // its icon, and goes back to waiting, so nobody is told to close an app they can't see.
@@ -4170,7 +4328,7 @@ final class Store: ObservableObject {
     }
 
     /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
-    private func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
+    func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
         var saved: [String] = []
         for message in messages {
             var names = message.kept + Attachments.save(message.attachments, to: project)
@@ -4433,7 +4591,7 @@ final class Store: ObservableObject {
         // Not over an app that couldn't be put in place or opened either: that isn't a failed turn, but the
         // card would say it's ready next to the line saying it didn't open.
         // A new app that opened in a window of its own: its chat goes on beside it from now on.
-        if !failed, edited, !owner.didNotOpen, !owner.keptOpen { Task { await MagicPanel.shared.handOff(project) } }
+        if !failed, edited, !owner.didNotOpen, !owner.keptOpen, AppUpdates.mayOpen(project) { Task { await MagicPanel.shared.handOff(project) } }
         return TurnResult(end: failed ? .failed : edited ? .changed : .replied, watched: watched)
     }
 
@@ -5439,6 +5597,10 @@ final class Store: ObservableObject {
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: LampProject) async {
+        guard AppUpdates.mayOpen(wish(of: project)) else {
+            log(project, .status, "This update opens once you've reviewed it.")
+            return
+        }
         // Only the wish, its apps all in folders of their own: each of them opens.
         guard project.holdsApp else { openWish(project); return }
         // Lamp can't tell whether a device app is still open on its device, so Open always puts it there.
@@ -6946,6 +7108,7 @@ final class Store: ObservableObject {
     /// request's would (`install`'s `quiet`). The places it can't reach are said in one line; they get the change when
     /// they're next reachable (`retryPlaces`) or opened there (`open`). A request sent meanwhile ends it (`send`).
     func updatePlaces(of project: LampProject, retrying: Bool = false) {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return }
         let wish = self.wish(of: project)
         refreshPlacesBehind(wish)
         guard setup.hasBuildTools || !needsAppleTools(wish), !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
@@ -7099,6 +7262,7 @@ final class Store: ObservableObject {
     /// A place kept current on the simulator: the copy open there opens again with the change, as a look would open it;
     /// one that isn't open is only put on the booted simulator, for next time.
     private func quietlyOnSimulator(_ project: LampProject, owner: Turn) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id {
             return await installOnSimulator(project, owner: owner, inFront: false, early: false)
         }
@@ -8110,6 +8274,8 @@ final class Store: ObservableObject {
 
     private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {
         guard exists(project), project.holdsApp else { return nil }
+        // An update being prepared is built, never installed or opened, until the person has reviewed it.
+        guard AppUpdates.mayOpen(wish(of: project)) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
@@ -8311,6 +8477,7 @@ final class Store: ObservableObject {
     /// Opens a TV app in the TV preview, or, when Play asked for it with a TV chosen under Try On, packages it and puts it
     /// on that TV. Nil when it's open; else what went wrong.
     private func installOnTV(_ project: LampProject, inFront: Bool) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         let staged = TVs.stagingFolder(for: project).appendingPathComponent("web")
         if inFront, let id = project.device {
             guard let record = TVs.record(id) else {
@@ -8481,6 +8648,7 @@ final class Store: ObservableObject {
     /// A device app opened in the preview on this Mac, from a copy of its kind's preview folder (`TVs.stage`, as a TV
     /// app's): what the agent looks at and plays. Its LampAI reaches Lamp through the preview, as a TV app's does.
     private func openDevicePreview(_ project: LampProject, folder: String) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         let device = previewDevice(project)
         do {
             let built = Runtime.builtFingerprint(project)
@@ -8515,6 +8683,7 @@ final class Store: ObservableObject {
     }
 
     private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         guard let device = await deviceForApp(project) else {
             let problem = project.device == nil
@@ -8807,6 +8976,7 @@ final class Store: ObservableObject {
     /// Puts an Android app on the device Try On points at (the person's own, or the emulator, started when it
     /// isn't running) and opens it, with its log read into the app's log. Nil when it's open; else what went wrong.
     private func installOnAndroid(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         let serial: String
         let kind = project.destination.emulator
@@ -9059,6 +9229,7 @@ final class Store: ObservableObject {
     }
 
     private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool, early: Bool) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         guard let udid = Simulator.device(project.family, preferring: project.simulator) else {
             let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
             log(project, .error, problem)
@@ -9940,6 +10111,9 @@ final class Store: ObservableObject {
         let fm = FileManager.default, app = copy.app
         var swapped = false
         defer { if !swapped { copy.discard() } }
+        // Every install of a Mac app ends here (a build, a new icon, a refreshed copy): an update waiting for its review
+        // is never put where it can be opened.
+        guard AppUpdates.mayOpen(wish(of: project)) else { throw Sharing.ImportError(AppUpdates.notInstalledYet) }
         // What Lamp signed as the app's sidebar, the one program it will talk to there.
         Sidebar.remember(project, signed: app)
 
@@ -11719,6 +11893,7 @@ final class Store: ObservableObject {
 
     /// `look_at_app`, for the wish or the part its `part` names.
     private func lookCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return (400, ["error": AppUpdates.notOpenedYet]) }
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
         return await underTurn(of: project, app) {
@@ -11730,6 +11905,7 @@ final class Store: ObservableObject {
 
     /// `use_app`, for the wish or the part its `part` names.
     private func useCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return (400, ["error": AppUpdates.notOpenedYet]) }
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
         // An app that controls the person's devices presses on real ones: only on the device the person allowed on Lamp's
@@ -12205,6 +12381,14 @@ final class Store: ObservableObject {
     private func recordArt(_ project: LampProject, cost: Double) {
         guard cost > 0 else { return }
         usage[project.id, default: AppUsage()].agentCost = (usage[project.id]?.agentCost ?? 0) + cost
+        saveUsage(project)
+    }
+
+    /// What was spent on a copy an update was prepared in goes on the app it was for, when the copy goes: the work was
+    /// that app's (`AppUpdates`).
+    func takeUsage(of copy: LampProject, into project: LampProject) {
+        guard let spent = usage[copy.id] else { return }
+        usage[project.id] = (usage[project.id] ?? AppUsage()).adding(spent)
         saveUsage(project)
     }
 

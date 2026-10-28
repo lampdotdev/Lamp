@@ -878,7 +878,8 @@ enum Agent {
         from a repository, a library copied in, a model, a picture, a sound, a font, data), add it to `upstream`: \
         `{"name": "Slop New York", "author": "Mr.doob", "url": "https://github.com/mrdoob/slop-newyork", "commit": \
         "<full commit hash>", "license": "MIT", "licenseFile": "Web/LICENSE-slop-newyork"}`, with the license as its SPDX id \
-        (left out when it has none) and its license text kept in the app beside the work. Never take anything out of \
+        (left out when it has none) and its license text kept in the app beside the work. The project an app is made from \
+        goes first, with the full commit it was taken at: Lamp brings the person its updates from there. Never take anything out of \
         \(Credits.file), never remove or change a license or a notice of someone else's, and never take an author's \
         name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license can be used here but \
         not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \

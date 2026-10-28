@@ -543,6 +543,12 @@ enum Versions {
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 
+    /// What the agent hears with the request that brings in an update of the project a wish was made from
+    /// (`AppUpdates.note`), in place of any other note, since that request is the next one.
+    static func rememberAdaptedUpdate(_ project: LampProject, note: String) {
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
     /// Remembers that the latest of the wish was merged in by git with nothing left to settle, so the agent reads the
     /// files again on the next request.
     static func rememberMerged(_ project: LampProject, from place: String) {

@@ -141,6 +141,14 @@ enum RepoImport {
         return package
     }
 
+    /// Whether a fetched tree is a wish (laid out as Put on GitHub lays one out, or holding a shared file) rather than
+    /// someone's own project, which `open` can't read.
+    static func holdsWish(_ folder: URL) -> Bool {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) { return true }
+        return ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).contains { $0.hasSuffix(".lampapp") }
+    }
+
     /// The tree as a shared file unpacks: every regular file but the repository's own records and builds, and the shared
     /// file beside the code, which would double what's counted. Held to what a shared file may hold.
     private static func copyTree(_ from: URL, to: URL) throws {
