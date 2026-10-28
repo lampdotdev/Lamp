@@ -149,8 +149,11 @@ Xbox, `device_integration`; a wish named for a phone, a TV or a device (`AppName
 request to a wish that opens on a TV or a device, or has a part that does, whose device line says whether Lamp finds it.
 A turn's note on the person's phone asks devicectl only when the app is set to open on one. The first look Lamp makes hears nothing while macOS's question is up, so a wish's look that
 was the first to ask waits up to half a minute for the answer and, given Allow, looks again before the agent starts
-(`lookAgainOnceAllowed`, `localNetworkAsked`); a refusal after that is the person's Don't Allow, not waited on. Never as Lamp opens or as a
-wish starts: those show what Lamp knows without looking (`showKnownDevices`: the last look's devices, and the kept TVs
+(`lookAgainOnceAllowed`, `localNetworkAsked`); a refusal after that is the person's Don't Allow, not waited on. The desk's
+shelf of devices (`DeskDevices`, the desk guide) is the one place that looks unasked: until Lamp has looked once it
+invites the person to (Find My Devices, the look macOS asks about), and from then on the desk looks each time it's
+shown or Lamp comes to the front, at most once a minute, since macOS has already asked. Never as a
+wish starts, nor as Lamp opens before that first look: those show what Lamp knows without looking (`showKnownDevices`: the last look's devices, and the kept TVs
 and devices as not found). A look macOS refused (`DeviceProbe.search`: nothing
 answered, and Network.framework says the path is local network prohibited, `localNetworkDenied`; a refused send itself
 succeeds) sets `Store.localNetworkRefused`, and where a look was asked for (Your

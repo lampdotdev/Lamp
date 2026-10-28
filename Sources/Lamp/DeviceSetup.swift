@@ -387,7 +387,7 @@ struct DeviceSetupPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: device.kind.symbol).font(.system(size: 30, weight: .light)).foregroundStyle(.secondary).frame(width: 44)
+                Image(systemName: device.symbol).font(.system(size: 30, weight: .light)).foregroundStyle(.secondary).frame(width: 44)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Set up \(device.name)").font(.title2.weight(.semibold))
                     Text(device.line).foregroundStyle(.secondary)

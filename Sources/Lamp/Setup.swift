@@ -1052,7 +1052,7 @@ struct DevicesSection: View {
     private func row(_ device: Device) -> some View {
         let setup = device.setup(team: team)
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
+            Image(systemName: device.symbol).foregroundStyle(.secondary).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                 Text(device.line).font(.caption).foregroundStyle(.secondary)
@@ -1153,7 +1153,7 @@ struct AddDeviceSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(waiting) { device in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
+                            Image(systemName: device.symbol).foregroundStyle(.secondary).frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(device.name)
                                 Text(device.line).font(.caption).foregroundStyle(.secondary)
@@ -1208,22 +1208,33 @@ struct DeviceNextStep: View {
 
     var body: some View { next(for: device) }
 
+    /// What the button does, for a place that offers a device's next step without the button (the desk's shelf): false
+    /// where Lamp can't take it from here (a team to choose, debugging to allow on the device).
+    static func takeFurther(_ device: Device, store: Store) -> Bool {
+        if device.kind.isPhone, !device.paired {
+            if !store.pairing.contains(device.udid) { store.pairDevice(device, for: nil) }
+        } else if device.kind.isPhone, !device.developerMode {
+            PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid)
+        } else if device.kind.isTV {
+            TVSetup.shared.show(device.udid)
+        } else if device.kind == .other {
+            // One Lamp has an integration for is set up in the window drawn from it; one it doesn't know yet starts
+            // the work of writing its integration, in a wish of its own.
+            if device.integration != nil { DeviceSetupWindow.show(device) } else { store.setUpDevice(device) }
+        } else {
+            return false
+        }
+        return true
+    }
+
     @ViewBuilder private func next(for device: Device) -> some View {
         if device.kind.isPhone, !device.paired {
             Button(store.pairing.contains(device.udid) ? "Pairing…" : "Pair…") { store.pairDevice(device, for: nil) }
                 .controlSize(.small).disabled(store.pairing.contains(device.udid))
         } else if device.kind.isPhone, !device.developerMode {
-            Button("How…") { then(); PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid) }.controlSize(.small)
-        } else if device.kind.isTV {
-            Button("Set Up…") { then(); TVSetup.shared.show(device.udid) }.controlSize(.small)
-        } else if device.kind == .other {
-            // One Lamp has an integration for is set up in the window drawn from it; one it doesn't know yet starts
-            // the work of writing its integration, in a wish of its own.
-            Button("Set Up…") {
-                then()
-                if device.integration != nil { DeviceSetupWindow.show(device) } else { store.setUpDevice(device) }
-            }
-            .controlSize(.small)
+            Button("How…") { then(); _ = Self.takeFurther(device, store: store) }.controlSize(.small)
+        } else if device.kind.isTV || device.kind == .other {
+            Button("Set Up…") { then(); _ = Self.takeFurther(device, store: store) }.controlSize(.small)
         }
     }
 }
