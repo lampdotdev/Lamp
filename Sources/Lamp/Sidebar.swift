@@ -166,7 +166,7 @@ final class SidebarServer {
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
             .merge(with: WishLinkCards.shared.objectWillChange).merge(with: PublishCards.shared.objectWillChange)
-            .merge(with: GitHubRepoCards.shared.objectWillChange).sink { [weak self] _ in
+            .merge(with: GitHubRepoCards.shared.objectWillChange).merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
@@ -336,6 +336,7 @@ final class SidebarServer {
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
                                          hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
             toolbar.canPublish = Publish.canPublish(project) && made ? true : nil
+            toolbar.canContribute = Contribute.canContribute(project) && made ? true : nil
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
             // A wish with no app at all has nothing to play.
@@ -366,6 +367,7 @@ final class SidebarServer {
         if let card = WishLinkCards.shared.card(for: project), card.inSidebar { state.wishLink = wishLink(card, of: project) }
         if let card = PublishCards.shared.card(for: project) { state.publish = PublishCards.shared.wire(card, of: project) }
         if let card = GitHubRepoCards.shared.card(for: project) { state.repo = GitHubRepoCards.shared.wire(card, of: project) }
+        if let card = ContributeCards.shared.card(for: project) { state.contribute = ContributeCards.shared.wire(card, of: project) }
         return state
     }
 
@@ -1213,6 +1215,16 @@ final class SidebarServer {
             case .makeLink: cards.makeLink(project)
             case .setPrivate(let value): cards.setPrivate(project, value)
             case .setLicense(let value): cards.setLicense(project, value)
+            }
+        case .contribute(let command):
+            let cards = ContributeCards.shared
+            switch command {
+            case .open: cards.open(project)
+            case .send: cards.send(project)
+            case .fix: cards.fix(project)
+            case .openRequest: cards.openRequest(project)
+            case .copy: cards.copy(project)
+            case .close: cards.close(project)
             }
         case .infoAction(let action):
             AppInfoView.perform(action, for: project) { tab in

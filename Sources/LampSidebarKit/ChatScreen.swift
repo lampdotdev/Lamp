@@ -144,6 +144,14 @@ private struct Chat: View {
                              setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },
                              openRepo: { link.send(.repo(.openRepo)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
                 }
+            } else if let card = state.contribute {
+                ScrollView {
+                    ContributeCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, upstream: card.upstream, fork: card.fork,
+                                   credit: card.credit, notes: card.notes, size: card.size, copied: card.copied, canSend: card.canSend,
+                                   send: { link.send(.contribute(.send)) }, fix: { link.send(.contribute(.fix)) },
+                                   openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
+                                   close: { link.send(.contribute(.close)) }, width: nil)
+                }
             } else if let card = state.publish {
                 ScrollView {
                     PublishCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo,
@@ -817,6 +825,7 @@ struct ChatBar: View {
         Menu {
             Button("Share Link…") { link.send(.wishLink(.open)) }
             Button("Put on GitHub…") { link.send(.repo(.open)) }
+            if toolbar.canContribute == true { Button("Send Changes Back…") { link.send(.contribute(.open)) } }
             if toolbar.canPublish == true { Button("Publish as Web Page…") { link.send(.publish(.open)) } }
             Divider()
             Button("Copy Wish File") { link.send(.copyWishFile) }

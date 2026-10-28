@@ -19,11 +19,13 @@ enum GitHubRepo {
     }
 
     /// A repository that's up, and whether it carries the MIT license the person chose: an update keeps to that choice.
-    /// Nil from a Lamp before the choice was kept, read as no license.
+    /// Nil from a Lamp before the choice was kept, read as no license. `commit` is the one the last Put on GitHub
+    /// pushed, which a later share names on the chain (`Sharing.export`); nil from a Lamp before it was kept.
     struct Repo: Codable, Equatable {
         var repo: String   // "owner/name"
         var url: String
         var license: Bool? = nil
+        var commit: String? = nil
     }
 
     static func url(_ repo: String) -> String { "https://github.com/\(repo)" }
@@ -73,8 +75,8 @@ enum GitHubRepo {
         // chain, and its contents unpacked beside it: the code as people read it on GitHub.
         let fileName = Publish.slug(project.name) + ".lampapp"
         // The file's credits end the chain with this wish, named where it's going: the repository's address, which a
-        // remix opened from there carries on.
-        let shared = try Sharing.export(project, repository: url(repo))
+        // remix opened from there carries on, and the commit up there now, which the next one is on top of.
+        let shared = try Sharing.export(project, repository: url(repo), commit: kept(for: project).flatMap { $0.repo == repo ? $0.commit : nil })
         defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
         guard Subprocess.runBlocking("/usr/bin/ditto", ["-x", "-k", shared.path, tree.path], timeout: 120).ok else {
             throw Failure(message: "Couldn't unpack \(project.name)'s files.")
@@ -228,10 +230,22 @@ enum GitHubRepo {
         return first == second
     }
 
+    /// Whether two credits files say the same, apart from the commits on the chain.
+    static func creditsMatch(_ a: Data?, _ b: Data?) -> Bool {
+        func plain(_ data: Data?) -> Credits? {
+            guard var credits = data.flatMap(Credits.decoded) else { return data == nil ? Credits() : nil }
+            for index in credits.remixOf.indices { credits.remixOf[index].commit = nil }
+            return credits
+        }
+        guard let first = plain(a), let second = plain(b) else { return false }
+        return first == second
+    }
+
     // MARK: Putting it up
 
     /// Puts the staged tree in `repo` (made, if it's new, public or private as asked) as one commit on top of what's
-    /// there; `step` hears what it's doing. `changed` is false when the repository already had the wish as it is.
+    /// there; `step` hears what it's doing. `changed` is false when the repository already had the wish as it is. The
+    /// record returned names the commit up there now.
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool,
                        isPrivate: Bool, license: Bool, step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
         let fm = FileManager.default
@@ -249,12 +263,11 @@ enum GitHubRepo {
             guard made.ok else { throw Failure(message: "GitHub didn't make \(repo): \(made.output.trimmed.suffix(200))") }
             // Kept as soon as it's made, so a try that fails after this goes on with the same repository rather than
             // leaving this one behind and making another.
-            keep(Repo(repo: repo, url: url, license: license), for: project)
+            keep(Repo(repo: repo, url: url, license: license, commit: kept(for: project)?.commit), for: project)
         }
-        let git = fm.isExecutableFile(atPath: "/opt/homebrew/bin/git") ? "/opt/homebrew/bin/git" : "/usr/bin/git"
-        let identity = ["-c", "user.name=\(login)", "-c", "user.email=\(login)@users.noreply.github.com"]
-        // Signed in through gh, for these commands alone: nothing is kept in a git configuration.
-        let signedIn = ["-c", "credential.helper=", "-c", "credential.helper=!\(gh) auth git-credential"]
+        let git = git
+        let identity = identity(login: login)
+        let signedIn = signedIn(gh: gh)
         let remote = "https://github.com/\(repo).git"
 
         let work: URL
@@ -288,11 +301,15 @@ enum GitHubRepo {
             // Unchanged when nothing but the export's own marks differ: the shared file's manifest says when it was made,
             // and the file is zipped afresh each time. The manifest's other fields matter (which device an app opens on),
             // so it's compared with only its time left out; the archive follows the manifest.
-            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)lamp-app.json", ":(exclude)*.lampapp"], cwd: clone, timeout: 60).ok {
+            // The chain names the commit up there (`Sharing.export`), which each push moves on: the credits compare
+            // without it, so real credit changes count and the bookkeeping doesn't.
+            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)lamp-app.json", ":(exclude)*.lampapp", ":(exclude)\(Credits.file)"], cwd: clone, timeout: 60).ok {
                 let before = await Subprocess.run(git, ["show", "HEAD:lamp-app.json"], cwd: clone, mergeErrors: false, timeout: 30)
+                let credits = await Subprocess.run(git, ["show", "HEAD:\(Credits.file)"], cwd: clone, mergeErrors: false, timeout: 30)
                 if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("lamp-app.json")),
-                   manifestsMatch(Data(before.output.utf8), after) {
-                    return (Repo(repo: repo, url: url, license: license), false)
+                   manifestsMatch(Data(before.output.utf8), after),
+                   creditsMatch(credits.ok ? Data(credits.output.utf8) : nil, try? Data(contentsOf: clone.appendingPathComponent(Credits.file))) {
+                    return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: clone)), false)
                 }
             }
             let committed = await Subprocess.run(git, identity + ["commit", "-q", "-m", "Update \(project.name) from Lamp"], cwd: clone, timeout: 120)
@@ -302,7 +319,28 @@ enum GitHubRepo {
         step("Uploading…")
         let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:main"], cwd: work, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
-        return (Repo(repo: repo, url: url, license: license), true)
+        return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: work)), true)
+    }
+
+    /// The git that talks to GitHub for the person, with their own settings: Homebrew's when they have it, else Apple's.
+    static var git: String {
+        FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/git") ? "/opt/homebrew/bin/git" : "/usr/bin/git"
+    }
+
+    /// The commits are the person's, under their GitHub name.
+    static func identity(login: String) -> [String] {
+        ["-c", "user.name=\(login)", "-c", "user.email=\(login)@users.noreply.github.com"]
+    }
+
+    /// Signed in through gh, for these commands alone: nothing is kept in a git configuration.
+    static func signedIn(gh: String) -> [String] {
+        ["-c", "credential.helper=", "-c", "credential.helper=!\(gh) auth git-credential"]
+    }
+
+    /// The commit a work folder is at, as the credits take one.
+    static func head(_ git: String, in folder: URL) async -> String? {
+        let head = await Subprocess.run(git, ["rev-parse", "HEAD"], cwd: folder, mergeErrors: false, timeout: 10)
+        return head.ok ? Credits.validCommit(head.output.trimmed) : nil
     }
 }
 

@@ -38,25 +38,39 @@ final class GitHubRepoTests: XCTestCase {
         XCTAssertTrue(readme.contains("https://github.com/someone/tally"))
 
         // The tree opens as the shared file does: only the sender's code is read (Lamp's own file beside it isn't), and
-        // the chain ends with this wish, named where it lives.
+        // the chain ends with this wish, named where it lives and at the commit the tree is at, which an update is
+        // merged from.
+        let made = TestShell.run("git init -q && git remote add origin https://github.com/someone/tally.git && git add -A "
+                                 + "&& git -c user.name=t -c user.email=t@localhost commit -qm one && git rev-parse HEAD", in: staged.folder)
+        XCTAssertEqual(made.status, 0, made.output)
         let package = try Sharing.open(staged.folder)
         defer { try? fm.removeItem(at: package.folder) }
         XCTAssertEqual(package.name, "Tally")
         XCTAssertTrue(package.sources.contains { $0.lastPathComponent == "App.swift" })
         XCTAssertFalse(package.sources.contains { $0.lastPathComponent == "LampSupport.swift" })
         XCTAssertEqual(package.credits?.remixOf.last?.url, "https://github.com/someone/tally")
+        XCTAssertEqual(package.credits?.remixOf.last?.commit, made.output.trimmed)
         XCTAssertFalse(fm.fileExists(atPath: package.folder.appendingPathComponent("tally.lampapp").path))
         // The file inside says the same.
         let file = try Sharing.open(staged.folder.appendingPathComponent("tally.lampapp"))
         defer { try? fm.removeItem(at: file.folder) }
         XCTAssertEqual(file.credits?.remixOf.last?.url, "https://github.com/someone/tally")
         // Opened here as the same wish and shared on as a file, it still says where it lives; put on another repository,
-        // it lives there now.
+        // it gets a link for that place after the one it came from, which stays the origin an update is merged from
+        // and a change goes back to.
         let link = Credits.Remix(name: "Tally", wish: file.credits?.remixOf.last?.wish)
         XCTAssertEqual(file.credits?.remixed(from: link).remixOf.last?.url, "https://github.com/someone/tally")
         var moved = link
         moved.url = "https://github.com/else/tally"
-        XCTAssertEqual(file.credits?.remixed(from: moved).remixOf.last?.url, "https://github.com/else/tally")
+        let chain = try XCTUnwrap(file.credits?.remixed(from: moved))
+        XCTAssertEqual(chain.remixOf.map(\.url), ["https://github.com/someone/tally", "https://github.com/else/tally"])
+        XCTAssertEqual(chain.origin(own: "https://github.com/else/tally")?.url, "https://github.com/someone/tally")
+        XCTAssertEqual(chain.remixed(from: moved).remixOf.count, 2, "put there again, it stays one link")
+        // The origin's commit moves on with what's merged in, and the file's older word doesn't take it back.
+        var fetched = chain
+        fetched.remixOf[0].commit = "199f010cf9b35eb58ec934d95eba1ab977c880c1"
+        XCTAssertEqual(chain.merged(with: fetched).remixOf.first?.commit, "199f010cf9b35eb58ec934d95eba1ab977c880c1")
+        XCTAssertEqual(chain.merged(with: fetched).remixOf.count, 2)
     }
 
     func testARepositoryAddressIsReadAsGitTakesIt() {

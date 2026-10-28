@@ -4,8 +4,9 @@ import Foundation
 /// from a folder it was cloned into. The repository is fetched shallowly with Lamp's own git, confined as every git
 /// command of Lamp's is (`Versions.git`: the sandbox, with the network open), into a folder of Lamp's; then the tree is
 /// read as a shared file's contents are (`Sharing.open(unpacked:)`: the same review, the same checks, Lamp's own files
-/// written afresh), or the shared file in it is opened when the tree holds only that. The repository's address goes on
-/// the credits' chain, on the link for the wish opened, so a remix of a remix links each repository.
+/// written afresh), or the shared file in it is opened when the tree holds only that. The repository's address and the
+/// commit fetched go on the credits' chain, on the link for the wish opened, so a remix of a remix links each
+/// repository and an update from there is merged from that commit (`Upstream`).
 enum RepoImport {
     /// A repository on GitHub, with a branch, tag or commit when the address names one.
     struct Source: Equatable {
@@ -125,7 +126,7 @@ enum RepoImport {
             defer { if !opened { try? fm.removeItem(at: copy) } }
             try copyTree(folder, to: copy)
             var package = try Sharing.open(unpacked: copy)
-            package.credits = naming(package.credits, repository: repository, name: package.name, identity: package.identity)
+            package.credits = naming(package.credits, repository: repository?.url, commit: repository?.commit, name: package.name, identity: package.identity)
             opened = true
             return package
         }
@@ -136,7 +137,7 @@ enum RepoImport {
             throw Sharing.ImportError("This isn't a wish Lamp can open.", detail: "A wish put on GitHub has lamp-app.json and its code at the top of the repository.")
         }
         var package = try Sharing.open(file)
-        package.credits = naming(package.credits, repository: repository, name: package.name, identity: package.identity)
+        package.credits = naming(package.credits, repository: repository?.url, commit: repository?.commit, name: package.name, identity: package.identity)
         return package
     }
 
@@ -166,24 +167,29 @@ enum RepoImport {
     }
 
     /// The chain with the wish opened named where it lives: its last link (the wish the file was shared from) takes the
-    /// address it has none for; a file with no chain gets the wish as its one link.
-    static func naming(_ credits: Credits?, repository: String?, name: String, identity: String?) -> Credits? {
+    /// address it has none for, and the commit the tree is at, which is the truth whatever the file says (the file was
+    /// written before that commit was made); a file with no chain gets the wish as its one link.
+    static func naming(_ credits: Credits?, repository: String?, commit: String?, name: String, identity: String?) -> Credits? {
         guard let repository else { return credits }
         var credits = credits ?? Credits()
         if credits.remixOf.isEmpty {
-            credits.remixOf = [Credits.Remix(name: name, wish: identity, url: repository)]
-        } else if credits.remixOf[credits.remixOf.count - 1].url == nil {
-            credits.remixOf[credits.remixOf.count - 1].url = repository
+            credits.remixOf = [Credits.Remix(name: name, wish: identity, url: repository, commit: commit)]
+        } else {
+            let last = credits.remixOf.count - 1
+            if credits.remixOf[last].url == nil { credits.remixOf[last].url = repository }
+            if Credits.Source.plain(credits.remixOf[last].url ?? "") == Credits.Source.plain(repository) { credits.remixOf[last].commit = commit }
         }
         return credits.checked
     }
 
-    /// Where a cloned folder came from, when its git remote is a repository on GitHub: asked of git confined to that
-    /// folder, as every git command of Lamp's is. Nil for a folder with no repository, or one from elsewhere.
-    static func repository(of folder: URL) -> String? {
+    /// Where a cloned folder came from, when its git remote is a repository on GitHub, and the commit it's at: asked of
+    /// git confined to that folder, as every git command of Lamp's is. The address as it was given (the setting itself,
+    /// not what git would rewrite it to for fetching). Nil for a folder with no repository, or one from elsewhere.
+    static func repository(of folder: URL) -> (url: String, commit: String?)? {
         guard FileManager.default.fileExists(atPath: folder.appendingPathComponent(".git").path) else { return nil }
-        let result = Versions.gitBlocking("git remote get-url origin", cwd: folder)
+        let result = Versions.gitBlocking("git config --get remote.origin.url", cwd: folder)
         guard result.ok, let source = source(from: result.output.trimmed) else { return nil }
-        return source.url
+        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: folder)
+        return (source.url, head.ok ? Credits.validCommit(head.output.trimmed) : nil)
     }
 }

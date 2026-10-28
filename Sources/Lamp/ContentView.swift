@@ -290,6 +290,12 @@ enum AppInfoView {
     static let remixedFromPage = "remixedFromPage"
     static let updateFromRepository = "updateFromRepository"
 
+    /// Where the wish came from, when that's a repository on GitHub: the chain's last link naming one that isn't where
+    /// this wish was put (`Credits.origin`).
+    static func origin(of project: LampProject) -> Credits.Remix? {
+        Credits.load(project).origin(own: GitHubRepo.kept(for: project)?.url)
+    }
+
     /// A button of the panel's, here or in the chat beside the app: Settings opened at its tab, the app or its code
     /// shown in Finder, or this app's own model choices undone.
     @MainActor static func perform(_ action: String, for project: LampProject, openSettings: (String) -> Void) {
@@ -301,11 +307,12 @@ enum AppInfoView {
         case basedOnPage:
             if let page = Credits.load(project).upstream.first?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         case remixedFromPage:
-            if let page = Credits.load(project).remixOf.last(where: { $0.url != nil })?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+            if let page = origin(of: project)?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         case updateFromRepository:
             // The repository fetched again and opened as any repository is: the review, then Update (the wish keeps its
-            // name, data and chat, with a version saved first) or Keep Both, since the wish came from there.
-            if let source = Credits.load(project).remixOf.last(where: { $0.url != nil })?.url.flatMap(RepoImport.source(from:)) {
+            // name, data and chat, with a version saved first, what changed here kept, `Upstream`) or Keep Both, since
+            // the wish came from there.
+            if let source = origin(of: project)?.url.flatMap(RepoImport.source(from:)) {
                 Store.shared.importRepository(source, request: nil)
             }
         default: break
@@ -340,7 +347,7 @@ enum AppInfoView {
         // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
         if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }
         sections.append(SidebarInfoSection(title: "AI inside this app", rows: ai, buttons: aiButtons))
-        if let credits = creditsSection(Credits.load(project)) { sections.insert(credits, at: 0) }
+        if let credits = creditsSection(Credits.load(project), own: GitHubRepo.kept(for: project)?.url) { sections.insert(credits, at: 0) }
         var building = [SidebarInfoRow(label: "Agent", value: Builder.engine.title)]
         if Builder.engine == .claude || Builder.engine == .codex {
             let model = Builder.engineModel(Builder.engine)
@@ -371,7 +378,8 @@ enum AppInfoView {
 
     /// Where the wish came from, first, since it's the one thing here that's about someone else: the work it's based on
     /// and its license, anything else it uses, and the wishes it was remixed from. A wish with no credits has none.
-    static func creditsSection(_ credits: Credits) -> SidebarInfoSection? {
+    /// `own` is where this wish was put on GitHub, which isn't where it came from.
+    static func creditsSection(_ credits: Credits, own: String?) -> SidebarInfoSection? {
         guard !credits.isEmpty else { return nil }
         var rows: [SidebarInfoRow] = []
         // The work it's based on and its license, each a row; anything else it uses a row of its own, named after it, with
@@ -394,13 +402,19 @@ enum AppInfoView {
             rows.append(SidebarInfoRow(label: "Made with AI", value: credits.generated.count == 1 ? "1 picture" : "\(credits.generated.count) pictures"))
         }
         if !credits.remixOf.isEmpty {
-            rows.append(SidebarInfoRow(label: "Remixed from", value: credits.remixOf.map { $0.name + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: " → ")))
+            // The same wish at two places (opened from one repository, put on another) is one name here.
+            var names: [String] = []
+            for remix in credits.remixOf {
+                let name = remix.name + (remix.starter != nil ? " (Lamp)" : "")
+                if names.last != name { names.append(name) }
+            }
+            rows.append(SidebarInfoRow(label: "Remixed from", value: names.joined(separator: " → ")))
         }
         var buttons: [SidebarInfoButton] = []
         if let source = credits.upstream.first, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
-        // The wish this one was most directly remixed from, where it lives (its repository on GitHub), and the latest of
-        // it from there, through the same review as the first time.
-        if let remix = credits.remixOf.last(where: { $0.url != nil }) {
+        // The wish this one was most directly remixed from, where it lives (its repository on GitHub, not the one this
+        // wish was put on), and the latest of it from there, through the same review as the first time.
+        if let remix = credits.origin(own: own) {
             buttons.append(SidebarInfoButton(title: "Visit \(remix.name) on GitHub", action: remixedFromPage))
             if remix.url.flatMap(RepoImport.source(from:)) != nil { buttons.append(SidebarInfoButton(title: "Update from GitHub…", action: updateFromRepository)) }
         }
@@ -519,7 +533,7 @@ struct ImportReviewCard: View {
     let review: ImportReview?
     /// The name of the wish already here that this file is another version of, if any.
     let existing: String?
-    /// That wish was changed here since it arrived: Update brings the new code in through the agent, keeping those changes.
+    /// That wish was changed here since it arrived: Update merges the new code into those changes, keeping them.
     var changedHere = false
     var room = CGFloat.infinity
     let cancel: () -> Void

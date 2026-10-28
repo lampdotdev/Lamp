@@ -3102,8 +3102,8 @@ final class Store: ObservableObject {
         var review: ImportReview?
         /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
         var existing: LampProject?
-        /// That app was changed here since it arrived: Update then brings the new code in through the agent, keeping
-        /// those changes (`mergeUpdate`), rather than putting it in their place.
+        /// That app was changed here since it arrived: Update then merges the new code into those changes with git, the
+        /// agent settling only what conflicts (`mergeUpdate`), rather than putting it in their place.
         var changedHere = false
     }
 
@@ -3246,8 +3246,6 @@ final class Store: ObservableObject {
             defer { finish(project) }
             let package = pending.package
             defer { try? FileManager.default.removeItem(at: package.folder) }
-            // What came from there last is now this version: a tree kept from an earlier merge is older than it.
-            try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(Self.upstreamLastFolder))
             let before = "Before updating from a shared file"
             var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
             if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
@@ -3346,90 +3344,70 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Where the latest of a wish from its repository waits for the agent to bring it in (`mergeUpdate`): inside the
-    /// wish's own folder, outside its versions. Once it's in, the agent moves it to `upstreamLastFolder`, the tree
-    /// that came from there last, which the next merge measures both sides against; an update that puts the new code
-    /// in place removes it, since the version it saves is then what came from there last.
-    static let upstreamFolder = ".lamp/upstream"
-    static let upstreamLastFolder = ".lamp/upstream-last"
-
-    /// Update for a wish changed here since it arrived, owning the wish (`begin`) as an update does: the new code goes
-    /// beside the wish, not in place of the person's changes, and the agent is asked to bring in what changed upstream
-    /// while keeping what changed here, asking the person only where it can't tell (`Versions.rememberMerge`). What's
-    /// unsaved is saved as a version first, as for an update, so Versions can bring the wish back; the credits take the
-    /// new file's now, since they're Lamp's to merge. Ends the turn, then sends the request.
+    /// Update for a wish changed here since it arrived, owning the wish (`begin`) as an update does: the new code is
+    /// merged into the person's changes by git (`Upstream.merge`), against the commit the wish has of its repository,
+    /// rather than put in their place. What's unsaved is saved as a version first, so Versions can bring the wish back;
+    /// the credits take the new file's, since they're Lamp's to merge, which moves the chain's commit on. A clean merge
+    /// is saved and built here; one with conflicts goes to the agent as a request with a note saying which files hold
+    /// markers (`Versions.rememberConflicts`), which settles the obvious itself and asks only where it can't tell.
     private func mergeUpdate(_ package: Sharing.Package, into project: LampProject) async {
         let fm = FileManager.default
         defer { try? fm.removeItem(at: package.folder) }
         let before = "Before bringing in an update"
         var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
         if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
-        let upstream = project.dir.appendingPathComponent(Self.upstreamFolder)
-        try? fm.removeItem(at: upstream)
-        do {
-            guard kept else { throw Sharing.ImportError(Self.updateFailed) }
-            try Self.stageUpstream(package, into: upstream)
-            if let credits = package.credits { try Credits.add(credits, to: project) }
-        } catch {
-            try? fm.removeItem(at: upstream)
+        guard kept else {
             finish(project)
             log(project, .error, Self.updateFailed)
             return
         }
-        // What came from there last: the tree an earlier merge brought in, when there is one, else the version that
-        // arrived (the merged result isn't an upstream tree, so the arrival alone would call a merge's changes local).
-        let last = fm.fileExists(atPath: project.dir.appendingPathComponent(Self.upstreamLastFolder).path)
-        let arrival = last ? nil : await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
-        let repository = package.credits?.remixOf.last(where: { $0.url != nil })?.url
-        Versions.rememberMerge(project, from: repository, since: arrival, lastTree: last)
-        finish(project)
-        let place = repository.flatMap(RepoImport.source(from:)).map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish"
-        send("Bring in what's new in \(place), keeping my changes.", to: project)
-    }
-
-    /// The new code as the agent reads it: what the import accepted and would install, laid out as the wish is, and
-    /// nothing else from the tree. Each app's code from the one list the review read (`Package.sources`), its own files,
-    /// its notes, what it declares as Lamp writes it, the licenses the credits name and the icon; the wish's other apps
-    /// the same way in their folders. Lamp's own files are never among them.
-    private static func stageUpstream(_ package: Sharing.Package, into folder: URL) throws {
-        let fm = FileManager.default
-        let lampsOwn: Set<String> = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
-        // A file may be listed twice (a license the credits name inside a part is in the wish's list and the part's; one
-        // beside the app's own files is among them too): the later copy replaces the earlier, as the install's does.
-        func put(_ file: URL, at relative: String, in to: URL) throws {
-            guard !relative.split(separator: "/").contains(where: { $0 == ".." }) else { return }
-            let target = to.appendingPathComponent(relative)
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.removeItem(at: target)
-            try fm.copyItem(at: file, to: target)
+        // Where the wish came from, and the commit it has of it, read before the credits move on; a wish from a shared
+        // file has no repository, and is merged against the version that arrived.
+        let origin = AppInfoView.origin(of: project)
+        let source = origin?.url.flatMap(RepoImport.source(from:))
+        let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
+        let place = source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish"
+        let merged: Upstream.Merged
+        do {
+            merged = try await Upstream.merge(package, into: project, from: source, commit: origin?.commit, arrival: arrival)
+            if let credits = package.credits { try Credits.add(credits, to: project) }
+        } catch {
+            _ = await Versions.git("git read-tree --reset -u HEAD && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+            print("Merging \(project.name) from \(place) failed: \(error)")
+            finish(project)
+            log(project, .error, Self.updateFailed)
+            return
         }
-        func stage(_ app: Sharing.Package, into to: URL) throws {
-            for file in app.sources where !lampsOwn.contains(file.lastPathComponent) {
-                let relative = app.path(of: file)
-                guard !Template.watchSupportPaths.contains(relative) else { continue }
-                try put(file, at: relative, in: to)
-            }
-            for file in app.attachments { try put(file, at: Sharing.Assets.folder + "/" + app.assetPath(of: file), in: to) }
-            for file in app.androidData + app.webData { try put(file, at: Sharing.relativePath(of: file, in: app.folder), in: to) }
-            for file in app.licences { try put(file, at: Sharing.relativePath(of: file, in: app.folder), in: to) }
-            for name in ["APP.md", "icon.json", "icon-art.png", Sharing.glassEntry] {
-                let file = app.folder.appendingPathComponent(name)
-                if fm.fileExists(atPath: file.path) { try put(file, at: name, in: to) }
-            }
-            if !app.capabilities.isEmpty {
-                let plain = JSONEncoder()
-                plain.outputFormatting = [.prettyPrinted, .sortedKeys]
-                try fm.createDirectory(at: to, withIntermediateDirectories: true)
-                try plain.encode(app.capabilities).write(to: to.appendingPathComponent(Template.Capabilities.file))
-            }
-            if let browser = app.browser {
-                try fm.createDirectory(at: to, withIntermediateDirectories: true)
-                try BrowserCompanions.Declaration.encoded(browser).write(to: to.appendingPathComponent(BrowserCompanions.Declaration.file))
-            }
+        // An app the package brings that the wish doesn't have yet is made as an update makes one; the apps it has
+        // were merged in their folders.
+        if !merged.newParts.isEmpty {
+            var arriving = package
+            arriving.parts = merged.newParts
+            let notIn = await installParts(of: arriving, into: project, onlyNew: true)
+            if !notIn.isEmpty { log(project, .error, "\(notIn.joined(separator: ", ")) couldn't be put in place.") }
         }
-        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        try stage(package, into: folder)
-        for part in package.parts { try stage(part.package, into: folder.appendingPathComponent(part.folder)) }
+        guard merged.conflicts.isEmpty else {
+            Versions.rememberConflicts(project, files: merged.conflicts, from: place)
+            finish(project)
+            send("Bring in what's new in \(place), keeping my changes.", to: project)
+            return
+        }
+        defer { finish(project) }
+        if await Versions.hasUnsavedChanges(project) {
+            guard await Versions.save(project, message: source == nil ? "Merged a newer shared file" : "Merged the latest from GitHub") else {
+                log(project, .error, Self.updateFailed)
+                return
+            }
+            Versions.rememberMerged(project, from: place)
+            versionsRevision += 1
+        }
+        log(project, .status, "Brought in what's new from \(place), keeping your changes. Building it now…")
+        if await build(project) == nil {
+            await installReportingCrash(project)
+        } else {
+            log(project, .error, ErrorMessages.appDoesNotBuild)
+        }
+        await rebuildParts(of: current(project) ?? project, onlyChanged: true)
     }
 
     /// An update that didn't happen, in the chat: the app is untouched or was put back, whatever the cause.
@@ -3488,7 +3466,9 @@ final class Store: ObservableObject {
     /// this Mac can't make yet keeps its files with the wish (`Sharing.keep`) and goes in once it can. A part the wish
     /// has and the file doesn't is left as it is. Returns the apps whose files couldn't be put in place, or kept, so an
     /// update can put the whole wish back and a fresh import can say so.
-    private func installParts(of package: Sharing.Package, into wish: LampProject) async -> [String] {
+    /// `onlyNew` makes only the parts the wish has no folder for, as a merge asks (`Upstream.Merged.newParts`): an
+    /// app of the same family already here is never taken for one of them, since its files were merged in place.
+    private func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
         var notIn: [String] = []
         func failed(_ kind: Platform) {
             let name = Parts.name(of: kind)
@@ -3501,7 +3481,8 @@ final class Store: ObservableObject {
             // one of its family while the wish and the file have one each.
             let family = { (kind: Platform) in Parts.group(kind) == Parts.group(part.package.platform) }
             var had = parts(of: wish).first { part.folder.lowercased() == $0.dir.lastPathComponent.lowercased() }
-            if had == nil, package.parts.filter({ family($0.package.platform) }).count == 1, parts(of: wish).filter({ family($0.platform) }).count == 1 {
+            if onlyNew, had != nil { continue }
+            if had == nil, !onlyNew, package.parts.filter({ family($0.package.platform) }).count == 1, parts(of: wish).filter({ family($0.platform) }).count == 1 {
                 had = parts(of: wish).first { family($0.platform) }
             }
             if let have = had, have.platform != kind {

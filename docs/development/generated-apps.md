@@ -289,20 +289,62 @@ a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the s
 afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
 the install does). A folder holding only a shared file opens that file. The chain's last link takes the repository's
 address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
-The person's folder is only read, never changed or removed. A wish whose chain names a repository offers Update from
-GitHub… in its info panel (`AppInfoView.updateFromRepository`): the repository fetched again and opened as any is, which
-lands on Update or Keep Both since the wish kept the sender's identity (`existingCopy`). A wish changed here since it
-arrived (`Store.changedSinceArrival`: its files differ from the last version Lamp saved as an arrival, or something is
-unsaved; looked at again once the update owns the wish, since a turn may have run while the review waited) isn't
-replaced by Update: what the import accepted goes to `.lamp/upstream/` laid out as the wish is (`Store.stageUpstream`:
-the reviewed code, the app's files, its notes and declarations, never Lamp's own files or anything else in the tree),
-the credits are merged by Lamp, a version is saved, and a request goes to the agent with a note (`Versions.rememberMerge`)
-saying what came from there last, to bring in what changed upstream, keep what changed here, settle the obvious itself
-and ask (`ask`) only where it can't tell. What came from there last is `.lamp/upstream-last/`, the tree the agent moves
-the new one to once it's in, so the next merge measures both sides against an upstream tree rather than the merged
-result; before any merge it's the version that arrived, and an update that puts the new code in place removes the kept
-tree, since the version it saves is then the arrival. The review sheet says so (`ImportReviewCard.changedHere`, "Already
-here, changed here" in the gallery). An unchanged wish takes the new code in place as before.
+The person's folder is only read, never changed or removed. The chain's last link also takes the commit the tree is
+at (`Credits.Remix.commit`, from the clone's HEAD, `RepoImport.repository`): the commit of its repository the wish
+has, which an update is merged from and a contribution goes back on top of. Put on GitHub keeps the commit it pushed
+in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept repository and commit on the chain when
+its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
+A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
+`Remix.sameLink`): the chain keeps where it came from, and `Credits.origin(own:)`, the last link naming a repository
+that isn't the wish's own, is what the info panel's Visit and Update from GitHub… and Send Changes Back go by
+(`AppInfoView.origin`).
+
+A wish whose chain names where it came from offers Update from GitHub… in its info panel
+(`AppInfoView.updateFromRepository`): the repository fetched again and opened as any is, which lands on Update or Keep
+Both since the wish kept the sender's identity (`existingCopy`). A wish unchanged since it arrived
+(`Store.changedSinceArrival`: its files are the last version Lamp saved as an arrival, and nothing is unsaved; looked
+at again once the update owns the wish, since a turn may have run while the review waited) takes the new code in
+place. One changed here is merged by git (`Upstream.merge`, from `Store.mergeUpdate`), never replaced: the wish's own
+git gets the repository as its `upstream` remote and fetches the recorded commit one deep (through `Versions.git`, so
+confined to the wish's folder with the network open, and only ever fetched from); that commit's tree is read as a
+repository is (`RepoImport.open`) and staged as the import would install it, and so is the reviewed package
+(`Upstream.stage`: the code the review read, an Android app's moved into this Mac's package as `AndroidFiles.install`
+moves it, the app's files, its notes and declarations, never Lamp's own files or the icon's pictures), each a tree in
+the wish's git made in an index of the merge's own (`.lamp/merge`), the second committed on top of the first at
+`refs/lamp/upstream`. `git merge-tree` merges the wish's files, the base and that commit three ways and the result
+goes into the index and the files (`git read-tree --reset -u`), with the version saved first so Versions can bring the
+wish back. What changed only upstream or only here is in place with no agent; the icon's pictures follow when the
+icon changed upstream, for the design as git merged it (`Sharing.installArtwork`, never the file's design in place of
+one changed here), the description when it changed upstream and not here, and an app the package brings that the
+wish doesn't have is made as an update makes one (`Store.installParts`, `Merged.newParts`). A clean merge is saved
+("Merged the latest from GitHub"), noted for the agent (`Versions.rememberMerged`) and built. Files both sides changed
+in the same place keep git's conflict markers, and a request goes to the agent with a note naming them
+(`Versions.rememberConflicts`: what the markers mean, `git show HEAD:<path>` and `git show refs/lamp/upstream:<path>`
+for each side), to settle the obvious itself and ask (`ask`) only where it can't tell. The credits are merged by Lamp
+either way, which moves the chain's commit on to the one fetched, so the next update is measured from there; the
+wish's history stays a line (the merge is one version, never a merge commit), and nothing of it leaves.
+
+The base, in order (`Upstream.Base`): the repository's commit, fetched; else the version of this wish's own history
+the file says it was made from (`Upstream.ownVersion`: a file shared from a wish that lives nowhere names the version
+its export was made from, `Sharing.export`, and a copy sharing on keeps that rather than naming its own, so a file
+that comes back from whoever it was sent to merges against the version they were given, with no repository anywhere),
+unless the last update brought in was measured against that same version (a file coming back again names the version
+it was first given; the kept commit records its base as a trailer), in which case what that update brought in
+(`refs/lamp/upstream`: a change the sender took back since is then taken back here, rather than read as unchanged);
+else that, for a wish from a file updated more than once; else the version that arrived (its tree as a shared file
+carries it, `Upstream.filteredTree`); else nothing. A part the package brings that the wish doesn't have is in the
+kept tree (staged as the app it will be) but not in what's merged. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
+changed here" in the gallery).
+
+A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share menu
+(`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
+GitHub's). It stages the wish as Put on GitHub does (`GitHubRepo.stage`: the same checks for licenses and keys), forks
+the repository to the person's account with `gh` when they have no fork (`Contribute.fork`), fetches the recorded
+commit into a folder of Lamp's, puts the staged tree over it with the repository's README and license left as its
+owner wrote them (read first) and its credits.json keeping its chain and taking only what the wish newly uses, commits that once in the person's name,
+pushes it to a branch of the fork and opens a pull request on the repository (`Contribute.send`). The request's text
+(`Contribute.summary`) is the wish's line, the names its versions since it arrived were given (never the requests
+themselves, never the chat) and the files changed. The person's own repository is refused (Put on GitHub updates it).
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
