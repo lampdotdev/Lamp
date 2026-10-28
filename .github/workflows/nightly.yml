@@ -110,12 +110,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # The tag follows the commit; the release is made once and edited after that, never published again. The new
-          # DMG goes up before any old one comes down, so a run cut short leaves the release whole, and the newest three
-          # stay: the feed is cached for a quarter of an hour and an update window may stay open longer, and each names
-          # the DMG it signed (updates/api/appcast.js), which must still be there to verify.
+          # DMG goes up whole before sparkle.json names it and before any old one comes down, so a run cut short leaves
+          # the release whole and the feed never pairs a signature with another file; the newest three stay, since the
+          # feed is cached for a quarter of an hour and an update window may stay open longer, and each names the DMG
+          # it signed (updates/api/appcast.js), which must still be there to verify.
           git push -f origin "$GITHUB_SHA:refs/tags/nightly"
           if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json --clobber
+            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" --clobber
+            gh release upload nightly dist/sparkle.json --clobber
             gh release edit nightly --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
           else
             gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json \

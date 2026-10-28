@@ -21,9 +21,13 @@ export async function GET(request) {
     for (const release of listed) {
       const info = dmgAssets(release).length ? await sparkleInfo(release) : null;
       if (!info?.signature) continue;   // released before auto-update: Sparkle can't verify it
-      // The DMG sparkle.json describes: named for its version where the release keeps more than one.
+      // The DMG sparkle.json describes, named for its version. The nightly's must be that one: its release keeps
+      // several, and a sparkle.json whose DMG isn't there yet (a push still uploading, or cut short) describes no
+      // file this feed could offer, so the item waits for the next read rather than pair the signature with another.
       const dmgs = dmgAssets(release);
-      const dmg = dmgs.find((asset) => asset.name.endsWith(`-${info.shortVersion || info.version}.dmg`)) ?? dmgs[0];
+      const named = dmgs.find((asset) => asset.name.endsWith(`-${info.shortVersion || info.version}.dmg`));
+      const dmg = isNightly(release) ? named : named ?? dmgs[0];
+      if (!dmg) continue;
       const link = isNightly(release) ? `${origin}/download/nightly/${encodeURIComponent(dmg.name)}` : `${origin}/download/${encodeURIComponent(release.tag_name)}`;
       items.push(`    <item>
       <title>${escape(release.name || release.tag_name)}</title>
