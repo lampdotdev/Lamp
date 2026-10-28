@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { wishHTML, wishLink, copyWish, askFrom, withAsk, exactWishLink, WISH_MARK, WISH_LIMIT, ASK_LIMIT } from "../lib/wish.js";
+import { wishHTML, wishLink, copyWish, askFrom, withAsk, exactWishLink, remixFrom, remixLink, WISH_MARK, WISH_LIMIT, ASK_LIMIT } from "../lib/wish.js";
 
 const wish = "A Mac app that sorts my files & asks <first>.\nNothing moves until I say \"yes\".";
 
@@ -68,4 +68,23 @@ test("the exact wish's link names its file and carries the request", () => {
   assert.equal(params.get("text"), "Add a weekly view");
   assert.equal(exactWishLink("", "Add a weekly view"), null);
   assert.equal(exactWishLink("https://files.example/w/abc.lampapp", "  "), null);
+});
+
+test("a remix names only a starter's id or a github.com repository, and Lamp's link and mark carry it", () => {
+  assert.deepEqual(remixFrom("?starter=newyork&ask=Snow"), { starter: "newyork" });
+  assert.deepEqual(remixFrom("?repo=https%3A%2F%2Fgithub.com%2Flampdotdev%2Fnewyork.git&commit=ABC1234"),
+    { repo: "https://github.com/lampdotdev/newyork", owner: "lampdotdev", name: "newyork", commit: "abc1234" });
+  for (const bad of ["?starter=..%2Fetc", "?starter=New%20York", "?starter=a&repo=https%3A%2F%2Fgithub.com%2Fa%2Fb",
+    "?repo=http%3A%2F%2Fgithub.com%2Fa%2Fb", "?repo=https%3A%2F%2Fgithub.com.evil%2Fa%2Fb", "?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb%2Ftree%2Fmain",
+    "?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=--upload-pack", "?ask=x"]) {
+    assert.equal(remixFrom(bad), null, bad);
+  }
+  assert.equal(remixLink({ starter: "newyork" }, "Snow + ice"), "lamp://wish?starter=newyork&text=Snow%20%2B%20ice");
+  const link = new URL(remixLink({ starter: "newyork" }, " Make it snow "));
+  assert.equal(link.protocol, "lamp:");
+  assert.equal(link.searchParams.get("starter"), "newyork");
+  assert.equal(link.searchParams.get("text"), "Make it snow");
+  assert.equal(new URL(remixLink({ repo: "https://github.com/a/b", commit: "abc1234" }, "")).searchParams.get("text"), null);
+  assert.match(wishHTML("Snow & ice", { repo: "https://github.com/a/b", commit: "abc1234" }),
+    /^<span data-lamp-wish="repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&amp;commit=abc1234" [^>]*>Snow &amp; ice<\/span>$/);
 });

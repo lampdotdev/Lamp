@@ -338,9 +338,12 @@ On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the 
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
 nothing to connect to: once Lamp has been away a few seconds and macOS says no Lamp is installed (`Link.lampInstalled`,
 from the `LampHost` Lamp wrote into the extension's Info.plist), it shows `RemixPanel` (LampSidebarKit): the app's name
-and line, three things to change and a box; Continue with Lamp opens the wish's Share Link page with the request as
-`ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js), or lamp.dev with a request that names the app
-(`RemixLink`), since without the link Lamp makes its own version. The three things come from `RemixSuggestions`: written by
+and line, three things to change and a box; Continue with Lamp goes where `RemixLink.url` says: lamp.dev with what the
+app is a copy of (`RemixLink.Origin`: a starter's id, or a repository and commit) beside the request as `ask`, when the
+offer names one (a published page does, "Remixing a published page" in the wishes guide); else the wish's Share Link
+page with the request as `ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js); else lamp.dev with a
+request that names the app, since without either Lamp makes its own version. The line under the button says which
+(`RemixLink.note`). The three things come from `RemixSuggestions`: written by
 the helper model after a change lands (`Store`, beside the version's title), kept in `.lamp/suggestions.json` with a
 stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
 `LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then

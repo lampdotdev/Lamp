@@ -17,6 +17,10 @@ final class RemixTests: XCTestCase {
         XCTAssertEqual(URLComponents(url: site, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ask" }?.value,
                        "Make an app like New York: Explore Manhattan.\n\nThen: Add a helicopter tour")
         XCTAssertNil(RemixLink.url(for: alone, ask: "   "))
+        // A starter or a wish on GitHub: Lamp's site with what to copy and the request as it is, even beside a Share Link.
+        let starter = RemixOffer(name: "New York", about: nil, suggestions: [], shareLink: linked.shareLink, origin: .starter("newyork"))
+        let copied = try XCTUnwrap(RemixLink.url(for: starter, ask: "Add a helicopter tour"))
+        XCTAssertEqual(copied.absoluteString, "https://lamp.dev/?starter=newyork&ask=Add%20a%20helicopter%20tour")
         XCTAssertEqual(RemixOffer(name: "X", about: nil, suggestions: [], shareLink: nil).suggestions, RemixOffer.fallback)
     }
 

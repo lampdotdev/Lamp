@@ -84,9 +84,13 @@ enum Publish {
     /// to, through Share Link's own card, where they see and change what it shows): that page works for someone without
     /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"). With no link, the
     /// wish as a shared file, which goes beside the page either way, for the README's download: the exact game.
+    /// `origin` is what the page is a copy of, when that's somewhere Lamp can copy it from again: the starter a
+    /// starter's own page is (`StarterRepos.stagePage`), or the repository the wish was put on (`GitHubRepo.kept`).
+    /// The Remix panel's request goes with it (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version.
     struct OpenInLamp: Equatable {
         var link: URL?
         var file: String?
+        var origin: RemixLink.Origin? = nil
     }
 
     /// What will go up, staged in a folder of its own, checked.
@@ -133,7 +137,9 @@ enum Publish {
         let shared = try Sharing.export(project)
         defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
         try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
-        let open = OpenInLamp(link: link, file: fileName)
+        // A wish that's on GitHub is remixed from there, at the commit last put up.
+        let kept = GitHubRepo.kept(for: project)
+        let open = OpenInLamp(link: link, file: fileName, origin: kept.map { .repository(url: GitHubRepo.url($0.repo), commit: $0.commit) })
         let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
         try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
 
@@ -182,11 +188,14 @@ enum Publish {
             parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Made with Lamp</a>")
         }
         // Remix…: a panel over the page with three things to change and a box for the player's own words. Continue with
-        // Lamp opens the wish's Share Link page with the request (which gives this exact wish, with Lamp or by getting
-        // it), or Lamp's site with a request that names the game. Nothing leaves the page until that press.
+        // Lamp goes where `RemixLink.url` sends the panel beside an app: Lamp's site with what to copy (a starter, or the
+        // repository the wish is on) and the request; else the wish's Share Link page with the request (which gives this
+        // exact wish, with Lamp or by getting it); else Lamp's site with a request that names the game. Nothing leaves
+        // the page until that press.
         parts.append("<a href=\"#\" id=\"lamp-remix-open\">Remix…</a>")
-        let offer = RemixOffer(name: name, about: about, suggestions: suggestions, shareLink: open.link)
-        let target: [String: Any] = ["link": open.link?.absoluteString as Any, "request": RemixLink.request(for: offer, ask: "{ask}")]
+        let offer = RemixOffer(name: name, about: about, suggestions: suggestions, shareLink: open.link, origin: open.origin)
+        let target: [String: Any] = ["link": open.link?.absoluteString as Any, "origin": open.origin?.json as Any,
+                                     "request": RemixLink.request(for: offer, ask: "{ask}")]
         let targetJSON = (try? JSONSerialization.data(withJSONObject: target)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let buttons = offer.suggestions.map { "<button type=\"button\" class=\"lamp-remix-pick\">\(escaped($0.text))</button>" }.joined()
         let panel = """
@@ -196,7 +205,7 @@ enum Publish {
               \(buttons)
               <textarea id="lamp-remix-ask" rows="3" placeholder="Or say it your way"></textarea>
               <button type="button" id="lamp-remix-go" disabled>Continue with Lamp</button>
-              <p class="lamp-remix-note">\(open.link == nil ? "Opens lamp.dev with your request. Lamp is a free Mac app; it makes its own version and changes it as you ask." : "Opens this wish's page with your request. Lamp is a free Mac app; it opens on this exact wish and changes it as you ask.")</p>
+              <p class="lamp-remix-note">\(escaped(RemixLink.note(for: offer)))</p>
             </div>
             <script type="application/json" id="lamp-remix-target">\(targetJSON.replacingOccurrences(of: "<", with: "\\u003c"))</script>
             <script>
@@ -207,7 +216,9 @@ enum Publish {
             var picks=p.querySelectorAll('.lamp-remix-pick');for(var i=0;i<picks.length;i++)picks[i].addEventListener('click',function(e){a.value=e.currentTarget.textContent;g.disabled=false;a.focus();});
             a.addEventListener('input',function(){g.disabled=!a.value.trim();});
             g.addEventListener('click',function(){var ask=a.value.trim().slice(0,\(RemixLink.askLimit));if(!ask)return;
-              var u=new URL(t.link||'https://lamp.dev/');u.searchParams.set('ask',t.link?ask:String(t.request||'{ask}').replace('{ask}',ask));window.open(u.href,'_blank','noopener');});})();
+              var f=t.origin&&typeof t.origin==='object'?t.origin:null,u=new URL(f?'https://lamp.dev/':(t.link||'https://lamp.dev/'));
+              if(f)for(var k in f)u.searchParams.set(k,String(f[k]));
+              u.searchParams.set('ask',f||t.link?ask:String(t.request||'{ask}').replace('{ask}',ask));window.open(u.href,'_blank','noopener');});})();
             </script>
             """
         let bar = """

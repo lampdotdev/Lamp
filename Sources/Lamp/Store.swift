@@ -626,6 +626,11 @@ final class Store: ObservableObject {
     @Published var stamps: [String: BuildStamp] = [:]
     /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
     @Published var arrivedWish: String?
+    /// A starter's remix from the site's link that came while the welcome is up, for the welcome to take (`take(remix:)`).
+    @Published var arrivedRemix: Wish.Remix?
+    /// The copy the last remix link put on the desk: another link for that starter goes into it while nothing has been
+    /// asked of it, so a page that keeps opening links can't fill the desk with copies.
+    private var remixApp: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
     @Published private(set) var arrivals: [String: Wish.Arrival] = [:]
     /// What writes each arriving wish in, by app: wishes from the site and from the agent's `write_wish` can be
@@ -1680,6 +1685,11 @@ final class Store: ObservableObject {
             importApp(from: url)
             return
         }
+        // A link naming what to start from is a remix or nothing: one that names it badly is never taken for a plain wish.
+        if Wish.isRemix(url) {
+            guard let remix = Wish.remix(from: url) else { return refuseRemix() }
+            return take(remix: remix)
+        }
         if let exact = Wish.exact(from: url) { return take(exact: exact) }
         if let wish = Wish.from(link: url) { return take(wish: wish) }
         guard url.scheme == Edition.urlScheme,
@@ -1748,6 +1758,49 @@ final class Store: ObservableObject {
             guard data.count <= limit else { throw Sharing.ImportError("This file is too large to be a Lamp app (over 64 MB).") }
         }
         return data
+    }
+
+    /// A remix the site's link (or, on a first open, its Download) brought: a fresh copy of what it names, opened with
+    /// its chat and the request in the box, never sent. A repository goes the way File → Open from GitHub… does, with
+    /// its fetch, review and credit; a starter only when this Lamp ships it and it runs on this Mac, copied as Starter
+    /// wishes' Add copies one (`put(starter:)`: credited to the starter at the commit this Lamp ships).
+    func take(remix: Wish.Remix) {
+        NSApp.activate()
+        if let source = remix.source { return importRepository(source, request: remix.text) }
+        guard let starter = Self.starter(named: remix) else { return refuseRemix() }
+        guard Onboarding.isDone || welcomeFinished else { arrivedRemix = remix; return }
+        openCopy(of: starter, request: remix.text)
+    }
+
+    /// The starter a remix names, when this Lamp ships it and it runs here.
+    static func starter(named remix: Wish.Remix) -> Starters.Starter? {
+        guard case .starter(let id) = remix.from else { return nil }
+        return Starters.bundled.first { $0.folder.lastPathComponent == id && Starters.runsHere($0.tree) }
+    }
+
+    /// Puts a copy of the starter on the desk and opens it with the request in its box. `reuseDesk` takes the desk's
+    /// own copy instead while nothing has been asked of it: the welcome's, whose starters were copied moments ago.
+    func openCopy(of starter: Starters.Starter, request: String?, reuseDesk: Bool = false) {
+        func fresh(_ project: LampProject) -> Bool {
+            !(logs[project.id] ?? []).contains { $0.kind == .user || $0.kind == .agent }
+                && !busy.contains(project.id) && !pendingSubmissions.contains(project.id) && queued[project.id] == nil
+        }
+        let copies = projects.filter { Starters.starter(of: $0)?.name == starter.name && fresh($0) }
+        let reused = copies.first { $0.id == remixApp } ?? (reuseDesk ? copies.first : nil)
+        guard let project = reused ?? put(starter: starter) else {
+            NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of \(starter.name).")).runModal()
+            return
+        }
+        remixApp = project.id
+        open(fromDesk: project)
+        if let request { writeIn(request, for: project) }
+    }
+
+    /// A remix link Lamp won't open: it names something other than a starter this Lamp ships or a repository on GitHub.
+    private func refuseRemix() {
+        NSApp.activate()
+        NSAlert(error: Sharing.ImportError("Lamp can't open this link.",
+                                           detail: "It doesn't name one of Lamp's wishes or a repository on GitHub.")).runModal()
     }
 
     func take(wish: String) {
