@@ -183,11 +183,11 @@ enum RepoImport {
     }
 
     /// Where a cloned folder came from, when its git remote is a repository on GitHub, and the commit it's at: asked of
-    /// git confined to that folder, as every git command of Lamp's is. Nil for a folder with no repository, or one from
-    /// elsewhere.
+    /// git confined to that folder, as every git command of Lamp's is. The address as it was given (the setting itself,
+    /// not what git would rewrite it to for fetching). Nil for a folder with no repository, or one from elsewhere.
     static func repository(of folder: URL) -> (url: String, commit: String?)? {
         guard FileManager.default.fileExists(atPath: folder.appendingPathComponent(".git").path) else { return nil }
-        let result = Versions.gitBlocking("git remote get-url origin", cwd: folder)
+        let result = Versions.gitBlocking("git config --get remote.origin.url", cwd: folder)
         guard result.ok, let source = source(from: result.output.trimmed) else { return nil }
         let head = Versions.gitBlocking("git rev-parse HEAD", cwd: folder)
         return (source.url, head.ok ? Credits.validCommit(head.output.trimmed) : nil)
