@@ -102,6 +102,13 @@ for tree in "$WORK"/trees/*(N/); do
   mkdir -p "$clone"
   if gh repo view "$repo" --json name >/dev/null 2>&1; then
     "$GIT" "${signed[@]}" clone -q "https://github.com/$repo.git" "$clone"
+    # The commit goes on top of the one the tree was staged from, not on whatever main is by now: someone may have
+    # pushed since, and a commit of the staged tree on their push would quietly undo it. If main moved, the push below
+    # isn't a fast-forward and GitHub turns it down, so nothing of theirs is lost.
+    if base="$("$GIT" -C "$WORK/latest/$folder" rev-parse -q --verify HEAD 2>/dev/null)"; then
+      "$GIT" -C "$clone" reset -q --hard "$base" 2>/dev/null \
+        || { echo "$repo: main no longer has $base, the commit staged from; publish again" >&2; exit 1; }
+    fi
   else
     gh repo create "$repo" --public >/dev/null
     gh api -X PUT "orgs/$ACCOUNT/teams/$TEAM/repos/$repo" -f permission=push >/dev/null \
@@ -117,7 +124,8 @@ for tree in "$WORK"/trees/*(N/); do
     echo "$repo: unchanged"
   else
     "$GIT" -c user.name="Lamp" -c user.email="$LOGIN@users.noreply.github.com" commit -q -m "$(sed -n 's/^name: *//p' "$OLDPWD/$starter" | head -1) from Lamp"
-    "$GIT" "${signed[@]}" push -q "https://github.com/$repo.git" HEAD:main
+    "$GIT" "${signed[@]}" push -q "https://github.com/$repo.git" HEAD:main \
+      || { echo "$repo: main moved since it was staged; nothing published, publish again" >&2; exit 1; }
     echo "$repo: $("$GIT" rev-parse --short HEAD)"
   fi
   sha="$("$GIT" rev-parse HEAD)"
