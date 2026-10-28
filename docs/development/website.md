@@ -6,7 +6,11 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 parts; the last is a wish shared as a link, `WishLink` in the app). Its
 homepage sells remixable software and is dressed as home video: cream paper, tape labels, and the stripes on their
 sleeves. The stripes are the hero's whole field, on the slant, with plain white words kept to the bands they read
-on; elsewhere they run between sections and sit beside headings (a tab above each), never on a heading's letters. Apps and games get the same weight on it, and
+on; elsewhere they sit beside headings (a tab above each), never on a heading's letters. New York's sleeve in the hero and the
+stack of tapes beside "Record over it" are three.js (`src/lib/tapes.ts`), drawn from canvases in the page's fonts:
+they lean toward the pointer and turn over to show a screenshot when clicked, over a flat HTML version kept for
+screen readers and browsers without WebGL. The device icons are Phosphor's duotone set, with the fill in the
+sleeve's colors. Apps and games get the same weight on it, and
 every example is a real starter (`Resources/Starters`), with the pictures and changes it ships with; the devices it
 lists are only those a kind of app or a shipped device integration really reaches. Its Download buttons, and the
 menu bar's, are the paper's ink with paper-colored words (the last section's is the stripes' yellow with ink).

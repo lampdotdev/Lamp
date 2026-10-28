@@ -8,7 +8,6 @@ const here = Astro.url.pathname.replace(/\/$/, "") || "/";
 const links = [
   { href: "/#remix", label: "Remixes", wide: true },
   { href: "/#devices", label: "Your devices", wide: true },
-  { href: "/#sharing", label: "Sharing", wider: true },
   { href: "/ideas", label: "Ideas" },
 ];
 ---
@@ -35,7 +34,6 @@ const links = [
             class:list={[
               "flex h-10 items-center rounded-sm px-2.5 text-[15px] font-bold text-tape underline-offset-[6px] hover:underline focus-visible:outline-2 focus-visible:outline-tape aria-[current=page]:underline sm:px-3",
               link.wide && "hidden md:flex",
-              link.wider && "hidden lg:flex",
             ]}
           >
             {link.label}
