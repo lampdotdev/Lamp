@@ -225,11 +225,24 @@ final class MagicPanel {
     /// Where an app opens changed (Try On, a place given, a device set up): when it went off the Mac just after its
     /// chat went with the app, the chat comes back in Lamp's panel. While the app is still open the chat stays beside
     /// it, and comes back when the app quits (`SidebarServer.closed`).
-    func placeChanged(_ project: LampProject) {
+    /// `afterSetup`: the device choice that waited on its setup is the change; a setup closed never gets here, and its
+    /// mark counts for nothing else.
+    func placeChanged(_ project: LampProject, afterSetup: Bool = false) {
         let id = Store.shared.wish(of: project).id
-        guard leftApp[id] != nil, !SidebarServer.shared.isConnected(id), !ChatPanel.isOpen(id) else { return }
+        let began = pendingMoves.removeValue(forKey: id).flatMap { afterSetup ? $0 : nil }
+        guard let left = leftApp[id], ChatReturn.leftLately(left, moveBegan: began, now: Date()),
+              !SidebarServer.shared.isConnected(id), !ChatPanel.isOpen(id) else { return }
+        // The move the chat went for is done only now: the wait counts from here.
+        leftApp[id] = Date()
         showChatAfterQuit(project, because: .placeChanged)
     }
+
+    /// Device choices waiting on their setup (a download, the device's approval), by wish, with when each was made: a
+    /// quit meanwhile is the app moving, however long the setup takes (`ChatReturn.leftLately`).
+    private var pendingMoves: [String: Date] = [:]
+    func moveWaitsOnSetup(_ project: LampProject) { pendingMoves[Store.shared.wish(of: project).id] = Date() }
+    /// Another choice under Try On: a device choice still waiting is dropped (`Store.tryOnChoices`).
+    func choiceMade(_ project: LampProject) { pendingMoves[Store.shared.wish(of: project).id] = nil }
 
     /// A wish Lamp came with opens with its chat beside it the first time it's opened, ready to be changed, as a new
     /// app does after its first build (`handOff`), and once only: a chat the person closes stays closed.
@@ -485,6 +498,15 @@ enum ChatReturn {
 
     /// How soon after the chat went with the app a place chosen still counts as the app moving.
     static let lately: TimeInterval = 120
+
+    /// Whether a place chosen `now` follows the chat going with the app (`left`). `moveBegan`: when a device choice still
+    /// waiting on its setup (a download, the device's approval) was made, however long the setup has taken since.
+    static func leftLately(_ left: Date, moveBegan: Date?, now: Date) -> Bool {
+        if now.timeIntervalSince(left) < lately { return true }
+        // The chat went while the choice waited, or just before it was made.
+        guard let moveBegan else { return false }
+        return left.timeIntervalSince(moveBegan) > -lately
+    }
 
     /// `onTheMac`: the wish's chat app opens on this Mac (`SidebarServer.onTheMac`). `leftAppLately`: its chat went with the
     /// app within `lately`, and nothing took it since. `dismissed`: the person closed the chat beside the app and hasn't

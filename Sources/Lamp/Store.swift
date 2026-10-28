@@ -2236,7 +2236,7 @@ final class Store: ObservableObject {
             changed.chosen = chosen
             try? Template.saveMeta(changed)
             if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
-            MagicPanel.shared.placeChanged(changed)
+            MagicPanel.shared.placeChanged(changed, afterSetup: true)
             syncLocalNetwork()   // the device reaches Lamp's gateway over the Wi‑Fi
             let name = devices.first(where: { $0.udid == serial })?.name
             let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
@@ -2247,7 +2247,12 @@ final class Store: ObservableObject {
                 finish(changed)
             }
         }
-        if let serial { checkAndroidDevice(serial, choose) } else { choose() }
+        if let serial {
+            MagicPanel.shared.moveWaitsOnSetup(project)
+            checkAndroidDevice(serial, choose)
+        } else {
+            choose()
+        }
     }
 
     /// Every app's latest choice under Try On, counted, so a choice that waits on a check (a device's) is dropped when
@@ -2271,14 +2276,19 @@ final class Store: ObservableObject {
             changed.chosen = .tv
             try? Template.saveMeta(changed)
             if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
-            MagicPanel.shared.placeChanged(changed)
+            MagicPanel.shared.placeChanged(changed, afterSetup: true)
             let name = devices.first(where: { $0.udid == id })?.name
             log(changed, .status, name.map { "\(placeName(changed)) will go on \($0) when you press Play." } ?? "\(placeName(changed)) will open in the TV preview from now on.")
             finish(changed)
             refreshOpenApps()
             syncLocalNetwork()   // the TV reaches Lamp's gateway over the Wi‑Fi
         }
-        if let id { TVSetup.shared.perform(id, then: choose) } else { choose() }
+        if let id {
+            MagicPanel.shared.moveWaitsOnSetup(project)
+            TVSetup.shared.perform(id, then: choose)
+        } else {
+            choose()
+        }
     }
 
     /// Which of the person's devices a device app goes on (`DeviceApps`), by its id as its integration found it. One not
@@ -2294,10 +2304,11 @@ final class Store: ObservableObject {
             changed.chosen = .device
             try? Template.saveMeta(changed)
             if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
-            MagicPanel.shared.placeChanged(changed)
+            MagicPanel.shared.placeChanged(changed, afterSetup: true)
             log(changed, .status, "\(changed.name) will go on \(device.name) when you press Play.")
             finish(changed)
         }
+        MagicPanel.shared.moveWaitsOnSetup(project)
         DeviceSetupWindow.show(device, then: choose)
     }
 

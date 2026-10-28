@@ -65,6 +65,20 @@ final class ChatReturnTests: XCTestCase {
         XCTAssertEqual(second.reason, .crashed)
     }
 
+    /// A device chosen, its setup waiting on a download or the device's approval, and the Mac copy quit meanwhile: the
+    /// setup finishing minutes later is still the app moving.
+    func testASetupThatTakesLongStillBringsTheChatBack() {
+        let quit = Date(timeIntervalSinceReferenceDate: 0)
+        // Chosen before the quit, or just after it.
+        XCTAssertTrue(ChatReturn.leftLately(quit, moveBegan: quit.addingTimeInterval(-30), now: quit.addingTimeInterval(300)))
+        XCTAssertTrue(ChatReturn.leftLately(quit, moveBegan: quit.addingTimeInterval(5), now: quit.addingTimeInterval(121)))
+        // With no device choice pending, only a place chosen soon after.
+        XCTAssertTrue(ChatReturn.leftLately(quit, moveBegan: nil, now: quit.addingTimeInterval(60)))
+        XCTAssertFalse(ChatReturn.leftLately(quit, moveBegan: nil, now: quit.addingTimeInterval(121)))
+        // A device chosen long after the quit isn't the app moving off with its chat.
+        XCTAssertFalse(ChatReturn.leftLately(quit, moveBegan: quit.addingTimeInterval(500), now: quit.addingTimeInterval(510)))
+    }
+
     /// Two reasons for one wish: the wait keeps the stronger.
     func testTheStrongerReasonIsKept() {
         XCTAssertEqual(max(ChatReturn.Reason.appLeft, .crashed), .crashed)

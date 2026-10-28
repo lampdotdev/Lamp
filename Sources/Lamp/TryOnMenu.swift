@@ -255,7 +255,10 @@ extension Store {
     func tryOn(_ project: LampProject, _ id: String, open: Bool = false) {
         guard let project = current(project) else { return }
         let (what, value) = id.firstIndex(of: ":").map { (String(id[..<$0]), String(id[id.index(after: $0)...])) } ?? (id, "")
-        if Self.choices.contains(what) { tryOnChoices[project.id, default: 0] += 1 }
+        if Self.choices.contains(what) {
+            tryOnChoices[project.id, default: 0] += 1
+            MagicPanel.shared.choiceMade(project)
+        }
         switch what {
         case "mac": setMac(project)
         case "family": if let family = DeviceFamily(rawValue: value) { setSimulator(project, family) }
