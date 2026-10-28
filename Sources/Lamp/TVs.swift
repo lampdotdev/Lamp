@@ -707,6 +707,7 @@ extension Device {
                             features: record.frame ? ["Art Mode"] : [], reach: .network)
         device.connected = onNetwork
         device.paired = kept
+        device.kept = kept
         device.developerMode = record.isSamsung
             ? record.developerMode && TVs.macAddresses().contains(record.developerIP ?? "")
             : FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path)

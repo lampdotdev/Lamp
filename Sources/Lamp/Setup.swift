@@ -939,9 +939,16 @@ struct DevicesSection: View {
     var body: some View {
         let list = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
         Section("Your Devices") {
-            // What Lamp makes apps for or controls, then what it could learn, then the rest of the network, folded.
-            ForEach(list.works + list.couldLearn) { device in
+            // The person's devices; then what's only found on the network, which may be a neighbor's: what Lamp makes apps
+            // for or controls, then what it could learn; then the rest of the network, folded.
+            ForEach(list.works) { device in
                 row(device, controls: list.controls[device.id])
+            }
+            if !list.possible.isEmpty || !list.couldLearn.isEmpty {
+                Text("Found on your network, not set up").font(.caption).foregroundStyle(.secondary)
+                ForEach(list.possible + list.couldLearn) { device in
+                    row(device, controls: list.controls[device.id])
+                }
             }
             if !list.others.isEmpty || list.unnamed > 0 {
                 DisclosureGroup(isExpanded: $showingEverything) {

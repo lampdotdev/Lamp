@@ -324,6 +324,8 @@ enum Gallery {
         offer: true)),
         // Lamp's card before the agent changes one of the person's devices (`device_permission`): only theirs to answer.
         ask("A device of the person's", DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")),
+        // The same for a device Lamp only found on the network, which may not be theirs.
+        ask("A device found on the network", DevicePermissions.card(device: "Samsung TV", doing: "Press Home and open Netflix to check the buttons", setUp: false)),
         ask("A device of the person's, answered", {
             var card = DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")
             card.answers = [DevicePermissions.allowOnce]

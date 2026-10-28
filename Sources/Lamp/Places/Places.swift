@@ -248,10 +248,18 @@ enum Places {
 
     /// The person's own devices Lamp knows of, each with its row, for the device line (`DeviceNote`): empty when it knows
     /// of none.
+    /// Those Lamp only found on the network are said apart, with their rows still: they may be a neighbor's, and an app
+    /// goes on one only once it's set up.
     static func known(_ devices: [Device]) -> String {
-        let named = devices.compactMap { device in row(for: device).map { "\(device.name) (\($0.name))" } }
-        guard !named.isEmpty else { return "" }
-        return "The person's own devices Lamp knows of: " + named.joined(separator: ", ") + "."
+        func named(_ devices: [Device]) -> [String] { devices.compactMap { device in row(for: device).map { "\(device.name) (\($0.name))" } } }
+        let mine = named(devices.filter(\.isSetUp)), possible = named(devices.filter { !$0.isSetUp })
+        var said: [String] = []
+        if !mine.isEmpty { said.append("The person's own devices Lamp knows of: " + mine.joined(separator: ", ") + ".") }
+        if !possible.isEmpty {
+            said.append("Found on the network but not set up with Lamp, so they may not be the person's: " + possible.joined(separator: ", ")
+                        + ". An app goes on one of these only once the person sets it up.")
+        }
+        return said.joined(separator: " ")
     }
 
     // MARK: Checking a request

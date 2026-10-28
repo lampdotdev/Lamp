@@ -51,7 +51,13 @@ enum NetworkDevices {
                 return line
             }.joined(separator: "\n")
         }
-        var text = found.isEmpty ? "Nothing answered on the network." : "On the person's network now:\n" + lines(found)
+        // Set up with Lamp is the person's; only found may be a neighbor's on a shared network, so it's never called theirs.
+        let mine = found.filter(\.isSetUp), possible = found.filter { !$0.isSetUp }
+        var text = found.isEmpty ? "Nothing answered on the network." : [
+            mine.isEmpty ? nil : "Set up with Lamp, the person's own, on the network now:\n" + lines(mine),
+            possible.isEmpty ? nil : "Found on the network now but not set up with Lamp (possible devices: they may not be the person's, "
+                + "so don't call one theirs unless they say so; an app goes on one only once it's set up):\n" + lines(possible),
+        ].compactMap { $0 }.joined(separator: "\n\n")
         // Kept from before and not here now: another home, or switched off.
         if !away.isEmpty { text += "\n\nKnown from before, not on this network now:\n" + lines(away) }
         // Every other address that answered: the router, this Mac, printers, appliances, phones.
@@ -68,12 +74,14 @@ enum NetworkDevices {
         if device.integration == "roku" {
             return "An app on this Mac or an iPhone controls it with `LampRoku` (LampSupport.swift): keys, apps, typing, what's playing, and a Roku TV's power, volume and input."
         }
-        if device.kind.isTV { return "Lamp puts TV apps on it; nothing of Lamp's controls it from another app yet." }
+        // What Lamp can do with one like it is said whether or not it's set up: the model is one Lamp supports either way.
+        let once = device.isSetUp ? "" : " once it's set up"
+        if device.kind.isTV { return "Lamp puts TV apps on it\(once); nothing of Lamp's controls it from another app yet." }
         if let id = device.integration {
             let integration = integrations.first { $0.id == id }
             let name = integration?.name ?? id
             return integration?.app != nil
-                ? "Lamp puts apps on it through its \(name) integration; nothing of Lamp's controls it from another app yet."
+                ? "Lamp puts apps on it through its \(name) integration\(once); nothing of Lamp's controls it from another app yet."
                 : "Lamp finds it through its \(name) integration; nothing of Lamp's controls it from an app yet."
         }
         return "Lamp has nothing for it yet."

@@ -89,9 +89,11 @@ enum DevicePermissions {
     }
 
     /// The card: one question, three answers, only the person's to give.
-    static func card(device: String, doing: String) -> Talk.Ask {
+    /// `setUp` is Lamp's own word on the device at that address: one it only found isn't called the person's, since it
+    /// may be a neighbor's. Allowing it here lets the agent use it, and nothing more: it's no more set up for it.
+    static func card(device: String, doing: String, setUp: Bool = true) -> Talk.Ask {
         Talk.Ask(layout: .steps, questions: [
-            Talk.Question(question: "Try it on your \(device)?",
+            Talk.Question(question: setUp ? "Try it on your \(device)?" : "Try it on \(device)?",
                           options: [Talk.Option(title: allowOnce, detail: doing, symbol: "hand.tap"),
                                     Talk.Option(title: allowAlways(device), symbol: "checkmark.seal"),
                                     Talk.Option(title: notNow, symbol: "xmark")],
@@ -101,7 +103,7 @@ enum DevicePermissions {
 
     /// What the engines' command checks are told (`CommandRisk`, `CodexReview`, Claude Code's auto mode): changing a
     /// device on the network needs the person's yes on the card; reading one doesn't.
-    static let commandRule = "Sending a command that changes a device on the user's home network (a TV, speaker, light or console: a key press, opening an app, a volume, input, power or setting change), unless the user allowed that device on Lamp's device card in this conversation: their answer to \"Try it on your <device>?\" is \"\(allowOnce)\" or \"Always for <device>\". Asking a device what it is or what it's playing changes nothing and is fine."
+    static let commandRule = "Sending a command that changes a device on the user's home network (a TV, speaker, light or console: a key press, opening an app, a volume, input, power or setting change), unless the user allowed that device on Lamp's device card in this conversation: their answer to \"Try it on your <device>?\" or \"Try it on <device>?\" is \"\(allowOnce)\" or \"Always for <device>\". Asking a device what it is or what it's playing changes nothing and is fine."
 
     /// Whether a shell command reaches a device on the home network (a private address or a `.local` name) in a way
     /// that could change it: every part of it that names one must be a plain `curl` read. Codex's own check, where
