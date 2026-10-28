@@ -5519,23 +5519,6 @@ final class Store: ObservableObject {
         refreshOpenApps()
     }
 
-    /// The sidebar in Chrome chose an app that isn't open: it opens as last built, behind the page the person is on.
-    /// Not while Lamp is building it, and only one try at a time while the app comes up.
-    func openForSidebar(_ project: LampProject) {
-        guard !busy.contains(project.id), macCopies(of: project).isEmpty,
-              FileManager.default.fileExists(atPath: project.installedURL.path),
-              openingForSidebar.insert(project.id).inserted else { return }
-        Task {
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = false
-            _ = try? await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
-            refreshOpenApps()
-            try? await Task.sleep(for: .seconds(15))
-            openingForSidebar.remove(project.id)
-        }
-    }
-    private var openingForSidebar: Set<String> = []
-
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
     /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture.
     private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
@@ -5581,17 +5564,6 @@ final class Store: ObservableObject {
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
-        }
-        if request["sidebar"] as? Bool == true {
-            guard BrowserBridge.enabled, project.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
-            // The sidebar is the open copy's too, so it's kept from the agent on the same terms as its windows (below).
-            if Runtime.holdsBuild(project), isRunning(project) {
-                return held(turn, in: project, note: Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote, using: true)
-            }
-            guard !macCopies(of: project).isEmpty else {
-                return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
-            }
-            return await BrowserPreview.use(project, actions: actions, page: request["page"] as? String, selection: request["selection"] as? String)
         }
         // A game is played in the preview, wherever else it's played: the same moves give the same frames.
         if GameKit.isGame(project), !GameKit.ownsLoop(project) { return await useOnGame(project, actions: actions) }
@@ -5716,26 +5688,6 @@ final class Store: ObservableObject {
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(Runtime.pictures(of: project), in: project)])
     }
-
-    /// `look_at_app` with `sidebar`: the app is built and opened as for any look, then its sidebar in Chrome is
-    /// drawn by Lamp (BrowserPreview) in place of its windows, beside the page the agent names.
-    private func lookAtSidebar(_ project: LampProject, page: String?, reopen: Bool = false) async -> (Int, [String: Any]) {
-        guard BrowserBridge.enabled, project.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
-        let window = await look(at: project, reopen: reopen)
-        guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
-        // What's open isn't the agent's change (or not the fresh launch it asked for) while it waits for the person:
-        // that's what the agent must hear, not a report of the old copy's sidebar.
-        if let text = window.1["text"] as? String, [Self.askedToReopenNote, Self.keptOpenNote].contains(text) || text.hasPrefix(Self.reloadNoteStart) { return window }
-        var (status, sidebar) = await BrowserPreview.look(project, page: page)
-        // The window beside it, so the sidebar's items are judged against the app's, not on their own.
-        if Privacy.sharesPictures, let pictures = window.1["screenshots"] as? [String], let front = pictures.first {
-            sidebar["screenshots"] = ((sidebar["screenshots"] as? [String]) ?? []) + [front]
-            sidebar["text"] = (sidebar["text"] as? String ?? "") + "\n\nThe app's front window follows it: the sidebar is a part of this app, so " +
-                "compare the two: each item in the sidebar shows what the window shows of it (its picture or symbol, its facts, in the same order and grouping), in Apple's own look with the window's tint."
-        }
-        return (status, sidebar)
-    }
-    private static let noSidebar = "Only a Mac app has a sidebar in Chrome, and only while Apps in Chrome is on in Lamp's Settings → Experimental."
 
     /// What the agent hears once the person has taken the app back, and from then on when it calls use_app.
     static let tookOverNote = "The person took the app over while you were trying it, so use_app is off until their next message. " +
@@ -6504,14 +6456,11 @@ final class Store: ObservableObject {
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
     private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
-            return (400, ["error": "`capability` must be text, decisions, pictures or browser."])
-        }
-        if capability == .browser && (!BrowserBridge.enabled || !project.hasMac) {
-            return (400, ["error": "A sidebar in Chrome is only for a Mac app, while Apps in Chrome is on in Lamp's Settings → Experimental."])
+            return (400, ["error": "`capability` must be text, decisions or pictures."])
         }
         let away = arguments["away"] as? Bool == true
         // Any app of the wish may be the one on the phone: a TV app's iPhone app is a part, not the app at its root.
-        guard !away || (Self.hasPhoneApp(project, parts: parts(of: project)) && capability != .browser) else {
+        guard !away || (Self.hasPhoneApp(project, parts: parts(of: project))) else {
             return (400, ["error": "`away` is only for iPhone apps."])
         }
         let why = (arguments["why"] as? String)?.trimmed ?? ""
@@ -10215,7 +10164,6 @@ final class Store: ObservableObject {
         switch capability {
         case .text: "\(project.name) just tried to use AI, but nothing on this Mac can answer yet. Set up one of the ways below and it will work the next time."
         case .decisions: "\(project.name) uses AI to make quick judgments, like yes or no, or which of a few options fits, but nothing on this Mac can make them yet. Set up one of the ways below and they will work the next time."
-        case .browser: "\(project.name) also works in Chrome. Connect Lamp to Chrome to use it beside a page."
         case .pictures: "\(project.name) just tried to make a picture, but nothing on this Mac can draw yet. Set up one of the ways below and it will work the next time."
         }
     }
@@ -10898,9 +10846,6 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
-        if BrowserBridge.enabled, request.path.hasPrefix("/browser/") {
-            return BrowserBridge.shared.handle(request, projects: projects)
-        }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/network", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
@@ -11737,11 +11682,9 @@ final class Store: ObservableObject {
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
         return await underTurn(of: project, app) {
-            arguments["sidebar"] as? Bool == true
-                ? await lookAtSidebar(app, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
-                : await look(at: app, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                             reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false,
-                             shape: arguments["shape"] as? String)
+            await look(at: app, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
+                       reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false,
+                       shape: arguments["shape"] as? String)
         }
     }
 

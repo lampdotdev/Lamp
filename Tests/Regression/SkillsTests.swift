@@ -38,7 +38,7 @@ final class SkillsTests: XCTestCase {
     /// Every skill a prompt can offer is in the bundle and reads as an Agent Skills file: a folder named as the
     /// skill, a one-line description within the format's limit, and instructions.
     func testEveryOfferedSkillShipsAndReads() {
-        XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design", "phone-controllers",
+        XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "device-integrations", "android-design", "phone-controllers",
                                            "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
                                            "scripting", "game", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
@@ -54,7 +54,7 @@ final class SkillsTests: XCTestCase {
         // whose code has one; designing for a TV by the TV rows of the table (`Place.skills`), to an app on one, whatever
         // its kind; a device's setup step by the skill itself (`SetupGuides`), to Lamp's setup alone; every other one is offered to some prompt. How an app's copies and a wish's apps share data
         // is offered to every kind that carries `LampWish`, which is every kind but a device's.
-        let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) + Skills.named($0) }
+        let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0) + Skills.named($0) }
         if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design"])
                                                        .subtracting(SetupGuides.registrations(shipped).map(\.skill))) }
         XCTAssertTrue(shipped["phone-controllers"]!.body.contains("phone-pages skill"))
@@ -68,8 +68,6 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Skills.offered(.iphone), everywhere + ["app-kinds", "iphone-hardware", "iphone-widgets", "apple-watch", "wish-links"])
         // An app for both has the Mac half's menu bar and the iPhone half's widgets, but no desktop widget or 3D.
         XCTAssertEqual(Skills.offered(.universal), everywhere + ["app-kinds", "menu-bar", "iphone-hardware", "iphone-widgets", "apple-watch", "wish-links"])
-        // The sidebar's page is offered wherever the prompt has the sidebar's rule, an app for both included.
-        XCTAssertEqual(Skills.offered(.universal, sidebar: true).last, "chrome-sidebar")
     }
 
     /// The Android prompt names its design skill, and the list it offers carries the skill's description.
@@ -93,9 +91,9 @@ final class SkillsTests: XCTestCase {
         XCTAssertTrue(shipped["maps"]!.body.contains("Overpass"))
     }
 
-    /// What only some apps need (how each kind of app looks, the menu bar, widgets, the watch, the phone's hardware,
-    /// the Chrome sidebar's details) is in skills: each prompt lists the ones it offers, names each where its short
-    /// rule is, and no longer carries what they say.
+    /// What only some apps need (how each kind of app looks, the menu bar, widgets, the watch, the phone's hardware)
+    /// is in skills: each prompt lists the ones it offers, names each where its short rule is, and no longer carries
+    /// what they say.
     func testPromptsListTheSkillsInsteadOfCarryingThem() {
         let moved: [String: [String]] = [
             "app-kinds": ["LazyVGrid", "kAXFocusedUIElementAttribute", "nonactivatingPanel", "a spring animation"],
@@ -104,17 +102,14 @@ final class SkillsTests: XCTestCase {
             "iphone-widgets": ["LAMP_WIDGET", "ControlWidgetButton", "Activity.request"],
             "apple-watch": ["LampWatched", "LampWorkout", "accessoryCorner"],
             "iphone-hardware": ["dailyTotals", "bonjourServices", "DataScannerViewController"],
-            "chrome-sidebar": ["data-lamp-reads", "LampBrowser.pageChanged", "lamp.onMenu"],
         ]
         for (name, phrases) in moved {
             for phrase in phrases { XCTAssertTrue(shipped[name]!.body.contains(phrase), "\(name) says \(phrase)") }
         }
-        BrowserBridge.testOverride = true
-        defer { BrowserBridge.testOverride = nil }
         let prompts: [(String, String, [String])] = [
-            ("Mac", Agent.systemPrompt, Skills.offered(.mac, sidebar: true)),
+            ("Mac", Agent.systemPrompt, Skills.offered(.mac)),
             ("iPhone", Agent.iPhonePrompt(for: .iphone), Skills.offered(.iphone)),
-            ("Mac and iPhone", Agent.universalPrompt(for: .iphone), Skills.offered(.universal, sidebar: true)),
+            ("Mac and iPhone", Agent.universalPrompt(for: .iphone), Skills.offered(.universal)),
         ]
         for (kind, prompt, offered) in prompts {
             let index = Skills.index(offered, from: shipped)
@@ -288,7 +283,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
     }
 
     func testParsing() {

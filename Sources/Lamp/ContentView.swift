@@ -341,11 +341,11 @@ enum AppInfoView {
         func answer(_ title: String, _ resolution: Resolution) -> SidebarInfoRow {
             SidebarInfoRow(label: title, value: resolution.tier == .none ? nil : short(resolution.answer ?? ""))
         }
-        var ai = Capability.allCases.filter { $0 != .browser }.map { answer($0.title, AppAI.resolve($0, for: project)) }
+        var ai = Capability.allCases.map { answer($0.title, AppAI.resolve($0, for: project)) }
         if project.hasIOS {
             // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
             if Provider.hasKey {
-                ai += Capability.allCases.filter { $0 != .browser }.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
+                ai += Capability.allCases.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
             } else {
                 ai.append(SidebarInfoRow(label: "Away from this Mac", value: nil))
             }
