@@ -161,4 +161,19 @@ final class ActLoopTests: XCTestCase {
         XCTAssertEqual(value(c, "seen") as? [Bool], [false, false, true])
         XCTAssertEqual(value(c, "requests[0].path") as? String, "/ai/act")
     }
+
+    /// A question back hands the page its choices as Lamp checked them, and checks them again: anything that isn't a
+    /// short plain set on a question comes through as none.
+    func testAQuestionsChoicesReachThePageOnlyAsAShortPlainSet() throws {
+        let c = try page()
+        c.evaluateScript("answers = [{ reply: 'Milk 2% is on the list. One more?', ask: true, choices: ['Yes', 'No'] }]; go('Add milk');")
+        settle(c)
+        XCTAssertEqual(value(c, "outcome.choices") as? [String], ["Yes", "No"])
+        c.evaluateScript("outcome = null; answers = [{ reply: 'Added.', ask: false, choices: ['Yes', 'No'] }]; go('Add milk');")
+        settle(c)
+        XCTAssertEqual(value(c, "outcome.choices") as? [String], [])
+        c.evaluateScript("outcome = null; answers = [{ reply: 'Which?', ask: true, choices: ['<b>Yes</b>', 'No'] }]; go('Add milk');")
+        settle(c)
+        XCTAssertEqual(value(c, "outcome.choices") as? [String], [])
+    }
 }

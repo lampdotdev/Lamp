@@ -45,7 +45,7 @@ final class AppActTests: XCTestCase {
         let r = try AppAct.parse(body(["steps": [["calls": [["id": "s1c1", "name": "addGrocery", "args": ["name": "milk"]]],
                                                   "results": [["id": "s1c1", "ok": true, "value": ["added": "Milk"]]]]]]))
         guard case .success(let parsed) = AppAct.parse(openRouterMessage: try message("reply"), for: r),
-              case .reply(let text, let ask) = parsed.answer else { return XCTFail("not a reply") }
+              case .reply(let text, let ask, _) = parsed.answer else { return XCTFail("not a reply") }
         XCTAssertTrue(text.contains("Milk"))
         XCTAssertFalse(ask)
     }
@@ -53,7 +53,7 @@ final class AppActTests: XCTestCase {
     func testWordsWithoutACallAreTheReply() throws {
         let r = try AppAct.parse(body())
         guard case .success(let parsed) = AppAct.parse(openRouterMessage: ["content": "Which store, the grocer or Costco?"], for: r),
-              case .reply(_, let ask) = parsed.answer else { return XCTFail("not a reply") }
+              case .reply(_, let ask, _) = parsed.answer else { return XCTFail("not a reply") }
         XCTAssertTrue(ask)
     }
 
@@ -112,5 +112,36 @@ final class AppActTests: XCTestCase {
         // What the app shows goes in fenced, as outside text.
         let user = ((sent["messages"] as? [[String: Any]])?[1]["content"] as? String) ?? ""
         XCTAssertTrue(user.contains("<outside-text-1>") && user.contains("eggs"))
+    }
+
+    /// A question's choices come only from the model's `reply`, and only as a set to choose from: two to four short,
+    /// distinct, plain-text answers to a question. Anything else is left out, and the question stands without buttons.
+    func testChoicesComeOnlyWithAQuestionAndOnlyAsAShortPlainSet() throws {
+        let r = try AppAct.parse(body())
+        func reply(_ args: [String: Any]) -> [String] {
+            let text = String(decoding: try! JSONSerialization.data(withJSONObject: args), as: UTF8.self)
+            let message: [String: Any] = ["tool_calls": [["id": "x", "type": "function", "function": ["name": "reply", "arguments": text]]]]
+            guard case .success(let parsed) = AppAct.parse(openRouterMessage: message, for: r),
+                  case .reply(_, _, let choices) = parsed.answer else { XCTFail("not a reply"); return ["?"] }
+            return choices
+        }
+        XCTAssertEqual(reply(["text": "Milk 2% is on the list. Add one more?", "ask": true, "choices": [" Yes ", "No"]]), ["Yes", "No"])
+        XCTAssertEqual(reply(["text": "Grocer or Costco?", "ask": true, "choices": ["Grocer", "Costco", "Either"]]), ["Grocer", "Costco", "Either"])
+        XCTAssertEqual(reply(["text": "Added milk.", "ask": false, "choices": ["Yes", "No"]]), [], "not a question")
+        XCTAssertEqual(reply(["text": "Which?", "ask": true, "choices": ["Yes"]]), [], "one isn't a choice")
+        XCTAssertEqual(reply(["text": "Which?", "ask": true, "choices": ["a", "b", "c", "d", "e"]]), [], "five is too many")
+        XCTAssertEqual(reply(["text": "Which?", "ask": true, "choices": ["**Yes**", "No"]]), [], "markup")
+        XCTAssertEqual(reply(["text": "Which?", "ask": true, "choices": ["Yes", "yes"]]), [], "the same twice")
+        XCTAssertEqual(reply(["text": "Which?", "ask": true, "choices": ["Yes", String(repeating: "x", count: 25)]]), [], "too long")
+        XCTAssertEqual(reply(["text": "Which?", "ask": true, "choices": ["Yes", 2]]), [], "not text")
+        // Words with no call are a reply with no choices; the page gets voice and typing.
+        guard case .success(let words) = AppAct.parse(openRouterMessage: ["content": "Do you want milk or eggs?"], for: r),
+              case .reply(_, true, let none) = words.answer else { return XCTFail("not a question") }
+        XCTAssertEqual(none, [])
+        // And the reply tool offers them to the model.
+        let tools = AppAct.openRouterBody(r, model: "m", tag: "t")["tools"] as? [[String: Any]] ?? []
+        let replyTool = tools.compactMap { $0["function"] as? [String: Any] }.first { $0["name"] as? String == "reply" }
+        let properties = (replyTool?["parameters"] as? [String: Any])?["properties"] as? [String: Any]
+        XCTAssertNotNil(properties?["choices"])
     }
 }

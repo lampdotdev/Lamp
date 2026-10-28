@@ -69,7 +69,7 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   right before it runs, makes the ids of what it adds from the call's key, and keeps what it changed for Undo,
   `App.changesOf`, `App.undoChange`), and the rules the views share with it (`App.categorize` for aisles, `App.chore`
   for ticking a chore and its stars).
-- `Web/js/agent.js`: Ask: the sheet, the turn (`LampAI.act` with the tools and the rules for asking back), what's
+- `Web/js/agent.js`: Ask: the panel floating over the page, the turn (`LampAI.act` with the tools and the rules for asking back), what's
   said, Undo, and voice where the app has it.
 - `Web/js/views/editor.js`: the Family and Chores sheets.
 - `Web/js/views/setup.js`: the welcome and the first-run setup.

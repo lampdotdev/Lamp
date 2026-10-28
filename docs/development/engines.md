@@ -196,6 +196,8 @@ A capability given to one engine must be given to all of them that can take it, 
   before it runs, stops at the deadline in every layer (the step's request, `send`'s retries) and drops an answer that
   comes after a cancel. Only OpenRouter answers: tools with `require_parameters` and `tool_choice` "auto" ("none" for
   the reply-only step), since the Anthropic models there take nothing stronger, so words without a call are the reply.
+  A question back may carry `choices` from `reply` (two to four short plain-text answers, checked by `AppAct.choices`
+  and again in lamp.js); words without a call carry none.
   Every other route answers 501 with a sentence saying so; Claude Code and Codex would take a JSON plan through their
   `--json-schema`/`--output-schema` paths, a GGUF model through `response_format`, and mlx_lm.server has neither.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around

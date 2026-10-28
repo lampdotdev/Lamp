@@ -47,6 +47,9 @@ seconds a turn). Its comment in lamp.js has the shapes. This is the one recipe f
   finds it instead of adding a second.
 - Say what happened from the result's `done`, `failed` and `skipped`, which are what the page ran, never from the AI's
   `reply`; add the reply only when it asks something (`ask`) or nothing was changed.
+- A question back may come with `choices` (two to four short answers): offer them as buttons with the first focused,
+  and take only the first answer, a button, what was heard or what was typed. With none, it's answered by voice or
+  typing; never guess choices from the question's wording.
 - Keep what each write changed for Undo, and undo only what's still as the write left it; say which ones it left.
 - Show each step while it runs (`onStep`), and cancel the turn (`turn.cancel()`) when the person closes it or the page
   is hidden.
@@ -61,12 +64,17 @@ turns it into text for `act`. Their comments in lamp.js have the details. The re
 - One deliberate press starts listening (opening the app's Ask), never a key that means something else on the remote;
   show the level as it's heard, a Stop that the opening press can't trigger, and "Type instead" wherever text can be
   typed. Never hide a typed way in because there's no voice.
+- Float Ask over the page rather than replacing it, and keep the remote in it while it's open (`Lamp.scope`, Tab on
+  the Mac), with something in it always focused; give focus back to where it was when it closes. A button newly
+  focused ignores OK for a moment, so a held press doesn't press it.
 - Give every recording a session of the page's own, and cancel it (`LampVoice.cancel`) when the person closes or the
   page hides; drop any recording, transcript or answer that comes back for a session that has ended, and a transcript
   that comes back after the person has typed or talked again.
 - Act only on `quiet` and `stopped`: `cap` may have cut the person off, so ask them to say it again shorter; say so
   plainly for `nothing` and `denied`.
-- Read the reply out with `LampVoice.speak`, and listen again for an answer only once it has finished.
+- Read the reply out with `LampVoice.speak`, and listen again for an answer only once it has finished, without moving
+  focus off the choices. Close by itself only after a finished answer, counted from when it was read out and put off by
+  any press; never while a question waits or after a failure.
 
 ## The person's own things
 

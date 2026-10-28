@@ -790,7 +790,7 @@ enum DeviceSupport {
         }
         var ran = actRan[id];
         var deadline = Date.now() + limits.seconds * 1000;
-        var out = { turn: id, reply: '', ask: false, done: [], failed: [], skipped: [], reads: [], stopped: null, error: '' };
+        var out = { turn: id, reply: '', ask: false, choices: [], done: [], failed: [], skipped: [], reads: [], stopped: null, error: '' };
         var steps = [], route = null, writes = 0, over = false, settle;
         var declared = Object.keys(tools).map(function (name) {
           var t = tools[name];
@@ -912,6 +912,11 @@ enum DeviceSupport {
             }
             out.reply = typeof answer.reply === 'string' ? answer.reply : '';
             out.ask = answer.ask === true;
+            // A question's answers to offer, as Lamp checked them: two to four short plain-text strings, or none.
+            var offered = out.ask && Object.prototype.toString.call(answer.choices) === '[object Array]' ? answer.choices : [];
+            out.choices = offered.length >= 2 && offered.length <= 4 && offered.every(function (c) {
+              return typeof c === 'string' && c.trim() && c.length <= 24 && !/[<>*_`#\[\]{}|\\\n\r\t]/.test(c);
+            }) ? offered.map(function (c) { return c.trim(); }) : [];
             stop(null);
           }, function (e) {
             var message = refused(e);
@@ -1016,7 +1021,7 @@ enum DeviceSupport {
          *       history: [{ said: 'Who did it?', heard: 'Maya' }],             // the last 3 exchanges, kept by the app
          *       onStep: function (s) { … }                                     // { kind, name, args[, result] }
          *     });
-         *     turn.result.then(function (r) { r.reply; r.ask; r.done; r.failed; r.skipped; r.stopped; });
+         *     turn.result.then(function (r) { r.reply; r.ask; r.choices; r.done; r.failed; r.skipped; r.stopped; });
          *     turn.cancel();
          *
          * An argument's shape is { type: 'string' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'list',
@@ -1025,7 +1030,8 @@ enum DeviceSupport {
          * that fails stops the writes after it in that step (`skipped`). Cancel and the time stop the turn between
          * calls, never in the middle of a write; an answer that comes after runs nothing.
          *
-         * Say what happened from `done`, `failed` and `skipped`, never from `reply`: they're what the page ran.
+         * Say what happened from `done`, `failed` and `skipped`, never from `reply`: they're what the page ran. A question
+         * back (`ask`) may come with `choices`, two to four short answers to offer as buttons; with none, any answer goes.
          * `call.key` is the same for the same write in the same turn: make the ids of what a write creates from it, or
          * keep it on the change, so a write asked again (or a turn tried again with `turn: r.turn`) finds it instead of
          * adding a second. The same write in one turn while the page is open isn't run twice; nothing promises more.

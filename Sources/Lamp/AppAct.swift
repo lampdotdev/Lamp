@@ -259,6 +259,7 @@ enum AppAct {
     - Never say something was done unless its result says it was. If something failed or was skipped, say so.
     - When the request is met, or you need to ask, finish with `reply`: one or two short sentences that can be spoken \
     aloud, no lists, no emoji, no markdown. Set `ask` to true only when the reply is a question for the person.
+    - When your question has a few short answers (yes or no, which of two or three), give them in `choices`: two to     four, each a word or a few, plain text, in the order to offer them. Leave `choices` out when any answer could do.
     """
 
     /// Wraps outside text the way lamp.js's `fenced` does: a tag nobody could have guessed, and the same rules.
@@ -310,7 +311,9 @@ enum AppAct {
         tools.append(["type": "function", "function": [
             "name": replyTool, "description": "Finish the turn: what to tell the person, or a question back.",
             "parameters": ["type": "object", "additionalProperties": false, "required": ["text", "ask"],
-                           "properties": ["text": ["type": "string"], "ask": ["type": "boolean"]]] as [String: Any]] as [String: Any]])
+                           "properties": ["text": ["type": "string"], "ask": ["type": "boolean"],
+                                          "choices": ["type": "array", "maxItems": maxChoices,
+                                                      "items": ["type": "string", "maxLength": maxChoiceLength]] as [String: Any]]] as [String: Any]] as [String: Any]])
         let choice = r.final ? "none" : "auto"
         return ["model": model, "messages": messages, "tools": tools, "tool_choice": choice, "max_tokens": 2000,
                 "usage": ["include": true], "provider": ["require_parameters": true]]
@@ -318,7 +321,25 @@ enum AppAct {
 
     enum Answer: Equatable {
         case calls([String])   // the calls' ids, in `calls`
-        case reply(String, ask: Bool)
+        case reply(String, ask: Bool, choices: [String] = [])
+    }
+
+    /// A question's answers to offer as buttons (and say): at most this many, each this long at most.
+    static let maxChoices = 4, maxChoiceLength = 24
+
+    /// The model's `choices`, kept only when they're a real set to choose from: on a question, two to four distinct
+    /// short plain-text answers. Anything else is dropped rather than asked again: the question still works by voice
+    /// and typing.
+    static func choices(_ raw: Any?, ask: Bool) -> [String] {
+        guard ask, let list = raw as? [Any], (2...maxChoices).contains(list.count) else { return [] }
+        var out: [String] = []
+        for item in list {
+            guard let text = (item as? String)?.trimmed, !text.isEmpty, text.count <= maxChoiceLength,
+                  text.rangeOfCharacter(from: CharacterSet(charactersIn: "<>*_`#[]{}|\\\n\r\t")) == nil,
+                  !out.contains(where: { $0.caseInsensitiveCompare(text) == .orderedSame }) else { return [] }
+            out.append(text)
+        }
+        return out
     }
 
     struct Parsed {
@@ -326,7 +347,7 @@ enum AppAct {
         var calls: [Call] = []
         var json: [String: Any] {
             switch answer {
-            case .reply(let text, let ask): ["reply": text, "ask": ask]
+            case .reply(let text, let ask, let choices): choices.isEmpty ? ["reply": text, "ask": ask] : ["reply": text, "ask": ask, "choices": choices]
             case .calls: ["calls": calls.map(\.json)]
             }
         }
@@ -355,7 +376,8 @@ enum AppAct {
             if name == replyTool {
                 guard raw.count == 1 else { return .failure(.init("`reply` must come alone, after the other calls have run.")) }
                 guard let words = (args["text"] as? String)?.trimmed, !words.isEmpty else { return .failure(.init("`reply` needs its text.")) }
-                return .success(Parsed(answer: .reply(words, ask: args["ask"] as? Bool ?? false)))
+                let ask = args["ask"] as? Bool ?? false
+                return .success(Parsed(answer: .reply(words, ask: ask, choices: choices(args["choices"], ask: ask))))
             }
             if r.final { return .failure(.init("Only `reply` is possible now.")) }
             guard let tool = r.tools.first(where: { $0.name == name }) else { return .failure(.init("There's no tool called \(name).")) }

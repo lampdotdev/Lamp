@@ -6,7 +6,12 @@
 // The Ask button shows wherever it works: LampAI.isAvailable('act') (this page, the app around it and the AI set up in
 // Lamp can all take it). Where the app around the page can hear (LampVoice: the Mac, iPhone and iPad, Android and
 // Android TV, a TV remote's microphone included) and Lamp can transcribe (LampAI.isAvailable('hear')), opening Ask
-// listens straight away: one press on the rail's Ask, then talk. Typing stays one press away everywhere (Type instead).
+// listens straight away: one press on the rail's Ask, then talk. Typing stays one press away everywhere (Type).
+//
+// Ask floats over the page, a small panel at the bottom: what was said, what's happening or what happened, and its few
+// buttons. While it's open the remote's focus stays in it (Lamp.scope, and Tab on the Mac), something in it always has
+// focus, and the page's own shortcuts wait. A question back is read out, offers the AI's choices as buttons with the
+// first focused, and listens again by itself: the first answer, said or pressed, is the one taken.
 (function () {
   'use strict';
   var D = window.DATA;
@@ -15,8 +20,10 @@
   // it came from, every question and answer of the chain so far, what's asked now and what was already done, so the
   // answer is read against all of them. `heard` counts what was said: a recording, its transcription, and typing all
   // take a new count, so a transcription that comes back after the person has typed or talked again is dropped.
+  // `q` is the question on screen, open until its first answer (a button, what was heard, or typing) claims it.
   var S = { turn: null, voice: null, hear: false, listening: false, listenTag: '', armedAt: 0, pending: null, last: null,
-            el: null, session: 0, followUp: null, tags: 0, heard: 0, ready: null, lines: 0 };
+            el: null, session: 0, followUp: null, tags: 0, heard: 0, ready: null, lines: 0, q: null, qs: 0,
+            closer: null, before: null, offBack: null, acts: [], focusKey: '' };
 
   var ABOUT = 'Home HQ is a family dashboard on the kitchen wall: the family, today and the calendar, the chores for ' +
     'each part of the day, and the shopping list. You act for whoever is talking to it.\n' +
@@ -102,34 +109,136 @@
   // Ends this session: nothing it started (a follow-up listen, a recording, a transcription, a turn) carries on.
   function end() {
     S.session++;
+    S.heard++;
     clearTimeout(S.followUp);
     S.followUp = null;
-    if (S.turn) { S.turn.cancel(); S.turn = null; busy(false); }
+    stayOpen();
+    if (S.turn) { S.turn.cancel(); S.turn = null; }
     if (S.listening) { S.listening = false; LampVoice.cancel(S.listenTag); }
+    if (S.q) S.q.open = false;
     hush();
   }
 
-  // ------------------------------------------------------------ the sheet
-  function line(cls, html) {
-    if (!S.el) return;
-    S.lines++;
-    var log = S.el.querySelector('.ask-log'), d = document.createElement('div');
-    d.className = 'ask-line ' + cls;
-    d.innerHTML = html;
-    log.appendChild(d);
-    log.scrollTop = log.scrollHeight;
-    return d;
+  // ------------------------------------------------------------ the panel
+  function el(sel) { return S.el && S.el.querySelector(sel); }
+  // What's happening now: what was said, and what it's doing or what it did. The exchange before moves up, dimmed; the
+  // line here always says in full what changed.
+  function show(now, cls) {
+    var box = el('[data-ask-now]');
+    if (!box) return;
+    box.className = 'ask-now' + (cls ? ' ' + cls : '');
+    box.innerHTML = now ? App.esc(now) : '';
+    note('');
   }
-  function busy(on) {
+  function note(text) { var n = el('[data-ask-note]'); if (n) n.innerHTML = text ? App.esc(text) : ''; }
+  function youSaid(text) {
+    var you = el('[data-ask-you]'), now = el('[data-ask-now]'), past = el('[data-ask-past]');
+    if (!you) return;
+    if (you.innerHTML || (now && now.innerHTML && S.lines)) {
+      var d = document.createElement('div');
+      d.className = 'ask-was';
+      d.innerHTML = (you.innerHTML ? '<span class="ask-was-you">' + you.innerHTML + '</span> ' : '') + (now ? now.innerHTML : '');
+      past.appendChild(d);
+      while (past.children && past.children.length > 2) past.removeChild(past.children[0]);
+    }
+    you.innerHTML = text ? App.esc(text) : '';
+    S.lines++;
+  }
+  function meter(level) { var m = el('[data-meter]'); if (m) m.style.width = Math.round(Math.min(1, level) * 100) + '%'; }
+  function listeningLook(on) {
     if (!S.el) return;
-    S.el.classList.toggle('is-busy', on);
-    S.el.querySelector('[data-ask-send]').disabled = on;
+    S.el.classList.toggle('is-listening', on);
+    var m = el('[data-ask-meter]');
+    if (m) m.hidden = !on;
+    if (!on) meter(0);
+  }
+
+  // The panel's buttons, by key: `mic` (Talk, or Stop while listening), `type`, `undo`, `close` and `choice:N`. Focus
+  // stays on the same key across a change (the mic turning from Talk to Stop keeps it); otherwise it goes where asked,
+  // or to the first. A button newly given focus ignores OK for a moment, so a held or repeated press that came before
+  // it never presses it.
+  function acts(list, focusKey) {
+    var box = el('[data-ask-acts]');
+    if (!box) return;
+    S.acts = list;
+    box.innerHTML = list.map(function (b) {
+      return '<button type="button" class="btn ' + (b.solid ? 'btn--solid' : 'btn--ghost') + ' ask-act" data-ask-act="' + b.key + '">' +
+        (b.icon ? App.icon(b.icon, 24) : '') + App.esc(b.label) + '</button>';
+    }).join('');
+    var typing = document.activeElement && document.activeElement.tagName === 'INPUT' && S.el.contains(document.activeElement);
+    if (typing && !focusKey) return;
+    var keys = list.map(function (b) { return b.key; });
+    var key = focusKey && keys.indexOf(focusKey) >= 0 ? focusKey : keys.indexOf(S.focusKey) >= 0 ? S.focusKey : keys[0];
+    if (!key) return;
+    if (key !== S.focusKey) S.armedAt = Date.now();
+    S.focusKey = key;
+    var b = box.querySelector('[data-ask-act="' + key + '"]');
+    if (b) b.focus();
+  }
+  function mic() { return { key: 'mic', label: S.listening ? 'Stop' : 'Talk', icon: S.listening ? '' : 'mic', solid: true }; }
+  function questionActs() {
+    var list = (S.q && S.q.open ? S.q.choices : []).map(function (c, i) { return { key: 'choice:' + i, label: c, solid: i === 0 }; });
+    if (canHear()) list.push(mic());
+    list.push({ key: 'type', label: 'Type' });
+    return list;
+  }
+  function idleActs(undoable) {
+    var list = [];
+    if (undoable) list.push({ key: 'undo', label: 'Undo', icon: 'undo', solid: true });
+    if (canHear()) list.push(mic());
+    list.push({ key: 'type', label: 'Type' });
+    list.push({ key: 'close', label: 'Close' });
+    return list;
+  }
+  function settle(undoable) { acts(S.q && S.q.open ? questionActs() : idleActs(undoable)); }
+
+  function press(key) {
+    stayOpen();
+    if (key === 'mic') return S.listening ? stopListening() : listen(S.q && S.q.open ? S.q.id : 0);
+    if (key === 'type') return typeInstead();
+    if (key === 'close') return close();
+    if (key === 'undo') return undo();
+    if (key.indexOf('choice:') === 0) {
+      var q = S.q, choice = q && q.choices[+key.slice(7)];
+      if (choice && claim(q.id)) ask(choice);
+    }
+  }
+
+  // The question on screen is answered once: the first of a button, what was heard or what was typed claims it, and
+  // ends whatever else was answering it (the recording, its transcription, the voice still reading it, a listen to come).
+  function claim(id) {
+    var q = S.q;
+    if (!q || q.id !== id || !q.open) return false;
+    q.open = false;
+    clearTimeout(S.followUp);
+    S.followUp = null;
+    S.heard++;
+    if (S.listening) { S.listening = false; LampVoice.cancel(S.listenTag); listeningLook(false); }
+    hush();
+    return true;
+  }
+
+  // Closing by itself: only after a finished answer, counted from when it has been read out, and put off by anything
+  // the person does. Never while a question waits, nor after a failure or a part done. With Undo there's longer.
+  function closeLater(undoable) {
+    stayOpen();
+    var session = S.session;
+    S.closeAfter = undoable ? 20000 : 8000;
+    S.closer = setTimeout(function () { if (live(session)) close(); }, S.closeAfter);
+  }
+  function stayOpen() { clearTimeout(S.closer); S.closer = null; }
+  function touched() {
+    if (!S.closer) return;
+    var after = S.closeAfter, session = S.session;
+    clearTimeout(S.closer);
+    S.closer = setTimeout(function () { if (live(session)) close(); }, after);
   }
 
   function ask(text) {
     text = String(text || '').trim();
     if (!text || S.turn || !S.el) return;
     hush();
+    stayOpen();
     clearTimeout(S.followUp);
     // An answer to a question back goes with the request it came from, so "Maya" after "Who did it?" still means the
     // dishes, and what that request already did isn't done again.
@@ -143,35 +252,38 @@
       history = answered.slice(-3).map(function (x) { return { said: x.question, heard: x.answer }; });
     }
     var session = S.session;
-    line('ask-you', App.esc(text));
-    var doing = line('ask-doing', 'Thinking…');
-    busy(true);
-    var undoBox = S.el && S.el.querySelector('[data-ask-undo]');
-    if (undoBox) undoBox.hidden = true;
+    S.q = null;
+    youSaid(text);
+    show('Thinking…', 'is-doing');
+    acts([{ key: 'close', label: 'Close' }]);
     S.turn = LampAI.act(request, {
       about: ABOUT, tools: tools, history: history,
       context: { people: App.read.people(), today: App.dayText(App.now()) },
-      onStep: function (s) { if (doing && !s.result) doing.textContent = (DOING[s.name] || s.name) + (s.args.name || s.args.title ? ' ' + (s.args.name || s.args.title) : '') + '…'; }
+      onStep: function (s) { if (live(session) && !s.result) show((DOING[s.name] || s.name) + (s.args.name || s.args.title ? ' ' + (s.args.name || s.args.title) : '') + '…', 'is-doing'); }
     });
     var id = S.turn.id;
     S.turn.result.then(function (r) {
-      // Cancelled by a close or the page hiding: only its "Thinking…" line goes.
-      if (!S.turn || S.turn.id !== id || session !== S.session) { if (doing && doing.parentNode) doing.parentNode.removeChild(doing); return; }
+      // Cancelled by a close or the page hiding: nothing more.
+      if (!S.turn || S.turn.id !== id || session !== S.session) return;
       S.turn = null;
-      busy(false);
-      if (doing && doing.parentNode) doing.parentNode.removeChild(doing);
-      var spoken = words(r);
-      if (r.stopped !== 'cancelled') line('ask-them' + (r.failed.length || r.stopped ? ' is-partly' : ''), App.esc(spoken));
-      var did = receipt(r);
+      var spoken = words(r), did = receipt(r), partly = !!(r.failed.length || r.stopped);
       S.pending = r.ask ? { request: pending ? pending.request : text, answered: answered, question: r.reply,
                             done: [pending && pending.done, did].filter(function (x) { return x; }).join(' ') } : null;
       S.last = r.turn;
-      if (App.changesOf(r.turn).length && S.el) S.el.querySelector('[data-ask-undo]').hidden = false;
-      // A question back: listen for the answer once it has been said to the end, while Ask is still open.
-      speak(spoken).then(function (said) {
-        if (!said || !r.ask || !canHear() || !live(session)) return;
-        S.followUp = setTimeout(function () { if (live(session)) listen(); }, 300);
-      });
+      var undoable = App.changesOf(r.turn).length > 0;
+      show(spoken, partly ? 'is-partly' : '');
+      if (r.ask) {
+        var q = S.q = { id: ++S.qs, open: true, choices: (r.choices || []).slice(0, 4) };
+        acts(questionActs(), q.choices.length ? 'choice:0' : (canHear() ? 'mic' : 'type'));
+        // Read out, then listen for the answer by itself, while this same question is still waiting.
+        speak(spoken).then(function (done) {
+          if (!done || !canHear() || !live(session) || S.q !== q || !q.open) return;
+          S.followUp = setTimeout(function () { if (live(session) && S.q === q && q.open) listen(q.id); }, 250);
+        });
+        return;
+      }
+      settle(undoable);
+      speak(spoken).then(function () { if (live(session) && !S.turn && !S.listening && !partly && !S.q) closeLater(undoable); });
     });
   }
 
@@ -183,162 +295,181 @@
     App.changesOf(S.last).length = 0;
     App.emit('data');
     App.rerender();
-    var text = (back.length ? 'Undid ' + back.join(', ') + '.' : '') + (kept.length ? ' Left ' + kept.join(', ') + ': changed since.' : '');
-    line('ask-them', App.esc(text.trim()));
-    speak(text.trim());
-    S.el.querySelector('[data-ask-undo]').hidden = true;
+    var text = ((back.length ? 'Undid ' + back.join(', ') + '.' : '') + (kept.length ? ' Left ' + kept.join(', ') + ': changed since.' : '')).trim();
+    youSaid('');
+    show(text, kept.length ? 'is-partly' : '');
+    settle(false);
+    var session = S.session;
+    speak(text).then(function () { if (live(session) && !S.turn && !S.listening && !S.q && !kept.length) closeLater(false); });
   }
 
-  // The voice controls: Talk when idle, Stop while listening, the level as it's heard, and what's happening.
-  function voiceState(kind, words) {
-    if (!S.el) return;
-    var talk = S.el.querySelector('[data-ask-talk]'), stop = S.el.querySelector('[data-ask-stop]');
-    if (talk) talk.hidden = kind === 'listening';
-    if (stop) stop.hidden = kind !== 'listening';
-    S.el.classList.toggle('is-listening', kind === 'listening');
-    var said = S.el.querySelector('[data-ask-voice-state]');
-    if (said) said.textContent = words || '';
-    if (kind !== 'listening') meter(0);
-  }
-  function meter(level) { var m = S.el && S.el.querySelector('[data-meter]'); if (m) m.style.width = Math.round(Math.min(1, level) * 100) + '%'; }
-
-  function listen() {
+  // Listening, for a new request or (with `answering`) for the answer to the question on screen. Opening Ask gives the
+  // mic (Stop) focus; listening again for an answer leaves focus where it is, on the first choice.
+  function listen(answering) {
     if (!canHear() || S.listening || S.turn || !S.el || document.hidden) return;
+    if (answering && !(S.q && S.q.id === answering && S.q.open)) return;
     var session = S.session, tag = 'ask' + session + '-' + (++S.tags), heard = ++S.heard;
     hush();
-    S.listening = true; S.listenTag = tag; S.armedAt = Date.now();
-    voiceState('listening', 'Listening… say what you want.');
-    var stop = S.el.querySelector('[data-ask-stop]');
-    if (stop) stop.focus();
-    LampVoice.listen({ session: tag, onLevel: function (l) { if (live(session)) meter(l.level); } }).then(function (audio) {
-      // Heard after Ask closed or the page hid: dropped, never transcribed, never a turn.
-      if (session !== S.session || tag !== S.listenTag) return;
+    stayOpen();
+    S.listening = true; S.listenTag = tag;
+    listeningLook(true);
+    if (answering) { note('Listening… say your answer, or choose.'); acts(questionActs()); }
+    else { youSaid(''); show('Listening… say what you want.'); S.armedAt = Date.now(); acts(S.q && S.q.open ? questionActs() : [mic(), { key: 'type', label: 'Type' }], S.q && S.q.open ? '' : 'mic'); }
+    LampVoice.listen({ session: tag, onLevel: function (l) { if (live(session) && heard === S.heard) meter(l.level); } }).then(function (audio) {
+      // Heard after Ask closed, the page hid, or something else answered or replaced it: dropped, never a turn.
+      if (session !== S.session || tag !== S.listenTag || heard !== S.heard) return;
       S.listening = false;
+      listeningLook(false);
       if (!live(session)) return;
-      var ended = audio.ended;
-      if (ended === 'cancelled') return voiceState('idle', '');
-      if (ended === 'denied') { voiceState('idle', ''); line('ask-them', 'Home HQ can’t use the microphone. Allow it in Settings, or type instead.'); return showTyping(); }
-      if (ended === 'nothing') {
-        voiceState('idle', '');
-        return line('ask-them', audio.peak < 0.01 ? 'I didn’t hear anything: no sound reached the microphone.' : 'I didn’t hear anything. Press Talk and try again.');
-      }
+      var ended = audio.ended, waiting = S.q && S.q.open;
+      settle(false);
+      function again(text, cls) { if (waiting) note(text); else show(text, cls); settle(false); }
+      if (ended === 'cancelled') return settle(false);
+      if (ended === 'denied') { again('Home HQ can’t use the microphone. Allow it in Settings, or type.'); return showTyping(); }
+      // Nothing said: the question and its buttons stay, with Talk to say it again.
+      if (ended === 'nothing') return again(audio.peak < 0.01 ? 'I didn’t hear anything: no sound reached the microphone.' : 'I didn’t hear anything. Say it again with Talk' + (waiting ? ', or choose.' : '.'));
       // Fifteen seconds may have cut the request off: never act on half of it.
-      if (ended === 'cap') { voiceState('idle', ''); return line('ask-them is-partly', 'That was longer than I can take at once. Say it again, a little shorter.'); }
-      if (ended === 'error' || !audio.audio) { voiceState('idle', ''); return line('ask-them is-partly', App.esc(audio.error || 'The microphone didn’t work.')); }
-      voiceState('hearing', 'Working out what you said…');
-      // Only while it's still the last thing said: talking again or typing meanwhile drops it.
+      if (ended === 'cap') return again('That was longer than I can take at once. Say it again, a little shorter.', 'is-partly');
+      if (ended === 'error' || !audio.audio) return again(audio.error || 'The microphone didn’t work.', 'is-partly');
+      if (waiting) note('Working out what you said…'); else show('Working out what you said…', 'is-doing');
+      // Only while it's still the last thing said: talking again, typing or a button meanwhile drops it.
       function current() { return live(session) && heard === S.heard; }
       LampAI.hear(audio.audio).then(function (r) {
         if (!current()) return;
-        voiceState('idle', '');
-        if (r.nothing) return line('ask-them', 'I didn’t catch that. Press Talk and try again.');
+        if (r.nothing) return again('I didn’t catch that. Say it again with Talk' + (waiting ? ', or choose.' : '.'));
+        if (answering && !claim(answering)) return;
         ask(r.text);
       }, function (e) {
         if (!current()) return;
-        voiceState('idle', '');
-        line('ask-them is-partly', App.esc(e && e.message || 'I couldn’t hear that.'));
+        again(e && e.message || 'I couldn’t hear that.', 'is-partly');
       });
     });
   }
 
   // Stop keeps what was said so far. Not in the first moment after listening starts: the press that opened Ask (its key
   // coming up, or repeating) mustn't also end what it began.
-  function stopListening(e) {
-    if (e && e.repeat) return;
+  function stopListening() {
     if (!S.listening || Date.now() - S.armedAt < 700) return;
     LampVoice.stop(S.listenTag);
   }
-  // Typing instead: a recording is let go, and what was being worked out from one is dropped.
+  // Typing: a recording is let go, and what was being worked out from one is dropped. A question on screen stays open
+  // for the typed answer.
   function typeInstead() {
     S.heard++;
-    if (S.listening) { S.listening = false; LampVoice.cancel(S.listenTag); }
-    voiceState('idle', '');
+    clearTimeout(S.followUp);
+    if (S.listening) { S.listening = false; LampVoice.cancel(S.listenTag); listeningLook(false); }
+    hush();
+    note('');
+    settle(false);
     showTyping();
   }
   function showTyping() {
     if (!S.el) return;
-    var form = S.el.querySelector('[data-ask-form]');
-    form.hidden = false;
-    S.el.querySelector('[data-ask-input]').focus();
+    el('[data-ask-form]').hidden = false;
+    el('[data-ask-input]').focus();
+  }
+  function typed(text) {
+    if (!String(text || '').trim()) return;
+    if (S.q && S.q.open && !claim(S.q.id)) return;
+    S.heard++;
+    ask(text);
   }
 
-  // Talking or typing: the voice row (Talk, Stop, the level, Type instead) where it can hear, the typed box otherwise, and
-  // a word when only transcription is missing.
-  function setMode(voice) {
-    if (!S.el) return;
-    S.el.querySelector('[data-ask-voice]').hidden = !voice;
-    S.el.querySelector('[data-ask-form]').hidden = voice;
-    S.el.querySelector('[data-ask-note]').hidden = !(S.voice && S.voice.listen && !S.hear);
-  }
-  // With a voice, opening Ask is listening (one press), unless the microphone was refused; otherwise it's typing.
+  // Talking or typing: the mic where it can hear, the typed box otherwise, and a word when only transcription is missing.
   function begin() {
     var voice = canHear();
-    setMode(voice);
-    if (voice && S.voice.permission !== 'denied') listen();
-    else if (voice) { voiceState('idle', ''); S.el.querySelector('[data-ask-talk]').focus(); }
-    else S.el.querySelector('[data-ask-input]').focus();
+    el('[data-ask-form]').hidden = voice;
+    if (S.voice && S.voice.listen && !S.hear) note('Talking needs OpenRouter set up in Lamp on the Mac. You can type.');
+    if (voice && S.voice.permission !== 'denied') return listen();
+    show('');
+    acts(idleActs(false), voice ? 'mic' : 'type');
+    if (!voice) el('[data-ask-input]').focus();
+  }
+
+  // The panel keeps the keys: Tab goes round its own buttons (the arrows already do, through Lamp.scope), a held or
+  // repeated OK presses nothing new, and anything pressed puts off closing by itself.
+  function keys(e) {
+    touched();
+    if ((e.key === 'Enter' || e.keyCode === 13) && e.repeat && e.target && e.target.tagName !== 'INPUT') { e.preventDefault(); e.stopPropagation(); return; }
+    if (e.key !== 'Tab') return;
+    var list = Array.prototype.slice.call(S.el.querySelectorAll('button, input')).filter(function (b) { return !b.disabled && b.offsetParent !== null; });
+    if (!list.length) return;
+    var i = list.indexOf(document.activeElement);
+    e.preventDefault();
+    list[(i + (e.shiftKey ? -1 : 1) + list.length) % list.length].focus();
   }
 
   function open() {
-    App.sheet('<div class="sheet-pad ask"><div class="label">Ask Home HQ</div>' +
-      '<div class="ask-log" aria-live="polite"></div>' +
-      '<div class="ask-voice" data-ask-voice hidden><button type="button" class="btn btn--solid ask-talk" data-ask-talk>' + App.icon('mic', 26) + 'Talk</button>' +
-        '<button type="button" class="btn btn--solid ask-stop" data-ask-stop hidden>Stop</button>' +
-        '<div class="ask-meter"><i data-meter></i></div><span class="ask-voice-state" data-ask-voice-state></span>' +
-        '<button type="button" class="btn btn--ghost ask-type" data-ask-type>Type instead</button></div>' +
-      '<form class="ask-row" data-ask-form>' +
-      '<input class="ask-input" data-ask-input placeholder="Add milk · Mark the dishes done · What\'s on after school?" autocomplete="off">' +
-      '<button class="btn btn--solid" data-ask-send>Ask</button></form>' +
-      '<button class="btn btn--ghost ask-undo" data-ask-undo hidden>' + App.icon('undo', 22) + 'Undo</button>' +
-      '<p class="sheet-p ask-note" data-ask-note hidden>Talking needs OpenRouter set up in Lamp on the Mac. You can type instead.</p>' +
-      '</div>', {
-      cls: 'sheet--wide',
-      onClose: function () {
-        // Closing ends the session: a recording is thrown away, and an answer, a transcript, a follow-up listen or
-        // the voice answering late that comes after does nothing.
-        end();
-        S.pending = null;
-        clearInterval(S.awake);
-        S.el = null;
-      },
-      onMount: function (sheet) {
-        S.session++;
-        S.pending = null;
-        S.el = sheet;
-        S.lines = 0;
-        var session = S.session;
-        // Talking isn't touching: while Ask is open the screen stays as it is, not off to the photo frame or the night
-        // clock (which would close the sheet and cancel the turn).
-        App.resetIdle();
-        clearInterval(S.awake);
-        S.awake = setInterval(App.resetIdle, 1000);
-        var input = sheet.querySelector('[data-ask-input]');
-        sheet.querySelector('[data-ask-form]').addEventListener('submit', function (e) { e.preventDefault(); var t = input.value; input.value = ''; S.heard++; if (!S.listening) voiceState('idle', ''); ask(t); });
-        sheet.querySelector('[data-ask-undo]').addEventListener('click', undo);
-        var talk = sheet.querySelector('[data-ask-talk]'), stop = sheet.querySelector('[data-ask-stop]'), type = sheet.querySelector('[data-ask-type]');
-        talk.addEventListener('click', listen);
-        stop.addEventListener('click', stopListening);
-        stop.addEventListener('keydown', function (e) { if (e.repeat) e.preventDefault(); });
-        type.addEventListener('click', typeInstead);
-        if (!S.ready) return begin();
-        // Opened just after the page loaded, before the app around it has said whether it can hear: the sheet is up
-        // and typed at once, so Back and closing work as ever, and it turns to listening when the answer comes, only
-        // while this same sheet is still open and untouched.
-        setMode(false);
-        input.focus();
-        S.ready.then(function () {
-          if (!live(session) || S.turn || S.listening || input.value || S.lines) return;
-          begin();
-        });
-      }
+    if (S.el) return;
+    var layer = document.createElement('div');
+    layer.className = 'ask-float';
+    layer.setAttribute('role', 'dialog');
+    layer.setAttribute('aria-label', 'Ask Home HQ');
+    layer.innerHTML = '<div class="ask-past" data-ask-past></div><div class="ask-you" data-ask-you></div>' +
+      '<div class="ask-now" data-ask-now aria-live="polite"></div><div class="ask-note" data-ask-note></div>' +
+      '<div class="ask-meter" data-ask-meter hidden><i data-meter></i></div>' +
+      '<div class="ask-acts" data-ask-acts></div>' +
+      '<form class="ask-row" data-ask-form hidden><input class="ask-input" data-ask-input placeholder="Add milk · Mark the dishes done · What\'s on after school?" autocomplete="off">' +
+      '<button class="btn btn--solid" data-ask-send>Ask</button></form>';
+    (document.getElementById('stage') || document.body).appendChild(layer);
+    S.session++;
+    S.el = layer;
+    S.pending = null; S.q = null; S.lines = 0; S.focusKey = '';
+    var session = S.session;
+    // The remote stays in the panel; what had focus, and any narrower scope, come back when it closes.
+    S.before = { focus: document.activeElement, scope: window.Lamp ? Lamp.scope : null };
+    if (window.Lamp) Lamp.scope = layer;
+    S.offBack = window.Lamp && Lamp.onBack ? Lamp.onBack(function () { close(); return true; }) : null;
+    // Talking isn't touching: while Ask is open the screen stays as it is, not off to the photo frame or the night clock.
+    App.resetIdle();
+    clearInterval(S.awake);
+    S.awake = setInterval(App.resetIdle, 1000);
+    var input = el('[data-ask-input]');
+    el('[data-ask-form]').addEventListener('submit', function (e) { e.preventDefault(); var t = input.value; input.value = ''; typed(t); });
+    el('[data-ask-acts]').addEventListener('click', function (e) {
+      var b = e.target && e.target.closest ? e.target.closest('[data-ask-act]') : null;
+      if (!b) return;
+      if (Date.now() - S.armedAt < 700) return;
+      press(b.getAttribute('data-ask-act'));
+    });
+    layer.addEventListener('keydown', keys, true);
+    layer.addEventListener('pointerdown', touched);
+    if (!S.ready) return begin();
+    // Opened just after the page loaded, before the app around it has said whether it can hear: typed at once, and it
+    // turns to listening when the answer comes, only while this same panel is still open and untouched.
+    el('[data-ask-form]').hidden = false;
+    acts(idleActs(false), 'type');
+    input.focus();
+    S.ready.then(function () {
+      if (!live(session) || S.turn || S.listening || input.value || S.lines) return;
+      begin();
     });
   }
 
-  // The page going away (the phone locked, the app hidden) ends the session: a turn still thinking is cancelled, the mic
-  // is let go and no follow-up listen starts.
-  document.addEventListener('visibilitychange', function () { if (document.hidden) end(); });
+  // Closing ends the session: a recording is thrown away, and an answer, a transcript, a follow-up listen or the
+  // voice answering late that comes after does nothing. Focus goes back to where it was (the rail's Ask).
+  function close() {
+    if (!S.el) return;
+    end();
+    S.pending = null;
+    S.q = null;
+    clearInterval(S.awake);
+    if (S.offBack) S.offBack();
+    S.offBack = null;
+    var layer = S.el, before = S.before || {};
+    S.el = null;
+    if (layer.parentNode) layer.parentNode.removeChild(layer);
+    if (window.Lamp) Lamp.scope = before.scope || null;
+    var back = before.focus && document.body.contains && document.body.contains(before.focus) ? before.focus : document.querySelector('.rail-ask');
+    if (back && back.focus) back.focus();
+  }
+
+  // The page going away (the phone locked, the app hidden) closes Ask: a turn still thinking is cancelled, the mic is
+  // let go and no follow-up listen starts.
+  document.addEventListener('visibilitychange', function () { if (document.hidden) close(); });
 
   App.openAsk = open;
+  App.askOpen = function () { return !!S.el; };
   App.on('ready', function () {
     if (!window.LampAI || !LampAI.act) return;
     LampAI.isAvailable('act').then(function (yes) {

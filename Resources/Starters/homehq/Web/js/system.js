@@ -203,7 +203,8 @@
       return false;
     });
     document.addEventListener('keydown', function (e) {
-      if (e.target.tagName === 'INPUT') return;
+      // Ask has the keys while it's open (js/agent.js).
+      if (e.target.tagName === 'INPUT' || (App.askOpen && App.askOpen())) return;
       var k = (e.key || '').toLowerCase();
       if (k === 'd') { $('#demo').classList.contains('is-open') ? closeSettings() : App.openSettings(); }
       if (k === 'a') App.setMode('ambient');
