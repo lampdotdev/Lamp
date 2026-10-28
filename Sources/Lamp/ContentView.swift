@@ -617,7 +617,7 @@ struct ImportReviewCard: View {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
                     Text(verbatim: "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
-                         + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself."
+                         + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself"
                                         : ". Updating keeps your data")
                          + ", and you can go back if you change your mind.")
                         .font(.callout).foregroundStyle(.secondary)
