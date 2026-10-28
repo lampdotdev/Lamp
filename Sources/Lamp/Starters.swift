@@ -31,7 +31,7 @@ enum Starters {
 
     /// Where Lamp's own starters live: a repository each, named as the starter's folder is, in the Lamp team's
     /// account on GitHub for them.
-    static let account = "RooCodeInc"
+    static let account = "lampdotdev"
     static func repositoryName(of folder: String) -> String { folder }
 
     /// A starter's link on a copy's chain, with where the starter lives filled in from the starter this Lamp ships

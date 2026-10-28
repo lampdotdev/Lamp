@@ -75,7 +75,7 @@ is) that need no key or account, use the AI the person builds with when they use
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
 Each starter Lamp can share also lives on GitHub, a public repository in the Lamp team's account
-(named as the starter's folder is, in the account `Starters.account` names), laid out as Put on GitHub lays a wish out
+(github.com/lampdotdev/<folder>, the account `Starters.account` names), laid out as Put on GitHub lays a wish out
 (`StarterRepos.stage`: the starter made into a wish the way the desk makes one, then `GitHubRepo.stage`, with an MIT
 license, no shared file beside the code, an identity derived from the starter and a fixed export time, so the same
 starter is always the same tree and an unchanged one makes no commit). `scripts/publish-starters.sh` stages them
