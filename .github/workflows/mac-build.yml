@@ -61,6 +61,7 @@ jobs:
           key: mac-test-${{ hashFiles('.github/xcode-version', 'Package.resolved') }}
 
       - name: Regression tests
-        # About a quarter of an hour on a fast Mac. The suites that need a key, a device or the live cases skip
-        # themselves when those aren't there.
-        run: swift test
+        # Each test in a process of its own, several at once: most of the suite waits on compilers, sockets and apps it
+        # starts rather than on the processor, so it takes a few minutes instead of twenty. The suites that need a key,
+        # a device or the live cases skip themselves when those aren't there.
+        run: swift test --parallel --num-workers 6
