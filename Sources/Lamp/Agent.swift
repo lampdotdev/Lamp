@@ -617,6 +617,7 @@ enum Agent {
         example "attach the files"); a refused command is final, so never say the user will be asked to approve it. To read a GitHub repo, clone it shallowly into \
         .lamp/reference/ (`gh repo clone owner/name .lamp/reference/name -- --depth 1` when gh is installed, which \
         also works for private repos; otherwise `git clone --depth 1`); it's reference only, not part of the app. \
+        A file you download only to read goes in .lamp/reference/ too, never in /tmp. \
         Never tell the user to approve prompts or change \
         permission settings anywhere else: Lamp is the only place they can approve anything.
         """
