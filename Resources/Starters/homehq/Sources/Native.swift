@@ -1,5 +1,10 @@
+import AVFoundation
 import EventKit
 import Foundation
+import Speech
+#if os(iOS)
+import UIKit
+#endif
 
 /// What the page asks of this Mac, iPhone or iPad with `LampNative.call(name, args)` in Web/: the person's own
 /// calendars and photos, read with Lamp's building blocks in LampSupport.swift. Each is asked for only when the person
@@ -14,6 +19,13 @@ enum Native {
         LampNative.on("events") { args in
             try await Calendars.events(in: args["calendars"] as? [String] ?? [], days: args["days"] as? Int ?? 42)
         }
+
+        // Talking to Home HQ (js/agent.js): whether this device can hear and speak, then one thing said, and the reply
+        // read out. Asked for only when the person taps Ask, so the system asks for the microphone then.
+        LampNative.on("voice") { _ in Voice.shared.status() }
+        LampNative.on("listen") { args in await Voice.shared.listen(words: args["words"] as? [String] ?? []) }
+        LampNative.on("stop") { args in Voice.shared.stop(cancel: args["cancel"] as? Bool ?? false); return true }
+        LampNative.on("speak") { args in await Voice.shared.speak(args["text"] as? String ?? "") }
 
         // The person's albums with something in them, for the settings sheet.
         LampNative.on("albums") { _ in
@@ -93,3 +105,165 @@ enum Calendars {
     }
 }
 
+
+/// Hearing and speaking for Ask Home HQ, on the device: Speech's recognizer (on the device only, so what the family says
+/// stays here; where it can't, `listen` is false and Ask is typed) and the system's voice. One thing is heard at a time,
+/// ending after a moment of quiet, a stop, or the app going to the background; it never listens while it speaks.
+@MainActor
+final class Voice: NSObject, AVSpeechSynthesizerDelegate {
+    static let shared = Voice()
+
+    private let recognizer = SFSpeechRecognizer(locale: Locale.current) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private let synthesizer = AVSpeechSynthesizer()
+    private var engine: AVAudioEngine?
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var silence: Task<Void, Never>?
+    private var heard = ""
+    private var waiting: CheckedContinuation<[String: String], Never>?
+    private var speaking: CheckedContinuation<Bool, Never>?
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+        #if os(iOS)
+        // Locked, or another app in front: what's being heard is let go, and nothing more is said.
+        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { Voice.shared.stop(cancel: true, ended: "interrupted") }
+        }
+        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { Voice.shared.stop(cancel: true, ended: "interrupted") }
+        }
+        #endif
+    }
+
+    func status() -> [String: String] {
+        let speech = SFSpeechRecognizer.authorizationStatus()
+        let permission = speech == .denied || speech == .restricted ? "denied" : speech == .authorized ? "granted" : "undetermined"
+        let onDevice = recognizer?.supportsOnDeviceRecognition == true
+        return ["listen": onDevice ? "1" : "", "speak": "1", "onDevice": onDevice ? "1" : "", "permission": permission]
+    }
+
+    func listen(words: [String]) async -> [String: String] {
+        stop(cancel: true)
+        guard await Self.authorize() else { return ["text": "", "ended": "denied"] }
+        guard let recognizer, recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else { return ["text": "", "ended": "unavailable"] }
+        #if os(iOS)
+        let audio = AVAudioSession.sharedInstance()
+        try? audio.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+        try? audio.setActive(true, options: .notifyOthersOnDeactivation)
+        #endif
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = true
+        request.contextualStrings = Array(words.prefix(80))
+        let engine = AVAudioEngine()
+        Self.tap(engine.inputNode, into: request)
+        engine.prepare()
+        do { try engine.start() } catch {
+            engine.inputNode.removeTap(onBus: 0)
+            return ["text": "", "ended": "nothing"]
+        }
+        self.engine = engine
+        self.request = request
+        heard = ""
+        task = recognizer.recognitionTask(with: request) { result, error in
+            let text = result?.bestTranscription.formattedString
+            let done = (result?.isFinal ?? false) || (error != nil && result == nil)
+            Task { @MainActor in Voice.shared.got(text, done: done) }
+        }
+        armSilence(after: 6, ended: "nothing")
+        return await withCheckedContinuation { waiting = $0 }
+    }
+
+    /// Ends listening: with `cancel` what was heard is let go, else it's the answer. Also stops speaking.
+    func stop(cancel: Bool, ended: String? = nil) {
+        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        finish(ended: ended ?? (cancel ? "cancelled" : "stopped"), keep: !cancel)
+    }
+
+    func speak(_ text: String) async -> Bool {
+        guard !text.isEmpty else { return true }
+        if engine != nil { finish(ended: "cancelled", keep: false) }
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        speaking?.resume(returning: false)
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
+            ?? AVSpeechSynthesisVoice(language: "en-US")
+        return await withCheckedContinuation { done in
+            speaking = done
+            synthesizer.speak(utterance)
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in Voice.shared.spoke(true) }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in Voice.shared.spoke(false) }
+    }
+
+    private func spoke(_ finished: Bool) {
+        speaking?.resume(returning: finished)
+        speaking = nil
+    }
+
+    private func got(_ text: String?, done: Bool) {
+        guard engine != nil else { return }
+        if let text, !text.isEmpty {
+            heard = text
+            armSilence(after: 1.3, ended: "silence")
+        }
+        if done { finish(ended: "silence", keep: true) }
+    }
+
+    private func armSilence(after seconds: Double, ended: String) {
+        silence?.cancel()
+        silence = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            self?.finish(ended: ended, keep: true)
+        }
+    }
+
+    private func finish(ended: String, keep: Bool) {
+        silence?.cancel()
+        silence = nil
+        engine?.stop()
+        engine?.inputNode.removeTap(onBus: 0)
+        request?.endAudio()
+        task?.finish()
+        engine = nil
+        request = nil
+        task = nil
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
+        let text = keep ? heard.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        heard = ""
+        waiting?.resume(returning: ["text": text, "ended": text.isEmpty && ended == "silence" ? "nothing" : ended])
+        waiting = nil
+    }
+
+    nonisolated private static func tap(_ input: AVAudioInputNode, into request: SFSpeechAudioBufferRecognitionRequest) {
+        let format = input.outputFormat(forBus: 0)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
+    }
+
+    nonisolated private static func authorize() async -> Bool {
+        let speech: Bool = await withCheckedContinuation { done in
+            SFSpeechRecognizer.requestAuthorization { done.resume(returning: $0 == .authorized) }
+        }
+        guard speech else { return false }
+        #if os(iOS)
+        return await AVAudioApplication.requestRecordPermission()
+        #else
+        return await AVCaptureDevice.requestAccess(for: .audio)
+        #endif
+    }
+}

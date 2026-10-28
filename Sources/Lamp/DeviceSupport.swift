@@ -494,7 +494,7 @@ enum DeviceSupport {
 
       // Each way to the Mac in turn, until one answers; when none does, once more after a moment, in case Lamp is
       // just starting.
-      function send(path, body, token, timeout) {
+      function send(path, body, token, timeout, deadline) {
         var list = routes(), text = JSON.stringify(body);
         // Lamp opens a claim for the device's IPv4 address, and a device can reach the Mac's .local name over IPv6
         // (the Xbox does), so a claim goes to the Mac's IPv4 addresses first.
@@ -505,12 +505,15 @@ enum DeviceSupport {
         // Lamp's preview of a game replays a play exactly, so nothing in it answers from outside.
         if (window.lampPreview) return Promise.reject(new Failure('Lamp\'s preview has no AI: show example content here, and look at the game on the device for the real answers.'));
         if (!list.length) return Promise.reject(new Failure('This copy of the app wasn\'t put here by Lamp, so it can\'t use AI. Open it from Lamp on your Mac.'));
+        // With a deadline (LampAI.act's turn), each try gets only the time left, and none starts after it.
+        function left() { return deadline ? deadline - Date.now() : timeout; }
         function attempt(i, round) {
+          if (left() <= 0) return Promise.reject(new Failure('Lamp on your Mac took too long to answer.'));
           if (i >= list.length) {
-            if (round === 0) return new Promise(function (r) { setTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
+            if (round === 0 && left() > 4000) return new Promise(function (r) { setTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
             return Promise.reject(new Failure('Couldn\'t reach Lamp on your Mac. Keep this device on the same Wi-Fi as the Mac, with Lamp open, and try again.'));
           }
-          return exchange(list[i], path, token, text, timeout).then(function (answer) {
+          return exchange(list[i], path, token, text, Math.min(timeout, left())).then(function (answer) {
             preferred = list[i];
             return answer;
           }, function () { return attempt(i + 1, round); });
@@ -533,7 +536,7 @@ enum DeviceSupport {
         });
       }
 
-      function post(path, body, timeout) {
+      function post(path, body, timeout, deadline) {
         timeout = timeout || 240000;
         var done;
         if (bridge) {
@@ -545,11 +548,11 @@ enum DeviceSupport {
           });
         } else {
           done = token().then(function (t) {
-            return send(path, body, t, timeout).then(function (answer) {
+            return send(path, body, t, timeout, deadline).then(function (answer) {
               if (answer.status !== 401) return answer;
               // The token kept is one Lamp no longer knows: ask once more, in case the claim is still open.
               forget('install.token');
-              return token().then(function (fresh) { return send(path, body, fresh, timeout); });
+              return token().then(function (fresh) { return send(path, body, fresh, timeout, deadline); });
             });
           });
         }
@@ -745,6 +748,164 @@ enum DeviceSupport {
         });
       }
 
+      // Doing things for the person: LampAI.act
+
+      var ACT_LIMITS = { steps: 4, writes: 6, seconds: 25 };
+      var actRan = {};      // turn id -> call key -> the result a write gave, while this copy of the page is open
+      function actId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+      function isList(v) { return Object.prototype.toString.call(v) === '[object Array]'; }
+      /** At most 4 KB of a result goes back to the model, cut with a note. */
+      function actValue(value) {
+        var json = jsonState(value === undefined ? null : value), text;
+        try { text = JSON.stringify(json); } catch (e) { return { note: 'The result couldn\'t be read.' }; }
+        if (text && text.length > 4096) return { cut: text.slice(0, 4000), note: 'Cut short: ask for less.' };
+        return json;
+      }
+      /** The page's own check of a call before it runs: a tool it declared, its arguments an object with nothing
+       *  undeclared and nothing required missing. Lamp has checked the shapes; this is what the page itself can hold to. */
+      function actProblem(tool, name, args) {
+        if (!tool) return 'There\'s no tool called ' + name + '.';
+        if (!args || typeof args !== 'object' || isList(args)) return name + '\'s arguments must be an object.';
+        var shapes = tool.args || {};
+        for (var key in args) if (args.hasOwnProperty(key) && !shapes.hasOwnProperty(key)) return name + ' has no argument ' + key + '.';
+        for (var k in shapes) if (shapes.hasOwnProperty(k) && !shapes[k].optional && (args[k] === undefined || args[k] === null)) return name + ' needs ' + k + '.';
+        return null;
+      }
+      function refused(error) { return String(error && error.message || error || 'It didn\'t work.'); }
+
+      function act(request, options) {
+        var o = options || {}, tools = o.tools || {};
+        var limits = {};
+        ['steps', 'writes', 'seconds'].forEach(function (k) {
+          var asked = o.limits && typeof o.limits[k] === 'number' ? o.limits[k] : ACT_LIMITS[k];
+          limits[k] = Math.max(1, Math.min(asked, ACT_LIMITS[k]));
+        });
+        var id = o.turn || actId();
+        if (!actRan[id]) {
+          var kept = Object.keys(actRan);
+          if (kept.length >= 20) delete actRan[kept[0]];
+          actRan[id] = {};
+        }
+        var ran = actRan[id];
+        var deadline = Date.now() + limits.seconds * 1000;
+        var out = { turn: id, reply: '', ask: false, done: [], failed: [], skipped: [], reads: [], stopped: null, error: '' };
+        var steps = [], route = null, writes = 0, over = false, settle;
+        var declared = Object.keys(tools).map(function (name) {
+          var t = tools[name];
+          return { name: name, about: t.about || '', reads: !!t.reads, args: t.args || {} };
+        });
+        function tell(step) { if (typeof o.onStep === 'function') { try { o.onStep(step); } catch (e) {} } }
+        function stop(reason, error) {
+          if (over) return;
+          over = true;
+          out.stopped = reason || null;
+          if (error) out.error = error;
+          settle(out);
+        }
+        var result = new Promise(function (resolve) { settle = resolve; });
+        var timer = setTimeout(function () { stop('time'); }, limits.seconds * 1000);
+        result.then(function () { clearTimeout(timer); });
+
+        // Reads run together; then the writes, one after another, each checked right before it runs. A write that
+        // fails stops the writes after it in this step, which the model hears were skipped.
+        function runCalls(calls, step) {
+          var results = {}, reads = [], changes = [];
+          calls.forEach(function (c) { (tools[c.name] && tools[c.name].reads ? reads : changes).push(c); });
+          return Promise.all(reads.map(function (c) {
+            if (over) return null;
+            var tool = tools[c.name], bad = actProblem(tool, c.name, c.args);
+            if (bad) { results[c.id] = { id: c.id, ok: false, error: bad }; return null; }
+            tell({ kind: 'read', name: c.name, args: c.args });
+            return Promise.resolve().then(function () { return tool.run(c.args, { turn: id, step: step, id: c.id }); }).then(function (value) {
+              out.reads.push({ name: c.name, args: c.args });
+              results[c.id] = { id: c.id, ok: true, value: actValue(value) };
+            }, function (e) { results[c.id] = { id: c.id, ok: false, error: refused(e) }; });
+          })).then(function () {
+            var stopped = null;
+            function next(i) {
+              if (i >= changes.length) return results;
+              var c = changes[i], tool = tools[c.name];
+              function skip(reason) {
+                out.skipped.push({ name: c.name, args: c.args, reason: reason });
+                results[c.id] = { id: c.id, ok: false, skipped: reason };
+                return next(i + 1);
+              }
+              function fail(reason) {
+                out.failed.push({ name: c.name, args: c.args, reason: reason });
+                results[c.id] = { id: c.id, ok: false, error: reason };
+                stopped = stopped || 'An earlier change in this step didn\'t go through.';
+                return next(i + 1);
+              }
+              if (over) return results;
+              if (stopped) return skip(stopped);
+              var bad = actProblem(tool, c.name, c.args);
+              if (bad) return fail(bad);
+              var key = 'k' + hash(id + '|' + c.name + '|' + canonical(c.args));
+              // The same change asked again in this turn gets its first result, and doesn't run again.
+              if (ran.hasOwnProperty(key)) { results[c.id] = { id: c.id, ok: true, repeat: true, value: ran[key] }; return next(i + 1); }
+              if (writes >= limits.writes) return fail('Over this turn\'s limit of ' + limits.writes + ' changes.');
+              var call = { turn: id, key: key, step: step, id: c.id };
+              return Promise.resolve().then(function () { return tool.check ? tool.check(c.args, call) : null; }).then(function (problem) {
+                if (problem) return fail(String(problem));
+                // Cancel and the time are looked at again right before the change, never in the middle of it.
+                if (over) return results;
+                writes++;
+                tell({ kind: 'write', name: c.name, args: c.args });
+                return Promise.resolve().then(function () { return tool.run(c.args, call); }).then(function (value) {
+                  var kept = actValue(value);
+                  ran[key] = kept;
+                  var entry = { name: c.name, args: c.args, result: value };
+                  if (value && typeof value === 'object' && value.partly) entry.partly = String(value.partly);
+                  out.done.push(entry);
+                  results[c.id] = { id: c.id, ok: true, value: kept };
+                  tell({ kind: 'write', name: c.name, args: c.args, result: value });
+                  return next(i + 1);
+                }, function (e) { return fail(refused(e)); });
+              }, function (e) { return fail(refused(e)); });
+            }
+            return next(0);
+          });
+        }
+
+        function step() {
+          if (over) return;
+          var left = deadline - Date.now();
+          if (left <= 500) return stop('time');
+          var body = { request: String(request), about: o.about || '', now: present(), tools: declared, steps: steps,
+                       history: (o.history || []).slice(-3), seconds: Math.floor(left / 1000) };
+          if (o.context !== undefined) body.context = jsonState(o.context);
+          if (route) body.route = route;
+          if (steps.length >= limits.steps - 1) body.final = true;
+          if (o.model) body.model = o.model;
+          post('/ai/act', body, left, deadline).then(function (answer) {
+            // Cancelled, out of time or already over: an answer that comes late runs nothing.
+            if (over) return;
+            route = answer.route || route;
+            if (answer.calls && answer.calls.length) {
+              var calls = answer.calls, n = steps.length + 1, ids = {};
+              for (var i = 0; i < calls.length; i++) {
+                if (ids[calls[i].id]) return stop('error', 'The AI gave two calls the same id.');
+                ids[calls[i].id] = true;
+              }
+              return runCalls(calls, n).then(function (results) {
+                if (over) return;
+                steps.push({ calls: calls, results: calls.map(function (c) { return results[c.id] || { id: c.id, ok: false, skipped: 'Not run.' }; }) });
+                if (steps.length >= limits.steps) return stop('steps');
+                step();
+              });
+            }
+            out.reply = typeof answer.reply === 'string' ? answer.reply : '';
+            out.ask = answer.ask === true;
+            stop(null);
+          }, function (e) {
+            var message = refused(e);
+            stop(/reach Lamp|Lamp isn't|wasn't put here|put it on this device/.test(message) ? 'unreachable' : 'error', message);
+          });
+        }
+        step();
+        return { id: id, result: result, cancel: function () { stop('cancelled'); } };
+      }
+
       /**
        * AI for the app: text, pictures and decisions. Lamp's gateway on the person's Mac answers, with the AI they set
        * up in Lamp: the TV preview on the Mac itself, and their own device over the same Wi-Fi while Lamp is open.
@@ -806,8 +967,11 @@ enum DeviceSupport {
       var LampAI = {
         Failure: Failure,
 
-        /** Whether this kind of AI ('text', 'decisions' or 'pictures') can answer now. False when Lamp can't be reached. */
+        /** Whether this kind of AI ('text', 'decisions', 'pictures' or 'act') can answer now. False when Lamp can't be reached. */
         isAvailable: function (capability) {
+          // 'act' is asked of /ai/act itself: true only when this lamp.js has it, the app around the page lets the
+          // route through (an older one answers Not found) and the AI that answers the app can take it.
+          if (capability === 'act') return post('/ai/act', { probe: true }, 10000).then(function (reply) { return reply.act === true; }, function () { return false; });
           return post('/ai/status', {}, 10000).then(function (reply) { return reply[capability] === true; }, function () { return false; });
         },
 
@@ -815,6 +979,44 @@ enum DeviceSupport {
          *  system, json (true asks for JSON and gives back the parsed value: describe its exact shape in the prompt),
          *  model (Lamp's id: "sonnet", "opus", "haiku", "claude-fable-5-1"). */
         ask: function (prompt, options) { return call(prompt, options); },
+
+        /**
+         * Does what the person asks, in their own words, with the app's own reads and writes: the model picks calls,
+         * the page runs them, the model sees what happened, until it replies (at most 4 model calls, 6 writes and 25
+         * seconds a turn). Check `LampAI.isAvailable('act')` first; keep the app's buttons for everything.
+         *
+         *     var turn = LampAI.act('Add milk', {
+         *       about: 'A family dashboard: the calendar, chores and the shopping list.',
+         *       context: { today: '…' },                       // small; sent as outside text
+         *       tools: {
+         *         groceries: { about: 'The shopping list', reads: true, args: {}, run: function () { return list(); } },
+         *         addGrocery: { about: 'Put something on the list',
+         *                       args: { name: { type: 'string' }, qty: { type: 'integer', min: 1, max: 99, optional: true } },
+         *                       check: function (args, call) { return null; },   // a sentence when it can't, else null
+         *                       run: function (args, call) { return add(args, call.key); } }
+         *       },
+         *       history: [{ said: 'Who did it?', heard: 'Maya' }],             // the last 3 exchanges, kept by the app
+         *       onStep: function (s) { … }                                     // { kind, name, args[, result] }
+         *     });
+         *     turn.result.then(function (r) { r.reply; r.ask; r.done; r.failed; r.skipped; r.stopped; });
+         *     turn.cancel();
+         *
+         * An argument's shape is { type: 'string' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'list',
+         * oneOf: [strings], min, max, optional, about, of (a list's item) }. A tool with `reads: true` changes nothing;
+         * reads in one step run together. Writes run one after another, each with its `check` right before it: a write
+         * that fails stops the writes after it in that step (`skipped`). Cancel and the time stop the turn between
+         * calls, never in the middle of a write; an answer that comes after runs nothing.
+         *
+         * Say what happened from `done`, `failed` and `skipped`, never from `reply`: they're what the page ran.
+         * `call.key` is the same for the same write in the same turn: make the ids of what a write creates from it, or
+         * keep it on the change, so a write asked again (or a turn tried again with `turn: r.turn`) finds it instead of
+         * adding a second. The same write in one turn while the page is open isn't run twice; nothing promises more.
+         * Throw `LampAI.refuse('sentence')` from `check` or `run` to say why something can't be done.
+         */
+        act: function (request, options) { return act(request, options); },
+
+        /** An error whose message the model hears as why a call couldn't be done. */
+        refuse: function (message) { return new Failure(String(message)); },
 
         /** Creates a new picture from a description, as a data: URL for an <img>. options: aspectRatio. */
         makeImage: function (description, options) { return image(description, [], (options && options.aspectRatio) || '1:1'); },

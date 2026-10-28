@@ -33,6 +33,14 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   copy of the screen follows. A family already made in the editor, and a calendar or album already chosen, are where
   the setup starts. A look at a fresh copy shows the welcome over the example family (`App.setup`,
   `DATA.isSetUp`, `settings.example`).
+- **Ask** (`js/agent.js`, on the rail where it works): say or type what you want ("Add milk", "Mark the
+  dishes done", "What do we need before school?") and Home HQ does it with the family's own data through
+  `LampAI.act`, with the reads and writes in `js/actions.js`; every copy of the screen shows the change, and the copy
+  that heard you says what actually ran (built from the result, never the AI's words) and offers Undo for what's still
+  as it left it. It asks back for who, which day and time, and which of two that both fit. New events go on Home HQ's
+  own calendar, never the family's shared one, and nothing is deleted. The button shows only where
+  `LampAI.isAvailable('act')` is true; talking (the mic, the reply read out) is `Sources/Native.swift`'s `voice`,
+  `listen`, `stop` and `speak`, on-device recognition only, on the Mac, iPhone and iPad; elsewhere it's typed.
 - **Family and Chores** (from Settings, `views/editor.js`): the family (a name, a color each, Stars for those who
   earn them, and pets, with a picture instead of a color) and the chore list by part of the day (a picture, who, how many stars), changed on the screen and saved as
   they're changed. The editor's own picture and color lists are at its top.
@@ -55,6 +63,12 @@ views. The credit stays on the page (the settings drawer's last line), in about.
 - `Web/js/system.js`: the example pictures (`App.img`, a landscape drawn as SVG from a seed), banners (`App.banner`)
   and the settings drawer.
 - `Web/js/sync.js`: the family's data the same on every copy of the screen (below).
+- `Web/js/actions.js`: what Ask can do (`App.read`, `App.write`: each write `check`s its item, looked up again by id,
+  right before it runs, makes the ids of what it adds from the call's key, and keeps what it changed for Undo,
+  `App.changesOf`, `App.undoChange`), and the rules the views share with it (`App.categorize` for aisles, `App.chore`
+  for ticking a chore and its stars).
+- `Web/js/agent.js`: Ask: the sheet, the turn (`LampAI.act` with the tools and the rules for asking back), what's
+  said, Undo, and voice where the app has it.
 - `Web/js/views/editor.js`: the Family and Chores sheets.
 - `Web/js/views/setup.js`: the welcome and the first-run setup.
 - `Web/js/live.js`: the real weather (Open-Meteo, open data with no key: `App.findPlaces`, `App.loadWeather`), and the
@@ -64,7 +78,7 @@ views. The credit stays on the page (the settings drawer's last line), in about.
 - `Web/css/tokens.css` (colors, type sizes, the fonts in `Web/fonts/`), `Web/css/base.css` (the stage, rail, cards,
   sheets, the settings drawer, focus), and one file per view in `Web/css/views/`.
 - `Sources/Native.swift`: what the page asks of the Mac, iPhone or iPad: `calendars`, `events`, `albums` and `photos`
-  (JPEGs at 1600 px as data URLs). Each runs only once the person turns it on in Settings, so the system asks for
+  (JPEGs at 1600 px as data URLs), and Ask's `voice`, `listen`, `stop` and `speak` (`Voice`). Each runs only once the person turns it on in Settings, so the system asks for
   access then.
 
 ## Any screen, any size

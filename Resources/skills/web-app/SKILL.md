@@ -19,6 +19,8 @@ opening comment for the whole list. What it gives:
   Every call is a Promise. Text from outside the app goes in `data`, never into the prompt. Where a feature depends
   on it, check `LampAI.isAvailable('text')` and show a short note when it can't answer: away from the Mac's Wi‑Fi, or
   with Lamp closed, it can't.
+- **LampAI.act**: the person asks the app to do something in their own words, and the app's own reads and writes do
+  it; "Doing things for the person" below.
 - **LampStore**: what the app saves, as JSON on the device. Once something is saved, only ever add to it: a new field
   gets a default where it's read, and a saved one is never renamed or retyped, because people rely on their data
   through every change.
@@ -27,6 +29,29 @@ opening comment for the whole list. What it gives:
   the wish-links skill says how they share data.
 - **Lamp.controllers** and `Lamp.phonePage`: phones on the same Wi‑Fi as controllers or a second screen; the
   phone-controllers skill first.
+
+## Doing things for the person
+
+`LampAI.act(request, { about, context, tools, history, onStep })` runs a short loop: the AI picks calls among the
+app's tools, the page runs them, the AI sees the results, until it replies (at most 4 AI calls, 6 writes and 25
+seconds a turn). Its comment in lamp.js has the shapes. This is the one recipe for it:
+
+- Show the feature only where `LampAI.isAvailable('act')` is true, and keep the app's own buttons for everything: it
+  only adds a way in.
+- Tools are small reads and writes over the app's own data, ids in and ids out, never "do anything". A read has
+  `reads: true`; everything else is a write. Nothing destructive (a delete, a clear) without an Undo the person sees.
+- Every write has a `check` that looks its item up again by id and says in a sentence why it can't be done (gone,
+  already done, in the past, nobody of that name); `run` changes the data the way the app's own button does, and
+  returns the item as it is after.
+- Make the ids of what a write adds from `call.key`, or keep the key on the change, so the same request made again
+  finds it instead of adding a second.
+- Say what happened from the result's `done`, `failed` and `skipped`, which are what the page ran, never from the AI's
+  `reply`; add the reply only when it asks something (`ask`) or nothing was changed.
+- Keep what each write changed for Undo, and undo only what's still as the write left it; say which ones it left.
+- Show each step while it runs (`onStep`), and cancel the turn (`turn.cancel()`) when the person closes it or the page
+  is hidden.
+- `about` says what the app is and its rules for asking back: which person, which day and time, which of two things
+  that both fit.
 
 ## The person's own things
 

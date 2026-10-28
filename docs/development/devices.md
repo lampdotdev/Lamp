@@ -622,7 +622,8 @@ A kind that takes places has what its places give it, not what its kind could (`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the
 app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach`, Lamp's common host, shared by
 `LampWebGame.swift` and `LampWebApp.swift`): LampAI's calls go through the app to Lamp with the app's own token (`lampGateway`, only the AI
-routes, only from the app's own page), and `LampNative.call(name, args)` reaches Swift the agent writes in
+routes, `/ai`, `/ai/status`, `/ai/image`, `/ai/decide` and `/ai/act`, the same list as Android's `LampPageGateway.kt` and the TV preview's,
+only from the app's own page), and `LampNative.call(name, args)` reaches Swift the agent writes in
 `Sources/Native.swift` (`Native.register()`, each call `LampNative.on(name) { args in … }` returning anything Encodable),
 which has every building block in LampSupport.swift: the person's mail, calendar, reminders, contacts, photos, location.
 Registering a call makes the Mac copy compiled rather than copied from Lamp's player.

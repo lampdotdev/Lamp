@@ -1,0 +1,22 @@
+/* Ask Home HQ (js/agent.js): what was said, what's happening, what happened. */
+.ask { display: flex; flex-direction: column; gap: 1.25rem; }
+.ask-log { display: flex; flex-direction: column; gap: .75rem; max-height: 22rem; min-height: 6rem; overflow-y: auto; }
+.ask-log:empty::before { content: 'Try “Add milk” or “What do we need before school?”'; color: var(--ink-2); font-size: 1.25rem; }
+.ask-line { font-size: 1.5rem; line-height: 1.3; max-width: 90%; }
+.ask-you { align-self: flex-end; background: var(--paper-2); border-radius: 1.25rem; padding: .625rem 1.125rem; }
+.ask-them { align-self: flex-start; font-weight: 600; }
+.ask-them.is-partly { border-left: .25rem solid var(--ink); padding-left: .875rem; }
+.ask-doing { align-self: flex-start; color: var(--ink-2); font-style: italic; }
+.ask-row { display: flex; gap: .75rem; align-items: center; }
+.ask-input {
+  flex: 1; min-width: 0; min-height: var(--tap); padding: 0 1.25rem;
+  border: 2px solid var(--line); border-radius: 62.4375rem; background: var(--card);
+  font: inherit; font-size: 1.25rem;
+}
+.ask-input:focus { outline: none; border-color: var(--ink); }
+.ask-mic { padding: 0; width: var(--tap); flex: none; }
+.ask.is-listening .ask-mic, .is-listening .ask-mic { background: var(--ink); color: var(--paper); }
+.is-busy .ask-input { opacity: .6; }
+.ask-undo { align-self: flex-start; }
+.ask-undo[hidden] { display: none; }
+.narrow .ask-line { font-size: 1.25rem; }

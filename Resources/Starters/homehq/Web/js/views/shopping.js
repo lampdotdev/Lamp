@@ -8,13 +8,7 @@
   function done() { return D.groceries.filter(function (g) { return g.done && (V.store === 'all' || g.store === V.store); }); }
   function storeName(id) { return D.stores.filter(function (s) { return s.id === id; })[0].name; }
 
-  function categorize(name) {
-    var n = name.toLowerCase();
-    var hit = D.catalog.filter(function (c) { return c[0].toLowerCase() === n; })[0] ||
-      D.catalog.filter(function (c) { var a = c[0].toLowerCase(); return a.indexOf(n) > -1 || n.indexOf(a) > -1; })[0] ||
-      D.catalog.filter(function (c) { return n.split(/\s+/).some(function (w) { return w.length > 3 && c[0].toLowerCase().indexOf(w) > -1; }); })[0];
-    return hit ? hit[1] : 'Other';
-  }
+  var categorize = App.categorize;
   // An item the list doesn't know (it would land in Other) goes in its aisle by the AI the family set up in Lamp: a
   // quick decision of a small model, remembered for months so the same item isn't asked about again. Without AI set up
   // (or away from the Mac's Wi-Fi) it stays in Other, as before.
@@ -35,6 +29,9 @@
       if (V.el && App.current === 'shopping') paintList();
     }, function () {});
   }
+
+  // The agent's adds go in their aisle the same way (js/actions.js).
+  App.aisleByAI = aisleByAI;
 
   function find(name, isDone) {
     return D.groceries.filter(function (g) { return !!g.done === isDone && g.name.toLowerCase() === name.toLowerCase(); })[0];

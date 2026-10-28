@@ -185,6 +185,21 @@ A capability given to one engine must be given to all of them that can take it, 
   Before adding a capability, a way to make one better, or a new offer, read `design/setup-card/README.md`:
   when an offer is worth making, how the card and Settings rows are built, and how to write their copy (for
   someone who has never heard of a key or a model, never naming providers, routes or APIs).
+- **An app's own agent loop** (`LampAI.act` in Web/lamp.js, `/ai/act`, `Sources/Lamp/AppAct.swift`): the page
+  runs its own tools and keeps the turn; each `/ai/act` request is one step carrying everything so far (the request,
+  the tools' argument shapes, every earlier call with its result) and gets back the next calls or the reply, with the
+  route's id, which the page sends back so the whole turn stays on one route. The gateway keeps nothing between steps,
+  so it holds only what one request can: tool names and shapes (`reply` is Lamp's own), unique call ids, at most
+  `AppAct.maxCalls` calls per answer checked against their shapes (a call that doesn't fit is asked for again once,
+  then answered as a reply that says it couldn't), and a reply-only step once three are behind it. The turn's writes,
+  its deadline and cancel are the page's: it runs reads together and writes one after another, each `check`ed right
+  before it runs, stops at the deadline in every layer (the step's request, `send`'s retries) and drops an answer that
+  comes after a cancel. Only OpenRouter answers: tools with `require_parameters` and `tool_choice` "auto" ("none" for
+  the reply-only step), since the Anthropic models there take nothing stronger, so words without a call are the reply.
+  Every other route answers 501 with a sentence saying so; Claude Code and Codex would take a JSON plan through their
+  `--json-schema`/`--output-schema` paths, a GGUF model through `response_format`, and mlx_lm.server has neither.
+  `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
+  the page lets the route through and the app's route can take it.
 - **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
   its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
   `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the
