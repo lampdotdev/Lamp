@@ -34,14 +34,29 @@ struct WaitingImport {
     /// The request a link brought with a fetched file, kept beside it (`Store.fetchedRequest`): it goes with the copy.
     static let requestFile = "request.txt"
 
+    /// The wish a repository was fetched to update, kept beside it (`target(beside:)`).
+    static let targetFile = "update-target.txt"
+
+    /// The wish a kept repository was fetched to update (`Store.copy(of:among:updating:)`), kept beside it so that
+    /// after the wait, or a relaunch, the review offers that wish and not another copy of the same repository.
+    /// Only in a folder kept for setup, never beside a file opened from anywhere else.
+    static func target(beside file: URL) -> String? {
+        let home = file.deletingLastPathComponent()
+        guard home.deletingLastPathComponent().lastPathComponent == "Waiting" else { return nil }
+        return (try? String(contentsOf: home.appendingPathComponent(targetFile), encoding: .utf8))?.trimmed.nilIfEmpty
+    }
+
     /// Keeps a copy, since the file may be a temporary one (opened straight from Mail or Messages), behind
     /// any already kept: each gets its review, none pushes another out. The same file opened again is kept
     /// once. False when no copy could be made (a full disk, say): nothing is remembered then, so Lamp never
     /// promises a file it may not have. A request kept beside a fetched file is copied with it.
-    func keep(_ file: URL) -> Bool {
+    func keep(_ file: URL, updating target: String? = nil) -> Bool {
         let fm = FileManager.default
         let kept = paths
+        // The same file again counts as the same only when it's for the same wish: two copies (Keep Both) updated from
+        // one repository fetch the same thing, and each still gets its own review.
         if let same = kept.first(where: { URL(fileURLWithPath: $0).lastPathComponent == file.lastPathComponent
+            && Self.target(beside: URL(fileURLWithPath: $0)) == target
             && fm.contentsEqual(atPath: $0, andPath: file.path) }) {
             // The same file again, with a request: the newer request is the one meant, so it replaces the kept one.
             let request = file.deletingLastPathComponent().appendingPathComponent(Self.requestFile)
@@ -61,6 +76,7 @@ struct WaitingImport {
             if Store.fetchedRequest(beside: file) != nil, fm.fileExists(atPath: request.path) {
                 try fm.copyItem(at: request, to: home.appendingPathComponent(Self.requestFile))
             }
+            if let target { try target.write(to: home.appendingPathComponent(Self.targetFile), atomically: true, encoding: .utf8) }
         } catch {
             try? fm.removeItem(at: home)
             return false

@@ -317,10 +317,10 @@ enum AppInfoView {
             if let page = origin(of: project)?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         case updateFromRepository:
             // The repository fetched again and opened as any repository is: the review, then Update (the wish keeps its
-            // name, data and chat, with a version saved first, what changed here kept, `Upstream`) or Keep Both. It's
-            // this wish's update whatever identity the repository's file carries (a starter's copy has its own).
+            // name, data and chat, with a version saved first, what changed here kept, `Upstream`) or Keep Both, since
+            // the wish came from there. It's this wish the review offers to update, not another copy of the same repository.
             if let source = origin(of: project)?.url.flatMap(RepoImport.source(from:)) {
-                Store.shared.importRepository(source, request: nil, updating: project)
+                Store.shared.importRepository(source, request: nil, updating: project.id)
             }
         default: break
         }

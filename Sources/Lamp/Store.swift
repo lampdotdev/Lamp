@@ -3003,16 +3003,15 @@ final class Store: ObservableObject {
 
     /// Fetches a wish's repository and opens it as a shared file is opened (`importApp`), with a request that came with
     /// its link kept beside it for the wish's box, as beside a fetched file. `updating` is the wish whose Update from
-    /// GitHub… asked for it: the review offers Update for that wish (`updateTargets`).
-    func importRepository(_ source: RepoImport.Source, request: String?, updating: LampProject? = nil) {
+    /// GitHub… asked for it, the one the review offers to update.
+    func importRepository(_ source: RepoImport.Source, request: String?, updating target: String? = nil) {
         NSApp.activate()
         Task {
             let folder = RepoImport.cloneFolder()
             do {
                 let tree = try await RepoImport.clone(source, into: folder)
-                if let updating { updateTargets[tree.standardizedFileURL.path] = (updating.id, source.url) }
                 if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
-                importApp(from: tree)
+                importApp(from: tree, updating: target)
             } catch {
                 try? FileManager.default.removeItem(at: folder)
                 NSAlert(error: error).runModal()
@@ -3121,23 +3120,18 @@ final class Store: ObservableObject {
         return await Versions.git("git diff --quiet \(arrival.id) HEAD -- . ':!.lamp'", cwd: project.dir) != 0
     }
 
-    /// The wish an Update from GitHub… was asked for, by the folder its repository was fetched into, with the
-    /// repository's address: taken by the review that opens that folder.
-    private var updateTargets: [String: (project: String, url: String)] = [:]
-
-    /// The wish an Update from GitHub… fetched `file` for, when the package is from the same place and of the same kind:
-    /// the review offers Update for it, whatever identity the file carries (a starter's copy has its own).
-    private func updateTarget(for file: URL, package: Sharing.Package) -> LampProject? {
-        guard let target = updateTargets.removeValue(forKey: file.standardizedFileURL.path),
-              let project = projects.first(where: { $0.id == target.project }), project.holdsApp, project.platform == package.platform,
-              package.credits?.remixOf.contains(where: { $0.url.map { Credits.Source.plain($0) == Credits.Source.plain(target.url) } ?? false }) == true
-        else { return nil }
-        return project
-    }
-
     /// The app on this Mac that a shared file is a version of: the one it was shared from, or the copy made
     /// by opening an earlier file from it.
-    func existingCopy(of package: Sharing.Package) -> LampProject? {
+    func existingCopy(of package: Sharing.Package, updating target: String? = nil) -> LampProject? {
+        Self.copy(of: package, among: projects, updating: target)
+    }
+
+    /// Asked from a wish's own Update from GitHub… (`target`), it's that wish: a second copy made with Keep Both has no
+    /// identity of its own (`finishImport`), so the repository's identity would find the first copy instead.
+    nonisolated static func copy(of package: Sharing.Package, among projects: [LampProject], updating target: String? = nil) -> LampProject? {
+        if let target {
+            return projects.first { $0.id == target && $0.holdsApp && $0.platform == package.platform && $0.hasScaffold }
+        }
         guard let identity = package.identity else { return nil }
         // Only an app of the same kind: a file that's an iPhone app doesn't replace the Mac app it began as.
         // A wish whose apps are all in folders of their own travels with the first of them at the file's root, so it isn't
@@ -3148,7 +3142,7 @@ final class Store: ObservableObject {
     /// Opens a shared `.lampapp`. Its review (fixed checklist + AI check) opens only when setup is really done
     /// and the welcome is over, so that an AI agent is there to check the app before it runs. Until then the
     /// file is kept, and its review opens by itself once the person is through setup.
-    func importApp(from file: URL) {
+    func importApp(from file: URL, updating target: String? = nil) {
         NSApp.activate()
         Task {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
@@ -3157,7 +3151,7 @@ final class Store: ObservableObject {
             guard reviewsCanOpen else {
                 let alert = NSAlert()
                 alert.messageText = "Finish setting up Lamp first"
-                if waitingImport.keep(file) {
+                if waitingImport.keep(file, updating: target) {
                     alert.informativeText = waitingImport.count > 1
                         ? "Lamp will open your shared apps as soon as it can build them."
                         : "Lamp will open the shared app as soon as it can build it."
@@ -3167,7 +3161,7 @@ final class Store: ObservableObject {
                 alert.runModal()
                 return
             }
-            review(file)
+            review(file, updating: target)
         }
     }
 
@@ -3177,7 +3171,7 @@ final class Store: ObservableObject {
     }
 
     /// Unpacks a shared app and shows its review.
-    private func review(_ file: URL) {
+    private func review(_ file: URL, updating target: String? = nil) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
         // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
@@ -3197,8 +3191,7 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file),
-                                        existing: updateTarget(for: file, package: package) ?? existingCopy(of: package))
+            var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
             if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             pendingImport = pending
@@ -3218,7 +3211,7 @@ final class Store: ObservableObject {
     @discardableResult func openWaitingImport() -> Bool {
         guard pendingImport == nil, importRequest == nil else { return true }
         let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
-        if let file { review(file) }
+        if let file { review(file, updating: WaitingImport.target(beside: file)) }
         return file != nil
     }
 

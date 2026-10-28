@@ -302,9 +302,9 @@ that isn't the wish's own, is what the info panel's Visit and Update from GitHub
 
 A wish whose chain names where it came from offers Update from GitHub… in its info panel
 (`AppInfoView.updateFromRepository`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
-which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, whatever identity the
-repository's file carries, as long as its chain names that repository), or for the wish that kept the sender's
-identity (`existingCopy`). A wish unchanged since it arrived
+which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that
+waits for setup, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's
+copy or a second copy made with Keep Both is the one updated). A wish unchanged since it arrived
 (`Store.changedSinceArrival`: its files are the last version Lamp saved as an arrival, and nothing is unsaved; looked
 at again once the update owns the wish, since a turn may have run while the review waited) takes the new code in
 place. One changed here is merged by git (`Upstream.merge`, from `Store.mergeUpdate`), never replaced: the wish's own
