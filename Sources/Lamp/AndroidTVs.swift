@@ -55,29 +55,48 @@ enum AndroidTVs {
         keeping.lock()
         defer { keeping.unlock() }
         let before = kept()
-        let (resolved, records) = merge(devices, services: services, kept: before, pairedAt: pairedHosts())
+        let hints = pairings()
+        let (resolved, records) = merge(devices, services: services, kept: before, pairedAt: Set(hints.keys))
         if records != before { save(records) }
+        // A paired device seen connected over Wireless debugging needs its address's hint no more.
+        let seen = Set(resolved.filter { $0.transport == .tls && $0.adbState == "device" }.compactMap(\.address))
+        if !seen.isDisjoint(with: hints.keys) { writePairings(hints.filter { !seen.contains($0.key) }) }
         return resolved
     }
 
     // MARK: Paired over Wireless debugging
 
-    /// Addresses this Mac paired with over Wireless debugging lately, by when. A pairing says the device there is to be
-    /// reached over its encrypted connection, never the old port, from the moment it worked, whether or not the window
-    /// was still open to see the connection: a record at that address is marked so at once, and one made there later
-    /// (`merge`'s `pairedAt`) too. It only ever takes the old port away, so an address is enough to go by; it's
-    /// forgotten after a day, when the router may have given the address to another device.
+    /// A pairing over Wireless debugging says the device paired is to be reached over its encrypted connection, never
+    /// the old port, from the moment it worked, whether or not the window was still open to see the connection. Two
+    /// things are kept, apart. The device's own record is marked so for good, but only by its identity: the serial
+    /// read from the device answering at the pairing's address as it paired (`promoted`), or later the encrypted
+    /// connection seen (`merge`). The address is kept too, for a day at most, by when (`pairedAt`): while it's recent,
+    /// nothing at that address is reached over the old port. That's a hint, never a mark on a record, since the router
+    /// may give the address to another device; it ends early once the paired device is seen connected that way.
     private static var pairedURL: URL { Edition.supportFolder.appendingPathComponent("Android/paired.json") }
     static let pairingLasts: TimeInterval = 24 * 3600
 
-    static func paired(at host: String, now: Date = Date()) {
+    static func paired(at host: String, serial: String?, now: Date = Date()) {
         keeping.lock()
         defer { keeping.unlock() }
-        var records = kept()
-        for index in records.indices where records[index].address == host { records[index].transport = .tls }
-        save(records)
+        let records = kept(), marked = promoted(records, serial: serial)
+        if marked != records { save(marked) }
         var all = pairings(now: now)
         all[host] = now.timeIntervalSince1970
+        writePairings(all)
+    }
+
+    /// The records of the device with that serial, marked to be reached over Wireless debugging; no other record.
+    static func promoted(_ records: [Record], serial: String?) -> [Record] {
+        guard let serial, isUsable(serial) else { return records }
+        return records.map { record in
+            var record = record
+            if record.serial == serial { record.transport = .tls }
+            return record
+        }
+    }
+
+    private static func writePairings(_ all: [String: Double]) {
         try? FileManager.default.createDirectory(at: pairedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(all).write(to: pairedURL, options: .atomic)
     }
@@ -90,7 +109,7 @@ enum AndroidTVs {
     static func pairedHosts(now: Date = Date()) -> Set<String> { Set(pairings(now: now).keys) }
 
     /// Whether the device at an address is to be reached over Wireless debugging only: paired there lately, or a kept
-    /// TV there that was.
+    /// TV there that's marked so.
     static func requiresTLS(_ host: String) -> Bool {
         pairedHosts().contains(host) || kept().contains { $0.address == host && $0.transport == .tls }
     }
@@ -220,11 +239,14 @@ enum AndroidTVs {
                 index = records.count - 1
             }
             seen.insert(serial)
-            // Paired over Wireless debugging once, it's reached that way from then on: seen connected so, or paired at
-            // its address (`pairedAt`) before its connection showed.
-            if transports.contains(.tls) || addresses.contains(where: { $0.map(pairedAt.contains) == true }) { records[index].transport = .tls }
+            // Seen connected over Wireless debugging once, it's reached that way from then on.
+            if transports.contains(.tls) { records[index].transport = .tls }
             let record = records[index]
-            let usable = group.indices.filter { record.transport == .legacy || transports[$0] == .tls }
+            // A recent pairing at an address keeps the old port there out of use, whichever record it is, for as long
+            // as the hint lasts; the record itself isn't changed by it.
+            let usable = group.indices.filter {
+                transports[$0] == .tls || (record.transport == .legacy && addresses[$0].map(pairedAt.contains) != true)
+            }
             // adb's own name for the TV first: it's the selector adb keeps reconnecting by itself.
             let pick = usable.sorted { (isMDNS(group[$0].id) ? 0 : 1, group[$0].id) < (isMDNS(group[$1].id) ? 0 : 1, group[$1].id) }.first
             records[index].aliases = Array((group.map(\.id) + record.aliases).uniqued().prefix(8))

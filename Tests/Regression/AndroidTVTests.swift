@@ -148,14 +148,32 @@ final class AndroidTVTests: XCTestCase {
     }
 
     /// A TV kept from its Fire‑style old port, then paired over Wireless debugging (with the window closed before its
-    /// encrypted connection showed), is never reached on 5555 again.
+    /// encrypted connection showed), isn't reached on 5555 while the pairing is recent, nor after, once it's marked by
+    /// its serial.
     func testAPairingOutlivesTheWindow() throws {
         let old = "192.168.1.50:5555"
         let read = Adb.listed("List of devices attached\n\(old)   device product:jarvis\n").map { Device.from(adb: $0.serial, state: $0.state, properties: properties) }
         let legacy = try XCTUnwrap(AndroidTVs.merge(read, services: [], kept: []).kept.first)
         XCTAssertEqual(legacy.transport, .legacy)
         let after = AndroidTVs.merge(read, services: [], kept: [legacy], pairedAt: ["192.168.1.50"])
-        XCTAssertEqual(after.kept.first?.transport, .tls)
         XCTAssertTrue(try XCTUnwrap(after.devices.first { $0.id == legacy.id }).isAway)
+        // Tied to the TV by the serial it read as it paired, the mark lasts beyond the address's hint.
+        let marked = AndroidTVs.promoted([legacy], serial: "SERIAL0123456")
+        XCTAssertEqual(marked.first?.transport, .tls)
+        XCTAssertTrue(try XCTUnwrap(AndroidTVs.merge(read, services: [], kept: marked).devices.first { $0.id == legacy.id }).isAway)
+    }
+
+    /// A pairing at an address is no lasting mark on a different device that has that address later: a Fire TV with
+    /// another serial there keeps its old port for good, and is kept from it only while the pairing is recent.
+    func testAPairingDoesntMarkAnotherDeviceAtItsAddress() throws {
+        let old = "192.168.1.50:5555"
+        let fire = ["ro.product.manufacturer": "Amazon", "ro.product.model": "AFTMM", "ro.serialno": "FIRETV0000001", "leanback": "true"]
+        let read = Adb.listed("List of devices attached\n\(old)   device product:mantis\n").map { Device.from(adb: $0.serial, state: $0.state, properties: fire) }
+        let legacy = try XCTUnwrap(AndroidTVs.merge(read, services: [], kept: []).kept.first)
+        let recent = AndroidTVs.merge(read, services: [], kept: [legacy], pairedAt: ["192.168.1.50"])
+        XCTAssertEqual(recent.kept.first?.transport, .legacy)
+        let later = AndroidTVs.merge(read, services: [], kept: recent.kept)
+        XCTAssertEqual(later.devices.first?.adb, old)
+        XCTAssertFalse(try XCTUnwrap(later.devices.first).isAway)
     }
 }

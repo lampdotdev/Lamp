@@ -180,7 +180,11 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
                 return await Adb.pair(host: host, port: port, code: code)
             }
             // A pairing that worked holds whatever the window does next: the TV is reached over Wireless debugging.
-            if result == .paired { AndroidTVs.paired(at: host) }
+            if result == .paired {
+                // The device answering at that address now is the one paired: its serial ties the mark to it.
+                let serial = (await Adb.devices()).first { $0.kind == .android && $0.address == host && $0.adbState == "device" }?.serialNumber
+                AndroidTVs.paired(at: host, serial: serial)
+            }
             guard let result, mine == generation else { return }
             switch result {
             case .paired:

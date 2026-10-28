@@ -113,8 +113,10 @@ app Lamp isn't watching all go through it; a phone over Wi‑Fi is used as chose
 (`Device.describedItself`: a device whose description couldn't be read may be one). An open app's selector is read from its
 TV's record and checked by the serial the TV reads at each use (`Store.liveSerial`); one `use_app` call keeps the one
 it checked. The app's watch, and the check as it opens, end it only when the TV says its process is gone, at a selector
-checked by the TV's serial, not when the TV stops answering (`Adb.process`). A pairing over Wireless debugging is kept for a day by address (`AndroidTVs.paired`, Android/paired.json),
-whatever the window does next: a record there is marked to be reached that way at once, one made there later too, and
-nothing connects there on 5555; the window takes the device as ready only over Wireless debugging and refuses 5555 for
-it. It only takes the old port away, so an address is enough to go by. While the window is open Lamp's own reconnecting waits, and no two requests to one address run
+checked by the TV's serial, not when the TV stops answering (`Adb.process`). A pairing over Wireless debugging holds whatever the window does next (`AndroidTVs.paired`), in two
+parts kept apart: the paired device's record is marked for good to be reached that way, but only by its identity (the
+serial the device answering at that address read as it paired, `promoted`, or its encrypted connection seen later);
+and the address is kept as a hint for a day at most (Android/paired.json), during which nothing there is reached or
+reconnected on 5555 and the window refuses it. The hint never changes a record, since the router may give the address
+to another device, and it ends early once the paired device is seen connected over Wireless debugging. While the window is open Lamp's own reconnecting waits, and no two requests to one address run
 at once (`AndroidTVs.exclusively`); a request that waited for the address checks it's still wanted before it runs. Each Lamp has its own adb key: pairing one doesn't let the other in. Android TV apps can't be shared as a file yet.
