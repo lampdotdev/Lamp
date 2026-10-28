@@ -3,7 +3,7 @@ name: New York
 kind: game
 offer: Make New York yours
 repository: https://github.com/lampdotdev/newyork
-commit: a2cad50bf761aec09cb15f5cab726e6b3fcb897b
+commit: 6f6d54257a24c38822ff98a7fe38fc138273f81b
 tweaks:
   - snowflake: Make it a snowy winter night
   - flag.checkered: Add taxi fares against the clock
