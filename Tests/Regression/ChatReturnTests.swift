@@ -50,6 +50,21 @@ final class ChatReturnTests: XCTestCase {
         XCTAssertTrue(ChatReturn.shows(.turnGoing, onTheMac: true, leftAppLately: true, dismissed: false, connected: false, panelOpen: false))
     }
 
+    /// The chat came back beside a copy and went again before the first wait's next look: the second quit gets a wait of
+    /// its own, which the first one ending doesn't take away.
+    func testAQuitAfterTheChatCameBackGetsAWaitOfItsOwn() {
+        let waits = ChatReturn.Waits()
+        guard let first = waits.begin("wish", because: .appLeft) else { return XCTFail("no first wait") }
+        waits.placed("wish")
+        XCTAssertFalse(waits.isCurrent(first, for: "wish"))
+        guard let second = waits.begin("wish", because: .appLeft) else { return XCTFail("the second quit was folded into a wait that's over") }
+        waits.end(first, for: "wish")
+        XCTAssertTrue(waits.isCurrent(second, for: "wish"))
+        // A third reason while the second waits is folded into it.
+        XCTAssertNil(waits.begin("wish", because: .crashed))
+        XCTAssertEqual(second.reason, .crashed)
+    }
+
     /// Two reasons for one wish: the wait keeps the stronger.
     func testTheStrongerReasonIsKept() {
         XCTAssertEqual(max(ChatReturn.Reason.appLeft, .crashed), .crashed)

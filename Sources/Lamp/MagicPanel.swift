@@ -178,28 +178,22 @@ final class MagicPanel {
     func showChatAfterQuit(_ project: LampProject, because reason: ChatReturn.Reason) {
         // The chat is the wish's, whichever of its apps quit.
         let id = Store.shared.wish(of: project).id
-        if let waiting = returning[id] {
-            returning[id] = max(waiting, reason)
-            return
-        }
-        returning[id] = reason
-        let placing = placings[id, default: 0]
+        guard let wait = waits.begin(id, because: reason) else { return }
         Task {
-            defer { returning[id] = nil }
+            defer { waits.end(wait, for: id) }
             // A change that reopens the app leaves a moment with no copy running: only three seconds with none, and no
             // chat back beside one, is the app gone.
             var gone = 0
             for _ in 0..<60 {
                 try? await Task.sleep(for: .milliseconds(250))
-                // The chat went somewhere since the wait began (Lamp's panel opened, even if closed again between two
-                // looks, or a chat beside a copy): the wait is over.
-                guard placings[id, default: 0] == placing,
+                // The chat went somewhere since the wait began (`chatPlaced`): the wait is over.
+                guard waits.isCurrent(wait, for: id),
                       let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
                       !ChatPanel.isOpen(id) else { return }
                 gone = Store.shared.macCopies(of: Store.shared.chatApp(of: current)).isEmpty ? gone + 1 : 0
                 guard gone >= 12 else { continue }
                 // Looked at as it's shown: the app may have been put back on the Mac, or its chat come back, meanwhile.
-                guard ChatReturn.shows(returning[id] ?? reason, onTheMac: SidebarServer.onTheMac(current),
+                guard ChatReturn.shows(wait.reason, onTheMac: SidebarServer.onTheMac(current),
                                        leftAppLately: leftApp[id].map { Date().timeIntervalSince($0) < ChatReturn.lately } ?? false,
                                        dismissed: dismissed.contains(id), connected: SidebarServer.shared.isConnected(id), panelOpen: ChatPanel.isOpen(id)) else { return }
                 leftApp[id] = nil
@@ -207,7 +201,7 @@ final class MagicPanel {
             }
         }
     }
-    private var returning: [String: ChatReturn.Reason] = [:]
+    private let waits = ChatReturn.Waits()
 
     /// When each wish's chat last went with the app it was beside, while nothing took it since: a place chosen soon
     /// after (a device's setup can come between) is the app moving off the Mac, its chat with nowhere to be.
@@ -217,10 +211,8 @@ final class MagicPanel {
     func chatPlaced(_ id: String) {
         leftApp[id] = nil
         dismissed.remove(id)
-        placings[id, default: 0] += 1
+        waits.placed(id)
     }
-    /// How many times each wish's chat was put somewhere: a wait that began before the last one is over.
-    private var placings: [String: Int] = [:]
 
     /// Wishes whose chat the person closed beside the app and hasn't opened since: it stays closed when the app moves off
     /// the Mac and quits.
@@ -462,6 +454,33 @@ enum ChatReturn {
         case crashed
 
         static func < (a: Reason, b: Reason) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// The waits for each wish's chat to come back (`MagicPanel.showChatAfterQuit`): one at a time per wish.
+    final class Waits {
+        final class Wait {
+            fileprivate(set) var reason: Reason
+            fileprivate init(_ reason: Reason) { self.reason = reason }
+        }
+        private var waits: [String: Wait] = [:]
+
+        /// A new wait for the wish, or nil when one is going already, which takes the stronger reason.
+        func begin(_ id: String, because reason: Reason) -> Wait? {
+            if let wait = waits[id] {
+                wait.reason = max(wait.reason, reason)
+                return nil
+            }
+            let wait = Wait(reason)
+            waits[id] = wait
+            return wait
+        }
+        /// The chat was put somewhere (Lamp's panel, even if closed again before the wait looks, or beside a copy): the
+        /// wish's wait is over, and a quit after this one has a wait of its own.
+        func placed(_ id: String) { waits[id] = nil }
+        /// Whether the wait is still the wish's.
+        func isCurrent(_ wait: Wait, for id: String) -> Bool { waits[id] === wait }
+        /// A wait that's done lets go of the wish only while it's still the wish's: an older one never ends its replacement.
+        func end(_ wait: Wait, for id: String) { if waits[id] === wait { waits[id] = nil } }
     }
 
     /// How soon after the chat went with the app a place chosen still counts as the app moving.
