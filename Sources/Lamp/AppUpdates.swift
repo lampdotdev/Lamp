@@ -249,7 +249,9 @@ enum AppUpdates {
 
     /// The request that makes someone's project into an app, at the version the person opened: the branch, tag or
     /// commit the address named, at the commit Lamp fetched, so the agent works from exactly that.
-    static func adaptRequest(_ source: RepoImport.Source, commit: String?, change: String) -> String {
+    /// `reference` is where Lamp put that commit's tree in the wish, when it did (`Store.adopt`): the agent reads it
+    /// there instead of fetching the project again.
+    static func adaptRequest(_ source: RepoImport.Source, commit: String?, change: String, reference: String? = nil) -> String {
         var line = "Make \(source.url) into an app"
         switch (source.ref, commit) {
         case let (ref?, commit?) where !commit.hasPrefix(ref.lowercased()): line += ", from its “\(ref)” at commit \(commit)"
@@ -257,7 +259,9 @@ enum AppUpdates {
         case let (ref?, nil): line += ", from its “\(ref)”"
         case (nil, nil): break
         }
-        return line + "." + (change.isEmpty ? "" : " " + change)
+        line += "."
+        if let reference { line += " Its code at that commit is in \(reference)." }
+        return line + (change.isEmpty ? "" : " " + change)
     }
 
     /// Whether the wish changed since its copy was made (`Job.head`): the copy would then put back what was changed.

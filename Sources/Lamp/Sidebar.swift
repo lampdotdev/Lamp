@@ -749,7 +749,7 @@ final class SidebarServer {
                 case .error:
                     var error = SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap)
                     // A phone that didn't take the app: tried again from here (`SidebarCommand.offer`).
-                    if line.retryPhone != nil { error.button = "Retry" }
+                    if line.retryPhone != nil || line.retryFetch == true { error.button = "Retry" }
                     out.append(error)
                 case .detail:
                     out.append(SidebarLine(id: line.id, kind: .detail, text: line.text, gap: gap))
@@ -1097,6 +1097,7 @@ final class SidebarServer {
                 Task { await store.retryPhone(project, udid: udid) }
                 return
             }
+            if line.kind == .error, line.retryFetch == true { return store.retryFetch(project) }
             if line.kind == .phoneSlot {
                 Task { await store.freePhoneSlot(project, line: line.id) }
                 return

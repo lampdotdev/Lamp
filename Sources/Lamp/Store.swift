@@ -284,6 +284,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var replaced: String? = nil        // for a request sent again in other words: the request it took the place of
     var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
     var retryPhone: String? = nil     // a phone install failure: retry this destination without the agent
+    var retryFetch: Bool? = nil       // a project named in a new wish that couldn't be fetched: fetch it again (`Store.retryFetch`)
     var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
     var ask: Talk.Ask? = nil          // the agent's questions, and what was clicked
     var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
@@ -1304,17 +1305,21 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil, failed: Bool = false, call: String? = nil) {
+             retryFetch: Bool = false, offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil, failed: Bool = false,
+             call: String? = nil) {
         // A part has no chat of its own: what's said of it (its build, its crash) is said in its wish's.
         if project.isPart {
             let wish = wish(of: project)
             if wish.id != project.id {
-                log(wish, kind, text, attachments: attachments, retryPhone: retryPhone, offer: offer, noted: noted, said: said, failed: failed, call: call)
+                log(wish, kind, text, attachments: attachments, retryPhone: retryPhone, retryFetch: retryFetch, offer: offer, noted: noted,
+                    said: said, failed: failed, call: call)
             }
             return
         }
-        let line = chaptered(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer,
-                                     noted: noted, said: said, at: Date(), failed: failed ? true : nil, call: call), in: project)
+        var line = LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer,
+                           noted: noted, said: said, at: Date(), failed: failed ? true : nil, call: call)
+        if retryFetch { line.retryFetch = true }
+        line = chaptered(line, in: project)
         let movedOn = line.part != nil && ChatItem.isStep(line)
             && logs[project.id]?.last(where: ChatItem.isStep).map { $0.part != line.part } == true
         logs[project.id, default: []].append(line)
@@ -1921,7 +1926,10 @@ final class Store: ObservableObject {
         guard !text.trimmed.isEmpty || !attachments.isEmpty else { return }
         create(from: spoken ? .spoken : .typed)
         guard let project = selected else { return }
-        updateDraft(Draft(text: text.trimmed, attachments: attachments), for: project)
+        let draft = Draft(text: text.trimmed, attachments: attachments)
+        // Someone's project on GitHub, named in the wish: Lamp fetches it first, so the app is made from a commit it credits.
+        if let mention = RepoImport.mention(in: text) { return adopt(mention, draft: draft, in: project) }
+        updateDraft(draft, for: project)
         SidebarServer.shared.send(project)
     }
 
@@ -3192,6 +3200,201 @@ final class Store: ObservableObject {
         SidebarServer.shared.send(project)
     }
 
+    // MARK: Someone's project named in a new wish
+
+    /// A wish whose project on GitHub is being fetched (`adopt`): its words and files, held until they go with the
+    /// request the fetch makes, or back into its box.
+    private var fetching: [String: Draft] = [:]
+
+    /// How a project named in a wish is fetched, the request then sent, a wish found on GitHub opened, and a question
+    /// that isn't a request for an app put to the person: Lamp's own, which tests replace.
+    var fetchRepository: @MainActor (RepoImport.Source, URL, @escaping @MainActor (Process) -> Void) async throws -> URL = { source, folder, started in
+        try await RepoImport.clone(source, into: folder, started: started)
+    }
+    var sendDraft: @MainActor (LampProject) -> Void = { SidebarServer.shared.send($0) }
+    var openFetchedWish: (@MainActor (URL) -> Void)?
+    var askToAdapt: @MainActor (RepoImport.Source, String) -> AdaptChoice = { source, ask in Store.askToAdaptAlert(source, ask: ask) }
+
+    /// What the person chose for a project named with a question that isn't a request for an app ("explain this").
+    enum AdaptChoice: Equatable { case make(String), asWritten, cancel }
+
+    /// The project named in a new wish, fetched by Lamp into the wish's chat ("Getting owner/name from GitHub…", with
+    /// the chat's Stop) before anything is sent. A wish someone put on GitHub opens as a shared wish does, the person's
+    /// words and files waiting in its box. Anyone else's project is made into an app from the commit fetched: its
+    /// credit with that commit, and its license and notice files, are in the wish before the request goes, so the
+    /// agent never fetches it again from wherever the project is now, and the app's updates are measured from there
+    /// (`AppUpdates`). A fetch that fails, or is stopped, puts the wish back in its box, with Retry for a failure.
+    func adopt(_ mention: RepoImport.Mention, draft: Draft, in project: LampProject) {
+        guard let turn = begin(project) else { return updateDraft(draft, for: project) }
+        let id = project.id
+        fetching[id] = draft
+        log(project, .status, "Getting \(mention.source.owner)/\(mention.source.name) from GitHub…")
+        Task {
+            let folder = RepoImport.cloneFolder()
+            var tree: URL?
+            var failure: Error?
+            do {
+                // Stop ends git through the turn, as it ends an agent.
+                tree = try await fetchRepository(mention.source, folder) { process in turn.agent = process }
+            } catch {
+                failure = error
+            }
+            turn.agent = nil
+            await fetched(tree, failure: failure, folder: folder, mention: mention, turn: turn, for: id)
+        }
+    }
+
+    /// The fetch's end, for the wish it was started in whatever is selected now. Nothing is sent without the credit
+    /// written: a credit or a license file that can't be written is a failure like the fetch's own.
+    private func fetched(_ tree: URL?, failure: Error?, folder: URL, mention: RepoImport.Mention, turn: Turn, for id: String) async {
+        let fm = FileManager.default
+        let source = mention.source
+        guard turns[id] === turn, let project = projects.first(where: { $0.id == id }), let draft = fetching.removeValue(forKey: id) else {
+            try? fm.removeItem(at: folder)
+            return
+        }
+        if turn.stopped {
+            try? fm.removeItem(at: folder)
+            return backInBox(project, draft, "Stopped. Your wish is back in the box.")
+        }
+        guard let tree else {
+            try? fm.removeItem(at: folder)
+            return fetchFailed(project, draft, source: source, failure)
+        }
+        if RepoImport.holdsWish(tree) {
+            // Opened as a wish from its link is, in a wish of its own: this one, never sent to, goes.
+            release(project)
+            dropUnsent(project)
+            if !mention.ask.isEmpty {
+                try? mention.ask.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8)
+            }
+            if !draft.attachments.isEmpty { fetchedAttachments[tree.standardizedFileURL.path] = draft.attachments }
+            if let openFetchedWish { openFetchedWish(tree) } else { importApp(from: tree) }
+            return
+        }
+        guard let commit = RepoImport.repository(of: tree)?.commit.flatMap(Credits.validCommit), commit.count >= 40 else {
+            try? fm.removeItem(at: folder)
+            return fetchFailed(project, draft, source: source, Sharing.ImportError("Lamp couldn't tell which version of \(source.name) it got."))
+        }
+        var ask = mention.ask
+        if !mention.asksForApp {
+            let choice = askToAdapt(source, ask)
+            // The wish may have been stopped or deleted while the question was open.
+            guard turns[id] === turn, !turn.stopped, let current = projects.first(where: { $0.id == id }) else {
+                try? fm.removeItem(at: folder)
+                if let current = projects.first(where: { $0.id == id }), turns[id] === turn || turns[id] == nil {
+                    backInBox(current, draft, "Stopped. Your wish is back in the box.")
+                }
+                return
+            }
+            switch choice {
+            case .make(let change):
+                ask = change
+            case .asWritten:
+                try? fm.removeItem(at: folder)
+                release(current)
+                updateDraft(draft, for: current)
+                return sendDraft(current)
+            case .cancel:
+                try? fm.removeItem(at: folder)
+                return backInBox(current, draft, "Your wish is back in the box.")
+            }
+        }
+        do {
+            let terms = try RepoLicenses.keep(from: tree, name: source.name, in: project.dir)
+            try Credits.add(Credits(upstream: [Credits.Source(name: source.name, author: source.owner, url: source.url, commit: commit,
+                                                              license: terms.license, licenseFile: terms.licenseFile)]), to: project)
+        } catch {
+            try? fm.removeItem(at: folder)
+            return fetchFailed(project, draft, source: source, error)
+        }
+        let reference = keepReference(tree, name: source.name, in: project)
+        try? fm.removeItem(at: folder)
+        release(project)
+        updateDraft(Draft(text: AppUpdates.adaptRequest(source, commit: commit, change: ask, reference: reference),
+                          attachments: draft.attachments), for: project)
+        sendDraft(project)
+    }
+
+    /// The fetched tree, kept in the wish's .lamp (which its versions and its shared file leave out) for the agent to
+    /// read: the path it's at, or nil when it couldn't be kept there.
+    private func keepReference(_ tree: URL, name: String, in project: LampProject) -> String? {
+        let fm = FileManager.default
+        let path = ".lamp/reference/\(name)"
+        let target = project.dir.appendingPathComponent(path)
+        do {
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+            try fm.moveItem(at: tree, to: target)
+            return path
+        } catch {
+            return nil
+        }
+    }
+
+    private func fetchFailed(_ project: LampProject, _ draft: Draft, source: RepoImport.Source, _ error: Error?) {
+        let why = [error?.localizedDescription, (error as? LocalizedError)?.recoverySuggestion].compactMap { $0 }
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        release(project)
+        updateDraft(draft, for: project)
+        let said = why.isEmpty ? "Lamp couldn't get \(source.owner)/\(source.name) from GitHub." : why
+        log(project, .error, said + " Your wish is still in the box; click Retry to fetch it again.", retryFetch: true)
+        startQueued(project)
+    }
+
+    private func backInBox(_ project: LampProject, _ draft: Draft, _ said: String) {
+        release(project)
+        updateDraft(draft, for: project)
+        log(project, .status, said)
+        startQueued(project)
+    }
+
+    /// Retry on a fetch that failed: the wish in the box, as it is now, fetched again.
+    func retryFetch(_ project: LampProject) {
+        guard let current = current(project), !busy.contains(current.id) else { return }
+        let draft = draft(for: current)
+        guard let mention = RepoImport.mention(in: draft.text) else {
+            return log(current, .status, "Put the project's address on GitHub back in the box, then click Retry.")
+        }
+        updateDraft(Draft(), for: current)
+        adopt(mention, draft: draft, in: current)
+    }
+
+    /// A new wish that turned out to be a wish someone put on GitHub, which opens as a wish of its own: this one was
+    /// never sent to, and leaves nothing behind.
+    private func dropUnsent(_ project: LampProject) {
+        guard project.untitled, !project.scaffolded else { return }
+        logs[project.id] = nil
+        drafts[project.id] = nil
+        settleChat(project)
+        try? FileManager.default.removeItem(at: project.dir)
+        projects.removeAll { $0.id == project.id }
+    }
+
+    /// Files that came with a wish found on GitHub, for its box once it's opened (`review`), by the tree they came with.
+    private(set) var fetchedAttachments: [String: [URL]] = [:]
+
+    /// The question for a project named with words that don't ask for an app: made into one, or the words sent as they
+    /// are, as the person wrote them.
+    static func askToAdaptAlert(_ source: RepoImport.Source, ask: String) -> AdaptChoice {
+        let alert = NSAlert()
+        alert.messageText = "Make \(source.name) into an app?"
+        alert.informativeText = "Lamp has \(source.owner)/\(source.name). \(Builder.engine.title) can make it into an app, using your plan or credits, "
+            + "and you'll get its updates later with one click. Or send your message as you wrote it."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.stringValue = ask
+        field.placeholderString = "What would you like to change? (optional)"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Make App")
+        alert.addButton(withTitle: "Send as Written")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .make(field.stringValue.trimmed)
+        case .alertSecondButtonReturn: return .asWritten
+        default: return .cancel
+        }
+    }
+
     /// Puts the app's .lampapp file on the clipboard with its picture, ready to paste into a message: a chat
     /// shows the picture large beside the file, where the file alone is a blank document.
     func canShare(_ project: LampProject) -> Bool { project.scaffolded }
@@ -3275,6 +3478,8 @@ final class Store: ObservableObject {
         let package: Sharing.Package
         /// The request a link brought with this file (`take(exact:)`), for the wish's box; nil for a file opened by hand.
         var request: String? = nil
+        /// Files that came with the words of a new wish naming this wish on GitHub (`adopt`), for the box too.
+        var attachments: [URL] = []
         var review: ImportReview?
         /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
         var existing: LampProject?
@@ -3372,6 +3577,7 @@ final class Store: ObservableObject {
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
+            pending.attachments = fetchedAttachments.removeValue(forKey: file.standardizedFileURL.path) ?? []
             if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             pendingImport = pending
@@ -3414,7 +3620,7 @@ final class Store: ObservableObject {
             }
             return
         }
-        finishImport(pending.package, request: pending.request)
+        finishImport(pending.package, request: pending.request, attachments: pending.attachments)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -3435,7 +3641,9 @@ final class Store: ObservableObject {
         showChat(project.id)
         // A request that came with the wish's link goes into the app it updates, as into a new one (`finishImport`):
         // in the box, ready to send, whether or not the file has anything new.
-        if let request = pending.request { updateDraft(Draft(text: request), for: project) }
+        if pending.request != nil || !pending.attachments.isEmpty {
+            updateDraft(Draft(text: pending.request ?? "", attachments: pending.attachments), for: project)
+        }
         Task {
             // Looked at again now that the update owns the wish: a turn that ran while the review waited may have
             // changed it since the sheet said. Changed here, the new code is brought in rather than put in place.
@@ -3648,7 +3856,7 @@ final class Store: ObservableObject {
     private static let updateFailed = "Lamp couldn't update this app. It's just as it was."
     private static let updateChangedIcon = " Only its icon may have changed."
 
-    private func finishImport(_ package: Sharing.Package, request: String? = nil) {
+    private func finishImport(_ package: Sharing.Package, request: String? = nil, attachments: [URL] = []) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -3670,7 +3878,7 @@ final class Store: ObservableObject {
         showChat(project.id)
         // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the
         // box, ready to send once the wish is built.
-        if let request { updateDraft(Draft(text: request), for: project) }
+        if request != nil || !attachments.isEmpty { updateDraft(Draft(text: request ?? "", attachments: attachments), for: project) }
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {
             defer { try? FileManager.default.removeItem(at: package.folder) }
