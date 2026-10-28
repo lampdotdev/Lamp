@@ -13,9 +13,15 @@ const tidy = (text) => String(text ?? "").trim().slice(0, WISH_LIMIT).trim();
  * the attribute when they tidy copied HTML (seen in Safari and Chrome; they drop comments and unknown tags).
  * The plain form beside it is only the words, so pasted anywhere but Lamp nothing shows.
  */
-export function wishHTML(text) {
-  const escaped = tidy(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-  return `<span ${WISH_MARK}="1" style="white-space: pre-wrap">${escaped}</span>`;
+const escapeHTML = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+/**
+ * With a remix's origin, the mark's value says what to start from as a link's query would ("starter=newyork"), since the
+ * mark is the attribute browsers are known to keep (`Wish.markedRemix` in Lamp); otherwise it's "1".
+ */
+export function wishHTML(text, origin = null) {
+  const value = origin ? remixParams(origin).toString() : "1";
+  return `<span ${WISH_MARK}="${escapeHTML(value)}" style="white-space: pre-wrap">${escapeHTML(tidy(text))}</span>`;
 }
 
 /** The link that opens Lamp, on a Mac that has it, with the wish in a box. Nothing is sent until they say so. */
@@ -29,14 +35,14 @@ export function wishLink(text) {
  * words could be copied (to paste by hand), and "none" when the browser refused both.
  * Call it straight from a press: Safari only lets a page copy while a press is being handled.
  */
-export async function copyWish(text, { clipboard = globalThis.navigator?.clipboard, Item = globalThis.ClipboardItem } = {}) {
+export async function copyWish(text, { clipboard = globalThis.navigator?.clipboard, Item = globalThis.ClipboardItem, origin = null } = {}) {
   const wish = tidy(text);
   if (!wish || !clipboard) return "none";
   try {
     if (clipboard.write && Item) {
       await clipboard.write([new Item({
         "text/plain": new Blob([wish], { type: "text/plain" }),
-        "text/html": new Blob([wishHTML(wish)], { type: "text/html" }),
+        "text/html": new Blob([wishHTML(wish, origin)], { type: "text/html" }),
       })]);
       return "marked";
     }
@@ -77,6 +83,46 @@ export function withAsk(wish, ask) {
 export function exactWishLink(file, ask) {
   const request = String(ask ?? "").trim().slice(0, ASK_LIMIT).trim();
   if (!file || !request) return null;
-  const params = new URLSearchParams({ file: String(file), text: request });
-  return `lamp://wish?${params}`;
+  return `lamp://wish?${query({ file: String(file), text: request })}`;
 }
+
+/**
+ * What a remix starts from, read off a link (`?starter=newyork`, or `?repo=https://github.com/owner/name&commit=…`, beside
+ * `ask`): a published page's Remix panel names it when the page is a starter's or a wish on GitHub (`RemixLink.Origin` in
+ * Lamp). Only a starter's plain id, or an https github.com repository with a full 40-digit commit (a shallow fetch takes no abbreviation); null for anything else, and
+ * for both at once. Lamp checks it all again (`Wish.remix`).
+ */
+export function remixFrom(search) {
+  const params = new URLSearchParams(search ?? "");
+  const starter = params.get("starter"), repo = params.get("repo"), commit = params.get("commit");
+  if (starter !== null && repo === null) {
+    return commit === null && /^[a-z0-9][a-z0-9-]{0,39}$/.test(starter) ? { starter } : null;
+  }
+  if (repo !== null && starter === null) {
+    const found = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})\/?$/.exec(repo);
+    if (!found || (commit !== null && !/^[0-9a-fA-F]{40}$/.test(commit))) return null;
+    const name = found[2].replace(/\.git$/, "");
+    if (!name) return null;
+    const origin = { repo: `https://github.com/${found[1]}/${name}`, owner: found[1], name };
+    return commit === null ? origin : { ...origin, commit: commit.toLowerCase() };
+  }
+  return null;
+}
+
+/** A remix's origin as the parameters Lamp reads, in its link and in the mark's value. */
+export function remixParams(origin) {
+  return new URLSearchParams(origin.starter ? { starter: origin.starter } : { repo: origin.repo, ...(origin.commit ? { commit: origin.commit } : {}) });
+}
+
+/**
+ * The link that opens Lamp, on a Mac that has it, on a fresh copy of what the remix starts from, with the request in its
+ * chat's box (`lamp://wish?starter=…&text=…`). The request may be empty: the copy opens with an empty box.
+ */
+export function remixLink(origin, text) {
+  if (!origin) return null;
+  const request = tidy(text);
+  return `lamp://wish?${query({ ...Object.fromEntries(remixParams(origin)), ...(request ? { text: request } : {}) })}`;
+}
+
+/** A query with spaces as %20, as `wishLink` writes one: Lamp reads "+" as a space too, but nothing need rely on it. */
+const query = (pairs) => Object.entries(pairs).map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");

@@ -172,7 +172,7 @@ enum StarterRepos {
     }
 
     /// A game's page as Publish stages one to play in any browser (`Publish.stage`), with the credit bar, the starter's
-    /// changes in its Remix panel and Lamp's site for the rest: nothing else (no shared file, which differs every time
+    /// changes in its Remix panel (whose request goes with the starter's id, so Lamp copies it) and Lamp's site for the rest: nothing else (no shared file, which differs every time
     /// it's made). Nil for a starter that isn't a game with a page.
     static func stagePage(_ project: LampProject, starter: Starters.Starter, repo: String, in root: URL) throws -> URL? {
         guard project.holdsApp, GameKit.isGame(project), GameKit.engine(project) == .web else { return nil }
@@ -197,7 +197,9 @@ enum StarterRepos {
         guard let html = try? String(contentsOf: index, encoding: .utf8) else { return nil }
         let credits = Credits.load(project)
         let ideas = starter.tweaks.map { RemixIdea(text: $0.title, symbol: $0.symbol ?? "sparkles") }
-        try Data(Publish.withCreditBar(html, credits: credits, open: Publish.OpenInLamp(link: nil, file: nil),
+        // Its Remix panel names the starter, so Lamp starts from a copy of it with the request.
+        let open = Publish.OpenInLamp(link: nil, file: nil, origin: .starter(starter.folder.lastPathComponent))
+        try Data(Publish.withCreditBar(html, credits: credits, open: open,
                                        suggestions: ideas.isEmpty ? RemixOffer.fallback : ideas, name: project.name,
                                        about: AppDescription.description(of: project)).utf8).write(to: index)
         try Data().write(to: site.appendingPathComponent(".nojekyll"))

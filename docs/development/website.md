@@ -20,7 +20,12 @@ fill in the sleeve's colors. Apps and games get the same weight on it, and
 every example is a real starter (`Resources/Starters`), with the pictures and changes it ships with; the devices it
 lists are only those a kind of app or a shipped device integration really reaches. Its Download buttons, and the
 menu bar's, are the paper's ink with paper-colored words (the last section's is the stripes' yellow with ink).
-The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
+A link from a Remix panel (`?ask=`, with `starter=` or `repo=` and `commit=` when the page names what it's a copy of)
+opens the homepage's remix dialog (`RemixDialog.astro`, "Remixing a published page" in the wishes guide), dressed as a
+sleeve: the cream paper in an ink frame with its hard shadow, the stripes across its top, the starter's picture on a
+tape's label (or a blank label with the name in marker), the request in marker in its box, and the page's buttons
+(Open in Lamp in ink, on a Mac; Download for Mac in the stripes' yellow). The ideas page keeps its own card
+(`WishDialog.astro`). The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
 lamp's bright orange with white words, about 3:1 at their lightest, a faint shadow under the words. That trade-off
 was weighed and accepted: the brightness is the point of the button, and the label is large, bold and the same
 wherever it appears. About 3:1 is the floor for those buttons, so a change that goes below it is a regression;

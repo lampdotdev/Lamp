@@ -958,6 +958,7 @@ enum Gallery {
     private static let remixEntries: [Entry] = [
         remix("With a share link", link: true),
         remix("Without a share link"),
+        remix("On GitHub", link: true, origin: .repository(url: "https://github.com/someone/new-york", commit: "b95d5012397fa3fa345505f428f1189271218753")),
         remix("Lamp's own suggestions", link: true, suggestions: RemixOffer.fallback),
         remix("Wide", link: true, width: 480),
     ]
@@ -966,10 +967,10 @@ enum Gallery {
                               suggestions: [RemixIdea] = [RemixIdea(text: "Add a helicopter tour of Central Park", symbol: "airplane"),
                                                           RemixIdea(text: "Let me race a friend on the same phone", symbol: "flag.checkered"),
                                                           RemixIdea(text: "Show the time of day as it is in New York", symbol: "clock")],
-                              width: CGFloat? = nil) -> Entry {
+                              width: CGFloat? = nil, origin: RemixLink.Origin? = nil) -> Entry {
         Entry(group: "Remix", name: name) {
             let offer = RemixOffer(name: "New York", about: "Explore Manhattan on foot, by car, by bike or by helicopter.", suggestions: suggestions,
-                                   shareLink: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil)
+                                   shareLink: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, origin: origin)
             return AnyView(RemixPanel(offer: offer) { _ in }
                 .frame(width: width ?? 320)
                 .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))

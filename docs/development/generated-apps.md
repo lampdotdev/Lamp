@@ -338,13 +338,22 @@ On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the 
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
 nothing to connect to: once Lamp has been away a few seconds and macOS says no Lamp is installed (`Link.lampInstalled`,
 from the `LampHost` Lamp wrote into the extension's Info.plist), it shows `RemixPanel` (LampSidebarKit): the app's name
-and line, three things to change and a box; Continue with Lamp opens the wish's Share Link page with the request as
-`ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js), or lamp.dev with a request that names the app
-(`RemixLink`), since without the link Lamp makes its own version. The three things come from `RemixSuggestions`: written by
+and line, three things to change and a box; Continue with Lamp goes where `RemixLink.url` says: lamp.dev with what the
+app is a copy of (`RemixLink.Origin`: a starter's id, or a repository and commit) beside the request as `ask`, when the
+offer names one (a published page does, "Remixing a published page" in the wishes guide, and so does an app whose wish
+is on GitHub, below); else the wish's Share Link
+page with the request as `ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js); else lamp.dev with a
+request that names the app, since without either Lamp makes its own version. The line under the button says which
+(`RemixLink.note`). The three things come from `RemixSuggestions`: written by
 the helper model after a change lands (`Store`, beside the version's title), kept in `.lamp/suggestions.json` with a
 stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
 `LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then
-(`RemixOffer.fallback`). When suggestions arrive after an install, or a Share Link is made or taken down, the installed
+(`RemixOffer.fallback`). A wish that's been Put on GitHub also has its repository and the commit last pushed there
+(`LampRepository`, `LampCommit`), while the repository is public and holds this version (`GitHubRepo.remixOrigin`, by the app's wish for an app in
+a folder of its own; a push refreshes every app of the wish), so
+the panel's request goes with them and Lamp starts from a copy of this exact wish; a
+starter's copy doesn't name the starter, since it may have been changed. When suggestions arrive after an install, a
+Share Link is made or taken down, or Put on GitHub pushes a new commit, the installed
 copy is made again from the build on disk and signed as before (`Store.refreshInstalled`: now if the app isn't open,
 else at its next quit), so a copy taken off this Mac carries them. On a Mac with Lamp, a request that came with a wish's
 link goes with the exact wish through a link of Lamp's own (`lamp://wish?file=…&text=…`, `exactWishLink` in

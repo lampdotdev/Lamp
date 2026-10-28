@@ -39,6 +39,7 @@ enum Sidebar {
         guard applies(to: project), let program else { return }
         try fm.createDirectory(at: appex.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
         try fm.copyItem(at: program, to: appex.appendingPathComponent("Contents/MacOS/LampSidebar"))
+        let remix = GitHubRepo.remixOrigin(for: project)
         let info: [String: Any] = [
             "CFBundleExecutable": "LampSidebar",
             "CFBundleIdentifier": bundleID(for: project),
@@ -57,12 +58,16 @@ enum Sidebar {
             "LampApp": project.id,
             // Where Lamp listens for it.
             "LampPort": Int(Edition.sidebarPort),
-            // For a Mac without Lamp (`RemixPanel`): which app Lamp is, the wish's line, what could be changed, and the
-            // wish's Share Link when it has one.
+            // For a Mac without Lamp (`RemixPanel`): which app Lamp is, the wish's line, what could be changed, the
+            // wish's Share Link when it has one, and the repository it was put on, at the commit last pushed, which a
+            // remix starts from a copy of (`GitHubRepo.remixOrigin`: public, and this version). Not a starter's: a copy
+            // may have been changed since.
             "LampHost": Edition.bundleID,
             "LampAbout": AppDescription.description(of: project) ?? "",
             "LampSuggestions": (RemixSuggestions.load(project) ?? []).map(\.plist),
             "LampShareLink": WishLink.kept(for: project)?.url.absoluteString ?? "",
+            "LampRepository": remix.map { if case .repository(let url, _) = $0 { url } else { "" } } ?? "",
+            "LampCommit": remix.map { if case .repository(_, let commit) = $0 { commit ?? "" } else { "" } } ?? "",
         ]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: appex.appendingPathComponent("Contents/Info.plist"))
