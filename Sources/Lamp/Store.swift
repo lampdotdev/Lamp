@@ -4025,7 +4025,7 @@ final class Store: ObservableObject {
                 owner.sentFrom = head
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
-            await settleUpdate(current(project) ?? project, messages: messages, end: result.end)
+            await settleUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value

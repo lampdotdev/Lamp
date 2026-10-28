@@ -422,10 +422,12 @@ extension Store {
 
     /// After a turn in a copy an update is prepared in: once it finished well, the copy takes the update's commit in its
     /// credits and its review opens. Any turn there is the update's: the person's answers, or their own asks to try again.
-    func settleUpdate(_ project: LampProject, messages: [QueuedMessage], end: TurnEnd) async {
+    /// `asked` is whether the agent asked the person something in this turn: its card may already be answered and
+    /// folded, with the answer only in line, so the open card alone doesn't say the update is still going.
+    func settleUpdate(_ project: LampProject, messages: [QueuedMessage], end: TurnEnd, asked: Bool) async {
         guard var job = AppUpdates.Job.load(project), job.wish != nil, job.ready != true else { return }
         let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
-        let asking = Talk.open(in: logs[project.id] ?? []) != nil
+        let asking = asked || Talk.open(in: logs[project.id] ?? []) != nil || (queued[project.id] ?? []).contains { $0.card != nil }
         switch AppUpdates.settle(end: end, errors: turnLines.contains { $0.kind == .error }, asking: asking) {
         case .waiting:
             return
