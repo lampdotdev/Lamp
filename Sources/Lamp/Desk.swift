@@ -1871,10 +1871,11 @@ extension Store {
     func open(fromDesk project: LampProject) {
         // A wish whose apps are all in folders of their own has no window of its own for its chat to go beside. One
         // that plays on another device shows its chat in Lamp's panel too, as a wish holding such an app does below:
-        // once that app is running there, using the wish opens nothing and the chat would be the only thing to show.
+        // once that app is running there, using the wish opens nothing and the chat would be the only thing to show. A
+        // starter still being made opens when it is ready, without its chat in between (`use`).
         guard project.holdsApp else {
             use(project)
-            if Self.playsAwayFromMac(apps(of: project)) { showChat(project.id) }
+            if Self.playsAwayFromMac(apps(of: project)), !openWhenReady.contains(project.id) { showChat(project.id) }
             return
         }
         let made = FileManager.default.fileExists(atPath: project.installedURL.path)
