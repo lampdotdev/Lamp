@@ -752,6 +752,10 @@ enum Gallery {
                                             capabilities: [], concerns: [], risk: .low,
                                             reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
                app: "Plant Care", existing: "Balcony Plants"),
+        review("Already here, changed here", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
+                                                          capabilities: [], concerns: [], risk: .low,
+                                                          reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
+               app: "Plant Care", existing: "Plant Care", changedHere: true),
         review("Android app", ImportReview(summary: "Counts your taps on one screen and remembers the count after closing.",
                                            capabilities: [], concerns: [], risk: .low,
                                            reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
@@ -766,10 +770,10 @@ enum Gallery {
     }
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
-                               existing: String? = nil, android: Bool = false) -> Entry {
+                               existing: String? = nil, changedHere: Bool = false, android: Bool = false) -> Entry {
         Entry(group: "Shared wish", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
-                                     icon: nil, review: review, existing: existing, cancel: {}, open: {}, update: {}, android: android)
+                                     icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)

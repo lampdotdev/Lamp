@@ -287,6 +287,7 @@ enum AppInfoView {
     static let useSettingsChoices = "settingsChoices"
     static let basedOnPage = "basedOnPage"
     static let remixedFromPage = "remixedFromPage"
+    static let updateFromRepository = "updateFromRepository"
 
     /// A button of the panel's, here or in the chat beside the app: Settings opened at its tab, the app or its code
     /// shown in Finder, or this app's own model choices undone.
@@ -300,6 +301,12 @@ enum AppInfoView {
             if let page = Credits.load(project).upstream.first?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         case remixedFromPage:
             if let page = Credits.load(project).remixOf.last(where: { $0.url != nil })?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+        case updateFromRepository:
+            // The repository fetched again and opened as any repository is: the review, then Update (the wish keeps its
+            // name, data and chat, with a version saved first) or Keep Both, since the wish came from there.
+            if let source = Credits.load(project).remixOf.last(where: { $0.url != nil })?.url.flatMap(RepoImport.source(from:)) {
+                Store.shared.importRepository(source, request: nil)
+            }
         default: break
         }
     }
@@ -390,8 +397,12 @@ enum AppInfoView {
         }
         var buttons: [SidebarInfoButton] = []
         if let source = credits.upstream.first, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
-        // The wish this one was most directly remixed from, where it lives (its repository on GitHub).
-        if let remix = credits.remixOf.last(where: { $0.url != nil }) { buttons.append(SidebarInfoButton(title: "Visit \(remix.name) on GitHub", action: remixedFromPage)) }
+        // The wish this one was most directly remixed from, where it lives (its repository on GitHub), and the latest of
+        // it from there, through the same review as the first time.
+        if let remix = credits.remixOf.last(where: { $0.url != nil }) {
+            buttons.append(SidebarInfoButton(title: "Visit \(remix.name) on GitHub", action: remixedFromPage))
+            if remix.url.flatMap(RepoImport.source(from:)) != nil { buttons.append(SidebarInfoButton(title: "Update from GitHub…", action: updateFromRepository)) }
+        }
         return SidebarInfoSection(title: "Credits", rows: rows, buttons: buttons)
     }
 
@@ -474,7 +485,7 @@ struct ImportReviewView: View {
 
     var body: some View {
         ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
-                         review: pending.review, existing: pending.existing?.name, room: room,
+                         review: pending.review, existing: pending.existing?.name, changedHere: pending.changedHere, room: room,
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
                          android: pending.package.platform.target.recipe.language == .kotlin)
             .task { icon = await Sharing.icon(of: pending.package) }
@@ -507,6 +518,8 @@ struct ImportReviewCard: View {
     let review: ImportReview?
     /// The name of the wish already here that this file is another version of, if any.
     let existing: String?
+    /// That wish was changed here since it arrived: Update brings the new code in through the agent, keeping those changes.
+    var changedHere = false
     var room = CGFloat.infinity
     let cancel: () -> Void
     let open: () -> Void
@@ -602,7 +615,10 @@ struct ImportReviewCard: View {
             if let existing {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
-                    Text(verbatim: "You already have this wish\(existing == name ? "" : ", as “\(existing)”"). Updating keeps your data, and you can go back if you change your mind.")
+                    Text(verbatim: "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
+                         + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself."
+                                        : ". Updating keeps your data")
+                         + ", and you can go back if you change your mind.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
