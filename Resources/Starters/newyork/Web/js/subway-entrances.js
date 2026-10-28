@@ -1,6 +1,7 @@
 import { BLOCKS, blockAt } from './city-config.js';
 import { getStreetGroundHeight } from './city-grid.js';
 import { SUBWAY_ENTRANCES } from './subway-geodata.js';
+import { groundHeight } from './terrain.js';
 import { polygonBoxOverlaps } from './building-collision.js';
 
 const HALF_WIDTH = 1.26;
@@ -50,9 +51,11 @@ function createSubwayEntrances(colliders, occupied = []) {
     });
   }
   for (const c of [...colliders, ...occupied]) {
-    if ((c.minY ?? 0) >= 2.8 || (c.maxY ?? Infinity) <= 0.22) continue;
+    // Lamp: the city stands on real terrain, so a collider's heights are measured from the ground under it, as the
+    // entrance is: a ground-level building on a hill is still in the way.
+    const o = c.obb, g = groundHeight(o ? o.cx : (c.minX + c.maxX) / 2, o ? o.cz : (c.minZ + c.maxZ) / 2);
+    if ((c.minY ?? g) - g >= 2.8 || (c.maxY ?? Infinity) - g <= 0.22) continue;
     if (c.polygon) { insert(c); continue; }
-    const o = c.obb;
     insert(o ? box(o.cx, o.cz, o.hx, o.hz, o.cs, o.sn)
       : box((c.minX + c.maxX) / 2, (c.minZ + c.maxZ) / 2, (c.maxX - c.minX) / 2, (c.maxZ - c.minZ) / 2));
   }
