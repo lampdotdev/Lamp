@@ -2195,6 +2195,7 @@ final class Store: ObservableObject {
         changed.simulator = newSimulator
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        MagicPanel.shared.placeChanged(changed)
         syncLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
         let said = name.map { "\(placeName(changed)) will open on \($0) from now on. Press Play to put it there." }
@@ -2228,6 +2229,7 @@ final class Store: ObservableObject {
         changed.chosen = chosen
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        MagicPanel.shared.placeChanged(changed)
         syncLocalNetwork()   // the device reaches Lamp's gateway over the Wi‑Fi
         let name = devices.first(where: { $0.udid == serial })?.name
         let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
@@ -2252,6 +2254,7 @@ final class Store: ObservableObject {
             changed.chosen = .tv
             try? Template.saveMeta(changed)
             if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
+            MagicPanel.shared.placeChanged(changed)
             let name = devices.first(where: { $0.udid == id })?.name
             log(changed, .status, name.map { "\(placeName(changed)) will go on \($0) when you press Play." } ?? "\(placeName(changed)) will open in the TV preview from now on.")
             finish(changed)
@@ -2274,6 +2277,7 @@ final class Store: ObservableObject {
             changed.chosen = .device
             try? Template.saveMeta(changed)
             if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
+            MagicPanel.shared.placeChanged(changed)
             log(changed, .status, "\(changed.name) will go on \(device.name) when you press Play.")
             finish(changed)
         }
@@ -2391,6 +2395,7 @@ final class Store: ObservableObject {
         }
         do { try Template.saveMeta(changed) } catch { return "Lamp couldn't save the change: \(error.localizedDescription)" }
         projects[index] = changed
+        MagicPanel.shared.placeChanged(changed)
         syncLocalNetwork()
         var said: [String] = []
         let screen = ScreenKit.isScreen(changed)
@@ -9551,7 +9556,7 @@ final class Store: ObservableObject {
                 guard let self, let current = self.current(project) else { return }
                 if let crash = Runtime.newestCrash(of: current), crash.date > since {
                     // Its chat went with it: it comes up in Lamp's panel, with what Lamp does about the crash.
-                    MagicPanel.shared.showChatAfterQuit(current)
+                    MagicPanel.shared.showChatAfterQuit(current, because: .crashed)
                     // After Lamp's own fix it's said once, and left to the person.
                     if !self.fixCrash(current, detail: crash.summary), self.lastRequestByLamp(current),
                        self.crashesAnswered[current.id] != crash.date {

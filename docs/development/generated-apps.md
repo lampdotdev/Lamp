@@ -192,9 +192,11 @@ closes (`MagicPanel.chatOpenedInApp`). Where there's no Mac window to put it bes
 a menu bar app, a widget, a background app, an iPhone app, an app built by a Lamp from before the sidebar) the chat is in
 Lamp's panel, and setup cards' keys, sign-ins and Image Playground are in Lamp's sheet (`SetupSheet`), "The chat's one
 screen" in the chat guide. An app opened for its chat that never connects one (it couldn't start) has its chat shown in
-Lamp's panel (`MagicPanel.showChatIfAppNeverComes`), and so does one that crashes, or quits while a turn is going on,
-with its chat beside it (`MagicPanel.showChatAfterQuit`, once three seconds have passed with no copy running: a change
-that reopens the app leaves a moment with none). The chat is drawn by another process, which AppKit's focus doesn't follow
+Lamp's panel (`MagicPanel.showChatIfAppNeverComes`), and so does one that crashes, quits while a turn is going on, or
+quits because it moved off the Mac (to a TV, a phone or another device, whether the place was chosen just before the quit
+or just after), with its chat beside it (`MagicPanel.showChatAfterQuit`, once three seconds have passed with no copy
+running: a change that reopens the app leaves a moment with none). A plain quit of an app that still opens on the Mac
+leaves its chat closed, and so does a later change of device for an app whose chat the person closed (`ChatReturn`). The chat is drawn by another process, which AppKit's focus doesn't follow
 (what had the keyboard, a list say, keeps it through a click in the chat), so once a click in the chat has landed the
 keyboard goes to it (`LampSidebar.watchClicks`). Point at the Screen is an item of the + by the message box, beside
 Attach a File…, in both chats (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the app is open on this Mac (`MagicPanel.point`; from Lamp's panel, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), kept above the app's own panels, sheets and alerts however high they float, but no higher, so other apps' windows still cover it (`Picker.keepOnTop`), and what's in them is pointed at and pictured as shown, outlines the smallest named

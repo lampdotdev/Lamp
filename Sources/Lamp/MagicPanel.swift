@@ -166,13 +166,19 @@ final class MagicPanel {
         }
     }
 
-    /// The app quit while its chat was beside it, and not for a change that reopens it: it crashed, or quit while a
-    /// turn was going on. The chat comes up in Lamp's panel, on its own, without taking the keyboard, once no chat
-    /// has come back beside a copy of the app.
-    func showChatAfterQuit(_ project: LampProject) {
+    /// The app's chat may have lost its place beside the app (`ChatReturn` says when). The chat comes up in Lamp's
+    /// panel, on its own, without taking the keyboard, once no chat has come back beside a copy of the app. One wait
+    /// per wish: a second reason while it waits is folded into it, the stronger one kept.
+    func showChatAfterQuit(_ project: LampProject, because reason: ChatReturn.Reason) {
         // The chat is the wish's, whichever of its apps quit.
         let id = Store.shared.wish(of: project).id
+        if let waiting = returning[id] {
+            returning[id] = max(waiting, reason)
+            return
+        }
+        returning[id] = reason
         Task {
+            defer { returning[id] = nil }
             // A change that reopens the app leaves a moment with no copy running: only three seconds with none, and no
             // chat back beside one, is the app gone.
             var gone = 0
@@ -181,9 +187,32 @@ final class MagicPanel {
                 guard let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
                       !ChatPanel.isOpen(id) else { return }
                 gone = Store.shared.macCopies(of: Store.shared.chatApp(of: current)).isEmpty ? gone + 1 : 0
-                if gone >= 12 { return ChatPanel.show(id, activate: NSApp.isActive) }
+                guard gone >= 12 else { continue }
+                // Looked at as it's shown: the app may have been put back on the Mac, or its chat come back, meanwhile.
+                guard ChatReturn.shows(returning[id] ?? reason, onTheMac: SidebarServer.onTheMac(current),
+                                       leftAppLately: leftApp[id].map { Date().timeIntervalSince($0) < ChatReturn.lately } ?? false,
+                                       connected: SidebarServer.shared.isConnected(id), panelOpen: ChatPanel.isOpen(id)) else { return }
+                leftApp[id] = nil
+                return ChatPanel.show(id, activate: NSApp.isActive)
             }
         }
+    }
+    private var returning: [String: ChatReturn.Reason] = [:]
+
+    /// When each wish's chat last went with the app it was beside, while nothing took it since: a place chosen soon
+    /// after (a device's setup can come between) is the app moving off the Mac, its chat with nowhere to be.
+    private var leftApp: [String: Date] = [:]
+    func chatLeftApp(_ id: String) { leftApp[id] = Date() }
+    /// The chat is somewhere again (beside the app, or in Lamp's panel, which the person may close on purpose).
+    func chatPlaced(_ id: String) { leftApp[id] = nil }
+
+    /// Where an app opens changed (Try On, a place given, a device set up): when it went off the Mac just after its
+    /// chat went with the app, the chat comes back in Lamp's panel. While the app is still open the chat stays beside
+    /// it, and comes back when the app quits (`SidebarServer.closed`).
+    func placeChanged(_ project: LampProject) {
+        let id = Store.shared.wish(of: project).id
+        guard leftApp[id] != nil, !SidebarServer.shared.isConnected(id), !ChatPanel.isOpen(id) else { return }
+        showChatAfterQuit(project, because: .placeChanged)
     }
 
     /// A wish Lamp came with opens with its chat beside it the first time it's opened, ready to be changed, as a new
@@ -391,5 +420,38 @@ extension Store {
         // Only a Mac copy: an app for both may be open elsewhere too.
         guard project.hasMac else { return false }
         return project.hasIOS ? openOnMac.contains(project.id) : isOpen(project)
+    }
+}
+
+/// Whether a wish's chat that went with the app it was beside comes up in Lamp's panel, so it's never nowhere.
+enum ChatReturn {
+    /// Why the chat may be nowhere, weakest first: a wait for one is kept for the strongest that comes.
+    enum Reason: Int, Comparable {
+        /// Where the app opens changed, soon after its chat went with it.
+        case placeChanged
+        /// The app quit with no turn going on.
+        case appLeft
+        /// It quit in the middle of a turn, whose progress, questions and Stop are in the chat.
+        case turnGoing
+        /// It crashed, and what Lamp does about it is said in the chat.
+        case crashed
+
+        static func < (a: Reason, b: Reason) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// How soon after the chat went with the app a place chosen still counts as the app moving.
+    static let lately: TimeInterval = 120
+
+    /// `onTheMac`: the wish's chat app opens on this Mac (`SidebarServer.onTheMac`). `leftAppLately`: its chat went with the
+    /// app within `lately`, and nothing took it since.
+    static func shows(_ reason: Reason, onTheMac: Bool, leftAppLately: Bool, connected: Bool, panelOpen: Bool) -> Bool {
+        guard !connected, !panelOpen else { return false }
+        switch reason {
+        case .turnGoing, .crashed: return true
+        // A plain quit of an app that still opens on the Mac leaves its chat closed, as the window it was in is.
+        case .appLeft: return !onTheMac
+        // Only just after the chat went with the app: a device app's chat the person closed in Lamp's panel stays closed.
+        case .placeChanged: return !onTheMac && leftAppLately
+        }
     }
 }
