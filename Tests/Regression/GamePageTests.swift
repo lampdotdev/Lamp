@@ -154,7 +154,8 @@ final class GamePageTests: XCTestCase {
     func testWhatThePageIsToldIsPartOfTheBuildsInputs() throws {
         let mac = try game(chosen: .mac), android = try game(chosen: .android)
         let inputs = { (project: LampProject) in project.platform.target.recipe.inputs(project) ?? "" }
-        XCTAssertTrue(inputs(mac).hasSuffix(try GamePage.descriptor(for: GamePage.place(for: mac))))
+        // Among the inputs, not at their end: what the player is told of the controllers comes after it.
+        XCTAssertTrue(inputs(mac).contains(try GamePage.descriptor(for: GamePage.place(for: mac))))
         XCTAssertNotEqual(inputs(mac), inputs(android))
     }
 
