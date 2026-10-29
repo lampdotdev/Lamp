@@ -213,6 +213,10 @@ enum TeamSigning {
             }
         }
         try fm.createDirectory(at: code.appendingPathComponent(Sharing.Assets.folder), withIntermediateDirectories: true)
+        // A page's app carries Web/ as a folder in its project (`Template.withWebFolder`), which must be there to build.
+        // So does a game's phone page (`Template.withPhoneFolder`).
+        if Template.showsPage(project) { files.append(("Web/index.html", "<!doctype html>\n")) }
+        if GamePhones.bundlesOnIOS(project) { files.append(("Phone/index.html", "<!doctype html>\n")) }
         for (path, text) in files {
             let url = code.appendingPathComponent(path)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
