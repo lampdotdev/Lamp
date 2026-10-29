@@ -9009,7 +9009,8 @@ final class Store: ObservableObject {
 
     /// The preview's build, or what stops it, in the words the agent is given.
     private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
-        note("Building…", for: project)
+        // The preview is drawn out of sight, often while the person plays the game itself: these say it's a copy.
+        note("Building a hidden copy…", for: project)
         do {
             // A three.js game has nothing to compile: its page is copied where the preview reads it.
             if GameKit.engine(project) == .web { _ = try await GameKit.stageWeb(project) }
@@ -9025,7 +9026,7 @@ final class Store: ObservableObject {
     }
 
     private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
-        note("Playing \(project.name)", for: project)
+        note("Trying the change in a hidden copy", for: project)
         let played: GameKit.Played
         do {
             played = GameKit.engine(project) == .web ? try await GameKit.playWeb(project, script: script)
