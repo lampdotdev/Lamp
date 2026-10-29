@@ -75,7 +75,8 @@ suits, and map no request to either: the agent chooses, and when one way can't b
 tools) `make_app_for`'s answer leaves it free to take another rather than stop. Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's
 staged beside `Web/` the same way (links refused) and never packaged, into a folder nothing serves, and put in place of
 the served one in one swap only once it has passed (`TVs.publishPhone`), so a request never reads a copy being made or
-one that failed. It's served by Lamp at a port of the app's own (`PhoneSites`, from `Edition.phonePagePorts`, sixteen
+one that failed. A game on Lamp's runtime has one too, served the same way while it's open on the Mac ("Games" in the
+devices guide). It's served by Lamp at a port of the app's own (`PhoneSites`, from `Edition.phonePagePorts`, sixteen
 for each Lamp), so each app's page is an origin of its own in the phone's browser and what one app's page keeps is out
 of another's reach. The sixteen are a pool, not a limit: an app keeps its port while it can, and gives it up to an app
 that needs one once its own page isn't served (or it's gone). A site counts as open only once it's listening

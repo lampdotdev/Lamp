@@ -605,7 +605,10 @@ final class Store: ObservableObject {
     @Published var openApps: Set<String> = []
     /// The apps open on this Mac, and those open in a simulator or on a phone: an app for both can be in
     /// both at once, and its Play and Stop are for the place Try On points at (`isOpen`).
-    @Published private(set) var openOnMac: Set<String> = []
+    @Published private(set) var openOnMac: Set<String> = [] { didSet { Self.openOnMacNow = openOnMac } }
+    /// The same, for what's asked of every app without the store at hand (`servesPhonePage`, which runs while the
+    /// store is still being made).
+    private(set) static var openOnMacNow: Set<String> = []
     @Published private(set) var openOnIOS: Set<String> = []
     /// A choice in the chat's Try On waiting to open the app where it points (`Store.tryOn`), by app.
     var openingChosen: [String: UUID] = [:]
@@ -7863,6 +7866,14 @@ final class Store: ObservableObject {
         Runtime.recordAndroidBuiltBefore(project)
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
+        // A game's page for phones is copied where Lamp serves it from, wherever the game is built for (on a TV, with the
+        // rest of its files, just below).
+        if project.platform.target.takesPhones, !project.onTV {
+            do { try await TVs.stagePhone(project) } catch {
+                log(project, .detail, "Build failed:\n" + error.localizedDescription)
+                return error.localizedDescription
+            }
+        }
         // A TV app has nothing to compile: its files are copied where the preview and the packages read them.
         if project.onTV {
             do {
@@ -11122,7 +11133,12 @@ final class Store: ObservableObject {
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + Array(deviceRuns.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
         let closedOnMac = openOnMac.subtracting(onMac)
-        if Set(onMac) != openOnMac { openOnMac = Set(onMac) }
+        if Set(onMac) != openOnMac {
+            let changed = openOnMac.symmetricDifference(onMac)
+            openOnMac = Set(onMac)
+            // A game's phone page is served while it's open here, and its players let go once it closes.
+            if projects.contains(where: { changed.contains($0.id) && $0.platform.target.takesPhones && Self.takesPlayers($0) }) { syncLocalNetwork() }
+        }
         if Set(onIOS) != openOnIOS { openOnIOS = Set(onIOS) }
         let ids = onMac + onIOS
         let closed = openApps.subtracting(ids).union(closedOnMac)
@@ -11283,10 +11299,23 @@ final class Store: ObservableObject {
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
-    /// can't watch, for as long as it's the TV the app opens on. Lamp serves it so the agent never has to start a
-    /// server of its own, which would outlive the app.
+    /// can't watch, for as long as it's the TV the app opens on; and a game's while its copy is open on this Mac too.
+    /// Lamp serves it so the agent never has to start a server of its own, which would outlive the app.
     static func servesPhonePage(_ project: LampProject) -> Bool {
-        project.holdsApp && project.hasTV && (project.device != nil || TVPreview.window(project) != nil) && takesPlayers(project)
+        guard project.holdsApp, takesPlayers(project) else { return false }
+        let onMac = project.platform.target.takesPhones && project.hasMac && openOnMacNow.contains(project.id)
+        return onTV(project) || onDevice(project) || onMac
+    }
+
+    /// The app is set to open on one of the person's TVs, which Lamp can't watch, or shown in its TV preview.
+    static func onTV(_ project: LampProject) -> Bool {
+        project.hasTV && ((project.onTV && project.device != nil) || TVPreview.window(project) != nil)
+    }
+
+    /// A game set to open on the person's Xbox (its integration's device: the one chosen under Try On, else theirs),
+    /// which Lamp can't watch either: the host there opens the page's link to the relay for it.
+    static func onDevice(_ project: LampProject) -> Bool {
+        project.platform.target.takesPhones && project.onDevice
     }
 
     /// A TV app's phone page (`TVTemplate.phoneFolder`, as staged): GET /phone/<app>/<file>, from a phone on the
@@ -11351,7 +11380,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -11437,6 +11466,8 @@ final class Store: ObservableObject {
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
+        // The About window's credits as they are now (`LampAbout`): a credit added since the app was installed shows.
+        if route == "/app/credits" { return (200, Credits.load(wish(of: project)).aboutPage.map { ["page": $0] } ?? [:]) }
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }
@@ -11461,12 +11492,21 @@ final class Store: ObservableObject {
     private func controllerSession(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         // By the name or address the app reached Lamp at, at the relay's port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
-        guard project.hasTV else {
+        guard project.hasTV || project.platform.target.takesPhones else {
             return (409, ["error": "This app was built by an earlier Lamp: open it from Lamp on your Mac to update it, and it joins the TV app's game again."])
         }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
+        // A game's copy on this Mac asking is open, though Lamp may not have seen it open yet.
+        if !request.fromPreview { refreshOpenApps() }
         syncLocalNetwork()
-        guard Self.servesPhonePage(project) else { return (409, ["error": "The app isn't open in the TV preview or set to open on a TV."]) }
+        guard Self.servesPhonePage(project) else {
+            return (409, ["error": project.hasTV ? "The app isn't open in the TV preview or set to open on a TV." : "The game isn't open on this Mac."])
+        }
+        // A game's copy on this Mac asks from this Mac; from the network only a TV or an Xbox it's set to open on does.
+        // Anywhere else (a phone, Android) has no host's side of phones, even while the Mac's copy takes players.
+        if request.fromNetwork, !request.fromPreview, !Self.onTV(project), !Self.onDevice(project) {
+            return (409, ["error": "Phones join this game where Lamp hosts them: on this Mac, a Samsung or LG TV, or the Xbox."])
+        }
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
         let relay: [String: Any] = ["kind": "relay", "socket": "ws://\(host):\(port)/", "app": project.id,
                                     "credential": PhoneControllers.shared.hostCredential(for: project, preview: request.fromPreview)]
@@ -11504,11 +11544,12 @@ final class Store: ObservableObject {
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or
     /// Mac app beside it in its wish (`Parts`): at the wish's root with parts, or itself a part (in TV/), beside the
-    /// app at the root.
+    /// app at the root. A game takes phones with a page for them, wherever it's played (`Target.takesPhones`).
     /// Read off the wish itself (its parts as found in its folder), never off the list of apps, which is being set
     /// while Lamp reads its apps again: a game must not end because, for a moment, the list was half made.
     nonisolated static func takesPlayers(_ project: LampProject) -> Bool {
-        project.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty || project.isPart)
+        (project.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty || project.isPart))
+            || (project.platform.target.takesPhones && TVs.hasPhonePage(project))
     }
 
     /// Where a TV app's phone page is now (`Lamp.phonePage` in lamp.js, which asks as the page opens and now and then

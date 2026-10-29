@@ -121,8 +121,8 @@ extension Sharing {
     }
 }
 
-/// A web game's files in a shared file (`Sharing`): its page in Web/, the agent's HTML, CSS and JavaScript as code
-/// and its models, pictures and sounds as data, and the Swift that answers the page's calls of the device
+/// A web game's files in a shared file (`Sharing`): its page in Web/ and the page phones join it from in Phone/, the
+/// agent's HTML, CSS and JavaScript as code and its models, pictures and sounds as data, and the Swift that answers the page's calls of the device
 /// (Sources/Native.swift) as code too. Never Lamp's runtime beside the page (lamp-game.js, lamp-phaser.js, lamp-controllers.js,
 /// lamp.js, three/, phaser/) or the app around it, which the Mac that opens the file writes itself (`GameKit.write`), never a hidden file
 /// or a link. A C++ game isn't shared: Lamp makes no new ones (`GameKit.engine(for:)`).
@@ -141,7 +141,8 @@ enum GameFiles {
         let fm = FileManager.default
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
         var code: [URL] = [], data: [URL] = []
-        if let items = fm.enumerator(at: root.appendingPathComponent(GameKit.webFolder), includingPropertiesForKeys: Array(keys)) {
+        for folder in [GameKit.webFolder, TVTemplate.phoneFolder] {
+            guard let items = fm.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: Array(keys)) else { continue }
             for case let url as URL in items {
                 if url.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
                 let values = try? url.resourceValues(forKeys: keys)
@@ -161,10 +162,12 @@ enum GameFiles {
         // The file's page and Native.swift take the place of the game's; a file without a Native.swift leaves the game
         // with Lamp's own, written again by `GameKit.write`, not the one it had.
         try? fm.removeItem(at: project.dir.appendingPathComponent(GameKit.webFolder))
+        try? fm.removeItem(at: project.dir.appendingPathComponent(TVTemplate.phoneFolder))
         try? fm.removeItem(at: project.dir.appendingPathComponent(native))
         for file in package.sources + package.webData {
             let relative = package.path(of: file)
-            guard !relative.contains(".."), relative == native || relative.hasPrefix(GameKit.webFolder + "/"), !isLamps(relative) else { continue }
+            let page = relative.hasPrefix(GameKit.webFolder + "/") || relative.hasPrefix(TVTemplate.phoneFolder + "/")
+            guard !relative.contains(".."), relative == native || page, !isLamps(relative) else { continue }
             let target = project.dir.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? fm.removeItem(at: target)

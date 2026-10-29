@@ -235,14 +235,14 @@ public final class Relay: @unchecked Sendable {
 
     /// A browser always says which page opened a socket: of web pages, only an app's own phone page, at the port it's
     /// served at by one of this Mac's names, is let in. A TV app's page isn't a web page: in the preview it's at the
-    /// preview's own address, on a TV a file of its package ("file://", or "null"), and a wish's own app sends no origin
-    /// at all. Each of those, like any client that isn't a browser, could say whatever origin it liked, so the
+    /// preview's own address, on a TV a file of its package ("file://", or "null"), a game's on the Mac at the address
+    /// Lamp's app around it serves it at, and a wish's own app sends no origin at all. Each of those, like any client that isn't a browser, could say whatever origin it liked, so the
     /// credential in its hello is what lets it in, as it is for everyone. Which app's page asked isn't known here (the
     /// Network framework doesn't say which socket a handshake is for); a page of one app can't hold another's
     /// credentials, which are what decide the app.
     private func admits(origin: String?) -> Bool {
         guard let origin else { return true }
-        if ["null", "file://", "lamp-tv://app"].contains(origin.lowercased()) { return true }
+        if ["null", "file://", "lamp-tv://app", "lamp-game://app"].contains(origin.lowercased()) { return true }
         guard let url = URL(string: origin), url.scheme == "http", let host = url.host?.lowercased(), let port = url.port else { return false }
         return games.values.contains { $0.session.pagePort.map(Int.init) == port && $0.session.hosts.contains(host) }
     }

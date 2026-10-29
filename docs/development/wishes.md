@@ -226,7 +226,8 @@ former. The info panel, the About window and a repository's README link the chai
 `.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was
 changed is still shown and shared. Lamp keeps only what passes `Credits.checked`, from the agent and from a shared file
 alike. It's shown first in the wish's info panel and, for a Mac app, in its About window (Credits.html, written into the
-bundle by `Store.stageSigned`). In a shared file it's credits.json at the root, which an older Lamp ignores, so the
+bundle by `Store.stageSigned`, and asked of Lamp as the window opens, so a credit added since the install shows:
+"Generated apps"). In a shared file it's credits.json at the root, which an older Lamp ignores, so the
 file's format isn't raised for it.
 
 Assets the `assets` tool brings in are credited by Lamp, not the agent: each a source with `adapted: false` and the

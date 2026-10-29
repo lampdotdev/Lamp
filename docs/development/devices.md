@@ -380,7 +380,8 @@ with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
 controls on a touch screen, and the frame rate measured wherever it's played: logged every ten seconds, and the canvas
 drawn at 3/4 and then 1/2 of 1920x1080 while frames come slower than 45 a second, a step undone when it didn't make them
-faster) and three.js in `Web/three` beside it. A 2D game is Phaser 3's scenes run through `Web/lamp-phaser.js`
+faster; a page laid out at the window's size whose HUD is its own HTML passes `fill: true` instead, sizes its canvas
+itself, and the runtime only measures and logs its frame rate) and three.js in `Web/three` beside it. A 2D game is Phaser 3's scenes run through `Web/lamp-phaser.js`
 (`phaser({ scenes, pixelArt, physics })`, Lamp's like lamp-game.js and written into every game so the agent can read it
 first), with Phaser itself in `Web/phaser` only while the page's own files import it (`DeviceSupport.usesPhaser`; pinned
 and checked by `scripts/update-phaser.sh`). The runtime stays the one frame loop: Phaser's loop is put to sleep once it has
@@ -471,6 +472,20 @@ page names its build (`lamp-build.js`, beside `lamp-device.js`: build.sh's `stag
 runtime keeps the latest snapshot every five seconds and as the page hides; a newer build opened within a quarter of an
 hour restores it once. That's how a change reaches the game on a phone, Android, a TV and the Xbox: when Lamp installs it
 there and opens it, the player is back where they were.
+
+**Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
+has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,
+shared with the game (`GameFiles`) and copied with a starter. Lamp serves it while the game is open on this Mac (the
+copy asks `/app/controller` through `LampPageGateway`, whose page Lamp's relay lets in by its `lamp-game://app`
+origin; `Store.servesPhonePage` goes by `openOnMac`, and the phone page is staged at each build, `TVs.stagePhone`), in
+the TV preview and on a Samsung or LG TV (staged with the rest, `TVs.stage`), and ends the session as the game closes.
+On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
+relay's plain link itself: `Lamp.controllers` opens it through the WebView2 host's pipe (`TVTemplate.linksJS`, shared
+with `Lamp.wish`), and Lamp serves the game's phones while it's set to open on the Xbox (`Store.onDevice`), which Lamp
+can't watch, as it does for a TV. On an iPhone or iPad and Android the game has no host's side of phones yet: Lamp turns
+down `/app/controller` from anywhere on the network but a TV or an Xbox the game is set to open on, so
+`Lamp.controllers` reports an error and the game plays with controllers and touch. A game's second screen is a phone joined from `onLink`'s address: `Lamp.phonePage`
+is a TV app's page's only.
 
 ### Lamp's player
 

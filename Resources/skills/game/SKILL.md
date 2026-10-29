@@ -15,13 +15,13 @@ The tools Lamp has for games:
   3D, in a game `make_app_for` made with `kind` "game". It's a game's default make, 2D or 3D, wherever Lamp has a host
   for a page, and the same on every one of them. Read lamp-game.js first, all of it (and lamp-phaser.js for 2D): their
   comments are the whole interface. Below, "Web" means this runtime.
-- **A game played with phones on a Samsung or LG TV**: for now a TV app's page (`kind` "app", the phone-controllers
-  skill), since the runtime has no `Lamp.controllers` yet. It has no lamp-game.js: it follows the TV rules and lamp.js
-  instead. Its frame loop is its own `requestAnimationFrame`, moving everything by the time since the last frame;
-  players are `Lamp.controllers` (and the remote's keys, with `Lamp.navigation = false`); sound is Web Audio and saves
-  are `LampStore`, as the TV rules say. It's drawn in 2D on a canvas, or in 3D with the three.js Lamp writes in its
-  Web/three (the 3d-game skill says how to load it and keep it light). The rest of this skill
-  holds for it wherever it doesn't name the runtime.
+- **Phones as players**: a game on the runtime takes phones on the Wi‑Fi with `Lamp.controllers` (Web/lamp.js) and
+  its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview, on a
+  Samsung or LG TV and on the Xbox; elsewhere `Lamp.controllers` says it can't start, so the game stays whole with a controller,
+  the keys or touch. Lamp's preview of the game has no phones: its scripted pad is the player there.
+- **A TV app's page**: a game made as a Samsung or LG TV app before games took phones (`kind` "app") has no
+  lamp-game.js: it follows the TV rules and lamp.js instead, with its own `requestAnimationFrame`. The rest of this
+  skill holds for it wherever it doesn't name the runtime.
 - **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, SwiftUI for menus and scores, and Lamp's blocks
   in LampSupport.swift: a game made natively, where the person asked for that, it needs what only Apple's apps have
   (Game Center, a widget, a place inside an app of theirs) or the device has no host for a page (an Apple TV). It stays
@@ -185,8 +185,7 @@ now played. If they might want both (the app they use and a game beside it), ask
 or replace it. Turning it into a game is a change to that app: `make_app_for` with its folder in `app` and `kind`
 "game" (made as the table's defaults say unless the person names a make: web wherever Lamp has a host for a page),
 keeping its folder and data, and its code changed into a
-game. A game played with phones on a Samsung or LG TV is the exception for now: it stays `kind` "app", on its TV
-app's page (above). A game beside
+game. A game beside
 the app is one more app, only when they say they want both and the game is of another kind than the app:
 `make_app_for` with `another` and `kind` "game", in a folder of its own, once they chose that when you asked. Two apps
 of one kind can't be in one wish yet (the `more-apps` skill), and a game is never made web only to get around that. A
