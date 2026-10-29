@@ -26,7 +26,7 @@ struct DeskDevices: View {
                 .accessibilityAddTraits(.isHeader)
             if asked { list } else { invitation }
         }
-        .sheet(isPresented: $adding) { AddDeviceSheet() }
+        .sheet(isPresented: $adding) { AddDeviceSheet(onPaper: true) }
     }
 
     private var invitation: some View {

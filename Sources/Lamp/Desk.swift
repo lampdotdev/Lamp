@@ -43,8 +43,8 @@ struct WishDesk: View {
     @State private var lastLook: Date?
     /// How the side panel comes and goes.
     private static let slide = Animation.spring(response: 0.35, dampingFraction: 0.9)
-    /// The line between the side, the list and the panel: ink, from the window's top to its foot, title bar and all.
-    private static var separator: some View { Paper.ink.frame(width: 1).ignoresSafeArea() }
+    /// The line between the side, the list and the panel, from the window's top to its foot, title bar and all.
+    private static var separator: some View { Paper.divider.frame(width: 1).ignoresSafeArea() }
 
     /// Where the side's first line and the bar both start, under the window's title.
     private static let top: CGFloat = 14
@@ -85,8 +85,6 @@ struct WishDesk: View {
             } }
         }
         .modifier(ClearToolbar())
-        // Drawn on Lamp's paper, as in the welcome, whatever the Mac's appearance.
-        .environment(\.colorScheme, .light)
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
@@ -471,7 +469,7 @@ struct DeskIdeas: View {
         VStack(alignment: .leading, spacing: 12) { content() }
             .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(accent ? Color.accentColor.opacity(0.1) : Color(nsColor: .textBackgroundColor).opacity(0.7),
+            .background(accent ? Color.accentColor.opacity(0.1) : Paper.card.opacity(0.7),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             // On hover only the outline darkens, as the ideas under a new wish's chat do.
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
