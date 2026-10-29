@@ -429,7 +429,7 @@ A Mac app's About window credits what the wish is based on: Lamp writes `Content
 wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About
 window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)", linked); an app with no credits has
 none. A change that goes into the open app (`LiveReload`, `PageLive`) installs nothing, so a credit the same change added
-(work the agent brought in, the `assets` tool's models) would wait for the next install: the app's About command
+(work the agent brought in) would wait for the next install: the app's About command
 (`LampAbout` in LampSupport, through `LampCommands`) asks Lamp for the page as it is now (`/app/credits`) and shows that,
 and the bundle's page only when Lamp doesn't answer within a moment. Only `Credits.basis` is "Based on", there, in the info panel, the README and the credit
 bar; everything else, and a library in a wish with no basis, is "Uses".
