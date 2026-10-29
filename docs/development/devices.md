@@ -26,7 +26,8 @@ Lamp's folder would be shadowed, and those an earlier Lamp wrote are taken away 
 rules; one kept before this was asked is still read, and Lamp's shipped ones pass it (their test). Once a device is set
 up, its setup window offers a test run (`IntegrationProbe`, `DeviceTrialCard`): the integration's own scaffold made in
 Lamp's `Probes/` folder and taken through Lamp's own ways with an app (`DeviceApps.install`, `picture`, `press` on the
-arrows and select only, `type`, `stop`, an install over the open copy, and `DeviceApps.remove`), holding the device as
+arrows and select only, `type`, `stop`, an install over the open copy, each install of a new build as a change is, since an Xbox won't open the same
+version put on again, and `DeviceApps.remove`), holding the device as
 an install does, stopping at the first stage that fails and taking the app off again. Its report goes with the next
 request of the device's setup conversation (`Agent.deviceSetupNote`), whatever the engine, and a run that passes marks
 the bridge (`bridge.known`, Lamp's alone: refused from the builder, kept while the bridge is unchanged, never written
