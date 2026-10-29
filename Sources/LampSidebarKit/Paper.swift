@@ -12,6 +12,8 @@ public enum Paper {
     public static let panel = shade(light: 0xEFE8D6, dark: 0x191714)
     /// What's lifted off the page: a card, a field, the selected row.
     public static let card = shade(light: 0xFFFDF6, dark: 0x2A2722)
+    /// What the agent says, in its bubble: the page a shade deeper.
+    public static let bubble = shade(light: 0xEAE3D0, dark: 0x2E2B25)
     /// Words, and the main button.
     public static let ink = shade(light: 0x1B1A17, dark: 0xF2ECDA)
     /// The main button's words: the page's color on ink.

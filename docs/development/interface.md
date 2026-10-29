@@ -26,6 +26,9 @@ parts), check:
 - **A card's buttons are one size**: the size Allow and Don't Allow are (`.cardButtons()`), on every card,
   the main one prominent; never the small size, which in the wand's narrow panel was too slight to find.
   Where they don't fit beside a card's words they go under them (`ChatLook.OfferCard`).
+- **One set of colors.** The desk, the welcome and the chat draw from `Paper` (LampSidebarKit): ink on warm paper, as
+  on lamp.dev, and the six stripes only for what's Lamp's own (the welcome's band, a remix's line to its original).
+  A new screen takes its colors and its two buttons (`PaperButtonStyle`) from there, never the system's accent.
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
   (`Engine.title`: "ChatGPT", "Claude": what people call them, not the coding tools' names), never a literal.
 

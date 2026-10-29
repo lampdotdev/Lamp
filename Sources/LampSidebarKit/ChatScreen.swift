@@ -951,13 +951,13 @@ private struct ToolSymbol: View {
         let side: CGFloat = 30
         Image(systemName: symbol)
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(on ? AnyShapeStyle(Color.accentColor) : isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+            .foregroundStyle(on ? AnyShapeStyle(Paper.ink) : isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
             .frame(width: side, height: side)
             .background {
                 if #available(macOS 26, *) {
-                    if on && !plain { Circle().fill(Color.accentColor.opacity(0.15)).padding(2) }
+                    if on && !plain { Circle().fill(Paper.ink.opacity(0.15)).padding(2) }
                 } else {
-                    Circle().fill(on && !plain ? AnyShapeStyle(Color.accentColor.opacity(0.15)) : AnyShapeStyle(Color(nsColor: .textBackgroundColor)))
+                    Circle().fill(on && !plain ? AnyShapeStyle(Paper.ink.opacity(0.15)) : AnyShapeStyle(Paper.card))
                         .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
                 }
             }
@@ -1157,7 +1157,7 @@ struct VersionsPanel: View {
                             .lineLimit(expanded ? nil : 2)
                     }
                     HStack(spacing: 4) {
-                        if version.current { Text("Current").foregroundStyle(Color.accentColor) }
+                        if version.current { Text("Current").foregroundStyle(Paper.ink) }
                         Text(version.date, format: .relative(presentation: .named))
                     }
                     .font(.caption)
@@ -1180,7 +1180,7 @@ struct VersionsPanel: View {
             }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(expanded ? Color.accentColor.opacity(0.1) : .clear))
+        .background(RoundedRectangle(cornerRadius: 8).fill(expanded ? Paper.ink.opacity(0.1) : .clear))
         .contextMenu {
             Button(version.named ? "Rename…" : "Name…") { startNaming(version) }
             if version.named { Button("Remove Name") { link.send(.nameVersion(version.id, "")) } }

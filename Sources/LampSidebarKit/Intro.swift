@@ -265,7 +265,7 @@ extension ChatLook {
             } else if finishing {
                 Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.2, dash: [2, 2])).foregroundStyle(.tertiary).padding(1)
             } else {
-                let color: Color = state == .now ? .accentColor : .secondary
+                let color: Color = state == .now ? Paper.ink : .secondary
                 Circle().strokeBorder(color.opacity(state == .now ? 1 : 0.5), lineWidth: 1.2).padding(1)
                     .overlay { Text("\(number)").font(.system(size: 9, weight: .semibold)).foregroundStyle(color.opacity(state == .now ? 1 : 0.7)) }
             }
