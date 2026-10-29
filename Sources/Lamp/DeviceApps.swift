@@ -263,7 +263,7 @@ enum DeviceApps {
     /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
     private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start) throws {
         var files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
-        if entry == .webHost { files = try WebHost.payload(files) }
+        if entry == .webHost { files = try WebHost.payload(files, phone: try GamePhones.xboxPage(for: project)) }
         let folder = buildFolder(for: project)
         let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
         var identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))

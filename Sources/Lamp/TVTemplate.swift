@@ -593,8 +593,10 @@ extension TVTemplate {
     /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks where its relay is, of the host the
     /// game chose with `start({ host })` (`/app/controller`: Lamp, for a TV app's page, the preview and the Xbox; the game
     /// itself on the Mac, iPhone and iPad, `ControllerRuntime`; on an LG TV, `'game'` is the service its package carries,
-    /// `LGPhones`, through a subscription that is the session; `start()` with no host asks whoever answers
-    /// `/app/controller` where it runs, as before), as it opens and every few seconds after, and opens its own socket there, where phones' pages
+    /// `LGPhones`, through a subscription that is the session; on the Xbox, `'game'` is the game's WebView2 host, asked
+    /// with `controllers` messages over its pipe, lamp_controllers.h; `start()` with no host asks whoever answers
+    /// `/app/controller` where it runs, as before), as it opens and every few seconds after, and opens its own socket
+    /// there, where phones' pages
     /// join; stopping says so, which closes a game's own relay and page. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
     /// block joins here (`_attach`), so they go on playing with Lamp closed. The page numbers the players itself, whichever
     /// way they came. What a player holds down is let go when it leaves or its link drops, and movement that arrives late
@@ -606,8 +608,8 @@ extension TVTemplate {
          *                                              Phone/index.html, loading lamp-controller.js (its own comment says how);
          *                                              the wish's iPhone or Mac app joins with LampController.
          * Lamp.controllers.start({ host: 'game' })    the game itself serves the phones' page and runs their link, with no
-         *                                              Lamp: on the Mac, an iPhone or iPad, and an LG TV whose package
-         *                                              carries the game's service
+         *                                              Lamp: on the Mac, an iPhone or iPad, an LG TV whose package
+         *                                              carries the game's service, and the Xbox's own host
          * Lamp.controllers.start({ host: 'lamp' })    Lamp on the Mac serves the page and runs the link (Lamp open, the Mac
          *                                              reachable)
          *     A host that isn't there, or fails, is said in onError and tried again; the other host is never used instead.
@@ -833,6 +835,7 @@ extension TVTemplate {
             askTimer = setTimeout(function () {
               if (!started || mine !== run) return;
               if (host === 'game' && lgService) return askService();
+              if (host === 'game' && pipe) return askPipe(mine);
               // The host asked for goes with the question, so whoever answers says when it isn't that host rather than
               // serve as the other.
               LampAI._post('/app/controller', host ? { host: host } : {}, 20000).then(function (answer) {
@@ -863,6 +866,27 @@ extension TVTemplate {
           // The subscription is the session: held from start() to stop(), and the service tells it each time the relay
           // or the TV's address changes. A relay that turned the page away is asked for a fresh credential, and the
           // answer counts only while the subscription it was asked under is still the page's.
+          // The Xbox's own host (lamp_web_host.cpp), asked over its pipe: it answers as /app/controller does.
+          var pipeAsks = {}, pipeAskId = 0;
+          if (pipe) pipe.addEventListener('message', function (e) {
+            var m = e.data, waiting = m && m.lamp === 'controllers' && pipeAsks[m.id];
+            if (!waiting) return;
+            delete pipeAsks[m.id];
+            waiting(m);
+          });
+          function pipeCall(op, then) {
+            var id = ++pipeAskId;
+            if (then) pipeAsks[id] = then;
+            pipe.postMessage({ lamp: 'controllers', op: op, id: id });
+          }
+          function askPipe(mine) {
+            pipeCall('start', function (m) {
+              if (!started || mine !== run) return;
+              if (m.status === 200) { take(m.body || {}); ask(((m.body && m.body.renew) || 15) * 1000); return; }
+              emit('error', [(m.body && m.body.error) || "The game's phones couldn't start on this console."]);
+              ask(5000);
+            });
+          }
           function askService() {
             try {
               if (lgBridge) {
@@ -922,6 +946,7 @@ extension TVTemplate {
             stop: function () {
               // The session the chosen host runs, and only it, ends.
               if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; }
+              else if (started && host === 'game' && pipe) pipeCall('stop', null);
               else if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', host ? { stop: true, host: host } : { stop: true }, 20000).then(function () {}, function () {});
               started = false;
               host = null;
@@ -3484,9 +3509,9 @@ extension Agent.Rules {
 
     static let tvPhone = """
     - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
-    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
-    the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
-    first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
+    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; who serves it is a \
+    choice made as the app starts its controllers, and the phone-controllers skill says what each choice needs. Open \
+    it first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
     phone's hardware or data the phone keeps.
     """
 

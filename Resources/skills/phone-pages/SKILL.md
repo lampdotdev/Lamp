@@ -26,7 +26,7 @@ Make each control big enough for a thumb, show the player's number and the state
 
 On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game. It starts with a host:
 
-- `Lamp.controllers.start({ host: 'game' })`: the game serves the page and runs the link itself, with no Lamp: on the Mac, an iPhone or iPad while it's in front, and an LG TV whose package carries the game's service (webOS 5 on). Lamp's TV preview has no game host.
+- `Lamp.controllers.start({ host: 'game' })`: the game serves the page and runs the link itself, with no Lamp: on the Mac, an iPhone or iPad while it's in front, an LG TV whose package carries the game's service (webOS 5 on), and the Xbox. Lamp's TV preview has no game host.
 - `Lamp.controllers.start({ host: 'lamp' })`: Lamp serves the page and runs the link, while Lamp is open and the Mac is reachable: in the TV preview, on a Samsung or LG TV and on the Xbox.
 - `Lamp.controllers.start()`: where it ran before either existed (the game itself on the Mac, iPhone and iPad; Lamp elsewhere).
 
