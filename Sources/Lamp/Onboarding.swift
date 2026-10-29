@@ -84,8 +84,8 @@ struct OnboardingView: View {
         .background {
             ZStack {
                 Palette.ground
-                WelcomeBand()
-                // Behind the later steps' content the band fades into the page, so it never competes with it.
+                WelcomeScene(atHello: step == .hello)
+                // Behind the later steps' content the stage fades into the page, so it never competes with it.
                 LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Palette.ground.opacity(0.425), location: 0.24),
                                        .init(color: Palette.ground.opacity(0.425), location: 0.76), .init(color: .clear, location: 1)],
                                startPoint: .leading, endPoint: .trailing)
@@ -127,7 +127,8 @@ struct OnboardingView: View {
         forward = next.rawValue > step.rawValue
         UserDefaults.standard.set(next.rawValue, forKey: Onboarding.stepKey)
         Analytics.capture(.welcomeStep, ["step": "\(next)", "back": !forward])
-        withAnimation(.spring(response: 0.6, dampingFraction: 0.88)) { step = next }
+        // As long and as eased as the camera's move along the stage, so the step rides with it.
+        withAnimation(.easeInOut(duration: 0.9)) { step = next }
     }
 
     /// Takes a wish from the site: one its link brought or, the first time the welcome is ever shown, one its
@@ -236,10 +237,11 @@ struct OnboardingView: View {
 
 // MARK: - Steps
 
-/// 1. What Lamp is, as lamp.dev says it: remixable software, beside a few of the things it comes with.
+/// 1. What Lamp is, as lamp.dev says it: remixable software, over the stage of a few of the things it comes with.
 private struct HelloStep: View {
     let next: () -> Void
     @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
@@ -264,98 +266,24 @@ private struct HelloStep: View {
                 }
                 .frame(maxWidth: 470, alignment: .leading)
                 .padding(.leading, 84)
+                // The stage behind is on this side: the stripes and the boxes (`WelcomeScene`).
                 Spacer(minLength: 0)
-                WelcomeSleeves()
-                    .frame(width: 440)
-                    .padding(.trailing, 40)
-                    .reveal(shown, delay: 0.3, rise: 12)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        // A moment after appearing, once the window has its size.
+        // Once the stage behind has arrived, the first time; a moment after appearing, once the window has its size,
+        // when it's already there or nothing moves.
         .task {
-            try? await Task.sleep(for: .seconds(0.15))
+            let first = !wordsShown && !reduceMotion
+            wordsShown = true
+            try? await Task.sleep(for: .seconds(first ? WelcomeStage.arrival : 0.15))
             shown = true
         }
     }
 }
 
-/// The site's stripes as one band slanting up across the welcome's right side, behind everything on it. Still, for
-/// now: it may come to join one step to the next.
-private struct WelcomeBand: View {
-    var body: some View {
-        GeometryReader { proxy in
-            Stripes(.horizontal)
-                .frame(width: proxy.size.width * 1.1, height: 230)
-                .rotationEffect(.degrees(-24), anchor: .leading)
-                .offset(x: proxy.size.width * 0.5, y: proxy.size.height * 0.62)
-        }
-        .clipped()
-    }
-}
-
-/// Three of the things Lamp comes with, fanned out: what someone made, ready to remix. Each is its name, who made it,
-/// its picture and its line, read from the starters this Lamp ships.
-private struct WelcomeSleeves: View {
-    private struct Sleeve: Identifiable {
-        let id: String
-        let name: String
-        let by: String
-        let about: String
-        let picture: NSImage?
-    }
-
-    /// The ones picked for the welcome, in the fan's order.
-    private static let picked = ["homehq", "newyork", "fireside"]
-
-    private let sleeves: [Sleeve] = Self.picked.compactMap { folder in
-        guard let starter = Starters.bundled.first(where: { $0.folder.lastPathComponent == folder }) else { return nil }
-        let credits = Credits.read(starter.tree.appendingPathComponent(Credits.file))
-        let by = (credits?.upstream.first(where: { $0.adapted == true }) ?? credits?.upstream.first)?.author ?? "Lamp"
-        return Sleeve(id: folder, name: starter.name, by: by, about: Starters.about(starter) ?? "",
-                      picture: NSImage(contentsOf: Starters.preview(of: starter)))
-    }
-
-    var body: some View {
-        ZStack {
-            ForEach(Array(sleeves.enumerated()), id: \.element.id) { index, sleeve in
-                card(sleeve)
-                    .rotationEffect(.degrees([-8, -1, 7][index % 3]))
-                    .offset(x: CGFloat(index - 1) * 140, y: [40, 0, 50][index % 3])
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private func card(_ sleeve: Sleeve) -> some View {
-        HStack(spacing: 0) {
-            Stripes(.horizontal).frame(width: 12)
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("by \(sleeve.by)").font(.system(size: 11, weight: .heavy)).italic()
-                    Text(sleeve.name).font(.system(size: 24, weight: .heavy)).tracking(-0.9).lineLimit(2)
-                }
-                .padding(.horizontal, 11).padding(.top, 11).padding(.bottom, 8)
-                ZStack {
-                    Paper.ink
-                    if let picture = sleeve.picture {
-                        Image(nsImage: picture).resizable().aspectRatio(contentMode: .fit)
-                    }
-                }
-                .frame(height: 124)
-                Text(sleeve.about).font(.system(size: 12)).foregroundStyle(Paper.muted).lineLimit(4)
-                    .padding(.horizontal, 11).padding(.vertical, 9)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(Paper.ink)
-        }
-        .frame(width: 196, height: 300)
-        .background(Color(hex: 0xF7F2E3))
-        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
-        .shadow(color: .black.opacity(0.22), radius: 22, y: 14)
-    }
-}
+/// The hello's words have been shown this launch: back from setup, they don't wait for the stage again.
+@MainActor private var wordsShown = false
 
 /// 2. Apple's tools, and what builds the apps.
 private struct SetupStep: View {
@@ -1028,9 +956,10 @@ private struct BigButton: View {
 // MARK: - Motion
 
 private extension AnyTransition {
-    /// A step slides in from the side it's coming from, sharpening out of a blur.
+    /// A step slides in from the side it's coming from, far and with the camera behind it (`WelcomeStage.look`), as if
+    /// it were further along the same stage.
     static func stage(from side: CGFloat) -> AnyTransition {
-        .modifier(active: StageModifier(offset: 60 * side, blur: 14, opacity: 0),
+        .modifier(active: StageModifier(offset: 520 * side, blur: 0, opacity: 0),
                   identity: StageModifier(offset: 0, blur: 0, opacity: 1))
     }
 }

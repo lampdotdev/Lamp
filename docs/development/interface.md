@@ -29,6 +29,9 @@ parts), check:
 - **One set of colors.** The desk, the welcome and the chat draw from `Paper` (LampSidebarKit): ink on warm paper, as
   on lamp.dev, and the six stripes only for what's Lamp's own (the welcome's band, a remix's line to its original).
   A new screen takes its colors and its two buttons (`PaperButtonStyle`) from there, never the system's accent.
+  The welcome's hello is a SceneKit stage behind its words (`WelcomeScene`; SceneKit, as Lamp still runs on macOS 14):
+  the stripes come down a wall and along the floor, three starters float over them as thin boxes, the words follow,
+  and Get Started moves the camera right as the next step slides in. With Reduce Motion it's all there at once.
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
   (`Engine.title`: "ChatGPT", "Claude": what people call them, not the coding tools' names), never a literal.
 
