@@ -628,8 +628,8 @@ final class Store: ObservableObject {
     @Published var arrivedWish: String?
     /// A starter's remix from the site's link that came while the welcome is up, for the welcome to take (`take(remix:)`).
     @Published var arrivedRemix: Wish.Remix?
-    /// The copy the last remix link put on the desk: another link for that starter goes into it while nothing has been
-    /// asked of it, so a page that keeps opening links can't fill the desk with copies.
+    /// The copy the last remix link opened: another link for that starter goes into it first while nothing has been
+    /// asked of it.
     private var remixApp: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
     @Published private(set) var arrivals: [String: Wish.Arrival] = [:]
@@ -1780,9 +1780,11 @@ final class Store: ObservableObject {
         return Starters.bundled.first { $0.folder.lastPathComponent == id && Starters.runsHere($0.tree) }
     }
 
-    /// Puts a copy of the starter on the desk and opens it with the request in its box. `reuseDesk` takes the desk's
-    /// own copy instead while nothing has been asked of it: the welcome's, whose starters were copied moments ago.
-    func openCopy(of starter: Starters.Starter, request: String?, reuseDesk: Bool = false) {
+    /// Opens the starter with the request in its box: a copy already on the desk that nothing has been asked of and
+    /// whose box is empty (the one Lamp came with, or one an earlier link made), else a fresh copy put there. So a link
+    /// opens the person's own untouched starter rather than adding another, and never one they've changed or started
+    /// writing to.
+    func openCopy(of starter: Starters.Starter, request: String?) {
         // Lamp's own first build of a copy (`prepareStarters`) holds it busy too, and isn't anything asked of it.
         func fresh(_ project: LampProject) -> Bool {
             !(logs[project.id] ?? []).contains { $0.kind == .user || $0.kind == .agent }
@@ -1790,7 +1792,13 @@ final class Store: ObservableObject {
                 && !pendingSubmissions.contains(project.id) && queued[project.id] == nil
         }
         let copies = projects.filter { Starters.starter(of: $0)?.name == starter.name && fresh($0) }
-        let reused = copies.first { $0.id == remixApp } ?? (reuseDesk ? copies.first : nil)
+        // What the person put in a copy's box is theirs, so a link never writes over it: only the copy the last link
+        // opened, whose box holds that link's request, is taken with something in it.
+        func emptyBox(_ project: LampProject) -> Bool {
+            let draft = draft(for: project)
+            return draft.text.trimmed.isEmpty && draft.attachments.isEmpty && draft.pointed == nil && draft.replacing == nil
+        }
+        let reused = copies.first { $0.id == remixApp } ?? copies.first(where: emptyBox)
         guard let project = reused ?? put(starter: starter) else {
             NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of \(starter.name).")).runModal()
             return
