@@ -590,6 +590,14 @@ enum AppAct {
         return true
     }
 
+    /// Whether this MLX model's calls come back as tool calls: the version must pass the tools on, and mlx-lm must have a
+    /// parser for the model's chat template. Without one the server hands a call back as plain text, which would read
+    /// as a finished reply, so such a model is asked for the JSON plan instead.
+    static func mlxNativeTools(version: String?, model folder: URL?) -> Bool {
+        guard mlxTakesTools(version), let folder else { return false }
+        return LocalModels.mlxToolParser(in: folder) != nil
+    }
+
     /// One attempt on the turn's route, its answer read but not yet asked again: the route's adapter.
     static func ask(_ route: AppAI.TextRoute, _ r: Request, tag: String, retry: String?, until deadline: Date) async throws -> (Result<Parsed, ParseProblem>, Double) {
         switch route.kind {
@@ -619,7 +627,7 @@ enum AppAct {
                                                                     templateArgs: ["enable_thinking": false])
                 return (parse(plan: text, for: r), 0)
             }
-            if mlxTakesTools(LocalModels.mlxVersion) {
+            if mlxNativeTools(version: LocalModels.mlxVersion, model: LocalModels.model(model)?.files.first) {
                 var body = chatBody(r, tag: tag, retry: retry)
                 body["model"] = model
                 if r.final { body["tools"] = nil }

@@ -108,6 +108,18 @@ final class AppActRoutesTests: XCTestCase {
         XCTAssertEqual(AppAct.refusal(for: route(.engine(.claude, model: "sonnet"), false)), AppAI.noTextRoute)
     }
 
+    /// An MLX model whose chat template mlx-lm has no tool-call parser for hands a call back as plain text, so it's
+    /// asked for the JSON plan instead, whatever the version. The templates in Tests/Fixtures/mlx-templates are the
+    /// `chat_template` of each mlx-community repository's tokenizer_config.json, as published on 2026-10-29.
+    func testAnMLXModelWithoutAToolParserIsAskedForThePlan() {
+        let templates = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/mlx-templates")
+        XCTAssertFalse(AppAct.mlxNativeTools(version: "0.32.2", model: templates.appendingPathComponent("Llama-3.2-3B-Instruct-4bit")))
+        XCTAssertTrue(AppAct.mlxNativeTools(version: "0.32.2", model: templates.appendingPathComponent("Qwen3-4B-4bit")))
+        XCTAssertFalse(AppAct.mlxNativeTools(version: "0.30.3", model: templates.appendingPathComponent("Qwen3-4B-4bit")))
+        XCTAssertFalse(AppAct.mlxNativeTools(version: "0.32.2", model: nil))
+    }
+
     /// mlx-lm hands the tools to the model's template from 0.30.4 (ml-explore/mlx-lm#747); before that, the shape is
     /// asked for in words.
     func testMLXToolCallsOnlyFromTheVersionThatPassesThem() {
