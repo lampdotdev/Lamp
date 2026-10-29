@@ -178,6 +178,9 @@ struct Integration: Codable, Hashable {
         var launch: [IntegrationAction]?
         /// Ends in a request whose answer is kept as the picture (`keep: "picture"`).
         var look: [IntegrationAction]?
+        /// Ends in a request whose answer is the app's screen as text (`keep: "screen"`): the tree of what it shows, as
+        /// the device describes it (a Roku's `/query/app-ui`), which `look_at_app` and `use_app` give beside the picture.
+        var screen: [IntegrationAction]?
         /// Run once per key, with `{key}` the device's name for it from `keys`.
         var use: [IntegrationAction]?
         var logs: [IntegrationAction]?
@@ -331,8 +334,8 @@ struct Request: Codable, Hashable {
     /// Over HTTPS, to a device that serves its own certificate (Xbox's Device Portal): Lamp trusts the certificate the
     /// first time and holds the device to it after (`DeviceTLS`).
     var https: Bool?
-    /// "picture": the answer is the screen's picture (in a bridge's `look`). "log": the answer is the app's log (in a
-    /// bridge's `log`). "key": the answer is a key the device gives this Mac to sign in to it over SSH, kept in Lamp's
+    /// "picture": the answer is the screen's picture (in a bridge's `look`). "screen": the answer is the screen as text
+    /// (in a bridge's `screen`). "log": the answer is the app's log (in a bridge's `log`). "key": the answer is a key the device gives this Mac to sign in to it over SSH, kept in Lamp's
     /// folder (in a setup step's `run`).
     var keep: String?
     /// Asks again every two seconds, up to this many seconds, while the device answers 204 (still working): for a
@@ -536,7 +539,7 @@ enum IntegrationCheck {
                                          "tcp": .leaf, "field": .leaf, "signedIn": .leaf])), "model": .leaf,
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
-            "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
+            "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action), "screen": .array(action),
                                "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map,
                                "lacks": .array(.leaf), "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf])]),
             "app": appKind,
@@ -654,20 +657,24 @@ enum IntegrationCheck {
 
         // Bridge
         if let bridge = integration.bridge {
-            let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("look", bridge.look), ("use", bridge.use),
+            let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("look", bridge.look), ("screen", bridge.screen), ("use", bridge.use),
                                                                ("logs", bridge.logs), ("stop", bridge.stop), ("log", bridge.log), ("remove", bridge.remove),
                                                                ("type", bridge.type)]
             for (name, sequence) in sequences {
                 for (n, action) in (sequence ?? []).enumerated() {
                     problems += actionProblems(action, at: "bridge.\(name)[\(n)]", fields: fields, steps: steps, inBridge: true)
                     if action.vendorSignIn != nil { say("bridge.\(name)[\(n)]: a sign-in is a setup step, never part of a bridge.") }
-                    if let keep = action.http?.keep, !(keep == "picture" && name == "look") && !(keep == "log" && name == "log") {
-                        say("bridge.\(name)[\(n)].http.keep: only look keeps an answer, as the picture, and log, as the log.")
+                    if let keep = action.http?.keep, !(keep == "picture" && name == "look") && !(keep == "log" && name == "log")
+                        && !(keep == "screen" && name == "screen") {
+                        say("bridge.\(name)[\(n)].http.keep: only look keeps an answer, as the picture, screen, as the screen as text, and log, as the log.")
                     }
                 }
             }
             if let look = bridge.look, !look.contains(where: { $0.http?.keep == "picture" }) {
                 say("bridge.look must have a request with keep \"picture\": its answer is the picture.")
+            }
+            if let screen = bridge.screen, !screen.contains(where: { $0.http?.keep == "screen" }) {
+                say("bridge.screen must have a request with keep \"screen\": its answer is the screen as text.")
             }
             if let log = bridge.log, !log.contains(where: { $0.http?.keep == "log" }) {
                 say("bridge.log must have a request with keep \"log\": its answer is the log.")
@@ -955,7 +962,7 @@ enum IntegrationCheck {
                 problems += placeholderProblems(auth.password, at: "\(at).auth.password", place: .auth, fields: fields, steps: steps)
             }
         }
-        if let keep = request.keep, !["picture", "log", "key"].contains(keep) { problems.append("\(at).keep can only be \"picture\", \"log\" or \"key\".") }
+        if let keep = request.keep, !["picture", "screen", "log", "key"].contains(keep) { problems.append("\(at).keep can only be \"picture\", \"screen\", \"log\" or \"key\".") }
         if let restore = request.restore {
             if restore.range(of: #"^[A-Za-z0-9_]{1,64}$"#, options: .regularExpression) == nil { problems.append("\(at).restore must be the name of a JSON field.") }
             if !["PUT", "POST"].contains(request.method?.uppercased() ?? "GET") || request.body == nil {

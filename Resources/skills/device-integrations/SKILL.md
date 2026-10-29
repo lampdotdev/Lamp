@@ -72,7 +72,8 @@ Every request goes to the address the device was found at; you give only the por
 `https: true` for a device that only speaks HTTPS with a certificate of its own (Xbox's Device Portal): Lamp
 trusts that certificate the first time and holds the device to it after. `method` (GET, POST, PUT, DELETE), `headers`, `body` or `form` (a value `"@{package}"` sends the package file), `auth`
 (`digest` true or false for basic; the password is always one `{field:…}`), and `keep`: `"picture"` in `bridge.look`
-for the answer that is the screen's picture, `"log"` in `bridge.log` for the answer that is the app's log, `"key"` in a
+for the answer that is the screen's picture, `"screen"` in `bridge.screen` for the answer that is the screen as text (the
+tree of what the app shows, where the device describes it), `"log"` in `bridge.log` for the answer that is the app's log, `"key"` in a
 step's `run` for an SSH key the device gives this Mac.
 `poll` (seconds) asks again every two seconds while the device answers 204 (still working on an install), and `expect`
 (`json` or `xml`, with `equals` or `contains`) is what the answer must say for the step to count, else it fails with the

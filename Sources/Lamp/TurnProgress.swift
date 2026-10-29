@@ -201,6 +201,7 @@ struct TurnProgress {
         case .learn: return "Reading up"
         case .remember: return "Taking notes for next time"
         case .art: return "Painting a picture"
+        case .assets: return "Finding models and art"
         case .offer: return "Suggesting a better setup"
         case .kind: return "Making it for other devices"
         case .remove: return "Taking an app away"

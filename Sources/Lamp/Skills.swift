@@ -96,9 +96,10 @@ enum Skills {
     }
 
     /// The skills every prompt offers, whatever the app is now: how an app is made (web or native) and on which
-    /// devices, games of every kind, 2D games and 3D in a page, web apps, and phones as controllers are the agent's to choose for
-    /// any request, so their guidance can't wait for the app to be of a kind that has them.
-    static let everywhere = ["web-or-native", "game", "2d-game", "3d-game", "web-app", "phone-controllers", "more-apps", "github-projects"]
+    /// devices, games of every kind, 2D games and 3D in a page, ready-made models and art, web apps, and phones as
+    /// controllers are the agent's to choose for any request, so their guidance can't wait for the app to be of a kind
+    /// that has them.
+    static let everywhere = ["web-or-native", "game", "2d-game", "3d-game", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
     /// and not a rule and a line: the building blocks, AI in the app, the person's accounts, App Intents, share
@@ -159,6 +160,9 @@ enum Skills {
         if offered.contains("3d-game"), pageCode(of: project, matches: threeImport) { found.append(("3d-game", "its page draws with three.js")) }
         if offered.contains("2d-game"), let why = twoDimensionalUse(project) { found.append(("2d-game", why)) }
         if offered.contains("icloud-sync"), appSwift(of: project, matches: #"\bLampSync\b"#) { found.append(("icloud-sync", "its code uses LampSync")) }
+        if offered.contains("assets"), Credits.load(project).upstream.contains(where: { $0.files?.isEmpty == false }) {
+            found.append(("assets", "it uses ready-made assets brought in with the assets tool"))
+        }
         return found
     }
 

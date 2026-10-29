@@ -108,6 +108,9 @@ final class DeviceAppPackageTests: XCTestCase {
             return try Data(contentsOf: folder.appendingPathComponent("out.zip"))
         }
         XCTAssertEqual(try MSIX.files(inZip: try zip(["index.html"])).map(\.path), ["index.html"])
+        // A game's models and sounds can be bigger than a device's answers are allowed to be: it's packaged whole.
+        try Data(count: 20 << 20).write(to: folder.appendingPathComponent("Web/model.glb"))
+        XCTAssertEqual(try MSIX.files(inZip: try zip(["-0", "model.glb"])).first?.data.count, 20 << 20)
         XCTAssertThrowsError(try MSIX.files(inZip: try zip(["-y", "secret"])), "a link isn't packaged")
         XCTAssertThrowsError(try MSIX.files(inZip: try zip(["../Web/index.html"])), "nothing above the zip's top")
         // A zip cut short is refused, never read past its end.

@@ -523,6 +523,70 @@ extension TVTemplate {
 
         """#
 
+    /// A link to Lamp's relay, or to another app of the wish, as a WebSocket; in Lamp's WebView2 host on the Xbox, whose
+    /// page is https and may not open plain links itself, its stand-in over the host's pipe (`lamp_web_host.cpp`, which
+    /// opens only links to the home network). Lamp.controllers and Lamp.wish each make one with `lampLinks(pipe)` (pipe
+    /// null where there's no such host) and get the same calls a WebSocket has.
+    static let linksJS = #"""
+        function lampLinks(pipe) {
+            var piped = {};
+            function open(url) {
+              if (!pipe) return new WebSocket(url);
+              // One count for every block on the page, so two blocks' links never share an id on the host's pipe.
+              var id = window.__lampLinkIds = (window.__lampLinkIds || 0) + 1, sizes = [];
+              var s = piped[id] = { readyState: 0, bufferedAmount: 0, binaryType: 'arraybuffer', onopen: null, onmessage: null, onclose: null, onerror: null,
+                send: function (data) {
+                  if (s.readyState !== 1) throw new Error('The link is not open.');
+                  var m = { lamp: 'ws', op: 'send', id: id }, n;
+                  if (typeof data === 'string') { m.text = data; n = data.length; }
+                  else {
+                    var b = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength), t = '';
+                    for (var i = 0; i < b.length; i += 32768) t += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
+                    m.data = btoa(t); n = b.length;
+                  }
+                  sizes.push(n); s.bufferedAmount += n;
+                  pipe.postMessage(m);
+                },
+                close: function () {
+                  if (s.readyState >= 2) return;
+                  s.readyState = 2;
+                  pipe.postMessage({ lamp: 'ws', op: 'close', id: id });
+                  setTimeout(function () { gone(1000); }, 0);
+                } };
+              function gone(code) {
+                if (piped[id] !== s) return;
+                delete piped[id];
+                s.readyState = 3;
+                if (code === 1006 && s.onerror) s.onerror({});
+                if (s.onclose) s.onclose({ code: code });
+              }
+              s._heard = function (m) {
+                if (m.ev === 'open' && s.readyState === 0) { s.readyState = 1; if (s.onopen) s.onopen({}); }
+                else if (m.ev === 'message' && s.readyState === 1 && s.onmessage) {
+                  var data = m.text;
+                  if (typeof data !== 'string') {
+                    var t = atob(m.data || ''), b = new Uint8Array(t.length);
+                    for (var i = 0; i < t.length; i++) b[i] = t.charCodeAt(i);
+                    data = b.buffer;
+                  }
+                  s.onmessage({ data: data });
+                } else if (m.ev === 'sent' && sizes.length) s.bufferedAmount -= sizes.shift();
+                else if (m.ev === 'close') gone(typeof m.code === 'number' ? m.code : 1006);
+              };
+              pipe.postMessage({ lamp: 'ws', op: 'open', id: id, url: url });
+              return s;
+            }
+            var hereFns = [];
+            if (pipe) pipe.addEventListener('message', function (e) {
+              var m = e.data;
+              if (!m || m.lamp !== 'ws') return;
+              if (m.ev === 'here') { for (var i = 0; i < hereFns.length; i++) hereFns[i](m); return; }
+              if (piped[m.id]) piped[m.id]._heard(m);
+            });
+            return { open: open, onHere: function (fn) { hereFns.push(fn); } };
+          }
+        """#
+
     /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks Lamp where its relay is
     /// (`/app/controller`), as it opens and every few seconds after, and opens its own socket there, where phones' pages
     /// join. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
@@ -565,6 +629,10 @@ extension TVTemplate {
           var MESSAGE = 16384;     // bytes of JSON in one message, the most the relay passes on (ControllerWire.message)
           var on = { link: [], join: [], leave: [], button: [], axis: [], message: [], file: [], error: [] };
           var players = {}, byKey = {}, kept = {}, links = {}, link = null, linkTimer = null, askTimer = null, beatTimer = null, started = false, away = false;
+          // On the Xbox the page is https and opens its link to the relay through the host's pipe.
+        /*LAMP_LINKS*/
+          var pipe = window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function' ? window.chrome.webview : null;
+          var relayLinks = lampLinks(pipe);
           // Players that come another way than Lamp's relay: each way's own code joins them here (`_attach`).
           var others = [];
         /*LAMP_FILES*/
@@ -700,7 +768,7 @@ extension TVTemplate {
             clearTimeout(l.again);
             if (!started || l.socket) return;
             var socket;
-            try { socket = new WebSocket(l.address); } catch (e) { return lost(l, 0); }
+            try { socket = relayLinks.open(l.address); } catch (e) { return lost(l, 0); }
             socket.binaryType = 'arraybuffer';
             l.socket = socket;
             l.heard = Date.now();
@@ -822,7 +890,7 @@ extension TVTemplate {
           if (window.Lamp) window.Lamp.controllers = api;
         })();
 
-        """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS)
+        """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS)
 
     /// The wish's other apps (`WishRooms`): the TV page's half of `LampWish`, the same block the wish's Swift and Kotlin
     /// apps have. The page asks Lamp for its room (`/app/wish`, through the preview's bridge or the gateway), opens its own
@@ -1109,7 +1177,7 @@ extension TVTemplate {
         """#
 
     static let wishJS = wishJSBody.replacingOccurrences(of: "/*LAMP_WISH_CRYPTO*/", with: wishCryptoJS.trimmingCharacters(in: .whitespacesAndNewlines))
-        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS)
+        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS)
 
     private static let wishJSBody = #"""
         /* The wish's other apps. Written by Lamp before every build; don't edit.
@@ -1689,64 +1757,15 @@ extension TVTemplate {
             keep();
           }
 
-          // A link as a WebSocket, or on the Xbox its stand-in over the host's pipe, with the same calls the code below
-          // uses (send, close, readyState, bufferedAmount, onopen, onmessage, onclose, onerror). The host may open only
-          // links to this network, and tells the page as each frame has gone, so a file's flow counts what's still to go.
-          var piped = {}, pipeIds = 0;
-          function opener(url) {
-            if (!pipe) return new WebSocket(url);
-            var id = ++pipeIds, sizes = [];
-            var s = piped[id] = { readyState: 0, bufferedAmount: 0, binaryType: 'arraybuffer', onopen: null, onmessage: null, onclose: null, onerror: null,
-              send: function (data) {
-                if (s.readyState !== 1) throw new Error('The link is not open.');
-                var m = { lamp: 'ws', op: 'send', id: id }, n;
-                if (typeof data === 'string') { m.text = data; n = data.length; }
-                else {
-                  var b = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength), t = '';
-                  for (var i = 0; i < b.length; i += 32768) t += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
-                  m.data = btoa(t); n = b.length;
-                }
-                sizes.push(n); s.bufferedAmount += n;
-                pipe.postMessage(m);
-              },
-              close: function () {
-                if (s.readyState >= 2) return;
-                s.readyState = 2;
-                pipe.postMessage({ lamp: 'ws', op: 'close', id: id });
-                setTimeout(function () { gone(1000); }, 0);
-              } };
-            function gone(code) {
-              if (piped[id] !== s) return;
-              delete piped[id];
-              s.readyState = 3;
-              if (code === 1006 && s.onerror) s.onerror({});
-              if (s.onclose) s.onclose({ code: code });
-            }
-            s._heard = function (m) {
-              if (m.ev === 'open' && s.readyState === 0) { s.readyState = 1; if (s.onopen) s.onopen({}); }
-              else if (m.ev === 'message' && s.readyState === 1 && s.onmessage) {
-                var data = m.text;
-                if (typeof data !== 'string') {
-                  var t = atob(m.data || ''), b = new Uint8Array(t.length);
-                  for (var i = 0; i < t.length; i++) b[i] = t.charCodeAt(i);
-                  data = b.buffer;
-                }
-                s.onmessage({ data: data });
-              } else if (m.ev === 'sent' && sizes.length) s.bufferedAmount -= sizes.shift();
-              else if (m.ev === 'close') gone(typeof m.code === 'number' ? m.code : 1006);
-            };
-            pipe.postMessage({ lamp: 'ws', op: 'open', id: id, url: url });
-            return s;
-          }
-          if (pipe) pipe.addEventListener('message', function (e) {
-            var m = e.data;
-            if (!m || m.lamp !== 'ws') return;
-            if (m.ev === 'here') {
-              var list = m.addresses instanceof Array ? m.addresses : [];
-              for (var i = 0; i < list.length; i++) if (typeof list[i] === 'string' && /^\d+\.\d+\.\d+\.\d+$/.test(list[i])) { here = list[i]; break; }
-              return;
-            }
-            if (piped[m.id]) piped[m.id]._heard(m);
+          // A link as a WebSocket, or on the Xbox its stand-in over the host's pipe (`lampLinks`, the same as
+          // Lamp.controllers'), with the same calls the code below uses. The host also says which addresses this
+          // device has.
+        /*LAMP_LINKS*/
+          var links = lampLinks(pipe);
+          function opener(url) { return links.open(url); }
+          links.onHere(function (m) {
+            var list = m.addresses instanceof Array ? m.addresses : [];
+            for (var i = 0; i < list.length; i++) if (typeof list[i] === 'string' && /^\d+\.\d+\.\d+\.\d+$/.test(list[i])) { here = list[i]; break; }
           });
 
           // The wish's key from Lamp, sealed to a key pair made here and now, so nobody else on the network can open it.

@@ -605,7 +605,10 @@ final class Store: ObservableObject {
     @Published var openApps: Set<String> = []
     /// The apps open on this Mac, and those open in a simulator or on a phone: an app for both can be in
     /// both at once, and its Play and Stop are for the place Try On points at (`isOpen`).
-    @Published private(set) var openOnMac: Set<String> = []
+    @Published private(set) var openOnMac: Set<String> = [] { didSet { Self.openOnMacNow = openOnMac } }
+    /// The same, for what's asked of every app without the store at hand (`servesPhonePage`, which runs while the
+    /// store is still being made).
+    private(set) static var openOnMacNow: Set<String> = []
     @Published private(set) var openOnIOS: Set<String> = []
     /// A choice in the chat's Try On waiting to open the app where it points (`Store.tryOn`), by app.
     var openingChosen: [String: UUID] = [:]
@@ -1997,7 +2000,7 @@ final class Store: ObservableObject {
     static func deviceSetupRefusal(route: String, request: Gateway.Request) -> (Int, [String: Any])? {
         let refusal = (400, ["error": "This conversation sets up a device; no app is made here. Write or fix the device's integration with device_integration, and tell the person to make a wish on Lamp's desk for anything to put on it."] as [String: Any])
         switch route {
-        case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/art", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
+        case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/art", "/agent/assets", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
              "/agent/setup", "/agent/connectors", "/agent/lampify":
             return refusal
         case "/agent/talk":
@@ -6175,6 +6178,7 @@ final class Store: ObservableObject {
             case "read_notes", "save_notes": (status, answer) = notes(name, arguments, for: project)
             case "read_skill": (status, answer) = Skills.read(arguments, from: Skills.readable(parts: parts(of: project)))
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
+            case "assets": (status, answer) = await assetsCall(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "remove_app": (status, answer) = await agentRemove(arguments, for: project)
@@ -6898,6 +6902,116 @@ final class Store: ObservableObject {
             }
             return (502, ["error": "Couldn't make the picture: \(error.localizedDescription)"])
         }
+    }
+
+    /// `assets`: ready-made models, sprites, tiles, icons and textures from Lamp's index of free work (`AssetCatalog`).
+    /// With `find` (and `kind`) it lists what fits, within what the slowest place the app is shown can draw, and with
+    /// `show` their pictures in one sheet; with `fetch` it brings the chosen ones into where the app's build takes files
+    /// from (Web/assets/ for a game or another page, a native Android app's packaged assets, else Assets/), checked
+    /// against the index, and credits each in credits.json as it's written.
+    private func assetsCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        // Fetching waits on the network: the turn that asked is taken now, and nothing is written unless that turn
+        // is still going when the files arrive (as `make_art`'s pictures).
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        func stillAsked() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
+        let (app, refusal) = target(arguments, in: project)
+        guard let app else { return (400, ["error": refusal ?? "No such app."]) }
+        let budget = AssetCatalog.budget(for: app)
+        let ids = (arguments["fetch"] as? [String] ?? []).map(\.trimmed).filter { !$0.isEmpty }
+        guard !ids.isEmpty else {
+            let words = (arguments["find"] as? String)?.trimmed ?? ""
+            let kind = (arguments["kind"] as? String)?.trimmed
+            guard !words.isEmpty || kind?.isEmpty == false else {
+                return (400, ["error": "Say what to look for in `find` (and `kind`), or the ids to bring in with `fetch`."])
+            }
+            let found = AssetCatalog.search(words, kind: kind)
+            let fitting = found.filter { ($0.triangles ?? 0) <= budget.triangles }
+            let shown = Array(fitting.prefix(min(max(arguments["limit"] as? Int ?? 12, 1), 30)))
+            guard !shown.isEmpty else {
+                let heavy = found.isEmpty ? "" : " (\(found.count) were too heavy for \(budget.place))"
+                return (200, ["text": "Nothing in Lamp's free assets fits that\(heavy). Try other words or a broader kind, or make it in code or with make_art."])
+            }
+            var text = "Free assets that fit, best first, with their size in the file's own units (y up). Bring one in with `fetch` and its id:\n"
+                + shown.map { AssetCatalog.line($0, budget: budget) }.joined(separator: "\n")
+            if found.count > fitting.count {
+                text += "\n\(found.count - fitting.count) more were left out as too heavy for \(budget.place), the slowest place it's shown."
+            }
+            if fitting.count > shown.count { text += "\n\(fitting.count - shown.count) more fit: narrow the words, or ask for more with `limit`." }
+            var pictures: [String] = []
+            if arguments["show"] as? Bool == true, let sheet = await AssetCatalog.sheet(of: shown), stillAsked(),
+               let url = Previews.destination(for: "assets-found.jpg", under: ".lamp/runtime/previews", in: project),
+               (try? sheet.write(to: url, options: .atomic)) != nil {
+                pictures = [url.path]
+                text += "\nTheir pictures follow, numbered in this order (the first \(min(shown.count, 12)))."
+            }
+            return (200, ["text": text, "screenshots": pictures])
+        }
+        guard ids.count <= 40 else { return (400, ["error": "Bring in at most 40 at a time."]) }
+        let byID = Dictionary(AssetCatalog.all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let unknown = ids.filter { byID[$0] == nil }
+        guard unknown.isEmpty else {
+            return (400, ["error": "Lamp's free assets have no \(unknown.joined(separator: ", ")): use the ids `find` lists."])
+        }
+        // Where the app's build takes files from: a page's are served from Web/, so a game or any other page gets them
+        // there; a native Android app's build packages app/src/main/assets; any other app's bundles Assets/.
+        let fm = FileManager.default
+        func folder(_ path: String) -> Bool {
+            var isFolder: ObjCBool = false
+            return fm.fileExists(atPath: app.dir.appendingPathComponent(path).path, isDirectory: &isFolder) && isFolder.boolValue
+        }
+        let page = folder("Web"), android = !page && folder("app/src/main")
+        let base = page ? "Web/assets/" : android ? "app/src/main/assets/" : "Assets/"
+        let wishPrefix = app.isPart ? app.dir.lastPathComponent + "/" : ""
+        var brought = 0
+        var said: [String] = [], problems: [String] = []
+        for id in Array(NSOrderedSet(array: ids)) as? [String] ?? ids {
+            guard let item = byID[id] else { continue }
+            // Its credit has to be kept: a wish holds only so many sources (`Credits.maxEntries`), and one past that is
+            // dropped as it's written, so the asset would be in the app uncredited. Asked before downloading, and again
+            // once the files are here, with nothing awaited between that and writing them and their credit: another
+            // fetch may have added a source while this one downloaded.
+            let credit = AssetCatalog.credits(for: [(item, [])])
+            func creditFits() -> Bool {
+                let kept = Credits.load(project).merged(with: credit)
+                return credit.upstream.allSatisfy { source in kept.upstream.contains { $0.sameWork(as: source) } }
+            }
+            let full = "- \(item.id) wasn't brought in: this wish already credits as many works as Lamp can keep (\(Credits.maxEntries)), so its credit would be lost. Use one from a pack the wish already credits, or make it in code."
+            guard creditFits() else { problems.append(full); continue }
+            do {
+                let files = try await AssetCatalog.files(of: item, budget: budget)
+                guard stillAsked() else { return (409, ["error": "The request was stopped, so nothing more was brought in."]) }
+                guard creditFits() else { problems.append(full); continue }
+                var paths: [String] = []
+                for file in files {
+                    try AppFolder.write(file.data, to: app.dir.appendingPathComponent(base + file.path), in: app.dir)
+                    paths.append(base + file.path)
+                }
+                // Credited as soon as it's written, so a stop before the next one leaves nothing uncredited.
+                try? Credits.add(AssetCatalog.credits(for: [(item, paths.map { wishPrefix + $0 })]), to: project)
+                brought += 1
+                let shown = paths.map { String($0.dropFirst(page ? "Web/".count : base.count)) }
+                var line = "- \(item.id) → " + shown.joined(separator: ", ")
+                if let box = item.box, box.count == 6 {
+                    line += String(format: " (box x %.2f…%.2f, y %.2f…%.2f, z %.2f…%.2f in its units)", box[0], box[3], box[1], box[4], box[2], box[5])
+                }
+                if !item.animations.isEmpty { line += "; animations: " + item.animations.prefix(12).joined(separator: ", ") }
+                if let notes = item.notes { line += "; \(notes)" }
+                if let note = files.compactMap(\.note).first { line += "; \(note)" }
+                if AssetCatalog.needsCredit(item.license) { line += "; \(item.license): credit \"\(item.name) by \(item.author)\" where the app shows its credits" }
+                said.append(line)
+            } catch {
+                problems.append("- \(item.id) wasn't brought in: \(error.localizedDescription).")
+            }
+        }
+        var text = ""
+        if !said.isEmpty {
+            let loading = page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`"
+                : android ? "inside the app's packaged assets, as `LampAssets` reads them" : "inside Assets/, as `LampAssets.url(\"…\")` takes them"
+            text = "Brought in, under \(base) (paths below are \(loading)), and credited in credits.json:\n"
+                + said.joined(separator: "\n")
+        }
+        if !problems.isEmpty { text += (text.isEmpty ? "" : "\n") + problems.joined(separator: "\n") }
+        return (brought == 0 ? 502 : 200, brought == 0 ? ["error": text] : ["text": text])
     }
 
     /// Where `make_art` may write a picture: Assets/ in the app's own folder, made if needed. This runs in Lamp,
@@ -7771,6 +7885,14 @@ final class Store: ObservableObject {
         Runtime.recordAndroidBuiltBefore(project)
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
+        // A game's page for phones is copied where Lamp serves it from, wherever the game is built for (on a TV, with the
+        // rest of its files, just below).
+        if project.platform.target.takesPhones, !project.onTV {
+            do { try await TVs.stagePhone(project) } catch {
+                log(project, .detail, "Build failed:\n" + error.localizedDescription)
+                return error.localizedDescription
+            }
+        }
         // A TV app has nothing to compile: its files are copied where the preview and the packages read them.
         if project.onTV {
             do {
@@ -8918,7 +9040,7 @@ final class Store: ObservableObject {
         }
         guard let run = deviceRuns[project.id] else { return (200, ["text": summary]) }
         note("Looking at \(project.name)", for: project)
-        var text = summary + " " + (await deviceAppPicture(project, run: run))
+        var text = summary + " " + (await deviceAppPicture(project, run: run)) + (await deviceAppScreen(project, run: run))
         if let answer = run.installAnswer, !answer.isEmpty { text += "\n\nWhat the \(name) answered when the app was put on it:\n\(answer)" }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         var logged: String?
@@ -8934,6 +9056,20 @@ final class Store: ObservableObject {
         text += await RokuSDK.notes(for: project, on: run.device, log: logged) { [weak self] in self?.deviceRuns[project.id] === run }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
+    }
+
+    /// The app's screen as text, as the device describes it (its integration's `screen`), for after its picture: what
+    /// each node shows and which has focus, which a picture of a TV across the room is often too small to tell. Shared
+    /// with the agent as pictures are; empty when the integration has no way to read it or the device didn't answer.
+    private func deviceAppScreen(_ project: LampProject, run: DeviceApps.Run) async -> String {
+        guard Privacy.sharesPictures, deviceRuns[project.id] === run,
+              let screen = try? await DeviceApps.screen(project, on: run.device), !screen.trimmed.isEmpty,
+              // Read again after the wait: another app put on the device meanwhile, or pictures turned off, keeps it back.
+              Privacy.sharesPictures, deviceRuns[project.id] === run else { return "" }
+        // Indentation between tags is most of a tree's size; what each node says is kept.
+        let compact = screen.replacingOccurrences(of: #">\s+<"#, with: "><", options: .regularExpression)
+        let cut = compact.count > 12_000 ? String(compact.prefix(12_000)) + "… (cut)" : compact
+        return "\n\nThe screen as text, as \(run.device.name) describes it (the app's tree of nodes):\n" + cut
     }
 
     /// Takes the device's picture of its screen into the app's runtime folder, and says what it is.
@@ -9008,7 +9144,7 @@ final class Store: ObservableObject {
             text += "\n\nThis is the app as last put on the \(name): it doesn't have the changes you've made to the code since. Call look_at_app to put them there."
         }
         guard deviceRuns[project.id] === run else { return (200, ["text": text + "\n\nThe \(name) shows another app now. Call look_at_app to put this one back."]) }
-        text += "\n\n" + (await deviceAppPicture(project, run: run))
+        text += "\n\n" + (await deviceAppPicture(project, run: run)) + (await deviceAppScreen(project, run: run))
         let tail = Privacy.sharesLog ? Runtime.logTail(project) : nil
         if let tail { text += "\n\nWhat it printed:\n" + tail }
         text += await RokuSDK.notes(for: project, on: run.device, log: tail) { [weak self] in self?.deviceRuns[project.id] === run }
@@ -11038,7 +11174,12 @@ final class Store: ObservableObject {
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + Array(deviceRuns.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
         let closedOnMac = openOnMac.subtracting(onMac)
-        if Set(onMac) != openOnMac { openOnMac = Set(onMac) }
+        if Set(onMac) != openOnMac {
+            let changed = openOnMac.symmetricDifference(onMac)
+            openOnMac = Set(onMac)
+            // A game's phone page is served while it's open here, and its players let go once it closes.
+            if projects.contains(where: { changed.contains($0.id) && $0.platform.target.takesPhones && Self.takesPlayers($0) }) { syncLocalNetwork() }
+        }
         if Set(onIOS) != openOnIOS { openOnIOS = Set(onIOS) }
         let ids = onMac + onIOS
         let closed = openApps.subtracting(ids).union(closedOnMac)
@@ -11199,10 +11340,23 @@ final class Store: ObservableObject {
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
-    /// can't watch, for as long as it's the TV the app opens on. Lamp serves it so the agent never has to start a
-    /// server of its own, which would outlive the app.
+    /// can't watch, for as long as it's the TV the app opens on; and a game's while its copy is open on this Mac too.
+    /// Lamp serves it so the agent never has to start a server of its own, which would outlive the app.
     static func servesPhonePage(_ project: LampProject) -> Bool {
-        project.holdsApp && project.hasTV && (project.device != nil || TVPreview.window(project) != nil) && takesPlayers(project)
+        guard project.holdsApp, takesPlayers(project) else { return false }
+        let onMac = project.platform.target.takesPhones && project.hasMac && openOnMacNow.contains(project.id)
+        return onTV(project) || onDevice(project) || onMac
+    }
+
+    /// The app is set to open on one of the person's TVs, which Lamp can't watch, or shown in its TV preview.
+    static func onTV(_ project: LampProject) -> Bool {
+        project.hasTV && ((project.onTV && project.device != nil) || TVPreview.window(project) != nil)
+    }
+
+    /// A game set to open on the person's Xbox (its integration's device: the one chosen under Try On, else theirs),
+    /// which Lamp can't watch either: the host there opens the page's link to the relay for it.
+    static func onDevice(_ project: LampProject) -> Bool {
+        project.platform.target.takesPhones && project.onDevice
     }
 
     /// A TV app's phone page (`TVTemplate.phoneFolder`, as staged): GET /phone/<app>/<file>, from a phone on the
@@ -11267,7 +11421,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -11353,6 +11507,8 @@ final class Store: ObservableObject {
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
+        // The About window's credits as they are now (`LampAbout`): a credit added since the app was installed shows.
+        if route == "/app/credits" { return (200, Credits.load(wish(of: project)).aboutPage.map { ["page": $0] } ?? [:]) }
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }
@@ -11377,12 +11533,21 @@ final class Store: ObservableObject {
     private func controllerSession(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         // By the name or address the app reached Lamp at, at the relay's port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
-        guard project.hasTV else {
+        guard project.hasTV || project.platform.target.takesPhones else {
             return (409, ["error": "This app was built by an earlier Lamp: open it from Lamp on your Mac to update it, and it joins the TV app's game again."])
         }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
+        // A game's copy on this Mac asking is open, though Lamp may not have seen it open yet.
+        if !request.fromPreview { refreshOpenApps() }
         syncLocalNetwork()
-        guard Self.servesPhonePage(project) else { return (409, ["error": "The app isn't open in the TV preview or set to open on a TV."]) }
+        guard Self.servesPhonePage(project) else {
+            return (409, ["error": project.hasTV ? "The app isn't open in the TV preview or set to open on a TV." : "The game isn't open on this Mac."])
+        }
+        // A game's copy on this Mac asks from this Mac; from the network only a TV or an Xbox it's set to open on does.
+        // Anywhere else (a phone, Android) has no host's side of phones, even while the Mac's copy takes players.
+        if request.fromNetwork, !request.fromPreview, !Self.onTV(project), !Self.onDevice(project) {
+            return (409, ["error": "Phones join this game where Lamp hosts them: on this Mac, a Samsung or LG TV, or the Xbox."])
+        }
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
         let relay: [String: Any] = ["kind": "relay", "socket": "ws://\(host):\(port)/", "app": project.id,
                                     "credential": PhoneControllers.shared.hostCredential(for: project, preview: request.fromPreview)]
@@ -11420,11 +11585,12 @@ final class Store: ObservableObject {
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or
     /// Mac app beside it in its wish (`Parts`): at the wish's root with parts, or itself a part (in TV/), beside the
-    /// app at the root.
+    /// app at the root. A game takes phones with a page for them, wherever it's played (`Target.takesPhones`).
     /// Read off the wish itself (its parts as found in its folder), never off the list of apps, which is being set
     /// while Lamp reads its apps again: a game must not end because, for a moment, the list was half made.
     nonisolated static func takesPlayers(_ project: LampProject) -> Bool {
-        project.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty || project.isPart)
+        (project.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty || project.isPart))
+            || (project.platform.target.takesPhones && TVs.hasPhonePage(project))
     }
 
     /// Where a TV app's phone page is now (`Lamp.phonePage` in lamp.js, which asks as the page opens and now and then
@@ -11547,6 +11713,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/art" {
             return Self.withPictureData(await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
+        }
+        if route == "/agent/assets" {
+            return Self.withPictureData(await assetsCall((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
         }
         if route == "/agent/talk" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]

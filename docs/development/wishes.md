@@ -226,8 +226,15 @@ former. The info panel, the About window and a repository's README link the chai
 `.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was
 changed is still shown and shared. Lamp keeps only what passes `Credits.checked`, from the agent and from a shared file
 alike. It's shown first in the wish's info panel and, for a Mac app, in its About window (Credits.html, written into the
-bundle by `Store.stageSigned`). In a shared file it's credits.json at the root, which an older Lamp ignores, so the
+bundle by `Store.stageSigned`, and asked of Lamp as the window opens, so a credit added since the install shows:
+"Generated apps"). In a shared file it's credits.json at the root, which an older Lamp ignores, so the
 file's format isn't raised for it.
+
+Assets the `assets` tool brings in are credited by Lamp, not the agent: each a source with `adapted: false` and the
+`files` of it in the wish (one entry for a pack of CC0 work, one for each CC-BY asset, which needs its own credit), so
+they show under "Uses" wherever credit is shown and never as what the wish is based on. Only CC0 and CC-BY are in the
+index ("3D scenes and games"), both open licenses to `ShareCheck`, so a wish using them is shared and published as any
+other.
 
 Pictures `make_art` paints are marked as made with AI twice: in the PNG itself (IPTC's digital source type
 `trainedAlgorithmicMedia` in its XMP, `AIMark`), and in the wish's `generated` list, which the info panel and About

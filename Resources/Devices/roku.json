@@ -155,6 +155,15 @@
         }
       }
     ],
+    "screen": [
+      {
+        "http": {
+          "keep": "screen",
+          "path": "/query/app-ui",
+          "port": 8060
+        }
+      }
+    ],
     "stop": [
       {
         "http": {

@@ -101,9 +101,11 @@ Open and every look put it on the device chosen under Try On (`Store.setDeviceAp
 one not set up opens its setup window, and with no choice the only one found is used) with the bridge's `install` and
 `launch` (`Store.installOnDeviceApp`), reading `logs` into the app's log; a device not set up gets its next step in the
 chat instead. `look_at_app` is the bridge's `look` picture with what the device answered the install
-(`IntegrationRunner.Outcome.answers`, as plain text) and the log; `use_app` takes only `key` (Lamp's names in
+(`IntegrationRunner.Outcome.answers`, as plain text) and the log, and, where the bridge has `screen`, the screen as text
+(`keep: "screen"`, `Store.deviceAppScreen`: a Roku's ECP `/query/app-ui`, SceneGraph's tree of the app's nodes with their
+text and focus, its indentation taken out and cut at 12,000 characters), shared with the agent as pictures are; `use_app` takes only `key` (Lamp's names in
 `bridge.keys`, each pressed with `use`), `type` (the bridge's `type`, once per character as `{text}`, which in a path
-Lamp encodes down to letters and digits; a Roku's `Lit_`) and `wait`. Stop runs the bridge's `stop` (a Roku's
+Lamp encodes down to letters and digits; a Roku's `Lit_`) and `wait`, then the picture and the screen as text again. Stop runs the bridge's `stop` (a Roku's
 `/exit-app/dev`), and presses `home` when there's none or the device refuses it. Lamp can't tell whether the
 app is still open on the device, so Play always puts it there again. Such an app can be one of a wish's apps, in a
 folder named for its device (Roku/, the "Wishes" guide), where all of this works in its folder as it does at a wish's
@@ -144,14 +146,13 @@ TypeScript" in its log), and Roku doesn't yet say how a person gets one. The rul
 blame the Roku's version. The agent never runs
 pnpm, npx or rk: a package it needs goes in package.json and the next prepare installs it.
 
-`look_at_app` and `use_app` on a Roku app also give the agent the SDK's view of it (`declared.inspect` "roku-sdk",
-`RokuSDK.notes`): the screen as SceneGraph's tree of nodes, focus included, from ECP's `query/app-ui`, and a crash's stack
-in what the app logged read back to its TypeScript lines with the build's source maps (`decode_stack_trace`). Both come
+`look_at_app` and `use_app` on a Roku app give the screen as text through the bridge's `screen` (ECP's `query/app-ui`,
+as for every Roku app) and also the SDK's own view (`declared.inspect` "roku-sdk", `RokuSDK.notes`): a crash's stack
+in what the app logged read back to its TypeScript lines with the build's source maps (`decode_stack_trace`). It comes
 from the SDK's MCP server, `rk mcp`, started from the app's packages in Lamp's copy, in the app's sandbox, for one call
-and stopped, at the address of the Roku Lamp put the app on; the tree goes only while pictures are shared with the
-agent and the stack only while the log is. Lamp calls those two reads alone: the server's other tools (sideloading,
-keys, rebooting, signing, the cloud emulator, the debugger) are never offered to the agent, which presses keys with
-`use_app` through Lamp's bridge and its checks, so no engine reaches the Roku any other way. `tools`, `prepare` and
+and stopped, and only while the log is shared with the agent. Lamp calls that read alone: the server's other tools
+(sideloading, keys, rebooting, signing, the cloud emulator, the debugger) are never offered to the agent, which presses
+keys with `use_app` through Lamp's bridge and its checks, so no engine reaches the Roku any other way. `tools`, `prepare` and
 `inspect` are refused in an integration the builder writes.
 
 A Roku app Lamp made before this is BrightScript (`DeviceApps.isOlderScaffold`: none of the files the scaffold writes now
@@ -431,7 +432,8 @@ with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
 controls on a touch screen, and the frame rate measured wherever it's played: logged every ten seconds, and the canvas
 drawn at 3/4 and then 1/2 of 1920x1080 while frames come slower than 45 a second, a step undone when it didn't make them
-faster) and three.js in `Web/three` beside it. A 2D game is Phaser 3's scenes run through `Web/lamp-phaser.js`
+faster; a page laid out at the window's size whose HUD is its own HTML passes `fill: true` instead, sizes its canvas
+itself, and the runtime only measures and logs its frame rate) and three.js in `Web/three` beside it. A 2D game is Phaser 3's scenes run through `Web/lamp-phaser.js`
 (`phaser({ scenes, pixelArt, physics })`, Lamp's like lamp-game.js and written into every game so the agent can read it
 first), with Phaser itself in `Web/phaser` only while the page's own files import it (`DeviceSupport.usesPhaser`; pinned
 and checked by `scripts/update-phaser.sh`). The runtime stays the one frame loop: Phaser's loop is put to sleep once it has
@@ -522,6 +524,20 @@ page names its build (`lamp-build.js`, beside `lamp-device.js`: build.sh's `stag
 runtime keeps the latest snapshot every five seconds and as the page hides; a newer build opened within a quarter of an
 hour restores it once. That's how a change reaches the game on a phone, Android, a TV and the Xbox: when Lamp installs it
 there and opens it, the player is back where they were.
+
+**Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
+has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,
+shared with the game (`GameFiles`) and copied with a starter. Lamp serves it while the game is open on this Mac (the
+copy asks `/app/controller` through `LampPageGateway`, whose page Lamp's relay lets in by its `lamp-game://app`
+origin; `Store.servesPhonePage` goes by `openOnMac`, and the phone page is staged at each build, `TVs.stagePhone`), in
+the TV preview and on a Samsung or LG TV (staged with the rest, `TVs.stage`), and ends the session as the game closes.
+On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
+relay's plain link itself: `Lamp.controllers` opens it through the WebView2 host's pipe (`TVTemplate.linksJS`, shared
+with `Lamp.wish`), and Lamp serves the game's phones while it's set to open on the Xbox (`Store.onDevice`), which Lamp
+can't watch, as it does for a TV. On an iPhone or iPad and Android the game has no host's side of phones yet: Lamp turns
+down `/app/controller` from anywhere on the network but a TV or an Xbox the game is set to open on, so
+`Lamp.controllers` reports an error and the game plays with controllers and touch. A game's second screen is a phone joined from `onLink`'s address: `Lamp.phonePage`
+is a TV app's page's only.
 
 ### Lamp's player
 

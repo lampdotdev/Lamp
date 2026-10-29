@@ -11,8 +11,7 @@ more than a phone, and a TV's chip is often slower than a phone's. Nothing here 
 costs the most, so you can choose what the game is worth on the devices it's played on.
 
 Lamp ships three.js in two kinds of page: a game's page on its runtime (`make_app_for` with `kind` "game"), and a page
-with no runtime: a Samsung or LG TV app's page, which is what a game played with phones is for now (the
-phone-controllers skill), or a device integration's web app whose rules name the 3D library's folder. A page with no
+with no runtime: a Samsung or LG TV app's page, or a device integration's web app whose rules name the 3D library's folder. A page with no
 runtime has no game runtime, no Phaser bridge and no Rapier: it loads three.js from the folder its rules give and makes
 its own renderer and frame loop (below).
 
@@ -30,7 +29,8 @@ TV's browser has no WebGL 2. The game skill holds what every game needs
 index.html loads lamp.js, then the scaffold's import map, then game.js as a module: keep that. The import map's
 `three` and `three/addons/` come from `Web/three`: the WebGL build and its addons such as GLTFLoader. `three/webgpu`
 and `three/tsl` (node materials, drawing with WebGL 2) are added once the page imports them, and only a heavy scene
-needs them. Nothing else is there, so no Draco or KTX2 files, and nothing is loaded from the network. Physics is
+needs them. Nothing else is there, so no Draco or KTX2 files (the `assets` tool brings in none), and nothing is
+loaded from the network. Physics is
 Rapier, mapped in the import map when a game needs it (Physics, below).
 
 game.js makes one `THREE.WebGLRenderer({ antialias: true })` and calls `game({ renderer, init, frame, touch })` from
@@ -45,6 +45,10 @@ lamp-game.js once:
 - `frame(f)` runs about 60 times a second. It reads the controller as `f.pads[0]`, moves things by `f.dt` (and
   `f.time`), and ends with `renderer.render(scene, camera)`.
 - `touch` names the buttons Lamp's touch controls show on a phone or tablet.
+
+A page laid out at the window's size whose HUD is its own HTML (a strategy game, a page made for phones as well as
+TVs) passes `fill: true` to `game()` and places and sizes its canvas itself, drawing it smaller when frames run slow;
+the rest of this section is for a game drawn at 1920x1080.
 
 When frames run slow, Lamp draws the game smaller and scales it up to the screen by itself (`sharp: true` in `game()`
 keeps it at 1920x1080), so size anything drawn off-screen (a render target, a post-process pass) from
@@ -75,12 +79,15 @@ device) or tell the person why 3D in a page can't run there.
 
 ## Models, light and materials
 
-- Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
+- Before building a game's buildings, vehicles, characters or trees in code, look in Lamp's free models (`assets` with
+  `find` and `show`; the assets skill): many distinct things, and anything that walks or runs, come out better
+  ready-made. Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
   mismatched models, and cost little. Build each character and prop as a `THREE.Group` of them in a function of its
   own (a body, a head, eyes that blink, wheels that turn, a tail that wags), its parts named so they can move, and
-  give it a little life: a bob, a lean into a turn, a squash on landing. A model file (a .glb) is for one
-  the person gave or named, as the game skill's "Fun" says: it goes in Web/ and loads once in `init` with
-  lamp-game.js's `model('ship.glb')` (a group holding its scene, with `group.animations`), and a picture with
+  give it a little life: a bob, a lean into a turn, a squash on landing. A model file (a .glb) is one the person
+  gave or named, or a ready-made one from the `assets` tool (buildings, vehicles, characters with animations, trees:
+  the assets skill says when they suit and how to scale, turn, copy and animate them). It goes in Web/ and loads once
+  in `init` with lamp-game.js's `model('ship.glb')` (a group holding its scene, with `group.animations`), and a picture with
   `texture('bricks.png', t => { t.colorSpace = THREE.SRGBColorSpace; })`: a new copy of either goes into the running
   game, inside the same group or texture. A clone of the model, or a mixer playing its animations, is made again in
   `assetChanged(path)` (the game skill, "Changes while it's played").
