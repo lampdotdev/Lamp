@@ -7229,7 +7229,7 @@ final class Store: ObservableObject {
     /// of it offers the same (`Starters.suggestions`).
     func offerStarterChanges(_ id: String, after delay: Double) {
         guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }),
-              let starter = Starters.suggestions(of: project), let card = Starters.card(for: starter),
+              let starter = Starters.suggestions(of: project), let card = Starters.card(for: starter, devices: devices),
               offeringStarter.insert(id).inserted else { return }
         Task {
             try? await Task.sleep(for: .seconds(delay))

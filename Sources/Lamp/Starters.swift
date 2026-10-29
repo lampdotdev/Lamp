@@ -23,7 +23,8 @@ enum Starters {
         var tree: URL
         let name: String
         /// The first thing the app's chat offers: a line inviting a change, and three changes to choose from: a new look,
-        /// a new thing it does and a new subject, to show how far the app can go.
+        /// a new thing it does and a new subject, to show how far the app can go, and any for a device the person may
+        /// have (`Tweak.needs`).
         let offer: String
         let tweaks: [Tweak]
         /// What kind of wish it is (`kind:` in starter.md): a Mac app unless it says otherwise, as a game does.
@@ -51,10 +52,26 @@ enum Starters {
     }
 
     /// A change the chat offers, with the symbol on its tile (`- drop.fill: Add a water counter` in starter.md;
-    /// the symbol may be left out).
+    /// the symbol may be left out), and the device it needs, if any: a `needs:` line under it naming a device as the
+    /// table of devices does (`needs: iphone`, `Places`), so only someone with that device is offered it (`offered`).
     struct Tweak: Equatable {
         let title: String
         var symbol: String?
+        var needs: String? = nil
+    }
+
+    /// The changes offered to someone with these devices: every one that needs none, and each that needs a device
+    /// only when one of theirs is that device, as the table names it (its row, and the family where the word names
+    /// one: "ipad" is an iPad, not an iPhone). Theirs is what Your Devices lists as set up with Lamp, never one only
+    /// found on the network, which may be a neighbor's. A word the table doesn't know is never offered.
+    static func offered(_ tweaks: [Tweak], devices: [Device], table: [Place] = Places.all) -> [Tweak] {
+        tweaks.filter { tweak in
+            guard let needs = tweak.needs else { return true }
+            guard let word = DeviceWord(needs, in: table) else { return false }
+            return devices.contains { device in
+                device.isSetUp && Places.row(for: device)?.id == word.row && (word.family == nil || device.family == word.family)
+            }
+        }
     }
 
     static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Starters") }
@@ -164,6 +181,10 @@ enum Starters {
             if trimmed == "---" { break }
             if trimmed.hasPrefix("- ") {
                 tweaks.append(tweak(unquoted(String(trimmed.dropFirst(2)))))
+            } else if trimmed.hasPrefix("needs:"), !tweaks.isEmpty {
+                // The device the change above it needs.
+                let device = unquoted(String(trimmed.dropFirst("needs:".count)))
+                tweaks[tweaks.count - 1].needs = device.isEmpty ? nil : device.lowercased()
             } else if let colon = trimmed.firstIndex(of: ":") {
                 let value = unquoted(String(trimmed[trimmed.index(after: colon)...]))
                 switch trimmed[..<colon] {
@@ -190,10 +211,12 @@ enum Starters {
     }
 
     /// The card a starter's chat opens with: its line, and its changes to click, each sent as the person's first
-    /// request (`Store.answer`). Typing something else answers it as well.
-    static func card(for starter: Starter) -> LogLine? {
-        guard !starter.offer.isEmpty, !starter.tweaks.isEmpty else { return nil }
-        let options = starter.tweaks.map { tweak in
+    /// request (`Store.answer`). Typing something else answers it as well. A change that needs a device is on it only
+    /// for someone with that device (`offered`).
+    static func card(for starter: Starter, devices: [Device]) -> LogLine? {
+        let tweaks = offered(starter.tweaks, devices: devices)
+        guard !starter.offer.isEmpty, !tweaks.isEmpty else { return nil }
+        let options = tweaks.map { tweak in
             TalkCard.Option(title: tweak.title, symbol: tweak.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) == nil ? nil : $0 })
         }
         // Just the offer and its changes: in the wand's narrow panel a line under the offer saying what the wish is

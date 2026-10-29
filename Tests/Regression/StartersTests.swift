@@ -35,7 +35,7 @@ final class StartersTests: XCTestCase {
                                         Starters.Tweak(title: "Never touch design files"),
                                         Starters.Tweak(title: "Group: by client")])
         // Its chat opens on a card of Lamp's own, which doesn't hold the wish up.
-        let card = try XCTUnwrap(Starters.card(for: starter))
+        let card = try XCTUnwrap(Starters.card(for: starter, devices: []))
         XCTAssertEqual(card.ask?.offer, true)
         XCTAssertEqual(card.ask?.questions.first?.options.map(\.title).first, "Group my invoices by client")
         XCTAssertNotNil(Talk.open(in: [card]))
@@ -50,6 +50,37 @@ final class StartersTests: XCTestCase {
         XCTAssertNil(Starters.parse("name: No front matter", folder: starters))
     }
 
+    /// A change that needs a device is offered only to someone whose devices include one: an iPhone of theirs, not an
+    /// iPad for "iphone", and not one only found on the network.
+    func testDeviceChangesAreOfferedToTheirOwners() throws {
+        let text = """
+        ---
+        name: Buzzer Beater
+        offer: Make Buzzer Beater yours
+        tweaks:
+          - bell.badge.fill: Remind me before big games
+          - iphone.gen3: Get alerts on my iPhone
+            needs: iPhone
+        ---
+        """
+        let starter = try XCTUnwrap(Starters.parse(text, folder: starters))
+        XCTAssertEqual(starter.tweaks.last, Starters.Tweak(title: "Get alerts on my iPhone", symbol: "iphone.gen3", needs: "iphone"))
+        func device(_ kind: Device.Kind, paired: Bool = true) -> Device {
+            var device = Device(id: kind.rawValue, kind: kind, maker: "Apple", model: kind.name, modelID: "", name: kind.name,
+                                os: "iOS", osVersion: "27", reach: .network)
+            device.paired = paired
+            return device
+        }
+        func offered(_ devices: [Device]) -> [String] { Starters.offered(starter.tweaks, devices: devices).map(\.title) }
+        XCTAssertEqual(offered([]), ["Remind me before big games"])
+        XCTAssertEqual(offered([device(.ipad)]), ["Remind me before big games"])
+        XCTAssertEqual(offered([device(.iphone, paired: false)]), ["Remind me before big games"])
+        XCTAssertEqual(offered([device(.iphone)]), ["Remind me before big games", "Get alerts on my iPhone"])
+        XCTAssertEqual(Starters.card(for: starter, devices: [device(.iphone)])?.ask?.questions.first?.options.count, 2)
+        // A device the table doesn't know is never offered.
+        XCTAssertTrue(Starters.offered([Starters.Tweak(title: "Fly it", needs: "drone")], devices: [device(.iphone)]).isEmpty)
+    }
+
     func testEveryStarterIsWhole() throws {
         let fm = FileManager.default
         let folders = try StarterTrees.folders()
@@ -58,7 +89,9 @@ final class StartersTests: XCTestCase {
             let name = folder.lastPathComponent
             let starter = try XCTUnwrap(Starters.read(folder), name)
             XCTAssertFalse(starter.offer.isEmpty, name)
-            XCTAssertEqual(starter.tweaks.count, 3, name)
+            // Three for everyone, and any that need a device the table of devices names.
+            XCTAssertEqual(starter.tweaks.filter { $0.needs == nil }.count, 3, name)
+            for tweak in starter.tweaks { if let needs = tweak.needs { XCTAssertNotNil(DeviceWord(needs), "\(name): \(needs)") } }
             for words in starter.tweaks.map(\.title) + [starter.offer] {
                 XCTAssertLessThanOrEqual(words.split(separator: " ").count, 6, "\(name): \(words)")
             }
