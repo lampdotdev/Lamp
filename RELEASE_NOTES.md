@@ -5,6 +5,21 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.28.0
+
+- Remix a game or an app straight from its page. Remix opens the untouched original on your desk, with your request
+  waiting in its chat.
+- Make any project on GitHub into a Lamp app or game: paste its link and say what you want. Lamp keeps its credits
+  and licences, and an app made from GitHub or opened from a wish there tells you when an update is available. You
+  review it before your app changes.
+- Games aim to be fun from the first build, and "Make it a lot more fun" is one of the changes New York offers.
+- Home HQ listens: ask it something, or tell it to add an event or a chore.
+- A wish's chat stays with it when its app plays on another device, and Lamp offers its own panel when an app can't
+  show the chat beside it.
+- Android: a phone or TV is checked as you choose it, an Android TV keeps its place in a wish, and setting one up
+  over Wi‑Fi walks you through it.
+- Starters each have their own page on GitHub, with a picture and a way to try them.
+
 ## 0.27.0
 
 - The desk shows your devices on a shelf between your wishes and the box where you wish.
