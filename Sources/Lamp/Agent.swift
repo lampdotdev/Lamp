@@ -608,6 +608,13 @@ enum Agent {
         device lookup once per turn, after the simulator app opens.
         """
 
+        /// Said with `make_app_for`'s answer when it makes a new app, which is read just before the app is built: the
+        /// AI rule (`setupRules`) at the moment it decides what goes in, so it isn't lost among the setup rules.
+        static let newAppAI = "Build it without AI unless the request asked for what AI does. When it works, if AI would really add "
+            + "something to this app (understanding what they type or say, reading what they hand it, drafting), end the turn with "
+            + "one `ask` saying what AI would do in it (\"Want AI to…?\", Yes or No thanks), and build that only after a yes. "
+            + "If it wouldn't, say nothing about AI."
+
         static let edit = """
         - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.
         """

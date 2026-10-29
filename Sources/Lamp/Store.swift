@@ -6607,6 +6607,7 @@ final class Store: ObservableObject {
         if intent == .game, kind != .game { said.append("It's a game: read the game skill with `read_skill` before you write it.") }
         said.append(watchLine(for: part, wanted: target.rows.contains("watch"), had: false))
         said.append(Skills.forNewDevices(target.rows))
+        said.append(Agent.Rules.newAppAI)
         said.append("Done: the wish has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. It's a new app "
                     + "with data of its own, starting empty: nothing another app of the wish saved is in it unless its code reads it from that app. Build it in this "
                     + "request, made to work with the rest. `make_app_for` and `remove_app` name it with `app` \"\(part.dir.lastPathComponent)\"; `look_at_app` and `use_app` reach it with `part` \"\(Parts.address(of: part, among: apps(of: current(wish) ?? wish)))\". "
@@ -6625,6 +6626,8 @@ final class Store: ObservableObject {
         // What this says replaces what Lamp still had to tell about the app since it made it from the wish's list.
         if let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }) { Parts.forgetMade(about: app, in: wish) }
         var said: [String] = []
+        // An app given its first kind is a new app being built: the moment the builder weighs AI for it.
+        if app.undecided != nil { said.append(Agent.Rules.newAppAI) }
         if kind != app.platform || app.undecided != nil || (kind == .device && target.integration != app.integration) {
             let (status, answer) = await convert(app, to: kind, integration: kind == .device ? target.integration : nil)
             guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed") else {
