@@ -1,37 +1,40 @@
 ---
 name: app-ai
-description: AI inside the app - whether it belongs at all (build it in, suggest it, leave it out), Apple's on-device frameworks first, LampAI for open-ended text and pictures, decisions for judging things by what they mean, checked actions for doing what the person asks, setup and where data goes, untrusted text, and dates. Read before writing any of it.
+description: AI inside the app - whether it belongs at all (asked for, worth offering with one question first, or left out), Apple's on-device frameworks first, LampAI for open-ended text and pictures, decisions for judging things by what they mean, checked actions for doing what the person asks, setup and where data goes, untrusted text, and dates. Read before writing any of it.
 ---
 
 # AI inside the app
 
-## Whether AI belongs
+## Whether AI belongs, and asking first
 
-Decide before choosing how, from what the person wants to get done, the kind of app, the data it has and what a wrong
-answer would cost. Nobody has to say "AI" for it to belong, and saying the app's kind doesn't make it belong.
+Lamp never adds AI the person didn't ask for. Keep it in mind as one way to make an app better, not the point of every
+app: most need none. Decide from what they want to get done, the kind of app, the data it has and what a wrong answer
+would cost.
 
-- **Build it in** when understanding their words, reading what they hand the app, or drafting something is the
-  request itself, it fits what was asked, and the app copes when the AI is wrong or missing. Use the smallest block
-  that does it, without asking permission for AI, and say in a sentence what it does and where it's worked out.
-- **Suggest it** when AI would add something definite but also a new way of working, more data sent to a service,
-  real setup, or more that the app changes. Offer that one improvement with its cost in your reply, and build what was
-  asked without waiting for an answer.
-- **Leave it out** when exact rules already do it, the gain is vague, or facts, timing or anything in real time would
-  get less reliable. Ordinary code then: no chat, no model call, nothing to set up.
+- **Asked for**: the request itself is for what AI does ("summarize my emails", "understand what I say", "suggest a
+  name"). Build it with the smallest block that does it, and say in a sentence what it does and where it's worked out.
+- **Worth offering**: AI would add something definite (understanding what they type, reading what they hand the app,
+  drafting) but they didn't ask for it. Build what they asked without it, then end that turn with one `ask` that says
+  what you made and what AI would do in it, in their words: "I made your recipe box. Want AI to turn a pasted recipe
+  into a card and find recipes by what's in your fridge?", answered Yes or No thanks. Build it only after a yes.
+- **Leave it out**: exact rules already do it, the gain is vague, or facts, timing or anything in real time would get
+  less reliable. Ordinary code, and no question about AI.
 
-A kitchen timer with three presets and a loud alarm has no AI: durations, scheduling and the alarm are code. "Remind me
-in the time it takes to roast these vegetables" is one interpretation worth reconsidering, and still never the alarm's
-timing. A remote "with buttons for my TV" is buttons, perhaps with named routines suggested; "say 'movie night' and have
-it use my TV and speaker" is understanding intent, so it's built in, as a routine the person reviews and saves, which
-then runs from its button with no AI at all.
+Don't pester. Offer AI at most once for an app, where it would change what the app can do, never for small changes or
+in every reply. After a no, write "AI: offered, declined" in APP.md and don't offer it again unless they bring it up.
+
+A kitchen timer with three presets and a loud alarm has no AI and no question about it: durations, scheduling and the
+alarm are code. A remote "with buttons for my TV" is buttons; once it works, offering "Want AI to turn 'movie night'
+into a routine for your TV and speaker?" is worth one question. "Let me say 'movie night' and have it use my TV and
+speaker" asks for it, so it's built: a routine the person reviews and saves, which then runs from its button with no AI.
 
 Which block: Apple's frameworks where one fits; `ask(..., as:)` for a structured draft; a decision for a judgment by
 meaning; a checked action (below) for a request that changes something. Arithmetic, ids, permissions, what's saved and
 what's true stay in code. A model's confidence is never permission to change something.
 
-When AI goes in, write its contract in APP.md under the feature, a few lines: what it gives the person, which block,
-what's sent and where it's worked out (from `LampAI.status`, below), what it may change, what the app checks, what
-happens without it, and the case that proves it works. Keep it current as the feature changes.
+When AI goes in (asked for, or after a yes), write its contract in APP.md under the feature, a few lines: what it
+gives the person, which block, what's sent and where it's worked out (from `LampAI.status`, below), what it may
+change, what the app checks, what happens without it, and the case that proves it works. Keep it current as the feature changes.
 
 ## On-device frameworks first
 
@@ -110,10 +113,11 @@ A web page's `LampAI.act` is the same contract in lamp.js: the web-app skill's "
 
 When the app has to judge things by what they mean, decisions are the tool. `LampAI.isTrue`, `LampAI.choose`,
 `LampAI.rate` and `LampAI.decide` call a decision model (Jev) that is smart, very fast (well under a second) and
-extremely cheap (about $0.04 per million input tokens: judging hundreds of items costs a fraction of a cent). Where the
-app sorts, filters, labels, prioritizes, groups, matches, routes, moderates or flags things by what they are or mean
-(file names, messages, notes, titles, descriptions, what the person meant), use one without being asked, rather than
-keyword lists, regexes, extension rules or other hand-written heuristics that guess at meaning. Where an exact rule
+extremely cheap (about $0.04 per million input tokens: judging hundreds of items costs a fraction of a cent). In an app
+whose AI was asked for or accepted, where it sorts, filters, labels, prioritizes, groups, matches, routes, moderates or
+flags things by what they are or mean (file names, messages, notes, titles, descriptions, what the person meant), use
+one rather than keyword lists, regexes, extension rules or other hand-written heuristics that guess at meaning. In an
+app without AI, judging by meaning is a reason to offer it (above), not to add it. Where an exact rule
 decides it (a size, a date, a type the system reports), that's code, not a decision. It's fine to judge every item
 individually.
 
