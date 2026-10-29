@@ -19,6 +19,9 @@ let package = Package(
         // phone pages and its players join (`LampRelay`, in Lamp's Helpers), and the credentials Lamp hands out for it.
         .target(name: "LampRelayKit", path: "Sources/LampRelayKit"),
         .executableTarget(name: "LampRelay", dependencies: ["LampRelayKit"], path: "Sources/LampRelay"),
+        // The same for a game on this Mac while Lamp is closed: a launch agent in Lamp's bundle that serves each game's
+        // phone page and runs its relay (`ControllerService`), which macOS keeps running once the person turns it on.
+        .executableTarget(name: "LampControllerService", dependencies: ["LampRelayKit"], path: "Sources/LampControllerService"),
         // What Lamp and the chat inside an app's window say to each other.
         .target(name: "LampSidebarKit", path: "Sources/LampSidebarKit"),
         // That chat: an extension Lamp puts in every Mac app it builds. It starts as Apple's own extensions do,

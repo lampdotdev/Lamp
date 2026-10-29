@@ -1,3 +1,4 @@
+import LampRelayKit
 import SwiftUI
 import LampSidebarKit
 import CryptoKit
@@ -1088,6 +1089,7 @@ final class Store: ObservableObject {
         // Lamp opens on the desk (`WishDesk`), not on a wish's chat.
         selection = nil
         startGateway()
+        refreshBackgroundControllers()
         watchOpenApps()
         // Lamp opens with what it knows of the person's devices and runs no tool to look for more: devicectl, adb and a
         // search of the network can each have macOS ask about the local network, which comes only once the person does
@@ -5442,6 +5444,8 @@ final class Store: ObservableObject {
         let disposed = RemovedApp.disposals(of: project, parts: parts)
         // What the person allowed on their devices is the wish's, and goes with it.
         DevicePermissions.forget(project)
+        // The controllers service lets its game go, and keeps nothing of it.
+        for app in [project] + parts { await BackgroundControllers.revoke(app.id) }
         // Its widget's process too: in the Trash it would go on running, and answer for an app made later
         // under the same name.
         await WidgetProcess.end(for: project)
@@ -10236,7 +10240,20 @@ final class Store: ObservableObject {
         defer { try? fm.removeItem(at: signing) }
         let resources = app.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
-        Self.setInstallValues(for: project, in: app.appendingPathComponent("Contents/Info.plist"), root: Self.installDir, wishKey: wishKey(for: project))
+        // A game with a phone page goes through the controllers service while it's on, so its phones play on with Lamp
+        // closed (`BackgroundControllers`): its copy is told where the service is, which build of the page it has and its
+        // key; the service is given the build once the copy is signed. A game that no longer goes through it is taken
+        // back from it, so Lamp serves its page again.
+        var controllers: BackgroundControllers.Build?
+        if BackgroundControllers.takes(project) {
+            do { controllers = try BackgroundControllers.build(for: project) } catch {
+                log(project, .status, "Phones can join \(project.name) only while Lamp is open: \(error)")
+            }
+        } else if BackgroundControllers.hosts(project.id) {
+            await BackgroundControllers.revoke(project.id)
+        }
+        Self.setInstallValues(for: project, in: app.appendingPathComponent("Contents/Info.plist"), root: Self.installDir,
+                              values: controllers.map { Template.installValues(for: project).merging($0.installValues) { $1 } }, wishKey: wishKey(for: project))
         // Every usage description, from the one list: without its reason macOS kills the app the moment it
         // asks for the microphone, photos and the rest. Added here as well as in build.sh so apps made before
         // a reason was added get it too.
@@ -10415,6 +10432,9 @@ final class Store: ObservableObject {
         let previousID = NSDictionary(contentsOf: project.installedURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
         let replaced = previousID == project.bundleID ? await AppSigning.requirement(of: project.installedURL) : nil
         let requirement = replaced == nil ? nil : await AppSigning.requirement(of: app)
+        if let controllers, let problem = await BackgroundControllers.provision(controllers, for: project, signed: app) {
+            log(project, .status, "Phones can join \(project.name) only while Lamp is open: \(problem)")
+        }
         finished = true
         return SignedCopy(app: app, signed: signed, replaced: replaced, requirement: requirement, iconReady: iconReady)
     }
@@ -11267,6 +11287,14 @@ final class Store: ObservableObject {
 
     // MARK: - AI gateway for generated apps
 
+    /// Which games the controllers service hosts, as Lamp opens: Lamp leaves those to it.
+    func refreshBackgroundControllers() {
+        Task {
+            await BackgroundControllers.refresh()
+            syncLocalNetwork()
+        }
+    }
+
     private func startGateway() {
         let gateway = Gateway(handler: { request in await Store.shared.handleAI(request) },
                               pages: { request in await Store.shared.phonePage(request) })
@@ -11307,7 +11335,8 @@ final class Store: ObservableObject {
     /// Lamp serves it so the agent never has to start a server of its own, which would outlive the app.
     static func servesPhonePage(_ project: LampProject) -> Bool {
         guard project.holdsApp, takesPlayers(project) else { return false }
-        let onMac = project.platform.target.takesPhones && project.hasMac && openOnMacNow.contains(project.id)
+        // A game the controllers service hosts is its own on this Mac (`BackgroundControllers`): Lamp never serves it too.
+        let onMac = project.platform.target.takesPhones && project.hasMac && openOnMacNow.contains(project.id) && !BackgroundControllers.hosts(project.id)
         return onTV(project) || onDevice(project) || onMac
     }
 
@@ -11359,27 +11388,8 @@ final class Store: ObservableObject {
         return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: data)
     }
 
-    nonisolated static func pageType(_ ext: String) -> String {
-        switch ext.lowercased() {
-        case "html", "htm": "text/html; charset=utf-8"
-        case "js", "mjs": "text/javascript; charset=utf-8"
-        case "css": "text/css; charset=utf-8"
-        case "json", "webmanifest": "application/json"
-        case "svg": "image/svg+xml"
-        case "png": "image/png"
-        case "jpg", "jpeg": "image/jpeg"
-        case "gif": "image/gif"
-        case "webp": "image/webp"
-        case "ico": "image/x-icon"
-        case "woff2": "font/woff2"
-        case "woff": "font/woff"
-        case "mp3": "audio/mpeg"
-        case "wav": "audio/wav"
-        case "mp4": "video/mp4"
-        case "txt": "text/plain; charset=utf-8"
-        default: "application/octet-stream"
-        }
-    }
+    /// The type a page's file is served as, the same list the controllers service serves by.
+    nonisolated static func pageType(_ ext: String) -> String { PhonePageServer.type(for: ext) }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
@@ -11500,8 +11510,12 @@ final class Store: ObservableObject {
             return (409, ["error": "This app was built by an earlier Lamp: open it from Lamp on your Mac to update it, and it joins the TV app's game again."])
         }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
-        // A game's copy on this Mac asking is open, though Lamp may not have seen it open yet.
-        if !request.fromPreview { refreshOpenApps() }
+        // A game's copy on this Mac asking is open, though Lamp may not have seen it open yet. One the controllers service
+        // hosts asks Lamp only when the service didn't answer it (turned off in System Settings): Lamp serves it again.
+        if !request.fromPreview {
+            BackgroundControllers.letGo(project.id)
+            refreshOpenApps()
+        }
         syncLocalNetwork()
         guard Self.servesPhonePage(project) else {
             return (409, ["error": project.hasTV ? "The app isn't open in the TV preview or set to open on a TV." : "The game isn't open on this Mac."])

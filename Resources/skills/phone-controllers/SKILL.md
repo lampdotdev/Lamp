@@ -62,8 +62,10 @@ choice.
 
 ## Away from home
 
-Phones reach the phone page on the same Wi‑Fi, with Lamp open on this Mac, which runs the relay. Friends in other
-homes can't join through it: say so if that's what they want. Apps of the wish's that talk through `LampWish` work
+Phones reach the phone page on the same Wi‑Fi, with Lamp open on this Mac, which runs the relay. A game on the Mac
+also takes phones with Lamp closed once the person turns on "Keep phone controllers working when Lamp is closed" in
+Lamp's settings, and its copy is built again; nothing in the game changes for it. Friends in other homes can't join
+through it: say so if that's what they want. Apps of the wish's that talk through `LampWish` work
 by its own rules (the wish-links skill).
 
 ## Building it

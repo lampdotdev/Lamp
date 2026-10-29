@@ -76,7 +76,8 @@ Tell the person how the build reaches each device, as `make_app_for` answers it 
 ## Away from home
 
 Each way of connecting has its own reach, said where it's described: phones joining a TV app's page do it on the same
-Wi‑Fi with Lamp open on this Mac (the phone-controllers skill); the wish's own apps find each other on the home
+Wi‑Fi with Lamp open on this Mac, and a Mac game's with Lamp closed too once that's turned on (the phone-controllers
+skill); the wish's own apps find each other on the home
 network, and once Lamp has introduced them go on talking with Lamp closed (the wish-links skill, which also says what
 reaching each other away from home takes). Lamp runs no relay of its own for players in other homes: when that's what
 the person wants, say so plainly, and offer what works (playing on one Wi‑Fi, or another way of connecting, as the

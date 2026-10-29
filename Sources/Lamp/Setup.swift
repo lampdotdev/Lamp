@@ -849,6 +849,8 @@ struct AppsSettings: View {
             }
             // Only for someone with an iPhone or iPad app: nothing else goes on a phone.
             if store.everyApp.contains(where: { $0.hasIOS }) { PhoneAwaySection(revision: revision) }
+            // Only for someone with a game, which is what phones play: shown while it's on too, so it can be turned off.
+            if store.everyApp.contains(where: { $0.platform.target.takesPhones }) || BackgroundControllers.state != .off { PhoneControllersSection() }
             ComputerUseSettings()
         }
         .settingsPane()
@@ -1268,6 +1270,40 @@ struct PhoneAwaySection: View {
                 CapabilityNote(capability: .text, context: .phoneAway)
             }
         }
+    }
+}
+
+/// Phones as controllers for games on this Mac with Lamp closed (`BackgroundControllers`): what macOS says of the
+/// service, never only what was chosen, and the way to approve it when macOS waits for the person.
+struct PhoneControllersSection: View {
+    @EnvironmentObject private var store: Store
+    @State private var state = BackgroundControllers.state
+    @State private var problem: String?
+
+    var body: some View {
+        Section("Phones as Controllers") {
+            SettingsCheckboxes {
+                Toggle("Keep phone controllers working when Lamp is closed", isOn: Binding(get: { state != .off && state != .missing }, set: { on in
+                    problem = BackgroundControllers.set(on)
+                    state = BackgroundControllers.state
+                    if state == .needsApproval { BackgroundControllers.openLoginItems() }
+                    store.refreshBackgroundControllers()
+                }))
+                .disabled(state == .missing)
+                .checkboxNote(state == .missing ? "This copy of Lamp can't do this."
+                              : "A small helper runs in the background while you're logged in, so phones can join and play your games on this Mac. Games take it once they're built again. Turning it off disconnects their phones.")
+            }
+            if state == .needsApproval {
+                HStack {
+                    Text("Waiting for you to allow Lamp in Login Items.").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Open Login Items") { BackgroundControllers.openLoginItems() }.controlSize(.small)
+                }
+            }
+            if let problem { Text(problem).font(.caption).foregroundStyle(.secondary) }
+        }
+        .onAppear { state = BackgroundControllers.state }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in state = BackgroundControllers.state }
     }
 }
 

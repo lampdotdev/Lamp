@@ -93,18 +93,126 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
               let url = URL(string: lampGateway + path) else {
             return replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
         }
+        // A game's session for phones comes from Lamp's controllers service when Lamp set this copy up for it, so phones
+        // go on playing, and new ones join, with Lamp closed. Without the service (turned off in Lamp), Lamp answers
+        // while it's open, as before; nothing here ever opens Lamp.
+        #if os(macOS)
+        if path == "/app/controller", LampControllerLink.isSetUp {
+            let body = call["body"] as? String
+            return LampControllerLink.shared.session { answer in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        if let answer { return replyHandler(answer, nil) }
+                        Self.ask(url, body: body) { status, body in
+                            let closed = #"{"error":"Phones can't join while Lamp is closed. To keep them playing, turn on “Keep phone controllers working when Lamp is closed” in Lamp's settings."}"#
+                            replyHandler(["status": status, "body": status == 502 ? closed : body], nil)
+                        }
+                    }
+                }
+            }
+        }
+        #endif
+        Self.ask(url, body: call["body"] as? String) { status, body in replyHandler(["status": status, "body": body], nil) }
+    }
+
+    private static func ask(_ url: URL, body: String?, done: @escaping @MainActor @Sendable (Int, String) -> Void) {
         var request = URLRequest(url: url, timeoutInterval: 240)
         request.httpMethod = "POST"
         request.setValue("Bearer " + LampInstall.token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data((call["body"] as? String ?? "{}").utf8)
+        request.httpBody = Data((body ?? "{}").utf8)
         URLSession.shared.dataTask(with: request) { data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 502
             let body = data.map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Couldn't reach Lamp on your Mac. Open Lamp and try again."}"#
-            DispatchQueue.main.async { replyHandler(["status": status, "body": body], nil) }
+            DispatchQueue.main.async { done(status, body) }
         }.resume()
     }
 }
+
+#if os(macOS)
+/// The game's way to Lamp's controllers service (`ControllerService` in Lamp), which serves its phone page and runs the
+/// relay its phones join while the person is logged in, whether Lamp is open or not. Lamp wrote which service, which
+/// build of the page and the game's own key into this copy's Info.plist when it installed it; the key opens this game's
+/// session and nothing else. One connection for as long as the game runs: the service ends the game's session when it
+/// goes, and lets a session the game stops asking for lapse.
+@objc(LampControllerServiceProtocol) protocol LampControllerServiceCalls {
+    func call(_ request: Data, withReply reply: @escaping (Data) -> Void)
+}
+
+final class LampControllerLink: @unchecked Sendable {
+    static let shared = LampControllerLink()
+    static var isSetUp: Bool { !LampInstall.value("controllers").isEmpty && !LampInstall.value("controllerVersion").isEmpty }
+
+    private let lock = NSLock()
+    private var connection: NSXPCConnection?
+    private var greeted = false
+
+    private func link() -> NSXPCConnection {
+        lock.withLock {
+            if let connection { return connection }
+            let made = NSXPCConnection(machServiceName: LampInstall.value("controllers"))
+            made.remoteObjectInterface = NSXPCInterface(with: LampControllerServiceCalls.self)
+            // The service ended or restarted: the next ask opens a new connection and a fresh session.
+            made.invalidationHandler = { [weak self, weak made] in self?.forget(made) }
+            made.interruptionHandler = { [weak self, weak made] in made?.invalidate(); self?.forget(made) }
+            made.resume()
+            connection = made
+            greeted = false
+            return made
+        }
+    }
+
+    private func forget(_ gone: NSXPCConnection?) {
+        lock.withLock { if connection === gone { connection = nil; greeted = false } }
+    }
+
+    private func send(_ message: [String: Any], on connection: NSXPCConnection, done: @escaping @Sendable ([String: Any]?) -> Void) {
+        let once = LampOnce(done)
+        guard let data = try? JSONSerialization.data(withJSONObject: message),
+              let service = connection.remoteObjectProxyWithErrorHandler({ _ in once.call(nil) }) as? LampControllerServiceCalls else { return once.call(nil) }
+        service.call(data) { reply in once.call((try? JSONSerialization.jsonObject(with: reply)) as? [String: Any] ?? [:]) }
+    }
+
+    /// The game's session as `/app/controller` answers it (`status`, `body`), or nil when the service isn't there.
+    func session(_ done: @escaping @Sendable ([String: Any]?) -> Void) {
+        let connection = link()
+        let game: [String: Any] = ["installation": LampInstall.slug, "version": LampInstall.value("controllerVersion")]
+        let open: () -> Void = { [weak self] in
+            self?.send(game.merging(["op": "open", "key": LampInstall.value("controllerKey")]) { $1 }, on: connection) { answer in
+                guard let answer else { return done(nil) }
+                done(Self.reply(answer))
+            }
+        }
+        if lock.withLock({ greeted }) { open(); return }
+        send(game.merging(["op": "hello"]) { $1 }, on: connection) { [weak self] answer in
+            // No service, or one that wasn't given this build (Lamp couldn't hand it over): Lamp answers, if it's open.
+            guard let answer, answer["status"] as? Int != 404 else { return done(nil) }
+            guard answer["error"] == nil else { return done(Self.reply(answer)) }
+            self?.lock.withLock { if self?.connection === connection { self?.greeted = true } }
+            open()
+        }
+    }
+
+    private static func reply(_ answer: [String: Any]) -> [String: Any] {
+        var body = answer
+        let status = body.removeValue(forKey: "status") as? Int ?? 200
+        let text = (try? JSONSerialization.data(withJSONObject: body)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return ["status": status, "body": text]
+    }
+}
+
+/// A callback called once, whichever of its callers comes first: XPC can say both that a call failed and that it was
+/// answered.
+final class LampOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done: (@Sendable ([String: Any]?) -> Void)?
+    init(_ done: @escaping @Sendable ([String: Any]?) -> Void) { self.done = done }
+    func call(_ value: [String: Any]?) {
+        let next = lock.withLock { () -> (@Sendable ([String: Any]?) -> Void)? in defer { done = nil }; return done }
+        next?(value)
+    }
+}
+#endif
 
 /// The page's `LampVoice` (Web/lamp.js): what the person says, recorded by this device's microphone as 16 kHz mono
 /// 16-bit PCM in a WAV, for the page to have transcribed (`LampAI.hear`); and what the page says back, read out. Asking
