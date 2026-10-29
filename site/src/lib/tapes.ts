@@ -513,9 +513,9 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
   };
   const remix = () => { if (sleeve.remix) document.dispatchEvent(new CustomEvent("lamp:remix", { detail: sleeve.remix })); };
 
-  // The turn it takes when clicked (its right side swinging toward the viewer), shown by a flat magenta arrow round
-  // its right side, from the back to the front, its tail fading in from nothing and its head in front pointing the way
-  // the front goes: seen while the pointer is on the sleeve and not on its button, until a sleeve has been turned over
+  // The turn it takes when clicked (its right side swinging toward the viewer), shown by a flat magenta arrow, a little
+  // see-through, round its right side from the back to the front, its tail fading in from nothing and its head in
+  // front pointing the way the front goes: seen while the pointer is on the sleeve and not on its button, until a sleeve has been turned over
   // once (`turnedOnce`). It's placed by whoever shows the sleeve, at its place and lean but never its turn, and fades
   // in and out as `aim` asks.
   const arrow = new THREE.Group();
@@ -559,7 +559,7 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
   /** Fades the arrow toward what `aim` asked, by how long the frame took. */
   const fade = (dt: number) => {
     if (turned.once) aimed = false;
-    ink.opacity = ease(ink.opacity, aimed ? 1 : 0, dt, aimed ? 10 : 6);
+    ink.opacity = ease(ink.opacity, aimed ? 0.65 : 0, dt, aimed ? 10 : 6);
     arrow.visible = ink.opacity > 0.01;
   };
   return { box, onButton, point, remix, arrow, aim, fade };
