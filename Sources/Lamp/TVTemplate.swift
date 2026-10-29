@@ -216,6 +216,10 @@ enum TVTemplate {
             415: 'play', 19: 'pause', 10252: 'playpause', 413: 'stop', 417: 'fastforward', 412: 'rewind',
             403: 'red', 404: 'green', 405: 'yellow', 406: 'blue', 427: 'channelup', 428: 'channeldown', 457: 'info' };
           for (var d = 0; d <= 9; d++) names[48 + d] = String(d);
+          // A key known only by its name: the Xbox's controller, whose presses Lamp's host gives as keys with a name and no
+          // code (padKeys in Lamp's device support, since a key made by a page can't carry one).
+          var named = { ArrowLeft: 'left', ArrowUp: 'up', ArrowRight: 'right', ArrowDown: 'down', Enter: 'enter', Escape: 'back' };
+          function nameOf(event) { return names[event.keyCode] || named[event.key] || null; }
           if (platform === 'tizen') {
             try {
               tizen.tvinputdevice.registerKeyBatch(['MediaPlay', 'MediaPause', 'MediaPlayPause', 'MediaStop', 'MediaFastForward',
@@ -290,7 +294,7 @@ enum TVTemplate {
           if (phone) { setTimeout(askPhone, 0); setInterval(askPhone, 30000); }
 
           document.addEventListener('keydown', function (event) {
-            var name = names[event.keyCode];
+            var name = nameOf(event);
             // Backspace is Back only where nothing is being typed (the preview's keyboard stands in for the remote).
             if (!name && event.keyCode === 8 && !typing(event.target)) name = 'back';
             if (!name) return;
@@ -321,7 +325,7 @@ enum TVTemplate {
             navigation: true,
             scope: null,
             store: store,
-            key: function (event) { return names[event.keyCode] || null; },
+            key: nameOf,
             onKey: function (handler) {
               keyHandlers.push(handler);
               return function () { var i = keyHandlers.indexOf(handler); if (i >= 0) keyHandlers.splice(i, 1); };
