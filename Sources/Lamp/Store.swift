@@ -6952,16 +6952,20 @@ final class Store: ObservableObject {
         for id in Array(NSOrderedSet(array: ids)) as? [String] ?? ids {
             guard let item = byID[id] else { continue }
             // Its credit has to be kept: a wish holds only so many sources (`Credits.maxEntries`), and one past that is
-            // dropped as it's written, so the asset would be in the app uncredited.
+            // dropped as it's written, so the asset would be in the app uncredited. Asked before downloading, and again
+            // once the files are here, with nothing awaited between that and writing them and their credit: another
+            // fetch may have added a source while this one downloaded.
             let credit = AssetCatalog.credits(for: [(item, [])])
-            let kept = Credits.load(project).merged(with: credit)
-            guard credit.upstream.allSatisfy({ source in kept.upstream.contains { $0.sameWork(as: source) } }) else {
-                problems.append("- \(item.id) wasn't brought in: this wish already credits as many works as Lamp can keep (\(Credits.maxEntries)), so its credit would be lost. Use one from a pack the wish already credits, or make it in code.")
-                continue
+            func creditFits() -> Bool {
+                let kept = Credits.load(project).merged(with: credit)
+                return credit.upstream.allSatisfy { source in kept.upstream.contains { $0.sameWork(as: source) } }
             }
+            let full = "- \(item.id) wasn't brought in: this wish already credits as many works as Lamp can keep (\(Credits.maxEntries)), so its credit would be lost. Use one from a pack the wish already credits, or make it in code."
+            guard creditFits() else { problems.append(full); continue }
             do {
                 let files = try await AssetCatalog.files(of: item, budget: budget)
                 guard stillAsked() else { return (409, ["error": "The request was stopped, so nothing more was brought in."]) }
+                guard creditFits() else { problems.append(full); continue }
                 var paths: [String] = []
                 for file in files {
                     try AppFolder.write(file.data, to: app.dir.appendingPathComponent(base + file.path), in: app.dir)
