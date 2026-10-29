@@ -32,6 +32,8 @@ export type Sleeve = {
   tweaks: string[];
   places: { label: string; icon: string }[];
   remix?: string;
+  /** Where its back's "Download for Mac" goes: the blank sleeve's, whose back is about Lamp. */
+  download?: string;
   /** The marker a remix's change is written in. */
   ink?: string;
 };
@@ -258,14 +260,57 @@ function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined, pointed 
   return canvas;
 }
 
-function sleeveBack(sleeve: Sleeve) {
+// The blank sleeve's back is about Lamp itself: what it is, what it does, and a "Download for Mac" where a front has
+// its "Remix me", outlined while it's pointed at.
+const LAMP_POINTS = [
+  "Start from scratch, or from what someone made",
+  "Change it live, while it runs",
+  "Put it on your TV, your phone, your Xbox",
+  "No code, and free",
+];
+function blankBack(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, pointed: boolean) {
+  bands(ctx, WARM, 0, 0, 800, 120);
+  ctx.fillStyle = INK;
+  font(ctx, "900", 132, SANS);
+  ctx.fillText("lamp", 52, 300);
+  font(ctx, "italic 800", 44, SANS);
+  lines(ctx, "Remixable software for the things you already own.", 688, 3).forEach((line, i) => ctx.fillText(line, 58, 390 + i * 56));
+  LAMP_POINTS.forEach((point, i) => {
+    const y = 600 + i * 150;
+    bands(ctx, WARM, 58, y - 40, 14, 56, true);
+    ctx.fillStyle = INK;
+    font(ctx, "700", 40, SANS);
+    lines(ctx, point, 620, 2).forEach((line, j) => ctx.fillText(line, 100, y + j * 50));
+  });
+  const b = REMIX_BUTTON;
+  if (pointed) {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.roundRect(b.x - 9, b.y - 9, b.w + 18, b.h + 18, 24);
+    ctx.stroke();
+  }
+  ctx.fillStyle = INK;
+  ctx.beginPath();
+  ctx.roundRect(b.x, b.y, b.w, b.h, 18);
+  ctx.fill();
+  ctx.fillStyle = LABEL;
+  ctx.textAlign = "center";
+  font(ctx, "900", 52, SANS);
+  ctx.fillText("Download for Mac", b.x + b.w / 2, b.y + 72);
+  font(ctx, "500", 24, SANS);
+  ctx.fillStyle = "#4a463c";
+  ctx.fillText("For Macs with Apple Silicon, macOS 14 or later", 400, 1428);
+  ctx.textAlign = "left";
+  return canvas;
+}
+
+/** `pointed` draws the blank sleeve's "Download for Mac" outlined, as it is while the pointer is over it. */
+function sleeveBack(sleeve: Sleeve, pointed = false) {
   const { canvas, ctx } = sleeveSheet(800);
   ctx.fillStyle = LABEL;
   ctx.fillRect(0, 0, 800, 1448);
-  if (sleeve.look === "blank") {
-    ruled(ctx, 0, 0, 800, 1448, 80);
-    return canvas;
-  }
+  if (sleeve.look === "blank") return blankBack(ctx, canvas, pointed);
   ctx.fillStyle = INK;
   font(ctx, "900", 110, SANS, sleeve.title, 688);
   ctx.fillText(sleeve.title, 52, 170);
@@ -498,20 +543,38 @@ const ease = (value: number, target: number, dt: number, speed = 7) => value + (
 function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sleeve: Sleeve, img: HTMLImageElement | undefined) {
   const spine = s.texture(sleeveSpine(sleeve, img));
   const [front, frontPointed] = [s.texture(sleeveFront(sleeve, img)), s.texture(sleeveFront(sleeve, img, true))];
-  const faces = [spine, spine, s.flat(INK), s.flat(INK), front, s.texture(sleeveBack(sleeve))];
+  const [back, backPointed] = [s.texture(sleeveBack(sleeve)), s.texture(sleeveBack(sleeve, true))];
+  const faces = [spine, spine, s.flat(INK), s.flat(INK), front, back];
   const box = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(1.05, 1.9, 0.3, 3, 0.025), faces));
+  // A button sits in the same place on either side: the front's "Remix me", or the blank sleeve's "Download for Mac"
+  // on its back. `onButton` says whether a hit is on one, and keeps which, for `point` and `press`.
+  let side = 4;
   const onButton = (found: ThreeTypes.Intersection | undefined) => {
-    if (!sleeve.remix || found?.object !== box || !found.uv || found.face?.materialIndex !== 4) return false;
+    const face = found?.face?.materialIndex;
+    const has = face === 4 ? !!sleeve.remix : face === 5 && !!sleeve.download;
+    if (!has || found?.object !== box || !found.uv) return false;
     const [x, y] = [found.uv.x * 800, (1 - found.uv.y) * 1448];
     const b = REMIX_BUTTON;
-    return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+    const on = x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+    if (on) side = face;
+    return on;
   };
-  /** Outlines the button, or not. */
+  /** Outlines the button last found, or neither. */
   const point = (on: boolean) => {
-    faces[4] = on ? frontPointed : front;
+    faces[4] = on && side === 4 ? frontPointed : front;
+    faces[5] = on && side === 5 ? backPointed : back;
     box.material = faces;
   };
   const remix = () => { if (sleeve.remix) document.dispatchEvent(new CustomEvent("lamp:remix", { detail: sleeve.remix })); };
+  /** Does what the button last found does: remix, or download Lamp as the page's own Download links do. */
+  const press = () => {
+    if (side === 4) return remix();
+    const link = Object.assign(document.createElement("a"), { href: sleeve.download! });
+    link.dataset.downloadPlace = "shelf";
+    document.body.append(link);
+    link.click();
+    link.remove();
+  };
 
   // The turn it takes when clicked (its right side swinging toward the viewer), shown by a flat magenta arrow, a little
   // see-through, round its right side from the back to the front, its tail fading in from nothing and its head in
@@ -562,7 +625,7 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
     ink.opacity = ease(ink.opacity, aimed ? 0.65 : 0, dt, aimed ? 10 : 6);
     arrow.visible = ink.opacity > 0.01;
   };
-  return { box, onButton, point, remix, arrow, aim, fade };
+  return { box, onButton, point, remix, press, arrow, aim, fade };
 }
 
 // MARK: The hero's sleeve
@@ -594,7 +657,7 @@ export async function mountSleeve(host: HTMLElement) {
   };
   s.on("click", (event) => {
     const found = s.hit(event, [box]);
-    if (built.onButton(found)) built.remix();
+    if (built.onButton(found)) built.press();
     else if (found) turn();
   });
   s.on("pointermove", (event) => {
@@ -675,7 +738,7 @@ export async function mountStack(host: HTMLElement) {
   };
   s.on("click", (event) => {
     const { i, onButton } = pointedAt(event);
-    if (onButton) items[i].built.remix();
+    if (onButton) items[i].built.press();
     else if (i >= 0 && i === chosen) {
       items[i].turns += 1;
       turned.now();

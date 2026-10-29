@@ -67,7 +67,8 @@ const shelf: Sleeve[] = [
     const starter = STARTERS.find((starter) => starter.id === id)!;
     return [sleeveOf(id), sleeveOf(id, { text: starter.remix, ink: inks[i % inks.length] })];
   }),
-  { look: "blank", title: "your idea here…", by: "", kind: "", line: "", tweaks: [], places: [] },
+  // Its back is about Lamp, with a Download for Mac.
+  { look: "blank", title: "your idea here…", by: "", kind: "", line: "", tweaks: [], places: [], download: DOWNLOAD_URL },
 ];
 
 // What Lamp can put something on today, as people name their things, from what a visitor most likely has to what

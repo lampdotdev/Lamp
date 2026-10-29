@@ -14,7 +14,8 @@ the making, not the app in use: a plain Mac window changing as it's asked from L
 screenshot shown whole, where it plays and a "Remix me" that opens the remix dialog on the front (a remix's change in
 marker there too), what it is and the changes its starter suggests on the back, and the screenshot, the name (or a
 remix's change) and the stripes on its spine. On the shelf the sleeves lie flat, spines out, each original with a
-remix of it under it; one that's clicked stands up as the hero's does. They're lit with soft shadows, lean toward the
+remix of it under it, and a blank one at the bottom whose back is about Lamp, with a Download for Mac; one that's
+clicked stands up as the hero's does. They're lit with soft shadows, lean toward the
 pointer and turn over when clicked (an arrow round the right side shows which way while the pointer is on one), on a canvas that runs past its box (so nothing is cropped) and lets the pointer
 through, over a flat HTML
 version kept for screen readers and browsers without WebGL. The device icons are Phosphor's duotone set, with the
