@@ -407,10 +407,24 @@ struct IntegrationRunner {
     var send: (Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer = {
         try await DeviceHTTP.send($0, to: $1, values: $2, pins: $3)
     }
+    /// Told each time Lamp waits on the device to finish something it was sent (asking again, or launching again), for
+    /// the activity line.
+    var onWaiting: (@Sendable () -> Void)?
+    /// How long Lamp waits between asking the device again; tests don't.
+    var pause: (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
 
     struct Failure: LocalizedError {
         let message: String
+        /// The device was still at it when Lamp stopped waiting: a moment later it may be done.
+        var stillWorking = false
         var errorDescription: String? { message }
+    }
+
+    /// An app the device never opened after it was launched again and again: it refused each launch, or took one and
+    /// never ran the app (`launched`). `refused` is what the device said the last time it refused.
+    struct NotOpened: Error {
+        let launched: Bool
+        let refused: String?
     }
 
     /// The device turned the sign-in away: waiting or going on won't mend it, the person has to type it again.
@@ -583,7 +597,7 @@ struct IntegrationRunner {
                         answer = try await transfer(request, values: values, files: files)
                     }
                     // Still working when the time is up is no answer: the step didn't finish.
-                    if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.") }
+                    if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.", stillWorking: true) }
                 }
                 cookies.merge(answer.cookies) { $1 }
                 if request.auth != nil, answer.status == 401 { throw Rejected() }
@@ -593,10 +607,20 @@ struct IntegrationRunner {
                     throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path)" + (said.isEmpty ? "." : ": " + said))
                 }
                 if let expect = request.expect {
-                    let value = DeviceHTTP.value(json: expect.json, xml: expect.xml, in: answer) ?? ""
-                    let met = expect.equals.map { value.caseInsensitiveCompare($0) == .orderedSame } ?? expect.contains.map { value.localizedCaseInsensitiveContains($0) } ?? true
-                    guard met else {
-                        throw Failure(message: "\(device.name) said: " + DeviceApps.plain(answer.text))
+                    // Asked again while the answer doesn't say it yet, for up to `until` seconds.
+                    var tries = max(1, (request.until ?? 0) / 2)
+                    while try !Self.meets(expect, answer, values) {
+                        tries -= 1
+                        guard tries > 0 else {
+                            if request.until != nil {
+                                throw Failure(message: "\(device.name) still wasn't ready at \(request.path) after \(request.until ?? 0) seconds.", stillWorking: true)
+                            }
+                            throw Failure(message: "\(device.name) said: " + DeviceApps.plain(answer.text))
+                        }
+                        onWaiting?()
+                        try await pause(2)
+                        answer = try await transfer(request, values: values, files: files)
+                        guard answer.ok else { throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path).") }
                     }
                 }
                 switch request.keep {
@@ -639,6 +663,47 @@ struct IntegrationRunner {
             }
         }
         return outcome
+    }
+
+    /// Whether an answer says what `expect` asks, of any element where its path has `*`.
+    static func meets(_ expect: Request.Expect, _ answer: DeviceHTTP.Answer, _ values: [String: String]) throws -> Bool {
+        let found = expect.json.map { DeviceHTTP.jsonValues($0, in: answer.body) } ?? expect.xml.map { [DeviceHTTP.xml($0, in: answer.body) ?? ""] } ?? []
+        if let equals = expect.equals {
+            let wanted = try Placeholders.fill(equals, values, in: .shown)
+            return found.contains { $0.caseInsensitiveCompare(wanted) == .orderedSame }
+        }
+        if let contains = expect.contains {
+            let wanted = try Placeholders.fill(contains, values, in: .shown)
+            return found.contains { $0.localizedCaseInsensitiveContains(wanted) }
+        }
+        return true
+    }
+
+    /// Opens an app just put on the device: `launch`, and then, where the bridge says how (`running`), a check that it's
+    /// running. A device only just done installing a package can refuse to open it (an Xbox answers 0x8D160120,
+    /// 0x80073D00 or 0x80070002 for a while, longer when the copy it replaced was open) or take the launch and show its
+    /// own "not ready yet" instead; so a refused launch is asked again after a pause that grows, and one that didn't
+    /// open is launched again, until `tries` launches have gone. Throws `NotOpened` when it never opened.
+    func open(_ launch: [IntegrationAction], running: [IntegrationAction]?, extra: [String: String], changed: ChangedSettings? = nil,
+              tries: Int = 8, stillWanted: @escaping @MainActor () -> Bool = { true }) async throws {
+        var launched = false, refused: String?, wait = 2.0
+        for attempt in 1...max(tries, 1) {
+            do {
+                _ = try await run(launch, extra: extra, changed: changed)
+                launched = true
+                guard let running, !running.isEmpty else { return }
+                do { _ = try await run(running, extra: extra, changed: changed); return }
+                catch is Failure {}
+            } catch let failure as Failure {
+                refused = failure.message
+            }
+            guard attempt < tries else { break }
+            onWaiting?()
+            try await pause(wait)
+            wait = min(wait * 2, 8)
+            guard await stillWanted() else { throw Failure(message: "Stopped.") }
+        }
+        throw NotOpened(launched: launched, refused: refused)
     }
 
     /// One request of a sequence. Without a package it goes through `send`, as a check's do, so tests can answer for a

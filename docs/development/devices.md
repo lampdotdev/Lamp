@@ -229,7 +229,10 @@ else), and an Authenticode signature (the APPX digest blob in an SpcIndirectData
 certificate kept in Lamp's folder (`MSIX.Signer`), which the device installs beside the package (`{certificate}`). The
 bridge launches it by its names (`{packageFullName}`, `{appUserModelID}`, and `{base64:…}` of either). For Xbox's Device
 Portal a request also carries cookies the device set earlier in its sequence (`{cookie:CSRF-Token}`), polls an install
-that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks.
+that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks,
+or asks again until it does (`until`), where a JSON path's `*` is any element of a list and the value may be one of
+Lamp's (`IntegrationRunner.meets`): the Xbox's install ends by waiting until the console lists `{packageFullName}`
+among its packages, since its install state says it's done before the app can be opened.
 Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
 controller-driven web app (arrow focus) wrapped as MSIX and shown in Lamp's own WebView2 host (`"host": "webview2"`, below). Its identity is
 read from wherever the console's SSDP answer points (`Read.description`), since that moves between retail and
@@ -579,8 +582,12 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 Xbox. On the Xbox, `on_device`, Play and the end of a turn build for the console and put it there through the
 integration's bridge: `stop` ends
 the copy there first (installing over a running copy can leave the next launch failing with 0x800700BF), then
-`install` and `launch` (asked again after a few seconds when the console refuses a launch just after an update,
-0x80073D00); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
+`install` and `launch` through `IntegrationRunner.open`: a console only just done installing refuses the launch for a
+while (0x8D160120, 0x80073D00 or 0x80070002, longer when the copy it replaced was open) or takes it and shows its own
+"not ready yet", so a refused launch is asked again with growing pauses, and one the bridge's `running` (Device Portal's
+processes listing `{packageFullName}`) doesn't see running within a few seconds is launched again. One that never opens
+is said plainly in the chat ("still finishing installing"), never claimed open, and the activity line says "Finishing
+installing on Xbox…" while Lamp waits (`DeviceApps.install`'s `waiting`); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
 takes its app off every device Lamp put it on (the bridge's `remove`, `DeviceApps.removeEverywhere`), web apps too. The
 package is Lamp's (`MSIX.package` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
 

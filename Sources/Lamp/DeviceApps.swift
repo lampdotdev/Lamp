@@ -316,14 +316,17 @@ enum DeviceApps {
     /// Puts the package on the device and opens it: the bridge's install, then its launch, with its log read into the
     /// app's from the moment before the install, so what the device says of the package is in it.
     /// `stillWanted` is asked before each thing that changes the device, so a Stop meanwhile leaves it as it was.
+    /// `waiting` is told when Lamp waits on the device to finish installing it.
     static func install(_ project: LampProject, on device: Device, log: FileHandle?,
-                        stillWanted: @escaping @MainActor () -> Bool = { true }) async throws -> Run {
+                        stillWanted: @escaping @MainActor () -> Bool = { true },
+                        waiting: @escaping @MainActor () -> Void = {}) async throws -> Run {
         guard let integration = integration(for: project), let bridge = integration.bridge, let install = bridge.install else {
             throw Failure(message: "\(device.name)'s integration doesn't say how an app goes on it.")
         }
-        let runner = IntegrationRunner(integration: integration, device: device, onLog: { line in
+        var runner = IntegrationRunner(integration: integration, device: device, onLog: { line in
             log?.write(Data((line + "\n").utf8))
         })
+        runner.onWaiting = { Task { @MainActor in waiting() } }
         let run = Run(device: device)
         // The app opened by this install asks for its token, which isn't in its package, over the network: Lamp listens
         // there from now on, and after, for as long as the app is on a device (`wentOnADevice`).
@@ -364,17 +367,15 @@ enum DeviceApps {
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
                 if let launch = bridge.launch, !launch.isEmpty {
-                    // A device that has only just taken an update can refuse to open it for a while (an Xbox answers
-                    // 0x80073D00, 0x8D160120 or 0x80070002 to a launch right after an install over a copy it ended, for up
-                    // to ten seconds or so while that copy's web view lets go): asked again a little later, a few times.
-                    var refused = 0
-                    while true {
-                        do { _ = try await runner.run(launch, extra: values(project), changed: changed); break }
-                        catch let failure as IntegrationRunner.Failure where refused < 4 {
-                            refused += 1
-                            try? await Task.sleep(for: .seconds(4))
-                            guard await stillWanted() else { throw failure }
-                        }
+                    // A device only just done installing can refuse the launch, or take it and not open the app yet:
+                    // launched again until it's seen running (`IntegrationRunner.open`).
+                    do {
+                        try await runner.open(launch, running: bridge.running, extra: values(project), changed: changed, stillWanted: stillWanted)
+                    } catch let notOpened as IntegrationRunner.NotOpened {
+                        if let refused = notOpened.refused { log?.write(Data((refused + "\n").utf8)) }
+                        throw Failure(message: notOpened.launched
+                            ? "The \(integration.name) is still finishing installing \(project.name), or it closed as it opened. Try again in a moment."
+                            : stillInstalling(project, on: integration))
                     }
                 }
                 break
@@ -384,12 +385,18 @@ enum DeviceApps {
             } catch {
                 await runner.putBack(changed)
                 run.end()
+                // Lamp stopped waiting while the device was still installing it: that, plainly, for a moment later.
+                if (error as? IntegrationRunner.Failure)?.stillWorking == true { throw Failure(message: stillInstalling(project, on: integration)) }
                 throw error
             }
         }
         await runner.putBack(changed)
         if let claimsKey { WishClaims.shared.renew(project.id, from: claimsKey) }
         return run
+    }
+
+    private static func stillInstalling(_ project: LampProject, on integration: Integration) -> String {
+        "The \(integration.name) is still finishing installing \(project.name). Try again in a moment."
     }
 
     /// The device's screen, from the bridge's look.

@@ -9037,7 +9037,9 @@ final class Store: ObservableObject {
         let file = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         do {
             let built = Runtime.builtFingerprint(project)
-            let run = try await DeviceApps.install(project, on: device, log: file, stillWanted: stillWanted)
+            let run = try await DeviceApps.install(project, on: device, log: file, stillWanted: stillWanted) { [weak self] in
+                self?.note("Finishing installing on \(name)…", for: project)
+            }
             guard stillWanted() else { run.end(); return "Stopped." }
             deviceRuns[project.id] = run
             deviceRunBuilt[project.id] = built

@@ -269,5 +269,71 @@ final class IntegrationTests: XCTestCase {
         XCTAssertTrue(accepted.passed)
         XCTAssertFalse(accepted.failed)
     }
-}
 
+    /// An Xbox says an install is done before the app can be opened: Lamp waits until the console lists the package,
+    /// asks again while it refuses the launch, and launches again while the app isn't seen running.
+    func testAnXboxAppIsWaitedForUntilItsInstalledAndLaunchedUntilItRuns() async throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Devices/xbox-one.json")
+        let xbox = try JSONDecoder().decode(Integration.self, from: Data(contentsOf: file))
+        let bridge = try XCTUnwrap(xbox.bridge)
+        var device = Device(id: "xbox-one:TEST", kind: .other, maker: "Microsoft", model: "Xbox Series X", modelID: "",
+                            name: "Test Xbox", os: "Xbox OS", osVersion: "10.0", reach: .network)
+        device.address = "192.168.1.30"
+        let extra = ["packageFullName": "Lamp.test_1.0.0.0_x64__abc", "appUserModelID": "Lamp.test_abc!App"]
+        func listing(_ key: String, has: Bool) -> DeviceHTTP.Answer {
+            let names = (has ? [extra["packageFullName"]!] : []) + ["Other.app_1.0.0.0_x64__xyz"]
+            return DeviceHTTP.Answer(status: 200, body: try! JSONSerialization.data(withJSONObject: [key: names.map { ["PackageFullName": $0] }]))
+        }
+        /// A made-up console answering each path from its own script, in turn, the last answer over and over.
+        final class Console: @unchecked Sendable {
+            var script: [String: [DeviceHTTP.Answer]] = [:]
+            var asked: [String: Int] = [:]
+            func answer(_ path: String) -> DeviceHTTP.Answer {
+                let key = String(path.split(separator: "?")[0])
+                asked[key, default: 0] += 1
+                guard var answers = script[key], !answers.isEmpty else { return DeviceHTTP.Answer(status: 200, body: Data("{}".utf8)) }
+                let next = answers.count > 1 ? answers.removeFirst() : answers[0]
+                script[key] = answers
+                return next
+            }
+        }
+        func runner(_ console: Console) -> IntegrationRunner {
+            var runner = IntegrationRunner(integration: xbox, device: device)
+            runner.send = { request, _, _, _ in console.answer(request.path) }
+            runner.pause = { _ in }
+            return runner
+        }
+
+        // Installed: the state says so, and the package is listed on the second ask.
+        let installed = Console()
+        installed.script["/api/app/packagemanager/state"] = [DeviceHTTP.Answer(status: 200, body: Data(#"{"Success":true}"#.utf8))]
+        installed.script["/api/app/packagemanager/packages"] = [listing("InstalledPackages", has: false), listing("InstalledPackages", has: true)]
+        _ = try await runner(installed).run(Array(try XCTUnwrap(bridge.install).suffix(2)), extra: extra)
+        XCTAssertEqual(installed.asked["/api/app/packagemanager/packages"], 2)
+
+        // Refused twice with the console's 0x8D160120, then opened and running.
+        let refused = Console()
+        let failed = DeviceHTTP.Answer(status: 400, body: Data(#"{"ErrorMessage":"Failed to launch the application.","ErrorCode":-1927937760}"#.utf8))
+        refused.script["/api/taskmanager/app"] = [failed, failed, DeviceHTTP.Answer(status: 200, body: Data())]
+        refused.script["/api/resourcemanager/processes"] = [listing("Processes", has: true)]
+        try await runner(refused).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra)
+        XCTAssertEqual(refused.asked["/api/taskmanager/app"], 3)
+
+        // Taken, but not running through the whole check, so launched again; then running.
+        let notReady = Console()
+        notReady.script["/api/resourcemanager/processes"] = Array(repeating: listing("Processes", has: false), count: 4) + [listing("Processes", has: true)]
+        try await runner(notReady).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra)
+        XCTAssertEqual(notReady.asked["/api/taskmanager/app"], 2)
+
+        // Never running: said, not claimed open.
+        let never = Console()
+        never.script["/api/resourcemanager/processes"] = [listing("Processes", has: false)]
+        do {
+            try await runner(never).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra, tries: 3)
+            XCTFail("an app never seen running isn't open")
+        } catch let notOpened as IntegrationRunner.NotOpened {
+            XCTAssertTrue(notOpened.launched)
+        }
+    }
+}
