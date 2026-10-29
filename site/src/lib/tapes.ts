@@ -515,9 +515,9 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
 
   // The turn it takes when clicked (its right side swinging toward the viewer), shown by a flat magenta arrow, a little
   // see-through, round its right side from the back to the front, its tail fading in from nothing and its head in
-  // front pointing the way the front goes: seen while the pointer is on the sleeve and not on its button, until a sleeve has been turned over
-  // once (`turnedOnce`). It's placed by whoever shows the sleeve, at its place and lean but never its turn, and fades
-  // in and out as `aim` asks.
+  // front pointing the way the front goes: seen while the pointer is on the sleeve and not on its button, until a
+  // sleeve has been turned over once (`turned`). It's placed by whoever shows the sleeve, at its place and lean but
+  // never its turn, and fades in and out as `aim` asks.
   const arrow = new THREE.Group();
   const fadeIn = sheet(256, 1);
   const ramp = fadeIn.ctx.createLinearGradient(0, 0, 256, 0);
