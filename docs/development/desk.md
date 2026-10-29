@@ -40,7 +40,9 @@ then builds it with its chat beside it; the original stays as it was. The row pi
 the toolbar's sidebar button slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture (`Runtime.previewURL`, else the one its
 starter shipped), line, who made it and its license, where it runs and its remixes, Open, and a box to
 remix it with a change, which asks for that change as the copy's first request; a starter's own three changes are there
-to pick from.
+to pick from. A remix made with no change asked opens its chat on the card its starter's chat opens on (the original's
+starter.md kept as `.lamp/starter-suggestions.md`, `Starters.suggestions`), never as a starter itself: its icon is
+painted and the desk counts it as the person's.
 
 **Making a new wish.** It's typed in the bar over the list, or said with the talk button beside it (`TalkButton`, moving
 with `Dictation.level`); either way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so

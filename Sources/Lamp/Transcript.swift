@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, connectors, network, ask, progress, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, rename, connectors, network, ask, progress, result, wish, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
@@ -61,6 +61,7 @@ struct ToolCall {
         case .offer: "sparkles"
         case .kind: "laptopcomputer.and.iphone"
         case .remove: "minus.circle"
+        case .rename: "character.cursor.ibeam"
         case .connectors: "link"
         case .network: "wifi"
         case .ask: "questionmark.bubble"
@@ -93,6 +94,7 @@ struct ToolCall {
         case .offer: "Suggested a setup"
         case .kind: "Changed what it runs on"
         case .remove: "Took an app away"
+        case .rename: "Renamed it"
         case .connectors: "Looked up a connector"
         case .network: "Looked around your network"
         case .ask: "Asked you"
@@ -127,6 +129,7 @@ struct ToolCall {
         case .offer: "suggested a setup"
         case .kind: "changed what it runs on"
         case .remove: "took an app away"
+        case .rename: "renamed it"
         case .connectors: "looked up \(n("connector", "connectors"))"
         case .network: "looked around your network"
         case .ask: "asked you"

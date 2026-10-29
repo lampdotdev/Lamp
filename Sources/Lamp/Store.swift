@@ -2000,7 +2000,7 @@ final class Store: ObservableObject {
     static func deviceSetupRefusal(route: String, request: Gateway.Request) -> (Int, [String: Any])? {
         let refusal = (400, ["error": "This conversation sets up a device; no app is made here. Write or fix the device's integration with device_integration, and tell the person to make a wish on Lamp's desk for anything to put on it."] as [String: Any])
         switch route {
-        case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/art", "/agent/assets", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
+        case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/art", "/agent/assets", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
              "/agent/setup", "/agent/connectors", "/agent/lampify":
             return refusal
         case "/agent/talk":
@@ -2858,8 +2858,9 @@ final class Store: ObservableObject {
         finish(await performRename(project, to: name))
     }
 
-    /// Renames while the app is marked busy, so nothing else starts on it meanwhile.
-    func performRename(_ project: LampProject, to rawName: String) async -> LampProject {
+    /// Renames while the app is marked busy, so nothing else starts on it meanwhile. `inPlace` keeps its folder and id
+    /// whatever has happened in it, for a rename during the agent's turn, which works in them.
+    func performRename(_ project: LampProject, to rawName: String, inPlace: Bool = false) async -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) && !$0.isNewline }
         guard !name.isEmpty, name != project.name || project.untitled,
               let current = projects.first(where: { $0.id == project.id }) else { return project }
@@ -2868,7 +2869,7 @@ final class Store: ObservableObject {
             return renameDraft(current, to: unique)
         }
         // Made again from Lamp's scaffold, a wish would leave its other parts' folders behind.
-        if current.partFolders.isEmpty, await isPristine(current) {
+        if !inPlace, current.partFolders.isEmpty, await isPristine(current) {
             return await rescaffold(current, as: unique)
         }
 
@@ -2956,7 +2957,8 @@ final class Store: ObservableObject {
         guard project.scaffolded, !project.untitled, begin(project) != nil else { return }
         let copy: LampProject
         do {
-            copy = try remixCopy(of: project)
+            // A remix with nothing asked of it yet opens on what its starter offers to change, as the starter does.
+            copy = try remixCopy(of: project, suggesting: change?.trimmed.isEmpty != false)
         } catch {
             finish(project)
             NSAlert(error: error).runModal()
@@ -2984,8 +2986,9 @@ final class Store: ObservableObject {
     /// that came from someone else never has it.
     nonisolated static let remixedHereMark = ".lamp/remixed-here"
 
-    /// The copy `remix` makes, on disk and not yet listed. Nothing is left of it when it can't be made.
-    func remixCopy(of project: LampProject) throws -> LampProject {
+    /// The copy `remix` makes, on disk and not yet listed. Nothing is left of it when it can't be made. `suggesting`
+    /// gives it what the original's chat offers to change first (`Starters.suggestions`), without making it a starter.
+    func remixCopy(of project: LampProject, suggesting: Bool = true) throws -> LampProject {
         let fm = FileManager.default
         let name = uniqueName("\(project.name) Remix")
         let exe = Template.identifier(from: name)
@@ -3012,6 +3015,9 @@ final class Store: ObservableObject {
             }
             for path in Self.duplicatedState where fm.fileExists(atPath: project.dir.appendingPathComponent(path).path) {
                 try fm.copyItem(at: project.dir.appendingPathComponent(path), to: copy.dir.appendingPathComponent(path))
+            }
+            if suggesting, let suggestions = Starters.suggestionsSource(of: project) {
+                try fm.copyItem(at: suggestions, to: Starters.suggestionsFile(of: copy))
             }
             try Template.saveMeta(copy)
             if let original = Sharing.identity(of: project) {
@@ -6167,6 +6173,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "remove_app": (status, answer) = await agentRemove(arguments, for: project)
+            case "rename_app": (status, answer) = await agentRename(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "lampify": (status, answer) = await lampify(arguments, for: project)
@@ -6673,6 +6680,28 @@ final class Store: ObservableObject {
         }
     }
 
+    /// `rename_app`: the name the person asked for, given as Rename on the desk gives it (`performRename`), with a version
+    /// of its own that Undo takes back. In place, since the turn works in the wish's folder: a wish with nothing done
+    /// yet isn't made again under the new name as the desk's Rename makes it, and a draft, with no app to carry the
+    /// name, is named once it has one.
+    func agentRename(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        guard let wish = current(self.wish(of: project)) else { return (404, ["error": "Lamp can't find the wish."]) }
+        guard wish.scaffolded, !wish.makesNoApp else {
+            return (400, ["error": "The wish has no app to carry a name yet: give it one with make_app_for, then rename it."])
+        }
+        let asked = (arguments["name"] as? String ?? "").trimmed
+        if asked == wish.name { return (200, ["text": "It's already called \(wish.name)."]) }
+        let renamed = await performRename(wish, to: asked, inPlace: true)
+        guard renamed.name != wish.name else {
+            return (400, ["error": "Lamp can't use that as a name. Ask the person for a few plain words."])
+        }
+        // Another wish may have the name, or it held what a name can't (a slash): the agent says the one it got.
+        let taken = renamed.name == asked ? "" : ", the nearest Lamp could give to \(asked)"
+        return (200, ["text": "Lamp renamed the wish \(renamed.name)\(taken): on the desk, in the chat and on its installed apps, "
+                      + "saved as a version of its own, so Undo in the chat's toolbar gives \(wish.name) back. Its settings and data stay. "
+                      + "Change any words in the app's own screens that still say \(wish.name)."])
+    }
+
     /// Makes an app for other devices: a Mac app for the iPhone too, say. The kind is the app's (meta.json), and
     /// Lamp's own files follow it (`Template.writeOwnedFiles`); the app's code is the agent's to adapt, so the
     /// answer carries the rules for the new kind, which stay in the conversation for later requests. The app's
@@ -7166,10 +7195,11 @@ final class Store: ObservableObject {
     /// is first shown, beside the app or in Lamp's window, so it arrives there rather than being there already.
     /// Once: a chat in which anything has been said is left as it is. Lamp's own lines about building the app (one
     /// built again for a newer Lamp before its chat was ever opened: "Updating … for this version of Lamp…", "… is
-    /// ready") aren't a conversation, so the card still comes, under them.
+    /// ready") aren't a conversation, so the card still comes, under them. A remix of a starter made with nothing asked
+    /// of it offers the same (`Starters.suggestions`).
     func offerStarterChanges(_ id: String, after delay: Double) {
-        guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }), Starters.isStarter(project),
-              let starter = Starters.starter(of: project), let card = Starters.card(for: starter),
+        guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }),
+              let starter = Starters.suggestions(of: project), let card = Starters.card(for: starter),
               offeringStarter.insert(id).inserted else { return }
         Task {
             try? await Task.sleep(for: .seconds(delay))
@@ -11384,7 +11414,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -11692,6 +11722,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/remove" {
             return await agentRemove((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/rename" {
+            return await agentRename((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/steer" {
             guard turns[project.id]?.steering == .pi else { return (200, [:]) }
