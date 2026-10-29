@@ -311,7 +311,7 @@ private struct WelcomeSleeves: View {
     private let sleeves: [Sleeve] = Self.picked.compactMap { folder in
         guard let starter = Starters.bundled.first(where: { $0.folder.lastPathComponent == folder }) else { return nil }
         let credits = Credits.read(starter.tree.appendingPathComponent(Credits.file))
-        let by = credits?.upstream.first(where: { $0.adapted == true })?.author ?? "Lamp"
+        let by = (credits?.upstream.first(where: { $0.adapted == true }) ?? credits?.upstream.first)?.author ?? "Lamp"
         return Sleeve(id: folder, name: starter.name, by: by, about: Starters.about(starter) ?? "",
                       picture: NSImage(contentsOf: Starters.preview(of: starter)))
     }

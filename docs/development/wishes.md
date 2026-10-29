@@ -292,7 +292,7 @@ Lamp takes such a link as a remix or not at all (`Wish.isRemix`, `Wish.remix`): 
 badly is refused with an alert, never taken for a plain wish. Everything in it is untrusted: a starter only by a plain
 folder name that this Lamp ships and that runs here (`Store.starter(named:)`); a repository only as an https
 github.com address with nothing after its name, and a commit only in full, 40 hex digits (a shallow fetch takes no abbreviation) (`RepoImport.Source` with the
-commit as its ref). A starter is copied as Starter wishes' Add copies one (`Store.openCopy`, `put(starter:)`, its chain
+commit as its ref). A starter is copied as the first launch copies one (`Store.openCopy`, `put(starter:)`, its chain
 naming the starter at the commit this Lamp ships) and opened with its chat, the request written into its box
 (`writeIn`); another link for the same starter goes into that copy while nothing has been asked of it (its first build out of
 sight isn't). A repository

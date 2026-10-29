@@ -2,170 +2,79 @@ import SwiftUI
 import AppKit
 import LampSidebarKit
 import AVFoundation
-import UniformTypeIdentifiers
 
-/// Lamp's home: the person's wishes laid out like a desktop, and the place to make a new one, by typing it,
-/// saying it, or finding it with the agent's help. A click on a wish opens it, with its chat beside it.
+/// Lamp's home: every wish in one list (what Lamp came with and what the person made, remixes under their originals),
+/// the place to make a new one, by typing it, saying it, or finding it with the agent's help, and the person's devices
+/// down the side. Open uses a wish, with its chat beside it; Remix makes a new copy of it to change.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
     @StateObject private var dictation = Dictation()
     @State private var hasMicrophone = true
     @FocusState private var barFocused: Bool
-    /// Whether the person put the bar to use (clicked into it, chose an idea), rather than Lamp focusing it as the
-    /// desk opened so typing starts at once: only then do the wishes recede behind it.
-    @State private var barEngaged = false
     @State private var dropTargeted = false
     /// The bar's frame in the window, for the chat of a wish sent from it to grow out of.
     @State private var barFrame = CGRect.zero
-    /// Set while Lamp itself moves the focus to the bar, so that move doesn't count as the person's.
-    @State private var lampFocusing = false
     /// Drawn once, so they don't change under the reader.
     @State private var ideas: [Idea] = []
-    /// The ideas under the bar, opened by "Not sure?", and open from the start on an empty desk.
+    /// The ideas, opened by "Not sure?" beside the bar.
     @State private var showingIdeas = false
-    @State private var notSureHovered = false
-    /// The room a scroll bar takes: none where scroll bars only show over the content while scrolling.
-    @State private var scrollerWidth = WishDesk.scrollerWidth()
-    /// The wish the pointer is on, and what it is on the stage where the headline is: its picture and the line
-    /// saying what it is.
-    @State private var pointedAt: LampProject.ID?
-    @State private var staged: Staged?
-    /// The wishes Lamp came with that aren't on the desk, offered at its end (`MoreFromLamp`).
-    @State private var missingStarters: [Starters.Starter] = []
-    @ObservedObject private var arrangement = DeskArrangement.shared
+    /// What's read of each wish for its row, by id (`DeskEntry`).
+    @State private var entries: [String: DeskEntry] = [:]
+    @State private var picked: LampProject.ID?
+    @AppStorage("deskSort") private var column = DeskList.Column.name
+    @AppStorage("deskAscending") private var ascending = true
+    @AppStorage("deskOnlyRemixes") private var onlyRemixes = false
     /// Lamp has looked on the network before, so macOS has asked about it: from then on the desk looks for devices
     /// each time it's shown (`lookForDevices`).
     @AppStorage(Store.localNetworkAskedKey) private var lookedBefore = false
     @State private var lastLook: Date?
-    private static let stageHeight: CGFloat = 160
-
-    private struct Staged: Equatable {
-        let id: LampProject.ID
-        let picture: NSImage?
-        let words: String?
-    }
-    /// How the desk moves when the ideas open or close and wishes come and go: everything on it together,
-    /// as one change, so nothing jumps ahead of the rest.
-    private static let glide = Animation.spring(response: 0.45, dampingFraction: 0.86)
 
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
-    /// They're in the order the person dragged them into (`DeskArrangement`).
     /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
-    private var wishes: [LampProject] { arrangement.arranged(store.wishes.filter { !$0.isDeviceSetup }) }
+    private var wishes: [LampProject] { store.wishes.filter { !$0.isDeviceSetup } }
+
+    private var rows: [DeskList.Row] {
+        let all = DeskList.rows(wishes, entries: entries, by: column, ascending: ascending)
+        return onlyRemixes ? all.filter { $0.madeBy == "You" } : all
+    }
 
     var body: some View {
-        ZStack {
-            DeskBackground().ignoresSafeArea()
-            GeometryReader { area in
-                ScrollView {
-                    // In the middle of the window while it fits, gliding to its new place as ideas open or
-                    // close and wishes come and go; from the top, scrolling, once it doesn't.
-                    // The wishes come first: using one and changing it is where most wishes start, and a new
-                    // one is the way on from there.
-                    VStack(spacing: 0) {
-                        // With the ideas open, the desk steps away and leaves the bar and the ideas on their own.
-                        if !hidesDesk {
-                            VStack(spacing: 0) {
-                                headline
-                                if !wishes.isEmpty || !store.newerWishes.isEmpty || !missingStarters.isEmpty {
-                                    grid.padding(.top, 28)
-                                        .modifier(receding ? Recede.behind : Recede.present)
-                                        .animation(.easeOut(duration: 0.3), value: receding)
-                                }
-                                // The devices, between the wishes and the bar: what a new wish can be for.
-                                DeskDevices(wishFor: wishFor)
-                                    .frame(maxWidth: 880)
-                                    .padding(.horizontal, 32)
-                                    .padding(.top, 28)
-                                    .modifier(receding ? Recede.behind : Recede.present)
-                                    .animation(.easeOut(duration: 0.3), value: receding)
-                            }
-                            .padding(.bottom, wishes.isEmpty ? 18 : 32)
-                            .transition(.modifier(active: Recede.gone, identity: Recede.present))
-                        }
-                        // While the pointer is on a wish, what it is takes this place: making a new one and
-                        // looking at one aren't done at once.
-                        VStack(spacing: 0) {
-                            header
-                            if showingIdeas && !ideas.isEmpty {
-                                DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
-                                    .padding(.top, 28)
-                                    .padding(.horizontal, 32)
-                                    .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
-                            }
-                        }
-                        .scaleEffect(shown == nil ? 1 : 0.92, anchor: .top)
-                        .blur(radius: shown == nil ? 0 : 10)
-                        .opacity(shown == nil ? 1 : 0)
-                        .overlay(alignment: .top) { stage }
-                    }
-                    .padding(.top, 16).padding(.bottom, 40)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: shown?.id)
-                    .task(id: pointedAt) { await stagePicture() }
-                    // Laid out as if the scroll bar were always there: when one comes and goes as the ideas
-                    // open, the desk would otherwise move sideways by its width.
-                    .frame(width: max(0, area.size.width - scrollerWidth))
-                    .frame(maxWidth: .infinity, minHeight: area.size.height, alignment: .leading)
-                    // A click on the desk itself leaves the bar, and the wishes come forward again.
-                    .background { Color.clear.contentShape(Rectangle()).onTapGesture { barFocused = false } }
-                    .animation(Self.glide, value: wishes.map(\.id))
-                    // Read from the files, so once for each change to the desk rather than at every redraw.
-                    // By the wishes there are rather than their order, so dragging one about reads nothing.
-                    .task(id: store.projects.map(\.id)) { missingStarters = Starters.missing(from: store.wishes) }
-                }
-                .scrollContentBackground(.hidden)
+        HStack(spacing: 0) {
+            sidebar
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                list
+            }
+            .padding(.top, 14).padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            if let row = rows.first(where: { $0.id == picked }) {
+                DeskDetail(row: row, remixes: remixes(of: row))
+                    .frame(width: 320)
+                    .overlay(alignment: .leading) { Paper.rule.frame(width: 1) }
             }
         }
-        // A wish dragged about the desk is let go here, to keep its new place.
-        .onDrop(of: [DeskArrangement.wishType], delegate: DeskArrangement.Target(drop: .desk))
+        .background(DeskBackground().ignoresSafeArea())
         .navigationTitle("Lamp")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                // While a wish is dragged, somewhere to drop it to delete it without leaving the window.
-                if arrangement.dragging != nil { DeskTrash() }
                 SettingsLink { Label("Settings", systemImage: "gearshape") }
                     .help("Settings (⌘,)")
             }
         }
         .modifier(ClearToolbar())
-        // Drawn on Lamp's light page, as in the welcome, whatever the Mac's appearance.
+        // Drawn on Lamp's paper, as in the welcome, whatever the Mac's appearance.
         .environment(\.colorScheme, .light)
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
-            if wishes.isEmpty { showingIdeas = true }
-            focusQuietly()
+            barFocused = true
             lookForDevices()
         }
+        // Read from the files, once for each change to the wishes and as each turn ends (a change can move a wish to
+        // the TV, or give it a new line).
+        .task(id: wishes.map(\.id) + store.busy.sorted()) { await readEntries() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in lookForDevices() }
-        .onChange(of: barFocused) {
-            barEngaged = barFocused && !lampFocusing
-            lampFocusing = false
-        }
-        // Wishes that stepped away for the ideas can't be pointed at.
-        .onChange(of: hidesDesk) {
-            if hidesDesk {
-                pointedAt = nil
-                staged = nil
-            }
-        }
-        // A wish being dragged isn't being looked at.
-        .onChange(of: arrangement.dragging) {
-            if arrangement.dragging != nil {
-                pointedAt = nil
-                staged = nil
-            }
-        }
-        .onChange(of: store.deskFocusRequest) {
-            pointedAt = nil
-            staged = nil
-            barEngaged = false
-            focusQuietly()
-        }
-        // Plugging in a mouse, or changing Show Scroll Bars, changes it.
-        .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
-            scrollerWidth = Self.scrollerWidth()
-        }
+        .onChange(of: store.deskFocusRequest) { barFocused = true }
         .onDisappear { dictation.cancel() }
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
@@ -183,120 +92,90 @@ struct WishDesk: View {
         }
     }
 
-    /// What's on the stage: nothing while a new wish is being typed or said, which the stage would hide.
-    private var shown: Staged? {
-        store.deskDraft.trimmed.isEmpty && store.deskAttachments.isEmpty && !dictation.isListening ? staged : nil
+    /// The filters, then the person's devices: what a new wish can be for.
+    private var sidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                filter("Everything", count: wishes.count, on: !onlyRemixes) { onlyRemixes = false }
+                filter("Your remixes", count: rows(remixesOnly: true), on: onlyRemixes) { onlyRemixes = true }
+                DeskDevices(wishFor: wishFor).padding(.top, 24)
+            }
+            .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 20)
+        }
+        .frame(width: 220)
+        .background(Paper.panel)
+        .overlay(alignment: .trailing) { Paper.rule.frame(width: 1) }
+    }
+
+    private func rows(remixesOnly: Bool) -> Int {
+        DeskList.rows(wishes, entries: entries, by: column, ascending: ascending).filter { $0.madeBy == "You" }.count
+    }
+
+    private func filter(_ name: String, count: Int, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(name).fontWeight(on ? .heavy : .regular)
+                Spacer()
+                Text("\(count)").foregroundStyle(Paper.muted)
+            }
+            .font(.system(size: 14))
+            .foregroundStyle(Paper.ink)
+            .padding(.horizontal, 10).frame(height: 32)
+            .background(Paper.ink.opacity(on ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private var list: some View {
+        VStack(spacing: 0) {
+            DeskListHeader(column: $column, ascending: $ascending)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(rows) { row in
+                        DeskListRow(row: row, selected: row.id == picked) { picked = row.id == picked ? nil : row.id }
+                    }
+                    ForEach(store.newerWishes) { NewerWishRow(wish: $0) }
+                }
+                .padding(.top, 6).padding(.bottom, 24)
+            }
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    /// The remixes made here of the row's wish, for its facts.
+    private func remixes(of row: DeskList.Row) -> [LampProject] {
+        guard let identity = row.entry?.identity else { return [] }
+        return wishes.filter { entries[$0.id]?.original == identity && $0.id != row.id }
+    }
+
+    private func readEntries() async {
+        let read = wishes.map { ($0, store.apps(of: $0)) }
+        let found = await Task.detached { read.map { DeskEntry.read($0.0, apps: $0.1) } }.value
+        guard !Task.isCancelled else { return }
+        entries = Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
     }
 
     /// Something to send: words, or files to make a wish of.
     private var hasWish: Bool { !store.deskDraft.trimmed.isEmpty || !store.deskAttachments.isEmpty }
 
-    /// The headline and the wishes step away while the ideas are open, leaving the bar and the ideas. An empty desk
-    /// opens on its ideas and keeps its headline, the only question on it.
-    private var hidesDesk: Bool { showingIdeas && !wishes.isEmpty }
-
-    /// The wishes recede behind the bar while the person is writing one, and come back while one is pointed at.
-    private var receding: Bool {
-        barFocused && (barEngaged || hasWish || dictation.isListening)
-            && pointedAt == nil && arrangement.dragging == nil
-    }
-
-    /// Focuses the bar so typing starts at once, without the wishes receding as they do when the person clicks into it.
-    private func focusQuietly() {
-        guard !barFocused else { return }
-        lampFocusing = true
-        barFocused = true
-    }
-
-    private var headline: some View {
-        Text(wishes.isEmpty ? "What do you wish for?" : "Use one, change one, or wish for something new.")
-            .font(.system(size: 26, weight: .semibold, design: .rounded))
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 32)
-    }
-
-    /// A wish's picture and what it is, over the place to make a new one, which steps back and fades while the
-    /// pointer is on the wish. It lies over that place rather than taking room of its own, so nothing moves.
-    private var stage: some View {
-        ZStack {
-            if let staged = shown {
-                HStack(spacing: 32) {
-                    if let picture = staged.picture {
-                        WishStage(image: picture, height: Self.stageHeight - 20)
-                    }
-                    if let words = staged.words {
-                        Text(words)
-                            .font(.system(size: 18, weight: .medium, design: .rounded))
-                            .foregroundStyle(.primary.opacity(0.8))
-                            // One size for every wish, in at most four lines: room for about 150 characters, so a
-                            // line written before `AppDescription.limit` fits too until the agent shortens it.
-                            .lineLimit(4)
-                            .multilineTextAlignment(staged.picture == nil ? .center : .leading)
-                            .frame(maxWidth: 360, alignment: staged.picture == nil ? .center : .leading)
-                    }
-                }
-                .padding(.horizontal, 32)
-                .id(staged.id)
-                .transition(.asymmetric(
-                    insertion: .scale(scale: 0.92).combined(with: .opacity),
-                    removal: .opacity))
-                .accessibilityHidden(true)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .allowsHitTesting(false)
-    }
-
-    /// A short rest before the first picture, so crossing the desk on the way somewhere doesn't flash one; from one
-    /// wish to the next it changes at once, and moving off leaves it a moment for the gap between two icons.
-    private func stagePicture() async {
-        guard let id = pointedAt, let project = wishes.first(where: { $0.id == id }) else {
-            try? await Task.sleep(for: .milliseconds(160))
-            if !Task.isCancelled { staged = nil }
-            return
-        }
-        if staged == nil {
-            try? await Task.sleep(for: .milliseconds(250))
-            if Task.isCancelled { return }
-        }
-        // Read afresh each time: the app takes a new picture whenever it opens, and the agent writes the line again
-        // when what the app is changes.
-        let url = Runtime.previewURL(project)
-        let file = FileManager.default.fileExists(atPath: url.path) ? url : Starters.shippedPreview(of: project)
-        let picture = file.flatMap(NSImage.init(contentsOf:))
-        let words = AppDescription.description(of: project)
-        guard !Task.isCancelled else { return }
-        staged = picture == nil && words == nil ? nil : Staged(id: project.id, picture: picture, words: words)
-    }
-
     private var header: some View {
-        VStack(spacing: 18) {
-            HStack(alignment: .center, spacing: 14) {
-                bar
-                if hasMicrophone {
-                    TalkButton(listening: dictation.isListening, level: dictation.level, action: toggleTalk)
-                }
+        HStack(alignment: .center, spacing: 10) {
+            bar
+            if hasMicrophone {
+                TalkButton(listening: dictation.isListening, level: dictation.level, action: toggleTalk)
             }
-            .frame(maxWidth: 600)
-            .padding(.horizontal, 32)
-            Button { withAnimation(Self.glide) { showingIdeas.toggle() } } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "lightbulb")
-                    Text("Not sure what to wish for?")
-                    Image(systemName: "chevron.down")
-                        .font(.callout.weight(.semibold))
-                        .rotationEffect(.degrees(showingIdeas ? 180 : 0))
-                }
-                .font(.title3.weight(.medium))
-                .padding(.horizontal, 20).padding(.vertical, 11)
-                .background(Color.white.opacity(notSureHovered ? 0.95 : 0.72), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(notSureHovered ? 0.2 : 0.1), lineWidth: 1))
-                .contentShape(Capsule())
+            Button { showingIdeas.toggle() } label: {
+                Label("Not sure?", systemImage: "lightbulb")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary.opacity(0.8))
-            .onHover { notSureHovered = $0 }
-            .help(showingIdeas ? "Hide the ideas" : "Show some ideas, or have Lamp help you find your wish")
+            .buttonStyle(PaperButtonStyle(.outline, height: 40))
+            .help("Show some ideas, or have Lamp help you find your wish")
+            .popover(isPresented: $showingIdeas, arrowEdge: .bottom) {
+                DeskIdeas(ideas: ideas, choose: choose, find: { showingIdeas = false; store.findWish() })
+                    .padding(20)
+                    .frame(width: 640)
+            }
         }
     }
 
@@ -319,17 +198,14 @@ struct WishDesk: View {
                 .padding(.leading, 34)
             }
         }
-        .padding(.leading, 12).padding(.trailing, 12).padding(.vertical, 14)
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
-            .strokeBorder(Color.primary.opacity(barFocused || dropTargeted ? 0.18 : 0.1), lineWidth: 1))
-        .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
+        .padding(.horizontal, 10).padding(.vertical, 9)
+        .background(Paper.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(barFocused || dropTargeted ? Paper.ink.opacity(0.4) : Paper.rule, lineWidth: 1))
         // Files dropped on the bar are attached to the wish; a wish's own icon dropped here isn't a file.
         .overlay(FileDrop(targeted: $dropTargeted) { urls in
             for url in urls where !store.deskAttachments.contains(url) { store.deskAttachments.append(url) }
         })
-        // A click into a bar Lamp already focused is the person's too.
-        .simultaneousGesture(TapGesture().onEnded { barEngaged = true })
         // Where the bar is, for the wish's chat to grow out of (`WishArrival`).
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { barFrame = $0 }
     }
@@ -338,26 +214,27 @@ struct WishDesk: View {
         HStack(alignment: .center, spacing: 10) {
             Button(action: chooseFiles) {
                 Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 24, height: 24)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Paper.muted)
             .help("Attach a file")
             .accessibilityLabel("Attach a file")
-            TextField(dictation.isListening ? "Listening…" : wishes.isEmpty ? "Type a wish…" : "Wish for something new…", text: $store.deskDraft, axis: .vertical)
+            TextField(dictation.isListening ? "Listening…" : "Wish for something new…", text: $store.deskDraft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.title3)
+                .font(.system(size: 15))
                 .lineLimit(1...5)
                 .focused($barFocused)
                 .onSubmit { send() }
             if hasWish {
                 Button { send() } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 26))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Color.accentColor)
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Paper.onInk)
+                        .frame(width: 26, height: 26)
+                        .background(Paper.ink, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
@@ -376,52 +253,29 @@ struct WishDesk: View {
         guard panel.runModal() == .OK else { return }
         for url in panel.urls where !store.deskAttachments.contains(url) { store.deskAttachments.append(url) }
         barFocused = true
-        barEngaged = true
     }
 
-    private var grid: some View {
-        DeskRows(width: 112, spacing: 4, lineSpacing: 6) {
-            ForEach(wishes) { project in
-                DeskIcon(project: project) { inside in
-                    if inside { pointedAt = project.id } else if pointedAt == project.id { pointedAt = nil }
-                }
-            }
-            ForEach(store.newerWishes) { NewerWishIcon(wish: $0) }
-            if !missingStarters.isEmpty {
-                MoreFromLamp(starters: missingStarters)
-            }
-        }
-        .frame(maxWidth: 880)
-        .padding(.horizontal, 32)
-    }
-
-    static func scrollerWidth() -> CGFloat {
-        NSScroller.preferredScrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
-    }
-
-    /// Looks for the person's devices for the shelf as the desk is shown and Lamp comes to the front, once Lamp has
-    /// looked before: the first look is the person's Find My Devices, since it's the one macOS asks about. Not more than
-    /// once a minute, as switching back to Lamp is often a moment's.
+    /// Looks for the person's devices as the desk is shown and Lamp comes to the front, once Lamp has looked before:
+    /// the first look is the person's Find My Devices, since it's the one macOS asks about. Not more than once a minute,
+    /// as switching back to Lamp is often a moment's.
     private func lookForDevices() {
         guard lookedBefore, lastLook.map({ Date().timeIntervalSince($0) > 60 }) ?? true else { return }
         lastLook = Date()
         store.refreshDevices()
     }
 
-    /// A ready device on the shelf goes in the bar: a wish begun for it, or the one being typed made for it.
+    /// A ready device in the list goes in the bar: a wish begun for it, or the one being typed made for it.
     private func wishFor(_ device: String) {
         let typed = store.deskDraft.trimmed
         store.deskDraft = typed.isEmpty ? "Something for my \(device) that " : "\(typed) for my \(device)"
         barFocused = true
-        barEngaged = true
     }
 
-    /// An idea goes in the bar to be made the person's own, and the ideas step aside for it.
+    /// An idea goes in the bar to be made the person's own, and the ideas close for it.
     private func choose(_ wish: String) {
         store.deskDraft = wish
-        withAnimation(Self.glide) { showingIdeas = false }
+        showingIdeas = false
         barFocused = true
-        barEngaged = true
     }
 
     /// The words heard go in the bar, after whatever was typed; the person sends them when they look right.
@@ -450,49 +304,6 @@ struct WishDesk: View {
         store.deskDraft = ""
         store.deskAttachments = []
         store.wish(wish, attachments: attachments, spoken: spoken)
-    }
-}
-
-/// The desk's icons in rows of equal columns, each row centered under the wish bar, as a few wishes look
-/// lost at the left of a wide window. Every icon takes `width`; a row lines up along its top.
-struct DeskRows: Layout {
-    var width: CGFloat
-    var spacing: CGFloat
-    var lineSpacing: CGFloat
-
-    private func columns(in available: CGFloat?) -> Int {
-        guard let available, available.isFinite else { return 6 }
-        return max(1, Int((available + spacing) / (width + spacing)))
-    }
-
-    private func rows(_ subviews: Subviews, columns: Int) -> [[LayoutSubviews.Element]] {
-        stride(from: 0, to: subviews.count, by: columns).map { Array(subviews[$0..<min($0 + columns, subviews.count)]) }
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let count = columns(in: proposal.width)
-        let lines = rows(subviews, columns: count)
-        let heights = lines.map { $0.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }.max() ?? 0 }
-        let used = CGFloat(min(count, subviews.count)) * (width + spacing) - spacing
-        return CGSize(width: proposal.width ?? max(0, used),
-                      height: heights.reduce(0, +) + CGFloat(max(0, lines.count - 1)) * lineSpacing)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let count = columns(in: bounds.width)
-        var y = bounds.minY
-        for line in rows(subviews, columns: count) {
-            let used = CGFloat(line.count) * (width + spacing) - spacing
-            var x = bounds.midX - used / 2
-            var tallest: CGFloat = 0
-            for view in line {
-                let size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
-                view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: width, height: size.height))
-                tallest = max(tallest, size.height)
-                x += width + spacing
-            }
-            y += tallest + lineSpacing
-        }
     }
 }
 
@@ -529,53 +340,6 @@ struct IdeaColumns: Layout {
             }
             y += height + spacing
         }
-    }
-}
-
-/// How far the desk's wishes stand back: smaller, softer and fainter, as if further away.
-private struct Recede: ViewModifier {
-    var scale: CGFloat
-    var blur: CGFloat
-    var opacity: Double
-
-    static let present = Recede(scale: 1, blur: 0, opacity: 1)
-    /// Behind the bar while a wish is written.
-    static let behind = Recede(scale: 0.95, blur: 2.5, opacity: 0.45)
-    /// Out of the way while the ideas are open.
-    static let gone = Recede(scale: 0.9, blur: 12, opacity: 0)
-
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(scale)
-            .blur(radius: blur)
-            .opacity(opacity)
-    }
-}
-
-/// The ideas open from their middle outward, their edges feathered as they go, rather than sliding in from
-/// somewhere: a band across the middle that widens until it holds them all, and narrows again as they close.
-private struct MiddleOut: ViewModifier, Animatable {
-    var shown: Double
-    var animatableData: Double {
-        get { shown }
-        set { shown = newValue }
-    }
-
-    /// How soft the band's edges are, as a share of the ideas' height.
-    private static let feather = 0.22
-
-    func body(content: Content) -> some View {
-        // Half the band, reaching past the edges once fully shown so that no feather is left on them.
-        let half = shown * (0.5 + Self.feather)
-        let solid = max(0, half - Self.feather)
-        content
-            .mask {
-                LinearGradient(stops: [.init(color: .clear, location: 0.5 - half), .init(color: .black, location: 0.5 - solid),
-                                       .init(color: .black, location: 0.5 + solid), .init(color: .clear, location: 0.5 + half)],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .scaleEffect(0.96 + 0.04 * shown)
-            .opacity(min(1, shown * 1.6))
     }
 }
 
@@ -714,298 +478,6 @@ struct TalkButton: View {
     private static let glow = Color(red: 1.0, green: 0.62, blue: 0.3)
 }
 
-/// What a wish looks like, where the desk's headline was: the picture its app took of its window, standing like a
-/// window on a stage, fitted to the stage whatever the window's shape.
-struct WishStage: View {
-    let image: NSImage
-    let height: CGFloat
-
-    private var size: CGSize {
-        let pixels = image.representations.first.map { CGSize(width: $0.pixelsWide, height: $0.pixelsHigh) } ?? image.size
-        guard pixels.width > 0, pixels.height > 0 else { return CGSize(width: height, height: height) }
-        let scale = min(height * 1.9 / pixels.width, height / pixels.height)
-        return CGSize(width: (pixels.width * scale).rounded(), height: (pixels.height * scale).rounded())
-    }
-
-    var body: some View {
-        Image(nsImage: image)
-            .resizable()
-            .interpolation(.high)
-            .frame(width: size.width, height: size.height)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.black.opacity(0.1), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
-            .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
-            // The light it stands in.
-            .background(
-                Ellipse()
-                    .fill(RadialGradient(colors: [.white.opacity(0.9), .white.opacity(0)], center: .center, startRadius: 0, endRadius: size.width * 0.6))
-                    .frame(width: size.width * 1.5, height: size.height * 1.2)
-            )
-            .accessibilityHidden(true)
-    }
-}
-
-/// One wish on the desk: its icon, its name, and under it where it lives or what it's waiting for. A click opens
-/// it, with its chat beside it to change it (`Store.open(fromDesk:)`).
-/// The wishes Lamp came with that aren't on the desk (never added, or deleted since), offered at its end as one
-/// tile: a few of their icons and how many there are. A click lists them, each with an Add that puts it back on
-/// the desk (`Store.put(starter:)`). It's gone once every one is there.
-struct MoreFromLamp: View {
-    @EnvironmentObject private var store: Store
-    let starters: [Starters.Starter]
-    @State private var hovered = false
-    @State private var listing = false
-    /// Measured once the rows are laid out. It starts at the most it can be, so the popover is placed on screen
-    /// for its largest size and only gets shorter: placed for a smaller one, it grew past the screen's bottom.
-    @State private var rowsHeight = MoreFromLamp.tallest
-    /// The most the list's rows take before they scroll: room for about six, on the shortest screens a Mac has.
-    private static let tallest: CGFloat = 440
-    /// The height of the window the desk is in, taken as the list opens, so the popover never stands taller than it.
-    @State private var windowHeight: CGFloat?
-    /// What the popover takes beyond its rows: the title, the line under it and the padding around them.
-    private static let chrome: CGFloat = 110
-    /// The most the rows take: what a short screen has room for, and no more than leaves the popover inside the
-    /// desk's window, with a margin above and below.
-    private var rowsLimit: CGFloat {
-        guard let windowHeight else { return Self.tallest }
-        return max(120, min(Self.tallest, windowHeight - Self.chrome - 48))
-    }
-    /// The Mac's own appearance, which the popover's material is drawn in.
-    private static var macScheme: ColorScheme {
-        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
-    }
-
-    var body: some View {
-        VStack(spacing: 6) {
-            tile
-                .scaleEffect(hovered ? 1.06 : 1)
-                .offset(y: hovered ? -2 : 0)
-            Text("Starter wishes")
-                .font(.callout.weight(.medium))
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8).padding(.horizontal, 4)
-        .background(Color.primary.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .contentShape(Rectangle())
-        .onTapGesture { show() }
-        .onHover { hovered = $0 }
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
-        .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel("Starter wishes")
-        .accessibilityValue("\(starters.count) to add")
-        .accessibilityAction { show() }
-        .focusable(interactions: .activate)
-        .onKeyPress(.return) { show(); return .handled }
-        .help("Starter kit wishes, for you to try and make your own")
-        // The desk is drawn light whatever the Mac's appearance, but the popover's glass is the system's, dark on a
-        // dark Mac: its words and buttons take the Mac's appearance, not the desk's.
-        .popover(isPresented: $listing, arrowEdge: .trailing) { list.environment(\.colorScheme, Self.macScheme) }
-        .onChange(of: starters.isEmpty) { if starters.isEmpty { listing = false } }
-    }
-
-    private func show() {
-        windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? NSApp.mainWindow?.contentLayoutRect.height
-        rowsHeight = rowsLimit
-        listing = true
-    }
-
-    /// Up to four of their icons, two by two, in a dashed outline the size of a wish's icon.
-    private var tile: some View {
-        let shown = Array(starters.prefix(4))
-        return RoundedRectangle(cornerRadius: 17, style: .continuous)
-            .strokeBorder(Color.primary.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-            .frame(width: 76, height: 76)
-            .overlay {
-                Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                    ForEach(0..<2, id: \.self) { row in
-                        GridRow {
-                            ForEach(0..<2, id: \.self) { column in
-                                let index = row * 2 + column
-                                if index < shown.count {
-                                    StarterIcon(starter: shown[index], size: 24)
-                                } else {
-                                    Color.clear.frame(width: 24, height: 24)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                Text("\(starters.count)")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6).frame(minWidth: 20, minHeight: 20)
-                    .background(Color.accentColor, in: Capsule())
-                    .overlay(Capsule().strokeBorder(.background, lineWidth: 2))
-                    .offset(x: 7, y: -7)
-            }
-    }
-
-    private var list: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Starter kit wishes").font(.headline)
-            Text("For you to try and make your own")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .padding(.top, 2)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(starters, id: \.name) { starter in
-                        HStack(alignment: .center, spacing: 12) {
-                            StarterIcon(starter: starter, size: 40)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(starter.name).font(.body.weight(.semibold))
-                                if let about = Starters.about(starter) {
-                                    Text(about)
-                                        .font(.callout).foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                            Spacer(minLength: 12)
-                            // Added to open at once, as a wish clicked on the desk does: built out of sight first when it
-                            // isn't yet, its icon spinning until then.
-                            Button("Add") {
-                                guard let project = store.put(starter: starter) else { return }
-                                listing = false
-                                store.open(fromDesk: project)
-                            }
-                                .accessibilityLabel("Add \(starter.name)")
-                        }
-                    }
-                }
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
-            }
-            // As tall as its rows, up to what a short screen has room for; past that the rows scroll.
-            .frame(height: min(rowsHeight, rowsLimit))
-            .scrollBounceBehavior(.basedOnSize)
-            .padding(.top, 14)
-        }
-        .padding(18)
-        .frame(width: 400)
-        // Its own height whatever the popover had: as each is added the list gets shorter, and the popover with it.
-        .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-/// A starter's icon as it ships, before it's on the desk.
-private struct StarterIcon: View {
-    let starter: Starters.Starter
-    let size: CGFloat
-
-    var body: some View {
-        if let icon = Starters.icon(of: starter) {
-            Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
-        } else {
-            BlueprintIcon(letter: starter.name.first, size: size)
-        }
-    }
-}
-
-struct DeskIcon: View {
-    @EnvironmentObject private var store: Store
-    let project: LampProject
-    /// The pointer came onto it or left it: the desk shows what it looks like (`WishStage`).
-    var onHover: (Bool) -> Void = { _ in }
-    @ObservedObject private var arrangement = DeskArrangement.shared
-    @State private var hovered = false
-    @State private var place: WishPlace?
-
-    private var busy: Bool { store.busy.contains(project.id) }
-    /// Lit under the pointer, but not while a wish is dragged over it: the pointer is the drag's then.
-    private var lit: Bool { hovered && arrangement.dragging == nil }
-    /// This one is being dragged: its place shows faintly where it would land.
-    private var lifted: Bool { arrangement.dragging == project.id }
-
-    /// A starter the person clicked before Lamp had built it, which opens by itself once it's ready: the only wait the
-    /// desk shows, since nothing else on screen says the click did anything. Its icon glows and "Getting it ready…"
-    /// is under its name (`BuildingGlow`, `DeskStatusLine`). Work on a wish that's already made shows in its chat.
-    private var opening: Bool { store.openWhenReady.contains(project.id) }
-
-    /// What's going on with it, for VoiceOver: on screen the glow, the status line and the dot say it.
-    private var status: String? {
-        // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
-        // says it's opening, which it does by itself once it's ready.
-        if store.openWhenReady.contains(project.id) { return "Opening…" }
-        if store.preparing.contains(project.id) { return nil }
-        if busy { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
-        if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
-        if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
-        if project.finding { return "Finding a wish" }
-        if store.unread.contains(project.id) { return "Ready" }
-        return nil
-    }
-
-    var body: some View {
-        VStack(spacing: 6) {
-            AppIcon(project: project, size: 76)
-                .background {
-                    if opening { BuildingGlow(size: 76).transition(.opacity) }
-                }
-                // It settles rather than vanishing when the starter is ready.
-                .animation(.easeOut(duration: 0.8), value: opening)
-                .overlay(alignment: .topTrailing) {
-                    if !opening && store.unread.contains(project.id) {
-                        ReadyDot(size: 12)
-                            .overlay(Circle().strokeBorder(.background, lineWidth: 2))
-                            .offset(x: -2, y: 2)
-                    }
-                }
-                .scaleEffect(lit ? 1.06 : 1)
-                .offset(y: lit ? -2 : 0)
-            VStack(spacing: 2) {
-                Text(project.title)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .truncationMode(.tail)
-                if opening { DeskStatusLine().transition(.opacity) }
-            }
-            .animation(.easeInOut(duration: 0.3), value: opening)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8).padding(.horizontal, 4)
-        .background(Color.primary.opacity(lit ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .opacity(lifted ? 0.3 : 1)
-        .contentShape(Rectangle())
-        .onTapGesture { store.open(fromDesk: project) }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { store.open(fromDesk: project) }
-        .accessibilityAction(named: "Use") { store.use(project) }
-        // With keyboard navigation on, Tab reaches it, and Return opens it.
-        .focusable(interactions: .activate)
-        .onKeyPress(.return) { store.open(fromDesk: project); return .handled }
-        .onHover { inside in
-            hovered = inside
-            onHover(inside)
-        }
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: lit)
-        .background(ShareAnchor(origin: .app(project.id)))
-        .background(WishDrag(project: project))
-        .contextMenu {
-            Button("Open") { store.open(fromDesk: project) }
-            Button("Change…") { store.change(project) }
-            Divider()
-            AppMenu(project: project)
-        }
-        .help("Click to use \(project.title) and change it")
-        .accessibilityLabel(project.title)
-        // What's going on with it is its state, read with its name; where it lives is the hint after.
-        .accessibilityValue(status ?? "")
-        .accessibilityHint(place?.caption ?? "")
-        // Read again as a turn ends: a change can move it, say, into the menu bar.
-        .task(id: busy) {
-            let current = project
-            place = await Task.detached { WishPlace.of(current) }.value
-        }
-    }
-}
-
 /// "Getting it ready…" under a starter's name while it's built for its first opening, with a sheen crossing it so the
 /// wait never looks frozen. Where the person asked for less motion it stays still.
 struct DeskStatusLine: View {
@@ -1041,169 +513,6 @@ struct DeskStatusLine: View {
     }
 }
 
-/// The order of the wishes on the desk, which the person sets by dragging them about, and the drag under way. Until
-/// the first such drag they're in name order, as Lamp lists them; after it, a wish made since goes at the end. Kept by
-/// the wish's instance, which a rename doesn't change, so a wish keeps its place when the agent names it.
-@MainActor
-final class DeskArrangement: ObservableObject {
-    static let shared = DeskArrangement()
-    private static let savedKey = "deskOrder"
-
-    /// The wish being dragged, by id.
-    @Published private(set) var dragging: String?
-    /// The order while it's dragged, by id: where it would land if let go now.
-    @Published private(set) var moving: [String]?
-    /// Whether it's over the toolbar's trash.
-    @Published fileprivate(set) var overTrash = false
-    /// Where it was let go: on the desk or its trash, the only places in Lamp that take it. A drag called off (Escape)
-    /// is let go nowhere, and changes nothing.
-    fileprivate var dropped: Drop?
-    enum Drop { case desk, trash }
-    @Published private var saved: [String] = UserDefaults.standard.stringArray(forKey: DeskArrangement.savedKey) ?? []
-
-    /// The order the drag began with, which it goes back to while the drag is off the window.
-    private var start: [String] = []
-    /// The wish the dragged one last took the place of. It slides under the pointer as it makes room, which mustn't
-    /// count as being dragged over again: the two would swap back and forth.
-    private var passed: String?
-    /// Each icon's view on the desk, which knows where the icon is.
-    private var icons: [String: Weak] = [:]
-
-    private struct Weak { weak var view: NSView? }
-
-    private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
-
-    func arranged(_ projects: [LampProject]) -> [LampProject] {
-        if let moving {
-            let rank = Dictionary(moving.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
-            return order(projects) { rank[$0.id] }
-        }
-        let rank = Dictionary(saved.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
-        return order(projects) { rank[Self.key($0)] }
-    }
-
-    /// Ranked ones first, by rank; the rest after them, as they came.
-    private func order(_ projects: [LampProject], by rank: (LampProject) -> Int?) -> [LampProject] {
-        projects.enumerated()
-            .sorted { a, b in
-                let x = rank(a.element) ?? .max, y = rank(b.element) ?? .max
-                return x != y ? x < y : a.offset < b.offset
-            }
-            .map(\.element)
-    }
-
-    /// Once the person has set an order, a wish seen for the first time goes after the rest and keeps that place,
-    /// whatever it's named and whatever comes after it.
-    func adopt(_ projects: [LampProject]) {
-        guard !saved.isEmpty else { return }
-        let known = Set(saved)
-        let new = projects.map(Self.key).filter { !known.contains($0) }
-        guard !new.isEmpty else { return }
-        saved += new
-        UserDefaults.standard.set(saved, forKey: Self.savedKey)
-    }
-
-    func register(_ view: NSView, for id: String) {
-        icons = icons.filter { $0.value.view != nil && $0.value.view !== view }
-        icons[id] = Weak(view: view)
-    }
-
-    func begin(_ id: String, among order: [String]) {
-        start = order
-        passed = nil
-        moving = order
-        overTrash = false
-        dropped = nil
-        dragging = id
-    }
-
-    /// Follows the drag: over another wish's icon, the dragged one takes that place and the rest make room. Says
-    /// whether the pointer is over the desk's window.
-    @discardableResult
-    func moved(to point: NSPoint, in window: NSWindow?) -> Bool {
-        guard let dragging, let window, var order = moving else { return false }
-        guard window.frame.contains(point) else {
-            // Off the window, to be shared or put in the Trash: the desk is as it was.
-            if order != start { moving = start }
-            return false
-        }
-        guard !overTrash else { return true }
-        let local = window.convertPoint(fromScreen: point)
-        let under = icons.first(where: { _, icon in
-            guard let view = icon.view, view.window === window else { return false }
-            return view.convert(view.bounds, to: nil).contains(local)
-        })?.key
-        guard under != passed else { return true }
-        passed = nil
-        guard let target = under, target != dragging,
-              let from = order.firstIndex(of: dragging), let to = order.firstIndex(of: target) else { return true }
-        passed = target
-        order.remove(at: from)
-        order.insert(dragging, at: to)
-        moving = order
-        return true
-    }
-
-    /// The drag is over. Let go on the desk, the new order is kept; anywhere else, or called off, it's as it was.
-    /// Says whether it was let go on the toolbar's trash, to be deleted.
-    func end(projects: [LampProject]) -> Bool {
-        let trashed = dropped == .trash
-        if dropped == .desk, let moving, moving != start {
-            let byID = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            // Every wish there is, so one made later goes after them all.
-            saved = arranged(projects).compactMap { byID[$0.id].map(Self.key) }
-            UserDefaults.standard.set(saved, forKey: Self.savedKey)
-        }
-        moving = nil
-        dragging = nil
-        overTrash = false
-        dropped = nil
-        start = []
-        return trashed
-    }
-
-    /// What a dragged wish carries for the desk to know it by.
-    static let wishType = UTType(importedAs: "dev.lamp.wish")
-
-    /// The desk and its trash take a dragged wish, so that only one let go there counts: AppKit ends a drag called
-    /// off with Escape the same way as one let go where nothing takes it.
-    struct Target: DropDelegate {
-        let drop: Drop
-
-        func validateDrop(info: DropInfo) -> Bool { DeskArrangement.shared.dragging != nil }
-        func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
-        func dropEntered(info: DropInfo) { if drop == .trash { DeskArrangement.shared.overTrash = true } }
-        func dropExited(info: DropInfo) { if drop == .trash { DeskArrangement.shared.overTrash = false } }
-        func performDrop(info: DropInfo) -> Bool {
-            DeskArrangement.shared.dropped = drop
-            return true
-        }
-    }
-}
-
-/// The trash in the toolbar while a wish is dragged: let go over it, the wish is deleted, as on the Dock's Trash.
-struct DeskTrash: View {
-    @ObservedObject private var arrangement = DeskArrangement.shared
-
-    var body: some View {
-        Image(systemName: arrangement.overTrash ? "trash.fill" : "trash")
-            .font(.system(size: 15, weight: .medium))
-            .foregroundStyle(arrangement.overTrash ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
-            .scaleEffect(arrangement.overTrash ? 1.2 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: arrangement.overTrash)
-            .frame(width: 28, height: 28)
-            .contentShape(Rectangle())
-            .onDrop(of: [DeskArrangement.wishType], delegate: DeskArrangement.Target(drop: .trash))
-            .accessibilityLabel("Trash")
-            .help("Drop a wish here to delete it")
-    }
-}
-
-/// A wish dragged about the desk takes the place it's dropped on (`DeskArrangement`), and dropped on the trash the
-/// window's toolbar shows meanwhile, it's deleted. Dragged off the desk and dropped on the Trash it's deleted too, as
-/// Delete… does once asked (the Trash gives it back); in the Dock or the Applications folder it's the app itself;
-/// anywhere else it's the wish's shared file, as Share… makes it. A wish being changed stays where it is. Behind the icon and never in its way, so a click,
-/// a double click and the menu stay SwiftUI's: the drag is started from the window's own mouse events.
 /// Where files are dropped on the desk's bar. Its text field would take a dropped file itself and type its path, so
 /// an AppKit view lies over the bar to take it first: a drop goes to the view registered for it, while a click passes
 /// through to the field. Takes files from Finder, a screenshot's thumbnail (a file promised, not yet written) and a
@@ -1275,7 +584,7 @@ struct FileDrop: NSViewRepresentable {
 
         private static func takes(_ pasteboard: NSPasteboard) -> Bool {
             // A wish's icon is dragged as a file promised too (to the Finder), but it isn't one to attach.
-            guard !(pasteboard.types ?? []).contains(NSPasteboard.PasteboardType(DeskArrangement.wishType.identifier)) else { return false }
+            guard !(pasteboard.types ?? []).contains(WishDrag.Source.wishType) else { return false }
             return pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
                 || pasteboard.canReadObject(forClasses: [NSFilePromiseReceiver.self])
                 || NSImage.canInit(with: pasteboard)
@@ -1290,6 +599,11 @@ struct FileDrop: NSViewRepresentable {
     }
 }
 
+/// A wish dragged out of Lamp: dropped on the Trash it's deleted, as Delete… does once asked (the Trash gives it back);
+/// in the Dock or the Applications folder it's the app itself; anywhere else it's the wish's shared file, as Share…
+/// makes it. Nothing in Lamp takes it: the desk's order is its sorting, not where wishes are dragged. A wish being
+/// changed stays where it is. Behind its row and never in its way, so a click, a double click and the menu stay
+/// SwiftUI's: the drag is started from the window's own mouse events.
 struct WishDrag: NSViewRepresentable {
     @EnvironmentObject private var store: Store
     let project: LampProject
@@ -1299,9 +613,7 @@ struct WishDrag: NSViewRepresentable {
 
     final class Source: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
         private let store: Store
-        var project: LampProject {
-            didSet { if project.id != oldValue.id { DeskArrangement.shared.register(self, for: project.id) } }
-        }
+        var project: LampProject
         private var monitor: Any?
         private var pressed: NSEvent?
         /// What one drag hands over, made once whichever way the other app asks for it.
@@ -1323,7 +635,6 @@ struct WishDrag: NSViewRepresentable {
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
             guard window != nil else { return }
-            DeskArrangement.shared.register(self, for: project.id)
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
                 self?.handle(event) ?? event
             }
@@ -1373,20 +684,17 @@ struct WishDrag: NSViewRepresentable {
             item.setDraggingFrame(CGRect(origin: CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2), size: size),
                                   contents: store.iconImage(for: project))
             session = beginDraggingSession(with: [item], event: event, source: self)
-            DeskArrangement.shared.begin(project.id, among: DeskArrangement.shared.arranged(store.wishes).map(\.id))
         }
 
         static let wishType = NSPasteboard.PasteboardType("dev.lamp.wish")
 
         func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-            // Inside Lamp only the desk and its trash take it (`DeskArrangement.Target`), as a move: a chat's drop
-            // takes a copy, and the wish's file there would only be an attachment.
-            guard context == .outsideApplication else { return .move }
+            // Nothing inside Lamp takes it: a chat's drop would only make the wish's file an attachment.
+            guard context == .outsideApplication else { return [] }
             return payload == nil ? .delete : [.copy, .link, .delete]
         }
 
         func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
-            DeskArrangement.shared.moved(to: screenPoint, in: window)
             guard let payload, payload.app != nil else { return }
             let overDock = Payload.dockIsUnder(screenPoint)
             guard overDock != payload.overDock else { return }
@@ -1414,8 +722,7 @@ struct WishDrag: NSViewRepresentable {
 
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             payload = nil
-            let trashed = DeskArrangement.shared.end(projects: store.wishes)
-            guard operation == .delete || trashed, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
+            guard operation == .delete, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
             Task { await store.delete(wish) }
         }
 

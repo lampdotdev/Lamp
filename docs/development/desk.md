@@ -2,51 +2,65 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
-Lamp's window is the desk and only the desk (`WishDesk`, `Desk.swift`): no wish's chat is ever drawn in it. It shows the
-person's wishes as icons, first, since using one and
-changing it is where most wishes start, and under them the one place to make a new one. A click's hint says it
-opens to use and change (`DeskIcon`). Wishes are dragged into the order the person wants (`DeskArrangement`, kept by
-instance so a rename keeps a wish's place; name order until the first drag, and a new wish goes at the end after it);
-while one is dragged, a trash beside Settings in the toolbar deletes what's let go on it (`DeskTrash`), as the Dock's
-Trash does (`WishDrag`). Everything someone makes with Lamp is a **wish** in what they read; a wish may
-be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
-typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
-way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
-setup checks as anything typed in a chat. Its chat doesn't pop up out of nowhere: the bar lifts off the desk and
-grows into the chat's window, lit in the colors of the smoke an app being changed shows (`LampTransition.Look.hues`),
-with a few sparks rising off it, and the chat fades in where it lands (`WishArrival`, drawn in a window of its own
-over the desk, so the chat is laid out once, at its real size). Where the person asked for less motion, or the chat
-opens on another screen than the bar's, it opens at once. A click on a wish (or Return, or Open on its menu) opens it to use and
-change at once (`Store.open(fromDesk:)`), always with its chat beside whatever shows it: a Mac app with windows opens with
-its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens
-no Mac window is used (`Store.use`) with its chat in Lamp's panel, beside the simulator, the emulator or Lamp's preview
-that shows it, or on its own where nothing on this Mac does (`ChatPanel`, "The chat's one screen" in the chat guide); one
-still coming true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way. Under each icon is its
-name, and a dot says it's ready. The one wait the desk shows is a starter clicked before Lamp has built it, since
-nothing else on screen says the click did anything until it opens by itself (`openWhenReady`): its icon glows, the light
-Lamp puts round an app's windows going round it, and "Getting it ready…" is under its name, a sheen crossing it so the
-wait never looks frozen (`BuildingGlow`, `DeskStatusLine`); both settle when it opens, and stay still where the person
-asked for less motion. Nothing else lights a tile: a wish being made or changed shows that in its chat, and Lamp's own
-work on a wish (a rename, Undo, Reload, a new icon) shows nothing on the desk. VoiceOver hears "Opening…" for such a
-starter, "Coming true…" or "Changing…" for a wish being worked on, and where a wish lives after its name (`WishPlace`, read
-from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
-(`WishStage`), which steps back and fades. When it's used where nothing comes
-forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
-large translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in front (⌘[).
+Lamp's window is the desk and only the desk (`WishDesk`, `Desk.swift`): no wish's chat is ever drawn in it. It's drawn
+on Lamp's paper (`Paper`, in LampSidebarKit, which the welcome and the chat draw from too): the person's wishes in one
+list, the place to make a new one above it, and down the side the filters and the person's devices. Everything someone
+makes with Lamp is a **wish** in what they read; a wish may be made of an app, a widget, a menu bar item, a watch app,
+so "app" stays where it means that piece. A wish is a thing to remix as much as to use, and it may run in several
+places, so the desk shows none of a Mac's icon grid and makes no difference between a game and an app.
 
-Between the wishes and the bar is the shelf of the person's devices (`DeskDevices`), since a wish for the TV or
-the phone is what Lamp is for and Settings is no place to find that out. Until Lamp has looked on the network
-(`localNetworkAsked`) it's one capsule inviting the person to, whose Find My Devices is the look macOS asks about; from
-then on the desk looks each time it's shown or Lamp comes to the front, at most once a minute (`lookForDevices`), and
-the shelf is the devices as capsules: this Mac, then the person's own, then what was only found that Lamp makes apps
-for or controls, each kind in the order people make most for (`DeskDevices.ranked`), as many as two lines hold
-(`DeskDevices.fitting`), then "N More" (which opens Settings → Your Devices, where the whole network is) and Add a
-Device (`AddDeviceSheet`), which are always on the second line's end. What Lamp could
-only learn (a server, an appliance) is counted in More, never shown. A green dot is ready, and a click puts "for my
-<device>" in the bar; a gearshape and an amber dot is a step to take, and a click takes it (`DeviceNextStep.takeFurther`,
-Settings where Lamp can't from here). A chip's name is short and plain (`DeskDevices.label`: a found one by its model,
-never an address or a serial); what else is known is in its tip a moment after the pointer comes onto it
-(`DeviceTip`), never its address. macOS refusing the network is `LocalNetworkRefused` under the shelf.
+**The list** (`DeskList.swift`) is every wish: those Lamp came with and those the person made, together, with nothing
+set apart for the starters (a starter deleted is gone; a remix of it from the site puts it back). Each row is the wish's
+picture (`Runtime.previewURL`, else the one its starter shipped), its name and its about.json line, who made it, where
+it runs (each place its apps open, `openPlaces`), when it last changed, and **Open** with **Remix** beside it (`DeskListRow`),
+all read from its files away from the main thread for each change to the wishes and as each turn ends (`DeskEntry`).
+Who made it is "You" for what was made or remixed here, the author of the work a starter is made from (Lamp when it
+names none), or "Shared" for a wish that came from someone else (`DeskList.madeBy`). Clicking a column's name sorts by it,
+and again the other way, kept between launches; nothing is dragged into an order. A remix made here sits under its
+original, whatever the sort, joined to it by the stripes' line (`DeskList.rows`: by the last link of its chain,
+`Credits.remixOf`, naming the original's identity). The filters are Everything and Your remixes (what the person made or
+remixed). Open (or a double click) opens it to use and change at once (`Store.open(fromDesk:)`), always with its chat
+beside whatever shows it: a Mac app with windows opens with its chat beside it (`Store.change`, below; a notification's
+click goes the same way, `Store.openChat`); a wish that opens no Mac window is used (`Store.use`) with its chat in Lamp's
+panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
+(`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
+chat. A right-click has Open, Change… and the wish's menu (`AppMenu`: Rename…, Remix, Delete… and the rest). Dragged out
+of Lamp a row is the wish's shared file, or the app itself in the Dock or the Applications folder (`WishDrag`). A dot
+beside a name says it's ready. The one wait the list shows is a starter opened before Lamp has built it, since nothing
+else on screen says the click did anything until it opens by itself (`openWhenReady`): "Getting it ready…" takes its
+line's place, a sheen crossing it so the wait never looks frozen (`DeskStatusLine`), still where the person asked for
+less motion. A wish being made or changed shows that in its chat, never on the desk. When a wish is used where nothing
+comes forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a large
+translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in
+front (⌘[).
+
+**Remix** (`Store.remix`, also Remix on the wish's menu and File → Remix) makes a new copy of the wish to change, "<name>
+Remix", with its code, history and icon on another background, and a link back to the original at the end of its chain,
+then builds it with its chat beside it; the original stays as it was. A row picked in the list shows beside it what it
+is (`DeskDetail`): its picture, line, who made it and its license, where it runs and its remixes, Open, and a box to
+remix it with a change, which asks for that change as the copy's first request; a starter's own three changes are there
+to pick from.
+
+**Making a new wish.** It's typed in the bar over the list, or said with the talk button beside it (`TalkButton`, moving
+with `Dictation.level`); either way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so
+it passes the same setup checks as anything typed in a chat. Its chat doesn't pop up out of nowhere: the bar lifts off
+the desk and grows into the chat's window, lit in the colors of the smoke an app being changed shows
+(`LampTransition.Look.hues`), with a few sparks rising off it, and the chat fades in where it lands (`WishArrival`, drawn in
+a window of its own over the desk, so the chat is laid out once, at its real size). Where the person asked for less
+motion, or the chat opens on another screen than the bar's, it opens at once. "Not sure?" beside the bar opens a few
+ideas (`DeskIdeas`) and Help Me Find One.
+
+**The devices** (`DeskDevices`) are down the side under the filters, since a wish for the TV or the phone is what Lamp
+is for and Settings is no place to find that out. Until Lamp has looked on the network (`localNetworkAsked`) they're an
+invitation to, whose Find My Devices is the look macOS asks about; from then on the desk looks each time it's shown or
+Lamp comes to the front, at most once a minute (`lookForDevices`), and the list is this Mac, then the person's own, then
+what was only found that Lamp makes apps for or controls, each kind in the order people make most for
+(`DeskDevices.ranked`), then "N More" for what Lamp could only learn (a server, an appliance; it opens Settings → Your
+Devices, where the whole network is) and Add a Device (`AddDeviceSheet`). A green dot is ready, and a click puts "for my
+<device>" in the bar; "Set up" and an amber dot is a step to take, and a click takes it (`DeviceNextStep.takeFurther`,
+Settings where Lamp can't from here). A device's name is short and plain (`DeskDevices.label`: a found one by its model,
+never an address or a serial); what else is known is in its tip a moment after the pointer comes onto it (`DeviceTip`),
+never its address. macOS refusing the network is `LocalNetworkRefused` under the list.
 
 "Help me find one" (`Store.findWish`) is the site's wizard in the app, held in the ordinary chat: a new wish
 marked `finding` whose first request is `Agent.findingRequest`. The agent asks about the person's days in
@@ -76,8 +90,7 @@ since Lamp draws none for a starter on the person's Mac, which would offer to se
 `StarterIconsTests` draws the icons again, with Xcode set up for the Liquid Glass one, and the artwork again with
 `LAMP_PAINT_STARTER_ART=1` and a key), so the desk
 shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`),
-preview.png, a picture of its window that the desk shows while the pointer is on the icon,
-with the app's about.json line beside it in large type, 90 characters at most (`WishStage`, `WishDesk.describedIn`; every
+preview.png, a picture of its window that the desk's list shows beside its about.json line, 90 characters at most (every
 Mac app saves a fresh one at each launch, `LampRuntime.preview`, and Lamp takes one of the simulator for an iPhone
 app, both at `Runtime.previewURL`), and starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
 with its tile's symbol (`- drop: Add a water counter`). The three show how far a starter can go, not small tweaks to
@@ -139,12 +152,9 @@ A starter whose code imports RealityKit (none does now) gets LampScene.swift and
 (`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.
 
-Starters not on the desk (never added, or deleted since; `Starters.missing`) are offered at its end as one dashed
-tile, Starter wishes (`MoreFromLamp`): up to four of their icons and how many there are, and a click lists them with
-an Add each. Add puts that one back (`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put
-on the desk, which the first launch uses too), saved and built out of sight like the first launch's, and opens it
-at once as a click on the desk would (`open(fromDesk:)`: one not built yet spins and opens when it's ready). The tile goes
-once every one is there.
+A starter deleted from the desk is gone, as any wish is; a remix of it from the site puts a fresh copy back
+(`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put on the desk, which the first launch
+uses too), saved and built out of sight like the first launch's.
 
 **A starter added or changed in how it looks gets a new preview in the same change** (`StartersTests` fails
 without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,
