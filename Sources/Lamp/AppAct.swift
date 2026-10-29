@@ -605,10 +605,13 @@ enum AppAct {
             let left = deadline.timeIntervalSinceNow
             guard left >= 1 else { throw OutOfTime() }
             guard LocalModels.model(model)?.format == .mlx else {
-                // llama.cpp holds the answer to the shape by itself.
+                // llama.cpp holds the answer to the shape by itself. A model that thinks first (Qwen) is asked not to:
+                // the schema leaves no room for the thinking, and a small model on this Mac can think past the
+                // turn's minute before it gives the step's few lines. Templates without the switch ignore it.
                 let (system, prompt) = planPrompt(r, tag: tag, retry: retry, schemaInPrompt: false)
                 let (text, _) = try await AppAI.viaOpenAICompatible("\(base)/v1/chat/completions", key: nil, prompt: prompt, images: [],
-                                                                    system: system, model: model, schema: planSchema(r), timeout: left)
+                                                                    system: system, model: model, schema: planSchema(r), timeout: left,
+                                                                    templateArgs: ["enable_thinking": false])
                 return (parse(plan: text, for: r), 0)
             }
             if mlxTakesTools(LocalModels.mlxVersion) {

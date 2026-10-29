@@ -675,9 +675,10 @@ enum AppAI {
 
     /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.
     /// `timeout` is for a caller with a deadline of its own; otherwise a model has time to load first.
+    /// `templateArgs` go to the model's chat template (llama.cpp's `chat_template_kwargs`).
     static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
                                     system: String, model: String, schema: [String: Any]? = nil,
-                                    timeout: TimeInterval = 600) async throws -> (String, Double) {
+                                    timeout: TimeInterval = 600, templateArgs: [String: Any]? = nil) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
@@ -691,6 +692,7 @@ enum AppAI {
         messages.append(["role": "user", "content": content])
         var body: [String: Any] = ["model": model, "messages": messages]
         if let schema { body["response_format"] = ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": schema]] }
+        if let templateArgs { body["chat_template_kwargs"] = templateArgs }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
