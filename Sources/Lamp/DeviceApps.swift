@@ -402,6 +402,12 @@ enum DeviceApps {
         return picture
     }
 
+    /// The app's screen as text, through the bridge's `screen`; nil when the integration has none.
+    static func screen(_ project: LampProject, on device: Device) async throws -> String? {
+        guard let integration = integration(for: project), let screen = integration.bridge?.screen, !screen.isEmpty else { return nil }
+        return try await IntegrationRunner(integration: integration, device: device).run(screen, extra: values(project)).screen
+    }
+
     /// Presses one of the remote's keys by Lamp's name for it, through the bridge's use.
     static func press(_ key: String, in project: LampProject, on device: Device) async throws {
         guard let integration = integration(for: project), let use = integration.bridge?.use, let name = integration.bridge?.keys?[key] else {
@@ -704,6 +710,11 @@ extension Agent.Rules {
             if integration?.bridge?.type?.isEmpty == false { rule += "`type` with `text` types into a keyboard on its screen once one has focus. " }
         }
         if integration?.bridge?.look == nil { rule += "Its integration has no way to picture its screen, so ask the person what they see. " }
+        if integration?.bridge?.screen != nil {
+            return rule + "Both also give you the screen as text, as the \(name) describes it: the tree of the app's nodes, with what each "
+                + "shows, where it is and which one has focus. Read it to check text and focus the picture is too small for. There is no "
+                + "pointer: try the app the way the person will, with the keys.\n"
+        }
         return rule + "There is no screen as text and no pointer: try the app the way the person will, with the keys.\n"
     }
 }

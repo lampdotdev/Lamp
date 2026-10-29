@@ -8914,7 +8914,7 @@ final class Store: ObservableObject {
         }
         guard let run = deviceRuns[project.id] else { return (200, ["text": summary]) }
         note("Looking at \(project.name)", for: project)
-        var text = summary + " " + (await deviceAppPicture(project, run: run))
+        var text = summary + " " + (await deviceAppPicture(project, run: run)) + (await deviceAppScreen(project, run: run))
         if let answer = run.installAnswer, !answer.isEmpty { text += "\n\nWhat the \(name) answered when the app was put on it:\n\(answer)" }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let kept = try? await DeviceApps.log(project, on: run.device) {
@@ -8924,6 +8924,18 @@ final class Store: ObservableObject {
         } else if Privacy.sharesLog, let tail = Runtime.logTail(project, lines: 60) { text += "\n\nWhat it printed (the device's log):\n\(tail)" }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
+    }
+
+    /// The app's screen as text, as the device describes it (its integration's `screen`), for after its picture: what
+    /// each node shows and which has focus, which a picture of a TV across the room is often too small to tell. Shared
+    /// with the agent as pictures are; empty when the integration has no way to read it or the device didn't answer.
+    private func deviceAppScreen(_ project: LampProject, run: DeviceApps.Run) async -> String {
+        guard Privacy.sharesPictures, deviceRuns[project.id] === run,
+              let screen = try? await DeviceApps.screen(project, on: run.device), !screen.trimmed.isEmpty else { return "" }
+        // Indentation between tags is most of a tree's size; what each node says is kept.
+        let compact = screen.replacingOccurrences(of: #">\s+<"#, with: "><", options: .regularExpression)
+        let cut = compact.count > 12_000 ? String(compact.prefix(12_000)) + "… (cut)" : compact
+        return "\n\nThe screen as text, as \(run.device.name) describes it (the app's tree of nodes):\n" + cut
     }
 
     /// Takes the device's picture of its screen into the app's runtime folder, and says what it is.
@@ -8998,7 +9010,7 @@ final class Store: ObservableObject {
             text += "\n\nThis is the app as last put on the \(name): it doesn't have the changes you've made to the code since. Call look_at_app to put them there."
         }
         guard deviceRuns[project.id] === run else { return (200, ["text": text + "\n\nThe \(name) shows another app now. Call look_at_app to put this one back."]) }
-        text += "\n\n" + (await deviceAppPicture(project, run: run))
+        text += "\n\n" + (await deviceAppPicture(project, run: run)) + (await deviceAppScreen(project, run: run))
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
