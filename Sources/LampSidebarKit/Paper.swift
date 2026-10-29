@@ -3,8 +3,8 @@ import AppKit
 
 /// Lamp's colors, as lamp.dev has them: dark ink on warm paper, and six stripes from green to magenta that mark what's
 /// Lamp's own (the welcome's band, a remix's line back to its original, work under way). The desk, the welcome and the
-/// chat all draw from here, so the three never drift apart. Each color has a dark form for the chat beside an app in
-/// dark mode; the desk and the welcome are always light.
+/// chat all draw from here, so the three never drift apart. Each color has a dark form, a warm night paper with cream
+/// ink, and the three follow the Mac's appearance.
 public enum Paper {
     /// The page everything sits on.
     public static let page = shade(light: 0xF6F1E4, dark: 0x1F1D19)
@@ -21,7 +21,7 @@ public enum Paper {
     /// Words that come second.
     public static let muted = shade(light: 0x5D574B, dark: 0xB9B2A1)
     /// A small heading in capitals ("YOUR DEVICES").
-    public static let label = shade(light: 0xA8361F, dark: 0xF08A1C)
+    public static let label = shade(light: 0xA8361F, dark: 0xEF6B4F)
     /// A thin line between things, and a field's edge.
     public static let rule = shade(light: 0x1B1A17, dark: 0xF2ECDA, alpha: 0.14)
 

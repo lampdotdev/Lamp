@@ -85,8 +85,6 @@ struct WishDesk: View {
             } }
         }
         .modifier(ClearToolbar())
-        // Drawn on Lamp's paper, as in the welcome, whatever the Mac's appearance.
-        .environment(\.colorScheme, .light)
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
@@ -471,7 +469,7 @@ struct DeskIdeas: View {
         VStack(alignment: .leading, spacing: 12) { content() }
             .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(accent ? Color.accentColor.opacity(0.1) : Color(nsColor: .textBackgroundColor).opacity(0.7),
+            .background(accent ? Color.accentColor.opacity(0.1) : Paper.card.opacity(0.7),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             // On hover only the outline darkens, as the ideas under a new wish's chat do.
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
