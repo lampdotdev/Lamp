@@ -2951,6 +2951,38 @@ final class Store: ObservableObject {
             return
         }
         guard project.scaffolded, !project.untitled, begin(project) != nil else { return }
+        let copy: LampProject
+        do {
+            copy = try remixCopy(of: project)
+        } catch {
+            finish(project)
+            NSAlert(error: error).runModal()
+            return
+        }
+        // Listed before the original is given back, so a second Remix can't choose the same name.
+        reload()
+        finish(project)
+        guard begin(copy) != nil else { return }
+        _ = await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: copy.dir, env: ["LAMP_MESSAGE": "Remix of \(project.name)"])
+        if let spec = Icons.load(copy) { await renderIcon(copy, spec: spec) }
+        finish(copy)
+        showChat(copy.id)
+        log(copy, .status, "A new copy of \(project.name). \(project.name) stays as it is.")
+        if let change = change?.trimmed, !change.isEmpty {
+            send(change, to: current(copy) ?? copy)
+            return
+        }
+        await run(copy)
+        await rebuildParts(of: current(copy) ?? copy)
+    }
+
+    /// Says a wish is a remix made on this Mac (`remix`), so the desk counts it as the person's whether or not its original
+    /// is still there. In Lamp's own folder, which no shared file, repository or copy of the wish takes along, so a wish
+    /// that came from someone else never has it.
+    nonisolated static let remixedHereMark = ".lamp/remixed-here"
+
+    /// The copy `remix` makes, on disk and not yet listed. Nothing is left of it when it can't be made.
+    func remixCopy(of project: LampProject) throws -> LampProject {
         let fm = FileManager.default
         let name = uniqueName("\(project.name) Remix")
         let exe = Template.identifier(from: name)
@@ -3003,27 +3035,12 @@ final class Store: ObservableObject {
             // it starts with nothing unsaved; its other apps' too.
             try Template.writeOwnedFiles(for: copy)
             if let read = Store.readWish(at: copy.dir) { for part in Parts.load(read) { try Template.writeOwnedFiles(for: part) } }
+            try Data().write(to: copy.dir.appendingPathComponent(Self.remixedHereMark))
         } catch {
             try? fm.removeItem(at: copy.dir)
-            finish(project)
-            NSAlert(error: error).runModal()
-            return
+            throw error
         }
-        // Listed before the original is given back, so a second Remix can't choose the same name.
-        reload()
-        finish(project)
-        guard begin(copy) != nil else { return }
-        _ = await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: copy.dir, env: ["LAMP_MESSAGE": "Remix of \(project.name)"])
-        if let spec = Icons.load(copy) { await renderIcon(copy, spec: spec) }
-        finish(copy)
-        showChat(copy.id)
-        log(copy, .status, "A new copy of \(project.name). \(project.name) stays as it is.")
-        if let change = change?.trimmed, !change.isEmpty {
-            send(change, to: current(copy) ?? copy)
-            return
-        }
-        await run(copy)
-        await rebuildParts(of: current(copy) ?? copy)
+        return copy
     }
 
     /// A background for a copy's icon: not the one it was copied from, as light or dark as that one so the
