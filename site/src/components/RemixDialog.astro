@@ -173,11 +173,15 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     // getting it, with Download first. Should Lamp open late (a browser asking first, answered slowly), it turns back.
     // On the dev server, `?scheme=` opens another Lamp (a Lamp Dev's, or one that's on no Mac) to try either way.
     const scheme = import.meta.env.DEV ? new URLSearchParams(location.search).get("scheme") : null;
+    // Only while an Open is pending, or for a while after it was given up on, does losing focus mean Lamp answered;
+    // later, switching away is only switching away.
     let trying: ReturnType<typeof setTimeout> | undefined;
+    let late = 0;
     const opened = () => {
-      if (!trying && !dialog.hasAttribute("data-missing")) return;
+      if (!trying && Date.now() > late) return;
       clearTimeout(trying);
       trying = undefined;
+      late = 0;
       dialog.removeAttribute("data-missing");
       openLink.textContent = "Open in Lamp";
       status.textContent = "Opened in Lamp. Your change is waiting in its chat.";
@@ -186,6 +190,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     document.addEventListener("visibilitychange", () => { if (document.hidden) opened(); }, { signal });
     addEventListener("pagehide", opened, { signal });
     signal.addEventListener("abort", () => clearTimeout(trying));
+    dialog.addEventListener("close", () => { clearTimeout(trying); trying = undefined; late = 0; }, { signal });
 
     openLink.addEventListener("click", () => {
       let link = origin ? remixLink(origin, text.value) : wishLink(text.value);
@@ -197,6 +202,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       trying = setTimeout(() => {
         trying = undefined;
         if (!document.hasFocus() || document.hidden) return;
+        late = Date.now() + 15000;
         dialog.setAttribute("data-missing", "");
         openLink.textContent = "Try again";
         status.textContent = "Lamp didn't open, so it's probably not on this Mac yet. Download it, and your change will be waiting when it opens.";
@@ -206,6 +212,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     }, { signal });
 
     download.addEventListener("click", () => {
+      late = 0;
       track("idea_download", { idea, place: "remix" });
       // The download leaves this page where it is, so the copy finishes and the dialog can say what happens next.
       copyWish(text.value, { origin }).then((copied) => {

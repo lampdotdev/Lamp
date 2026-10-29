@@ -65,7 +65,11 @@ const shelf: Sleeve[] = [
     return [sleeveOf(id), sleeveOf(id, { text: starter.remix, ink: inks[i % inks.length] })];
   }),
   // Its back is about Lamp, with a Download for Mac.
-  { look: "blank", title: "your idea here…", by: "", kind: "", line: "", tweaks: [], places: [], download: DOWNLOAD_URL },
+  {
+    look: "blank", title: "your idea here…", by: "", kind: "", line: "Remixable software for the things you already own.",
+    tweaks: ["Start from scratch, or from what someone made", "Change it live, while it runs", "Put it on your TV, your phone, your Xbox", "No code, and free"],
+    places: [], download: DOWNLOAD_URL,
+  },
 ];
 
 // What Lamp can put something on today, as people name their things, from what a visitor most likely has to what
@@ -142,8 +146,9 @@ const devices: { name: string; icon: string; brands?: string }[] = [
     <!-- From the shelf: a stack of sleeves, in 3D once lib/tapes.ts has drawn it, the hero's sleeve for each starter,
          lying flat with its spine out, each original with a remix of it under it. One that's clicked comes out and
          stands up as the hero's does, its "Remix me" opening the remix dialog. Without WebGL, and for screen readers,
-         the same sleeves as a list, as tall as it needs, each linking to its remix; a keyboard reaches a button for each
-         that opens the remix dialog for it, as its "Remix me" does. -->
+         the same sleeves as a list, as tall as it needs, each linking to its remix, and the blank one with what's on its
+         back; a keyboard reaches a button for each that opens the remix dialog for it, as its "Remix me" does, and
+         the blank one's Download. -->
     <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
       <div class="tape-host order-last min-h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:min-h-[40rem] lg:order-none" data-tape-stack data-sleeves={JSON.stringify(shelf)}>
         <ul class="tape-fallback flex h-full flex-col justify-center gap-2">
@@ -156,11 +161,19 @@ const devices: { name: string; icon: string; brands?: string }[] = [
                   <span class="font-marker text-lg">{item.title}</span>
                 )}
                 {item.by && <span class="text-[11px] font-bold tracking-wider uppercase">{item.by}</span>}
+                {item.download && (
+                  <div class="flex flex-col gap-1 pt-1 text-sm">
+                    <p class="font-bold">{item.line}</p>
+                    <ul class="list-disc pl-5">{item.tweaks.map((point) => <li>{point}</li>)}</ul>
+                    <a href={item.download} data-download-place="shelf" class="font-bold underline underline-offset-4">Download Lamp for Mac</a>
+                  </div>
+                )}
               </li>
             ))
           }
         </ul>
         {shelf.map((item, i) => item.remix && <button type="button" class="tape-control" data-sleeve={i}>Remix {item.look === "remix" ? `${item.title}: ${item.line}` : item.title}</button>)}
+        {shelf.map((item) => item.download && <a href={item.download} data-download-place="shelf" class="tape-control">Download Lamp for Mac</a>)}
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
         <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>

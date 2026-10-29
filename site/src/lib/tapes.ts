@@ -24,11 +24,12 @@ export type Sleeve = {
   /** The app's name, and the line over it: who made it, or what it's a remix of. */
   title: string;
   by: string;
-  /** What kind of thing it is, and what it is in a line (a remix: its change). */
+  /** What kind of thing it is, and what it is in a line (a remix: its change; the blank one: what Lamp is). */
   kind: string;
   line: string;
   shot?: string;
   treat?: "snow" | "frame";
+  /** The changes on its back; on the blank one's, what Lamp does. */
   tweaks: string[];
   places: { label: string; icon: string }[];
   remix?: string;
@@ -260,22 +261,17 @@ function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined, pointed 
   return canvas;
 }
 
-// The blank sleeve's back is about Lamp itself: what it is, what it does, and a "Download for Mac" where a front has
-// its "Remix me", outlined while it's pointed at.
-const LAMP_POINTS = [
-  "Start from scratch, or from what someone made",
-  "Change it live, while it runs",
-  "Put it on your TV, your phone, your Xbox",
-  "No code, and free",
-];
-function blankBack(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, pointed: boolean) {
+// The blank sleeve's back is about Lamp itself: what it is (its line), what it does (its tweaks), and a "Download for
+// Mac" where a front has its "Remix me", outlined while it's pointed at. The page lists the same words for whoever
+// can't see the canvas.
+function blankBack(sleeve: Sleeve, ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, pointed: boolean) {
   bands(ctx, WARM, 0, 0, 800, 120);
   ctx.fillStyle = INK;
   font(ctx, "900", 132, SANS);
   ctx.fillText("lamp", 52, 300);
   font(ctx, "italic 800", 44, SANS);
-  lines(ctx, "Remixable software for the things you already own.", 688, 3).forEach((line, i) => ctx.fillText(line, 58, 390 + i * 56));
-  LAMP_POINTS.forEach((point, i) => {
+  lines(ctx, sleeve.line, 688, 3).forEach((line, i) => ctx.fillText(line, 58, 390 + i * 56));
+  sleeve.tweaks.slice(0, 4).forEach((point, i) => {
     const y = 600 + i * 150;
     bands(ctx, WARM, 58, y - 40, 14, 56, true);
     ctx.fillStyle = INK;
@@ -310,7 +306,7 @@ function sleeveBack(sleeve: Sleeve, pointed = false) {
   const { canvas, ctx } = sleeveSheet(800);
   ctx.fillStyle = LABEL;
   ctx.fillRect(0, 0, 800, 1448);
-  if (sleeve.look === "blank") return blankBack(ctx, canvas, pointed);
+  if (sleeve.look === "blank") return blankBack(sleeve, ctx, canvas, pointed);
   ctx.fillStyle = INK;
   font(ctx, "900", 110, SANS, sleeve.title, 688);
   ctx.fillText(sleeve.title, 52, 170);
@@ -518,6 +514,9 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
     }).observe(host);
     host.prepend(canvas);
     host.classList.add("is-3d");
+    // The flat version stays for screen readers, but its links are out of a keyboard's way: they're not seen, and
+    // the controls beside them do the same.
+    for (const link of host.querySelectorAll<HTMLElement>(".tape-fallback a, .tape-fallback button")) link.tabIndex = -1;
   };
 
   return { THREE, scene, camera, canvas, texture, flat, solid, pointer, hit, on, hand, run };

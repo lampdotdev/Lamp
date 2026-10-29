@@ -34,6 +34,18 @@ test("copying writes the words and the marked form together", async () => {
   assert.equal(await written[0].forms["text/html"].text(), wishHTML(wish));
 });
 
+test("a remix with no words is still copied with its origin, and a wish with none isn't", async () => {
+  const written = [];
+  class Item { constructor(forms) { this.forms = forms; } }
+  const clipboard = { write: async (items) => { written.push(...items); }, writeText: async () => assert.fail("not needed") };
+  const origin = { starter: "newyork" };
+  assert.equal(await copyWish("  ", { clipboard, Item, origin }), "marked");
+  assert.equal((await written[0].forms["text/plain"].text()).trim(), "");
+  assert.equal(await written[0].forms["text/html"].text(), wishHTML("", origin));
+  assert.equal(await copyWish("  ", { clipboard, Item }), "none");
+  assert.equal(await copyWish("", { clipboard: { writeText: async () => assert.fail("no words to copy") }, Item: undefined, origin }), "none");
+});
+
 test("a browser that can't copy the marked form still copies the words, and says so", async () => {
   let plain = null;
   const refusing = { write: async () => { throw new Error("no"); }, writeText: async (t) => { plain = t; } };
