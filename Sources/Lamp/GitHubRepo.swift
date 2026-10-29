@@ -222,13 +222,13 @@ enum GitHubRepo {
         let font = "font-family=\"-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif\" font-size=\"18\" font-weight=\"800\""
         let open = """
             <svg xmlns="http://www.w3.org/2000/svg" width="196" height="48" viewBox="0 0 196 48" role="img" aria-label="Open in Lamp">\
-            <rect x="1" y="1" width="194" height="46" rx="7" fill="#1b1a17" stroke="#f2ecda" stroke-width="2"/>\(stripes)\
+            <rect x="1" y="1" width="194" height="46" rx="6" fill="#1b1a17" stroke="#f2ecda" stroke-width="2"/>\(stripes)\
             <text x="56" y="31" fill="#f2ecda" \(font)>Open in Lamp</text></svg>
 
             """
         let play = """
             <svg xmlns="http://www.w3.org/2000/svg" width="236" height="48" viewBox="0 0 236 48" role="img" aria-label="Play in your browser">\
-            <rect x="1" y="1" width="234" height="46" rx="7" fill="#f6b81c" stroke="#1b1a17" stroke-width="2"/>\
+            <rect x="1" y="1" width="234" height="46" rx="6" fill="#f6b81c" stroke="#1b1a17" stroke-width="2"/>\
             <path d="M20 14 L36 24 L20 34 Z" fill="#1b1a17"/>\
             <text x="48" y="31" fill="#1b1a17" \(font)>Play in your browser</text></svg>
 
