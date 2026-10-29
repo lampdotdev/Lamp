@@ -227,7 +227,7 @@ extension Agent {
     /// The rules for a screen: the TV app's rules for the page (it's the same page), with where it's shown in the
     /// request's device line (`Rules.screenPlaces`), since a place may be given at any time.
     static func screenPrompt(for project: LampProject) -> String {
-        let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.screenDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
+        let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.screenDesign(project.openPlaces), Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
                      Skills.index(Skills.offered(.screen)), Rules.begin, Rules.finish]
         return (Rules.screenHeader + "\n\nRules:\n" + rules.joined())
@@ -239,7 +239,7 @@ extension Agent {
     /// The rules for a screen that's one of a wish's apps, in a folder of its own: the screen's own, for the files
     /// there, without those about the wish as a whole.
     static func screenPrompt(part folder: String, alone: Bool = false) -> String {
-        let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.screenDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
+        let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.screenDesign(nil), Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
                      Skills.index(Skills.offered(.screen))]
         return (Rules.partHeader("a web app, a page in Web/ shown full screen, at home on the Mac and shown on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
@@ -274,8 +274,9 @@ extension Agent.Rules {
     """ }
 
     /// How a screen looks: like a TV app's page (`tvDesign`), but filling whatever it's shown on rather than a fixed
-    /// 1920x1080, and looked at in several shapes.
-    static let screenDesign = """
+    /// 1920x1080, and looked at in the shapes of the places it's shown (`places`, or nil to read them off the request's
+    /// device line): a Mac web app is never sent to look at itself as a TV, a frame and a phone.
+    static func screenDesign(_ places: [Destination]?) -> String { """
     - Design for a screen glanced at from across a room that fills whatever it's on: a 16:9 TV, a Mac window of any \
     size, a photo frame, an iPad either way up, a phone. Lay it out as a responsive web page, never as a fixed canvas \
     scaled like a picture: CSS grid and flexbox that share out the space, type and spacing sized from the screen (a unit \
@@ -286,11 +287,48 @@ extension Agent.Rules {
     narrow screen a stacked column may scroll. Text easy to read from a few meters, headings much larger, high \
     contrast. Everything is reached with a remote's arrows and OK as well as by touch and the mouse: what has focus \
     must be unmistakable, focus moves the way the layout looks, targets are large, and nothing needs hover. Before you \
-    finish, look at it in several shapes with `look_at_app`'s `shape`: "1920x1080" (a TV), "1280x800" (a photo frame), \
-    "820x1180" (an iPad upright) and "390x844" (a phone). A page whose viewport is `width=1920` (a screen made before \
-    screens filled any shape) is zoomed whole instead and looked at only as a TV: make it fill any shape when it's to \
-    go on a phone, an iPad or a frame, starting with its viewport (`width=device-width, initial-scale=1`).
-    """
+    finish, look at it with `look_at_app`'s `shape` in the shapes of the places it's shown, and only those: \
+    \(shapesToLook(places)). When it's put somewhere new, look at it in that place's shapes too. A page whose viewport \
+    is `width=1920` (a screen made before screens filled any shape) is zoomed whole instead and looked at only as a TV: \
+    make it fill any shape when it's to go on a phone, an iPad or a frame, starting with its viewport \
+    (`width=device-width, initial-scale=1`).
+    """ }
+
+    /// The shapes a screen is looked at in for each place it's shown, as `look_at_app`'s `shape` takes them.
+    static func screenShapes(_ place: Destination) -> [(shape: String, what: String)] {
+        switch place {
+        case .mac: [("1280x800", "a Mac window"), ("800x600", "a small Mac window")]
+        case .ios: [("820x1180", "an iPad upright"), ("390x844", "an iPhone")]
+        case .android: [("390x844", "an Android phone"), ("1280x800", "an Android tablet or photo frame")]
+        case .androidTV, .tv, .device: [("1920x1080", "a TV")]
+        }
+    }
+
+    /// The shapes to look at in before finishing: those of the places given, each once; with none given, each place's,
+    /// for the places the request's device line names.
+    static func shapesToLook(_ places: [Destination]?) -> String {
+        guard let places, !places.isEmpty else {
+            let all: [(String, [Destination])] = [("the Mac", [.mac]), ("an iPhone or iPad", [.ios]), ("an Android device", [.android]),
+                                                  ("a TV or an Xbox", [.tv])]
+            return "for each place the request's device line names, " + all.map { name, place in
+                name + " " + place.flatMap(screenShapes).map { "\"\($0.shape)\"" }.joined(separator: " and ")
+            }.joined(separator: "; ")
+        }
+        var shapes: [(shape: String, what: String)] = []
+        for (shape, what) in places.flatMap(screenShapes) {
+            if let at = shapes.firstIndex(where: { $0.shape == shape }) { shapes[at].what += " or " + what } else { shapes.append((shape, what)) }
+        }
+        return shapes.map { "\"\($0.shape)\" (\($0.what))" }.joined(separator: ", ")
+    }
+
+    /// What `make_app_for` says once a web app's places are set: the shapes to look at it in, from the places it has now,
+    /// since the change rules it was given with its kind were written before they were (`Store.change`).
+    static func screenPlaced(_ project: LampProject) -> String {
+        (ScreenKit.fillsAnyShape(project)
+            ? "It's the same page everywhere, filling each screen; before you finish, look at it with `look_at_app`'s `shape` in the "
+                + "shapes of its places: \(shapesToLook(project.openPlaces)). "
+            : "It's the same page everywhere, laid out at 1920x1080 and scaled to each screen. ") + screenPlaces(project)
+    }
 
     /// Where a screen is shown, for the request's device line.
     static func screenPlaces(_ project: LampProject) -> String {
