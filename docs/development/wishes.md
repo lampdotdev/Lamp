@@ -203,12 +203,16 @@ A web app, and a screen made before, travel the same way (`ScreenFiles`, asked f
 folder holds a TV app's page too: `Sharing.kindFiles`): Web/ without Lamp's lamp.js, with its pages and scripts as code
 and its pictures, sounds and fonts as data, and the Swift beside the page (Sources/Native.swift, or any other Swift of
 the agent's there) as code, never Lamp's app around the page (LampScreen.swift or LampWebApp.swift, LampPage.swift,
-LampSupport.swift) or its Android app, which the Mac that opens it writes (`ScreenKit.write`). The file's `platform` says
+LampControllerKit.swift, LampSupport.swift) or its Android app, which the Mac that opens it writes (`ScreenKit.write`). The file's `platform` says
 which of the two it is, and the copy is that kind: a screen stays a screen, at its own address with its saves. The copy
 opens on the Mac, wherever the sender had put it. Such a file says 12: a Lamp from before would take the page for a TV
 app's and leave the Swift beside it. The review is told what a page is and what it reaches through Lamp (`pageReview`:
 Lamp's AI through the app around it, the device through Native.swift), for a game too, and reads the page's reach as a
-TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `isPage`). On GitHub, Lamp's files around
+TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `isPage`). A copy of a library Lamp ships
+(three.js, Rapier) that is Lamp's byte for byte is left out of the review wherever it sits (`Sharing.knownLibraries`);
+one changed in any way is the sender's code. The rest of the sender's code is read in full: in requests of at most
+`Sharing.batchLimit` characters, a long file in slices, their answers put together with the highest risk any gave
+(`Sharing.Answer.merged`), and only past `Sharing.batchCount` requests does the sheet say AI didn't check all of it. On GitHub, Lamp's files around
 the page are the ones `GitHubRepo.ownedPaths` adds and an update leaves out (`DeviceSupport.paths`, `ScreenKit.paths`).
 
 ## Credit

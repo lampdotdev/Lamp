@@ -182,7 +182,7 @@ enum GameFiles {
 /// A web app's or a screen's files in a shared file (`Sharing`): its page in Web/, the agent's HTML, CSS and JavaScript as
 /// code and its pictures, sounds and fonts as data, and the Swift beside the page that answers its calls of the device
 /// (Sources/Native.swift, as a game's) as code too. Never Lamp's own files around the page (Web/lamp.js, the app that shows
-/// the page, LampPage.swift and LampSupport.swift in Sources/, the Android app), which the Mac that opens the file writes
+/// the page, LampPage.swift, LampControllerKit.swift and LampSupport.swift in Sources/, the Android app), which the Mac that opens the file writes
 /// itself (`ScreenKit.write`), never a hidden file or a link. Both kinds travel the same way; the file's `platform` says
 /// which the copy is, so a screen stays a screen with its address and saves (`ScreenKit`).
 enum ScreenFiles {
@@ -190,11 +190,11 @@ enum ScreenFiles {
     /// file's code is read before the kind's project exists.
     static func isLamps(_ relative: String) -> Bool {
         relative == TVTemplate.supportFile || relative == ScreenKit.screenPage.swift || relative == ScreenKit.webAppPage.swift
-            || relative == "Sources/LampPage.swift" || relative == "Sources/LampSupport.swift"
+            || relative == "Sources/LampPage.swift" || relative == "Sources/LampControllerKit.swift" || relative == "Sources/LampSupport.swift"
     }
 
-    /// The Swift beside the page first: it's what reaches the device, and the review sends the code in this order up to a
-    /// cap, which a large page would push it past.
+    /// The Swift beside the page first: it's what reaches the device, and the review sends the code in this order, so it
+    /// goes in the first request however large the page is.
     static func list(in root: URL) -> (code: [URL], data: [URL]) {
         let fm = FileManager.default
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]

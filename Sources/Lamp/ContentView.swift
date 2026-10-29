@@ -623,6 +623,16 @@ struct ImportReviewCard: View {
                     section("What it does") {
                         // The reviewer is asked for a sentence or two: a few lines here, the whole of it on hover.
                         Text(review.summary).lineLimit(5).fixedSize(horizontal: false, vertical: true).help(review.summary)
+                        // What the reviewer saw it do for the person: features, said with what the app is, not as
+                        // permissions beside what Lamp's own checks found in the code.
+                        ForEach(review.capabilities, id: \.self) { feature in
+                            Label {
+                                Text(verbatim: feature).lineLimit(2).fixedSize(horizontal: false, vertical: true).help(feature)
+                            } icon: {
+                                Image(systemName: "checkmark").foregroundStyle(.secondary)
+                            }
+                            .font(.callout)
+                        }
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.summary] = $0 }
                 }
@@ -731,6 +741,8 @@ struct ImportReviewCard: View {
         var id: String { text }
     }
 
+    static let partlyChecked = "AI didn't check all of its code. Open only if you trust the sender"
+
     /// The verdict first, unless it's an all-clear (said by nothing being here), then each concern.
     /// `prepared` is an update Lamp prepared for an app here: there's no sender to trust, only the update to look at.
     static func considerations(_ review: ImportReview, prepared: Bool = false) -> [Consideration] {
@@ -739,10 +751,10 @@ struct ImportReviewCard: View {
         case .risky where prepared:
             list.append(Consideration(text: "Looks risky. Don't update unless you expected this", weight: .warning, icon: "xmark.octagon.fill"))
         case .partlyChecked where prepared:
-            list.append(Consideration(text: "Only partly checked. Update only if you trust where the app came from", weight: .caution))
+            list.append(Consideration(text: "AI didn't check all of its code. Update only if you trust where the app came from", weight: .caution))
         case .risky: list.append(Consideration(text: "Looks risky. Don't open unless you trust the sender", weight: .warning, icon: "xmark.octagon.fill"))
         case .sensitive: list.append(Consideration(text: "Does sensitive things. Open only if you expected that", weight: .warning, icon: "exclamationmark.octagon.fill"))
-        case .partlyChecked: list.append(Consideration(text: "Only partly checked. Open only if you trust the sender", weight: .caution))
+        case .partlyChecked: list.append(Consideration(text: Self.partlyChecked, weight: .caution))
         case .powerful: list.append(Consideration(text: "Powerful. Check it's what you expect", weight: .caution))
         case .checkedOnThisMac: list.append(Consideration(text: "Nothing worrying found, but not by a check Lamp can vouch for", weight: .caution))
         case .unchecked: list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
@@ -752,6 +764,10 @@ struct ImportReviewCard: View {
         // in red, that no AI read it, and why.
         if review.risk == nil, review.verdict != .unchecked, review.asked || review.note != nil {
             list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
+        }
+        // A worse verdict leads, and unread code is still said, once.
+        if review.partial, review.risk != nil, review.verdict != .partlyChecked {
+            list.append(Consideration(text: "AI didn't check all of its code", weight: .caution))
         }
         // A high rating makes each reason for it as serious as the rating.
         let weight: Consideration.Weight = review.risk == .high ? .warning : .caution
@@ -779,12 +795,11 @@ struct ImportReviewCard: View {
     }
 
     /// One row per thing the app can do, like the permissions list in System Settings: what Lamp's own checks
-    /// found in the code, worst first, then what the AI noticed beyond them, each an icon in a tinted square and
-    /// a line in plain words.
+    /// found in the code, worst first, each an icon in a tinted square and a line in plain words. What the AI saw it
+    /// do for the person is under What it does.
     private func capabilities(_ review: ImportReview) -> some View {
         let found = review.detected.sorted { $0.level > $1.level }
         let rows = found.map { Row(icon: $0.icon, tint: tint(for: $0.level), text: $0.label) }
-            + review.capabilities.map { Row(icon: "sparkle.magnifyingglass", tint: .purple, text: $0) }
         return VStack(spacing: 0) {
             if rows.isEmpty {
                 // Says what the checks found, not what the app can't do.
