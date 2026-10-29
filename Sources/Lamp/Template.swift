@@ -3486,8 +3486,17 @@ enum Template {
                 throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.",
                                      needsSetup: .text)
             }
-            // What the phone carries answers all three.
-            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
+            // What the phone carries answers all three. Actions need Lamp, whatever the phone carries.
+            if path == "/ai/status" {
+                let away: [String: Any] = ["available": true, "route": "OpenRouter, from this phone", "where": "remote"]
+                return ["text": true, "decisions": true, "pictures": true, "act": false,
+                        "details": ["text": away, "decisions": away, "pictures": away,
+                                    "act": ["available": false, "where": "unknown", "setup": "openLamp",
+                                            "reason": "Asking the app to do things needs Lamp: use it on the same Wi‑Fi as the Mac."] as [String: Any]]]
+            }
+            if path == "/ai/act" {
+                throw LampAI.Failure(message: "Couldn't reach Lamp, and asking the app to do things needs it. Try again on the same Wi‑Fi as the Mac.")
+            }
             fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
             switch path {
             case "/ai":
@@ -13437,10 +13446,15 @@ enum Template {
     /// Text calls take a few seconds; decisions well under a second; image calls 10–60 seconds. Show a ProgressView, and show
     /// `error.localizedDescription` on failure. Aspect ratios look like "1:1", "16:9", "3:4".
     ///
-    /// Not every Mac has every kind of AI set up. `await LampAI.isAvailable(.pictures)` (or `.text`, `.decisions`) says
+    /// Not every Mac has every kind of AI set up. `await LampAI.isAvailable(.pictures)` (or `.text`, `.decisions`, `.act`) says
     /// whether it can answer now: check it where a feature depends on it, and show the feature with a short note
     /// ("Pictures need AI set up in Lamp") rather than hiding it or failing at it. A call that fails for that reason has
-    /// `needsSetup` set on its `LampAI.Failure`, and Lamp offers the person a way to set it up.
+    /// `needsSetup` set on its `LampAI.Failure`, and Lamp offers the person a way to set it up. `LampAI.status(_:)` says
+    /// more: what answers, whether on this Mac or at a service, and why not; `LampAI.openSetup(for:)` is the button for it.
+    ///
+    /// To have the app do what the person asks in their own words, give `LampAI.act` (or a `LampActSession`) the app's
+    /// own reads and checked writes: the AI chooses among them, the app checks and runs each, and the result says what
+    /// was done from the tools' receipts.
     enum LampAI {
         struct Failure: LocalizedError {
             let message: String
@@ -13449,7 +13463,8 @@ enum Template {
             var errorDescription: String? { message }
         }
 
-        enum Capability: String { case text, decisions, pictures }
+        /// `act`: the app's own tools doing what the person asks (`LampAI.act`).
+        enum Capability: String { case text, decisions, pictures, act }
 
         /// Whether this kind of AI can answer now. False when Lamp can't be reached and the phone has no key.
         static func isAvailable(_ capability: Capability) async -> Bool {
@@ -13913,6 +13928,569 @@ enum Template {
                   let jpeg = LampImage.lampJPEG(scaled, quality: 0.8)
             else { return nil }
             return ["media_type": "image/jpeg", "data": jpeg.base64EncodedString()]
+        }
+    }
+
+    // MARK: - Doing things for the person
+
+    /// How one kind of AI stands for this app now, as Lamp sees it (`LampAI.status`).
+    struct LampAIStatus {
+        /// Where the AI works out its answer, for telling the person where their words go. A Claude Code or Codex
+        /// sign-in runs on the Mac but sends what it's given to its company: that's `remote`.
+        enum Processing: String { case onDevice, remote, unknown }
+        /// What the person can do when it can't answer: set it up in Lamp, open Lamp, or update Lamp.
+        enum Setup: String { case setUpInLamp = "lamp", openLamp, updateLamp }
+
+        var available: Bool
+        /// What answers, as the person would say it ("Claude Sonnet via Claude Code"); nil when nothing does.
+        var route: String?
+        var processing: Processing
+        /// Why it can't answer, or why it isn't the best it could be, in a sentence to show as it is.
+        var reason: String?
+        var setup: Setup?
+    }
+
+    extension LampAI {
+        /// Whether a kind of AI answers this app now, what answers it, where, and if not, why and what would help. A
+        /// status that says available isn't a promise: a call can still fail (signed out, offline), so keep the
+        /// person's request and show the failure with a way to try again.
+        static func status(_ capability: Capability) async -> LampAIStatus {
+            let reply: [String: Any]
+            do { reply = try await post("/ai/status", [:], timeout: 10) } catch {
+                return LampAIStatus(available: false, route: nil, processing: .unknown,
+                                    reason: "Lamp isn't open, or can't be reached from here.", setup: .openLamp)
+            }
+            guard let details = (reply["details"] as? [String: Any])?[capability.rawValue] as? [String: Any] else {
+                // A Lamp from before `details` answers with booleans alone, and knows nothing of actions.
+                if capability == .act {
+                    return LampAIStatus(available: false, route: nil, processing: .unknown, reason: "This needs a newer Lamp.", setup: .updateLamp)
+                }
+                let on = reply[capability.rawValue] as? Bool ?? false
+                return LampAIStatus(available: on, route: nil, processing: .unknown,
+                                    reason: on ? nil : "AI isn't set up in Lamp yet.", setup: on ? nil : .setUpInLamp)
+            }
+            let available = details["available"] as? Bool ?? false
+            return LampAIStatus(available: available, route: details["route"] as? String,
+                                processing: LampAIStatus.Processing(rawValue: details["where"] as? String ?? "") ?? .unknown,
+                                reason: details["reason"] as? String,
+                                setup: (details["setup"] as? String).flatMap(LampAIStatus.Setup.init(rawValue:)) ?? (available ? nil : .setUpInLamp))
+        }
+
+        /// The person pressed the app's "Set up in Lamp": Lamp shows the ways to set it up in the app's chat, which
+        /// opens beside the window. Only ever from the person's press. Keep what they typed, check `status` again when
+        /// the app comes back to the front, and let them send it again themselves: never run it for them after setup.
+        @MainActor static func openSetup(for capability: Capability) {
+            Task { @MainActor in
+                _ = try? await post("/ai/setup", ["capability": capability.rawValue], timeout: 10)
+                #if os(macOS)
+                LampSidebar.openFromMenu()
+                #endif
+            }
+        }
+
+        /// The person asks the app to do something in their own words, and the app's own tools do it: a few reads and
+        /// checked writes over its data, chosen by the AI, run by the app. `LampActSession` has the details; this starts a
+        /// request in `session`, or in a session of its own when there's none to keep (no questions back can be answered then).
+        @MainActor static func act(request: String, about: String = "", context: (any Encodable)? = nil, tools: [LampActTool],
+                                   session: LampActSession? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn {
+            (session ?? LampActSession(about: about, tools: tools)).ask(request, context: context, onStep: onStep)
+        }
+
+        fileprivate static var actPresent: String { present }
+    }
+
+    /// The shape of one argument of a tool, as Lamp checks it before the app sees the call.
+    struct LampActArg {
+        fileprivate let json: [String: Any]
+
+        private static func make(_ type: String, _ about: String, optional: Bool, _ more: [String: Any] = [:]) -> LampActArg {
+            var json = more
+            json["type"] = type
+            if !about.isEmpty { json["about"] = about }
+            if optional { json["optional"] = true }
+            return LampActArg(json: json)
+        }
+        /// Text; with `oneOf`, one of those exactly (ids, kinds of operation).
+        static func text(_ about: String = "", oneOf: [String] = [], optional: Bool = false) -> LampActArg {
+            make("string", about, optional: optional, oneOf.isEmpty ? [:] : ["oneOf": oneOf])
+        }
+        static func whole(_ about: String = "", min: Int? = nil, max: Int? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = [:]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("integer", about, optional: optional, more)
+        }
+        static func number(_ about: String = "", min: Double? = nil, max: Double? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = [:]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("number", about, optional: optional, more)
+        }
+        static func yesNo(_ about: String = "", optional: Bool = false) -> LampActArg { make("boolean", about, optional: optional) }
+        /// A day, YYYY-MM-DD.
+        static func day(_ about: String = "", optional: Bool = false) -> LampActArg { make("date", about, optional: optional) }
+        /// A date and time, ISO 8601 with its offset.
+        static func moment(_ about: String = "", optional: Bool = false) -> LampActArg { make("datetime", about, optional: optional) }
+        static func list(of item: LampActArg, _ about: String = "", min: Int? = nil, max: Int? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = ["of": item.json]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("list", about, optional: optional, more)
+        }
+
+        fileprivate var optional: Bool { json["optional"] as? Bool == true }
+    }
+
+    /// For a tool that takes no arguments.
+    struct LampActNoArgs: Decodable {}
+
+    /// What a tool's code is told about the call it runs.
+    struct LampActCall {
+        /// The same for the same change asked again in this request, through every question back and answer: make the
+        /// ids of what a write adds from it, so a change delivered twice finds what it added the first time.
+        let key: String
+        /// The AI's id for this call.
+        let id: String
+        /// The person's request, kept through its questions back.
+        let request: String
+        /// When the turn's time runs out. A write that waits (a network call) checks `Task.isCancelled` after it.
+        let deadline: Date
+    }
+
+    /// What a write did, in the app's own words. It's what the person is shown and what the AI is told; never write
+    /// more than the code knows ("Sent" when a device took a command, not "The lights are on").
+    struct LampActReceipt {
+        var summary: String
+        /// Anything else the AI should see, such as the id of what was added. JSON-friendly values only.
+        var details: [String: Any] = [:]
+
+        init(_ summary: String, details: [String: Any] = [:]) {
+            self.summary = summary
+            self.details = details
+        }
+    }
+
+    /// One of the app's tools: a read (looks something up) or a write (changes something), each a few lines over the
+    /// app's own data and commands. A write has a `check` of its own, run right before it, that looks its items up
+    /// again by id and says why it can't be done now; it runs only when the check says nothing.
+    struct LampActTool {
+        let name: String
+        let about: String
+        let reads: Bool
+        let args: [String: LampActArg]
+        fileprivate let check: (@MainActor ([String: Any], LampActCall) async throws -> String?)?
+        fileprivate let perform: @MainActor ([String: Any], LampActCall) async throws -> Any
+
+        fileprivate static func decode<Args: Decodable>(_ args: [String: Any], as type: Args.Type) throws -> Args {
+            guard let data = try? JSONSerialization.data(withJSONObject: args) else { throw LampAI.Failure(message: "Its arguments couldn't be read.") }
+            do { return try JSONDecoder().decode(Args.self, from: data) } catch {
+                throw LampAI.Failure(message: "Its arguments don't fit: \(error.localizedDescription)")
+            }
+        }
+
+        /// A look-up with nothing to say. `run` returns what the AI should see: ids and names, as little as answers it.
+        static func read<Value: Encodable>(_ name: String, _ about: String,
+                                           run: @escaping @MainActor () async throws -> Value) -> LampActTool {
+            read(name, about, args: [:], as: LampActNoArgs.self) { _, _ in try await run() }
+        }
+
+        /// A look-up with arguments, decoded as `type`.
+        static func read<Args: Decodable, Value: Encodable>(_ name: String, _ about: String, args: [String: LampActArg],
+                                                            as type: Args.Type,
+                                                            run: @escaping @MainActor (Args, LampActCall) async throws -> Value) -> LampActTool {
+            LampActTool(name: name, about: about, reads: true, args: args, check: nil) { raw, call in
+                let value = try await run(try decode(raw, as: Args.self), call)
+                let data = try JSONEncoder().encode(value)
+                return try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+            }
+        }
+
+        /// A change. `check` says in a sentence why it can't be done now (the item is gone, the device can't, the value
+        /// is out of range), or nil; `run` does it the way the app's own button does and says what it did.
+        static func write<Args: Decodable>(_ name: String, _ about: String, args: [String: LampActArg],
+                                           as type: Args.Type,
+                                           check: @escaping @MainActor (Args, LampActCall) async -> String?,
+                                           run: @escaping @MainActor (Args, LampActCall) async throws -> LampActReceipt) -> LampActTool {
+            LampActTool(name: name, about: about, reads: false, args: args,
+                        check: { raw, call in await check(try decode(raw, as: Args.self), call) },
+                        perform: { raw, call in try await run(try decode(raw, as: Args.self), call) })
+        }
+
+        fileprivate var declared: [String: Any] {
+            ["name": name, "about": about, "reads": reads, "args": args.mapValues(\.json)]
+        }
+
+        /// The app's own check of a call's shape, beside Lamp's: arguments it declared, none it needs missing.
+        fileprivate func problem(_ given: [String: Any]) -> String? {
+            if let extra = given.keys.sorted().first(where: { args[$0] == nil }) { return "\(name) has no argument \(extra)." }
+            if let missing = args.keys.sorted().first(where: { !args[$0]!.optional && (given[$0] == nil || given[$0] is NSNull) }) {
+                return "\(name) needs \(missing)."
+            }
+            return nil
+        }
+    }
+
+    /// A change the app made, with what its tool said.
+    struct LampActDone {
+        let tool: String
+        let key: String
+        let receipt: LampActReceipt
+    }
+
+    /// A change the app didn't make, and why.
+    struct LampActMiss {
+        let tool: String
+        let reason: String
+    }
+
+    /// What a turn is doing, for showing it as it goes. Called on the main thread.
+    enum LampActStep {
+        case thinking
+        case reading(String)
+        case changing(String)
+        case changed(LampActDone)
+        case failed(LampActMiss)
+    }
+
+    /// How a turn ended.
+    struct LampActResult {
+        enum Stop: String {
+            /// The person (or the app) cancelled, or started something else.
+            case cancelled
+            /// The turn's time ran out.
+            case time
+            /// The AI used all its steps without replying.
+            case steps
+            /// The request asked for more than a request may: changes, questions back, or what a session keeps.
+            case limit
+            /// The AI couldn't answer (signed out, offline, a service down): `error` says how.
+            case error
+            /// Lamp couldn't be reached.
+            case unreachable
+        }
+
+        /// The AI's last words. Show them only for a question, or when nothing was changed; say what was done from `done`.
+        var reply = ""
+        /// The AI's question back, when it needs to know which one, who or when: answer it with `session.answer`.
+        var question: String?
+        /// Two to four short answers to offer as buttons for the question, or none.
+        var choices: [String] = []
+        /// What this turn changed, from the tools' own receipts.
+        var done: [LampActDone] = []
+        var failed: [LampActMiss] = []
+        var skipped: [LampActMiss] = []
+        var stopped: Stop?
+        var error: String?
+
+        /// What to tell the person, from what the app did: the receipts, what failed or was skipped, and why it
+        /// stopped. The AI's reply is added only for a question or when nothing changed.
+        var summary: String {
+            var lines = done.map(\.receipt.summary)
+            lines += failed.map { "Didn't \($0.tool): \($0.reason)" }
+            lines += skipped.map { "Skipped \($0.tool): \($0.reason)" }
+            switch stopped {
+            case .cancelled?: lines.append(done.isEmpty ? "Stopped before changing anything." : "Stopped. Nothing after this was done.")
+            case .time?: lines.append("Ran out of time.")
+            case .steps?: lines.append("Couldn't finish in the steps one request may take.")
+            case .limit?: lines.append(error ?? "That's more than one request can do.")
+            case .error?, .unreachable?: lines.append(error ?? "The AI couldn't answer.")
+            case nil: break
+            }
+            if question != nil || done.isEmpty, !reply.isEmpty { lines.append(question ?? reply) }
+            return lines.joined(separator: "\n")
+        }
+    }
+
+    /// One request being worked on: its result when it's over, and a way to stop it.
+    @MainActor final class LampActTurn {
+        fileprivate var task: Task<LampActResult, Never>?
+        fileprivate weak var session: LampActSession?
+        fileprivate let generation: Int
+
+        fileprivate init(session: LampActSession, generation: Int) {
+            self.session = session
+            self.generation = generation
+        }
+
+        var result: LampActResult {
+            get async { await task?.value ?? LampActResult(stopped: .cancelled) }
+        }
+
+        /// Stops it: nothing more is asked or changed, and a change already under way is kept in the receipts, since it
+        /// can't be taken back. Late answers from the AI run nothing.
+        func cancel() { session?.cancel(generation) }
+    }
+
+    /// The app's conversation with the AI about doing things: one request at a time, each with any questions back and
+    /// their answers, and every change made, by the app's own tools.
+    ///
+    ///     let session = LampActSession(about: "A grocery list.", tools: [
+    ///         .read("items", "The list's items: id and name.") { list.items.map { ["id": $0.id, "name": $0.name] } },
+    ///         .write("add", "Adds an item.", args: ["name": .text("What to add")], as: Add.self,
+    ///                check: { add, _ in add.name.isEmpty ? "Say what to add." : nil },
+    ///                run: { add, call in list.add(add.name, id: call.key); return LampActReceipt("Added \(add.name)") }),
+    ///     ])
+    ///     let turn = session.ask("add milk and eggs")
+    ///     let result = await turn.result
+    ///     if let question = result.question { show(question, result.choices) } else { show(result.summary) }
+    ///     // later, the person's answer: session.answer("Whole milk")
+    ///
+    /// The AI proposes calls; Lamp checks their shapes; the app's `check` decides whether each change is allowed now and
+    /// its `run` makes it. Reads run first, then changes one at a time, each checked right before it runs; a change that
+    /// fails skips the rest of that step. The same change asked twice in a request runs once. A request may take 4 AI
+    /// steps between questions, 6 changes in all, 3 questions back, and the route's time (25 seconds over OpenRouter, a
+    /// minute through Claude Code, Codex or a model on the Mac); asking something new, cancelling or closing ends it.
+    @MainActor final class LampActSession {
+        static let maxSteps = 4
+        static let maxWrites = 6
+        static let maxQuestions = 3
+        /// What a session keeps of its changes; past this it stops taking changes and says so, rather than forget them.
+        static let maxReceipts = 60
+        static let maxSeconds: Double = 60
+
+        let about: String
+        let tools: [LampActTool]
+        /// Every change this session made, in order.
+        private(set) var receipts: [LampActDone] = []
+        /// The question waiting for the person's answer.
+        private(set) var question: String?
+        private(set) var choices: [String] = []
+
+        private struct Operation {
+            let id = UUID().uuidString
+            let request: String
+            var answers: [(question: String, answer: String)] = []
+            var writes = 0
+        }
+        private var operation: Operation?
+        /// Each change's result by its key, so the same change asked again gets it without running again.
+        private var ran: [String: Any] = [:]
+        private var generation = 0
+        private var cancelled: Set<Int> = []
+        private var closed = false
+        private let send: ([String: Any], TimeInterval) async throws -> [String: Any]
+
+        /// `send` stands in for Lamp in a test; leave it out.
+        init(about: String = "", tools: [LampActTool], send: (([String: Any], TimeInterval) async throws -> [String: Any])? = nil) {
+            self.about = about
+            self.tools = tools
+            self.send = send ?? { body, timeout in try await LampAI.post("/ai/act", body, timeout: timeout) }
+        }
+
+        /// A new request: whatever was under way or waiting for an answer ends.
+        func ask(_ request: String, context: (any Encodable)? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn {
+            question = nil
+            choices = []
+            operation = Operation(request: request)
+            return start(context: context, onStep: onStep)
+        }
+
+        /// The person's answer to the question waiting. Only the first answer counts: nil when nothing is waiting.
+        func answer(_ text: String, context: (any Encodable)? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn? {
+            guard let asked = question, var op = operation, !closed else { return nil }
+            question = nil
+            choices = []
+            op.answers.append((asked, text))
+            operation = op
+            return start(context: context, onStep: onStep)
+        }
+
+        /// Stops whatever is under way and drops the question waiting.
+        func cancel() { cancel(generation) }
+
+        /// For good: nothing more runs, and anything that comes back is dropped.
+        func close() {
+            closed = true
+            cancel()
+            operation = nil
+        }
+
+        fileprivate func cancel(_ turn: Int) {
+            cancelled.insert(turn)
+            if turn == generation { question = nil; choices = [] }
+        }
+
+        private func start(context: (any Encodable)?, onStep: ((LampActStep) -> Void)?) -> LampActTurn {
+            generation += 1
+            let turn = LampActTurn(session: self, generation: generation)
+            var json: Any?
+            if let context, let data = try? JSONEncoder().encode(context) { json = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) }
+            let mine = generation
+            // The turn keeps its session while it runs, so `LampAI.act` without a session of the app's own still finishes.
+            turn.task = Task { @MainActor in await self.run(mine, context: json, onStep: onStep ?? { _ in }) }
+            return turn
+        }
+
+        private func run(_ turn: Int, context: Any?, onStep: (LampActStep) -> Void) async -> LampActResult {
+            var out = LampActResult()
+            guard !closed, var op = operation else { out.stopped = .cancelled; return out }
+            if op.answers.count > Self.maxQuestions {
+                out.stopped = .limit
+                out.error = "That took more questions than one request can. Start again, saying which ones."
+                return out
+            }
+            let started = Date()
+            var deadline = started.addingTimeInterval(Self.maxSeconds)
+            func over() -> LampActResult.Stop? {
+                if closed || cancelled.contains(turn) || turn != generation || Task.isCancelled { return .cancelled }
+                if Date() >= deadline { return .time }
+                return nil
+            }
+            var request = op.request
+            for (asked, answer) in op.answers { request += "\n\nYou asked: \(asked)\nThe person answered: \(answer)" }
+            let earlier = receipts.filter { $0.key.hasPrefix(Self.prefix(op)) }.map(\.receipt.summary)
+            if !earlier.isEmpty { request += "\n\nAlready done for this request (don't do these again): " + earlier.joined(separator: "; ") }
+            var steps: [[String: Any]] = []
+            var route: String?
+            while true {
+                if let stop = over() { out.stopped = stop; break }
+                let left = deadline.timeIntervalSinceNow
+                if left <= 0.5 { out.stopped = .time; break }
+                var body: [String: Any] = ["request": request, "about": about, "now": LampAI.actPresent,
+                                           "tools": tools.map(\.declared), "steps": steps, "seconds": Int(left)]
+                if let context { body["context"] = context }
+                if let route { body["route"] = route }
+                if steps.count >= Self.maxSteps - 1 { body["final"] = true }
+                onStep(.thinking)
+                let answer: [String: Any]
+                do { answer = try await send(body, left) } catch {
+                    if let stop = over() { out.stopped = stop; break }
+                    let message = (error as? LampAI.Failure)?.message ?? error.localizedDescription
+                    out.stopped = message.contains("reach Lamp") ? .unreachable : .error
+                    out.error = message
+                    break
+                }
+                // The route's own time for a turn, counted from its start, shortens it; it never lengthens it.
+                if let seconds = (answer["seconds"] as? NSNumber)?.doubleValue, seconds > 0 {
+                    deadline = min(deadline, started.addingTimeInterval(seconds))
+                }
+                // Cancelled, out of time or replaced: an answer that comes late runs nothing.
+                if let stop = over() { out.stopped = stop; break }
+                route = answer["route"] as? String ?? route
+                if let calls = answer["calls"] as? [[String: Any]], !calls.isEmpty {
+                    let ids = calls.compactMap { $0["id"] as? String }
+                    guard ids.count == calls.count, Set(ids).count == ids.count else {
+                        out.stopped = .error
+                        out.error = "The AI gave two calls the same id."
+                        break
+                    }
+                    let results = await runCalls(calls, op: &op, out: &out, deadline: deadline, over: over, onStep: onStep)
+                    operation = turn == generation ? op : operation
+                    steps.append(["calls": calls, "results": calls.map { call -> [String: Any] in
+                        let id = call["id"] as! String
+                        return results[id] ?? ["id": id, "ok": false, "skipped": "Not run."]
+                    }])
+                    if out.stopped != nil { break }
+                    if steps.count >= Self.maxSteps { out.stopped = .steps; break }
+                    continue
+                }
+                out.reply = answer["reply"] as? String ?? ""
+                if answer["ask"] as? Bool == true {
+                    out.question = out.reply
+                    let offered = answer["choices"] as? [Any] ?? []
+                    let fit = offered.count >= 2 && offered.count <= 4 && offered.allSatisfy { item in
+                        guard let text = item as? String, !text.trimmingCharacters(in: .whitespaces).isEmpty, text.count <= 24 else { return false }
+                        return text.rangeOfCharacter(from: CharacterSet(charactersIn: "<>*_`#[]{}|\\\n\r\t")) == nil
+                    }
+                    out.choices = fit ? offered.map { ($0 as! String).trimmingCharacters(in: .whitespaces) } : []
+                    question = out.question
+                    choices = out.choices
+                }
+                break
+            }
+            if turn == generation { operation = op }
+            return out
+        }
+
+        private static func prefix(_ op: Operation) -> String { "k" + String(op.id.prefix(8)).lowercased() }
+
+        /// Reads first, one after another; then the changes, each checked right before it runs. A change that fails
+        /// skips the ones after it in this step, which the AI is told.
+        private func runCalls(_ calls: [[String: Any]], op: inout Operation, out: inout LampActResult, deadline: Date,
+                              over: () -> LampActResult.Stop?, onStep: (LampActStep) -> Void) async -> [String: [String: Any]] {
+            var results: [String: [String: Any]] = [:]
+            func tool(_ call: [String: Any]) -> LampActTool? { tools.first { $0.name == call["name"] as? String } }
+            func args(_ call: [String: Any]) -> [String: Any] { call["args"] as? [String: Any] ?? [:] }
+            func callInfo(_ call: [String: Any], key: String) -> LampActCall {
+                LampActCall(key: key, id: call["id"] as! String, request: op.request, deadline: deadline)
+            }
+            for call in calls where tool(call)?.reads != false {
+                let id = call["id"] as! String
+                if let stop = over() { out.stopped = stop; return results }
+                guard let tool = tool(call) else { results[id] = ["id": id, "ok": false, "error": "There's no tool called \(call["name"] as? String ?? "")."]; continue }
+                if let bad = tool.problem(args(call)) { results[id] = ["id": id, "ok": false, "error": bad]; continue }
+                onStep(.reading(tool.name))
+                do {
+                    let value = try await tool.perform(args(call), callInfo(call, key: ""))
+                    results[id] = ["id": id, "ok": true, "value": Self.cut(value)]
+                } catch {
+                    results[id] = ["id": id, "ok": false, "error": Self.words(error)]
+                }
+            }
+            var stopped: String?
+            for call in calls where tool(call)?.reads == false {
+                let id = call["id"] as! String, tool = tool(call)!, given = args(call)
+                func miss(_ reason: String, skipped: Bool = false) {
+                    let entry = LampActMiss(tool: tool.name, reason: reason)
+                    if skipped { out.skipped.append(entry) } else { out.failed.append(entry); onStep(.failed(entry)) }
+                    results[id] = ["id": id, "ok": false, skipped ? "skipped" : "error": reason]
+                    if !skipped { stopped = stopped ?? "An earlier change in this step didn't go through." }
+                }
+                if let stop = over() { out.stopped = stop; return results }
+                if let stopped { miss(stopped, skipped: true); continue }
+                if let bad = tool.problem(given) { miss(bad); continue }
+                let key = Self.prefix(op) + Self.hash(tool.name + "|" + Self.canonical(given))
+                // The same change asked again in this request gets its first result, and doesn't run again.
+                if let kept = ran[key] { results[id] = ["id": id, "ok": true, "repeat": true, "value": kept]; continue }
+                if op.writes >= Self.maxWrites { miss("Over this request's limit of \(Self.maxWrites) changes."); out.stopped = .limit; out.error = "That's more changes than one request can make. Ask for the rest separately."; return results }
+                if receipts.count >= Self.maxReceipts { miss("This conversation has made as many changes as it can keep track of."); out.stopped = .limit; out.error = "Close this and start again to make more changes."; return results }
+                let info = callInfo(call, key: key)
+                let problem: String?
+                do { problem = try await tool.check?(given, info) } catch { problem = Self.words(error) }
+                if let problem { miss(problem); continue }
+                // Cancel and the time are looked at again right before the change, never in the middle of it.
+                if let stop = over() { out.stopped = stop; return results }
+                onStep(.changing(tool.name))
+                op.writes += 1
+                do {
+                    let receipt = try await tool.perform(given, info) as! LampActReceipt
+                    // Done is done, even if the turn was cancelled while it ran: it's kept and shown.
+                    var value = receipt.details.filter { JSONSerialization.isValidJSONObject([$0.value]) }
+                    value["summary"] = receipt.summary
+                    ran[key] = value
+                    let done = LampActDone(tool: tool.name, key: key, receipt: receipt)
+                    out.done.append(done)
+                    receipts.append(done)
+                    results[id] = ["id": id, "ok": true, "value": value]
+                    onStep(.changed(done))
+                } catch {
+                    miss(Self.words(error))
+                }
+            }
+            return results
+        }
+
+        private static func words(_ error: Error) -> String { (error as? LampAI.Failure)?.message ?? error.localizedDescription }
+
+        /// At most 4 KB of a read goes back to the AI, cut with a note.
+        private static func cut(_ value: Any) -> Any {
+            guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value]) else {
+                return ["note": "The result couldn't be read."]
+            }
+            guard data.count > 4096 else { return value }
+            return ["cut": String(String(decoding: data, as: UTF8.self).prefix(4000)), "note": "Cut short: ask for less."]
+        }
+
+        private static func canonical(_ value: Any) -> String {
+            guard let data = try? JSONSerialization.data(withJSONObject: [value], options: [.sortedKeys]) else { return "" }
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        /// FNV-1a: short and stable, for keys.
+        private static func hash(_ text: String) -> String {
+            var h: UInt64 = 0xcbf29ce484222325
+            for byte in text.utf8 { h = (h ^ UInt64(byte)) &* 0x100000001b3 }
+            return String(h, radix: 16)
         }
     }
 

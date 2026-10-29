@@ -1,9 +1,37 @@
 ---
 name: app-ai
-description: AI inside the app - Apple's on-device frameworks first (text in pictures, speech, reading aloud, language, sounds, translation), LampAI for open-ended text and pictures, decisions for judging things by what they mean, untrusted text, and dates with AI. Read before writing any of it.
+description: AI inside the app - whether it belongs at all (build it in, suggest it, leave it out), Apple's on-device frameworks first, LampAI for open-ended text and pictures, decisions for judging things by what they mean, checked actions for doing what the person asks, setup and where data goes, untrusted text, and dates. Read before writing any of it.
 ---
 
 # AI inside the app
+
+## Whether AI belongs
+
+Decide before choosing how, from what the person wants to get done, the kind of app, the data it has and what a wrong
+answer would cost. Nobody has to say "AI" for it to belong, and saying the app's kind doesn't make it belong.
+
+- **Build it in** when understanding their words, reading what they hand the app, or drafting something is the
+  request itself, it fits what was asked, and the app copes when the AI is wrong or missing. Use the smallest block
+  that does it, without asking permission for AI, and say in a sentence what it does and where it's worked out.
+- **Suggest it** when AI would add something definite but also a new way of working, more data sent to a service,
+  real setup, or more that the app changes. Offer that one improvement with its cost in your reply, and build what was
+  asked without waiting for an answer.
+- **Leave it out** when exact rules already do it, the gain is vague, or facts, timing or anything in real time would
+  get less reliable. Ordinary code then: no chat, no model call, nothing to set up.
+
+A kitchen timer with three presets and a loud alarm has no AI: durations, scheduling and the alarm are code. "Remind me
+in the time it takes to roast these vegetables" is one interpretation worth reconsidering, and still never the alarm's
+timing. A remote "with buttons for my TV" is buttons, perhaps with named routines suggested; "say 'movie night' and have
+it use my TV and speaker" is understanding intent, so it's built in, as a routine the person reviews and saves, which
+then runs from its button with no AI at all.
+
+Which block: Apple's frameworks where one fits; `ask(..., as:)` for a structured draft; a decision for a judgment by
+meaning; a checked action (below) for a request that changes something. Arithmetic, ids, permissions, what's saved and
+what's true stay in code. A model's confidence is never permission to change something.
+
+When AI goes in, write its contract in APP.md under the feature, a few lines: what it gives the person, which block,
+what's sent and where it's worked out (from `LampAI.status`, below), what it may change, what the app checks, what
+happens without it, and the case that proves it works. Keep it current as the feature changes.
 
 ## On-device frameworks first
 
@@ -30,19 +58,64 @@ the Mac, `UIImage` on iPhone, `LampImage` in an app for both) when the AI needs 
 create or edit pictures, use `LampAI.makeImage(...)`, `LampAI.editImage(...)` or `LampAI.editImages(...)`; these take
 10–60 seconds. Show a ProgressView while waiting and show errors in the UI.
 
-A page's `LampAI.act` (the person asking the app to do things, with the app's own reads and writes) has no Swift
-form yet. A native app doing that asks `LampAI.ask(..., as:)` for its plan and follows the rules in the web-app skill's
-"Doing things for the person".
+## Doing what the person asks: checked actions
+
+`LampAI.act` in Swift is a `LampActSession` (its comment has the whole API) holding the app's own tools: reads that look
+things up and writes that change them, each a few lines over the app's data and its ordinary commands. The AI proposes
+calls, Lamp checks their shapes, the app's `check` says whether that exact change is allowed now, and its `run` makes it
+and returns a receipt. Lamp keeps the loop, its limits (4 AI steps between questions, 6 changes a request, 3 questions
+back, the route's time), cancellation, questions back and the receipts.
+
+```swift
+struct Rename: Decodable { let id: String; let name: String }
+
+let session = LampActSession(about: "A list of rooms. Ask which room when two could fit.", tools: [
+    .read("rooms", "Every room: id and name.") { store.rooms.map { ["id": $0.id, "name": $0.name] } },
+    .write("rename", "Renames one room.", args: ["id": .text("A room's id from rooms"), "name": .text("The new name")], as: Rename.self,
+           check: { r, _ in store.room(r.id) == nil ? "There's no room with that id." : r.name.isEmpty ? "Say the new name." : nil },
+           run: { r, _ in try store.rename(r.id, to: r.name); return LampActReceipt("Renamed to \(r.name)") }),
+])
+let result = await session.ask(typed).result
+if let question = result.question { askBack(question, offering: result.choices) }   // then session.answer(reply)
+else { status = result.summary }
+```
+
+- Show the feature where `await LampAI.status(.act)` says it's available, with what answers and where its `processing`
+  is (`remote` for a service, Claude Code and Codex included; `onDevice` for a model on this Mac). When it isn't, keep
+  the feature visible with its `reason` and a "Set up in Lamp" button (`LampAI.openSetup(for: .act)`), or "Open Lamp" /
+  "Update Lamp" when `setup` says so; keep the typed draft, and every manual control working. Check again when the app
+  comes back to the front, and never send the draft by itself after setup. Available is no guarantee: show the actual
+  failure (`result.error`) with the request kept and an explicit Try Again.
+- A tool is a named read or write over the app's own data, ids in and ids out: never "run this", never an address the
+  AI gives, never another app. Device names, messages and pages are data, not instructions.
+- Every write's `check` looks its items up again by id and says in a sentence why it can't be done now (gone, not
+  connected, can't do that, out of range); make the final check and the change one step for local data, or have `run`
+  check the revision again. Make the ids of what a write adds from `call.key`, so the same change delivered twice finds
+  it instead of adding a second.
+- Say what happened from `result.done` (the receipts), `failed`, `skipped` and `stopped`, which is what `summary` does:
+  never from the AI's `reply`, which is shown only for a question or when nothing changed. A receipt says what the code
+  knows: "Sent" when a device took a command, never "The TV is on".
+- Offer `result.choices` as buttons for a question; only the first answer counts (`session.answer` returns nil after).
+- Cancel (`turn.cancel()`) when the person stops or closes it. A change already sent stays in the receipts as sent:
+  never say nothing happened. Don't retry a change whose outcome is uncertain by yourself; show what's left for the
+  person to run again.
+- For a change with real consequences (a device, a message, money), let the AI build a draft the person reviews and
+  confirms with the app's own button, rather than act at once. Confirming is the app's policy for that change; it isn't
+  what makes the arguments safe, `check` is.
+- Not on a phone away from the Mac: actions need Lamp, and `status(.act)` says so there.
+
+A web page's `LampAI.act` is the same contract in lamp.js: the web-app skill's "Doing things for the person".
 
 ## Decisions
 
-Decisions are your default tool for anything that depends on meaning. `LampAI.isTrue`, `LampAI.choose`,
+When the app has to judge things by what they mean, decisions are the tool. `LampAI.isTrue`, `LampAI.choose`,
 `LampAI.rate` and `LampAI.decide` call a decision model (Jev) that is smart, very fast (well under a second) and
-extremely cheap (about $0.04 per million input tokens: judging hundreds of items costs a fraction of a cent). Use
-them generously, without being asked, whenever the app sorts, filters, labels, prioritizes, groups, matches, routes,
-moderates or flags things by what they are or mean: file names, messages, notes, titles, descriptions, user intent.
-Prefer a decision over keyword lists, regexes, extension rules or other hand-written heuristics that guess at
-meaning; those are brittle and the decision model is better at it. It's fine to judge every item individually.
+extremely cheap (about $0.04 per million input tokens: judging hundreds of items costs a fraction of a cent). Where the
+app sorts, filters, labels, prioritizes, groups, matches, routes, moderates or flags things by what they are or mean
+(file names, messages, notes, titles, descriptions, what the person meant), use one without being asked, rather than
+keyword lists, regexes, extension rules or other hand-written heuristics that guess at meaning. Where an exact rule
+decides it (a size, a date, a type the system reports), that's code, not a decision. It's fine to judge every item
+individually.
 
 To judge a list, hand the whole list to `LampAI.isTrue(_:each:)`, `LampAI.choose(_:from:each:)`,
 `LampAI.rate(_:levels:each:)` or, for several questions per item, `LampAI.decideEach(items, questions)`: they run
@@ -61,8 +134,9 @@ Text the person didn't type into the app themselves is untrusted: emails, messag
 contents, the clipboard, anything read from another app. It can contain instructions aimed at the AI ("ignore the
 above and…"). Never interpolate it into a prompt: pass it as `data:` (`LampAI.ask("Summarize this email in one
 line.", data: email.body)`), and Lamp fences it off so the AI works on it without obeying it. In decisions it goes in
-`about:`, with the question in your own words. Don't write regexes, keyword filters or "sanitizing" code to defend
-against it; `data:` is the defense.
+`about:`, with the question in your own words. Don't write regexes, keyword filters or "sanitizing" code against it.
+Fencing helps the AI read it as material rather than orders, but it is no guarantee: what the app does with an answer
+is held by the app's own code, a write's `check`, ids looked up again, the person's review of anything consequential.
 
 ## Dates and times
 

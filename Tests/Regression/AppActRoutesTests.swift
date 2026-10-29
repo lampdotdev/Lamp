@@ -108,6 +108,26 @@ final class AppActRoutesTests: XCTestCase {
         XCTAssertEqual(AppAct.refusal(for: route(.engine(.claude, model: "sonnet"), false)), AppAI.noTextRoute)
     }
 
+    /// Ask is ready on a sign-in with no OpenRouter key, and an app set to a model on this Mac never has its actions
+    /// sent to a service while that model can't answer: they're refused instead, with the reason.
+    @MainActor func testActionsStayOnAModelOnThisMacWhenOneWasChosen() {
+        func route(_ kind: AppAI.TextRoute.Kind, _ available: Bool = true) -> AppAI.TextRoute {
+            AppAI.TextRoute(id: "r", label: "r", group: "g", name: "Qwen", kind: kind, available: available)
+        }
+        let claude = route(.engine(.claude, model: "sonnet")), local = route(.localModel(provider: "local", model: "qwen3.5-4b"))
+        guard case .success = AppAct.choose(wanted: nil, resolved: claude) else { return XCTFail("a sign-in alone should answer") }
+        guard case .success = AppAct.choose(wanted: local, resolved: local) else { return XCTFail("the chosen local model should answer") }
+        guard case .failure(let refused) = AppAct.choose(wanted: route(.localModel(provider: "local", model: "qwen3.5-4b"), false), resolved: claude) else {
+            return XCTFail("actions went to Claude Code though a model on this Mac was chosen")
+        }
+        XCTAssertTrue(refused.message.contains("Qwen on this Mac"))
+        guard case .success = AppAct.choose(wanted: route(.openRouter(model: "m"), false), resolved: claude) else {
+            return XCTFail("a cloud choice standing in for another cloud route should answer")
+        }
+        guard case .failure(let none) = AppAct.choose(wanted: nil, resolved: route(.openRouter(model: "m"), false)) else { return XCTFail("nothing can answer") }
+        XCTAssertEqual(none.message, AppAI.noTextRoute)
+    }
+
     /// An MLX model whose chat template mlx-lm has no tool-call parser for hands a call back as plain text, so it's
     /// asked for the JSON plan instead, whatever the version. The templates in Tests/Fixtures/mlx-templates are the
     /// `chat_template` of each mlx-community repository's tokenizer_config.json, as published on 2026-10-29.

@@ -511,14 +511,45 @@ enum AppAct {
         route.available ? nil : AppAI.noTextRoute
     }
 
+    /// The route a turn's first step takes, or why there's none. It's the app's text route, with one difference: an
+    /// app set to a model on this Mac (by its own choice, Settings', or pi building with one) has its actions refused
+    /// while that model can't answer, rather than sent to a service the person didn't choose for them.
+    @MainActor static func firstRoute(appModel: String?) -> Result<AppAI.TextRoute, Failure> {
+        let saved = appModel ?? UserDefaults.standard.string(forKey: "appModel")
+        let piLocal = Builder.engine == .pi && Builder.piProvider == Builder.localProvider ? "local:\(Builder.piModel)" : nil
+        let wanted = (saved ?? piLocal).map(AppAI.canonicalRoute).flatMap { id in AppAI.allTextRoutes.first { $0.id == id } }
+        return choose(wanted: wanted, resolved: AppAI.route(for: appModel))
+    }
+
+    static func choose(wanted: AppAI.TextRoute?, resolved: AppAI.TextRoute) -> Result<AppAI.TextRoute, Failure> {
+        func local(_ route: AppAI.TextRoute) -> Bool { if case .localModel = route.kind { return true }; return false }
+        if let wanted, local(wanted), !wanted.available, !(local(resolved) && resolved.available) {
+            return .failure(Failure(status: 501, message: "This app is set to use \(wanted.name) on this Mac, which can't answer now. Choose it again, or another AI, in Lamp."))
+        }
+        guard resolved.available else { return .failure(Failure(status: 501, message: AppAI.noTextRoute)) }
+        return .success(resolved)
+    }
+
+    /// `LampAI.status(.act)`: what the probe and the first step would say, and where the turn's data would go.
+    @MainActor static func status(appModel: String?) -> [String: Any] {
+        switch firstRoute(appModel: appModel) {
+        case .success(let route):
+            let local: Bool = { if case .localModel = route.kind { return true }; return false }()
+            return ["available": true, "route": route.label, "where": local ? "onDevice" : "remote"]
+        case .failure(let failure):
+            return ["available": false, "where": "unknown", "reason": failure.message, "setup": "lamp"]
+        }
+    }
+
     /// One step, end to end: the page's request, the route (pinned for the turn by its id once the first step chose
     /// it), the model, its answer checked. Returns the status, the JSON and what was billed.
     @MainActor static func step(_ data: Data, appModel: String?) async -> (Int, [String: Any], Double) {
         let started = Date()
         if let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], body["probe"] as? Bool == true {
-            let route = AppAI.route(for: appModel)
-            let refused = refusal(for: route)
-            return (200, ["act": refused == nil, "route": route.id, "why": refused ?? ""], 0)
+            switch firstRoute(appModel: appModel) {
+            case .success(let route): return (200, ["act": true, "route": route.id, "why": ""], 0)
+            case .failure(let failure): return (200, ["act": false, "route": AppAI.route(for: appModel).id, "why": failure.message], 0)
+            }
         }
         let r: Request
         do { r = try parse(data) } catch let failure as Failure { return (failure.status, ["error": failure.message], 0) } catch { return (400, ["error": "\(error)"], 0) }
@@ -532,7 +563,10 @@ enum AppAct {
             }
             route = same
         } else {
-            route = AppAI.route(for: appModel)
+            switch firstRoute(appModel: appModel) {
+            case .success(let first): route = first
+            case .failure(let failure): return (failure.status, ["error": failure.message], 0)
+            }
         }
         if let refused = refusal(for: route) { return (501, ["error": refused], 0) }
         // One deadline for the whole step, from the seconds the page has left and never past the route's own: every

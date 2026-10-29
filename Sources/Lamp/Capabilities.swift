@@ -258,6 +258,27 @@ extension AppAI {
         return "\("AEIOU".contains(name.prefix(1)) ? "an" : "a") \(name) key"
     }
 
+    /// Where a capability's answer is worked out, for an app to tell the person: `onDevice` for a model on this Mac,
+    /// `remote` for a service. A Claude Code or Codex run starts on this Mac but sends what it's given to its company, so
+    /// it's remote too.
+    @MainActor static func processing(of provider: String?) -> String {
+        guard let provider else { return "unknown" }
+        if provider == Builder.localProvider || provider == "local" { return "onDevice" }
+        if provider == "openrouter" || provider.hasPrefix("engine:") { return "remote" }
+        return "unknown"
+    }
+
+    /// One capability as `LampAI.status` reads it: whether it answers, what answers and where, and why not. Added
+    /// beside `/ai/status`'s booleans, which older apps still read.
+    @MainActor static func details(_ resolution: Resolution) -> [String: Any] {
+        let answers = resolution.tier != .none
+        var details: [String: Any] = ["available": answers, "where": answers ? processing(of: resolution.provider) : "unknown"]
+        if let answer = resolution.answer { details["route"] = answer }
+        if let why = answers ? resolution.explanation : resolution.note { details["reason"] = why }
+        if !answers { details["setup"] = "lamp" }
+        return details
+    }
+
     /// The Providers row behind a text route.
     @MainActor static func provider(of route: TextRoute) -> String {
         switch route.kind {
@@ -341,6 +362,14 @@ enum AIStatus {
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
             if resolution.tier != .best, offered.contains(SetupOffer(capability: capability)) { line += "; Lamp has offered the person a way to set it up" }
             return line
+        }
+        // Actions (`LampActSession`, lamp.js's `act`) are the app's text route with one more rule, so they're said apart.
+        let act = AppAct.status(appModel: AppModels.load(project).text)
+        if act["available"] as? Bool == true {
+            let place = act["where"] as? String == "onDevice" ? "on this Mac" : "sent to a service"
+            lines.append("- Actions: \(act["route"] as? String ?? ""), \(place)")
+        } else {
+            lines.append("- Actions: none, \(act["reason"] as? String ?? "nothing can answer yet")")
         }
         // What it has where it runs away from this Mac: a phone away from it, a device on the same Wi‑Fi.
         if let elsewhere = project.platform.target.guidance.elsewhere(project) { lines.append(elsewhere) }

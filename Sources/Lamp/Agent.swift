@@ -293,7 +293,13 @@ enum Agent {
     /// changes between turns.
     private static let setupRules = """
 
-    - The end of a request says what AI this app can use right now: text, decisions and pictures, each with \
+    - AI goes in an app only where it earns its place, asked for or not: build it in when understanding the \
+    person's words, reading what they hand the app or drafting is the request itself and the app copes when it's \
+    wrong; suggest it, once, with its cost, when it would add something definite but also more setup, more data sent \
+    or more that the app changes, and build what was asked meanwhile; leave it out when exact rules do the job or \
+    facts and timing would get less reliable. A request that changes things through AI goes through the app's own \
+    checked reads and writes, never a plan the app runs unchecked. The app-ai skill (or web-app for a page) says how.
+    - The end of a request says what AI this app can use right now: text, decisions, pictures and actions, each with \
     what answers it, or "nothing can answer yet". Build for what's there. When a feature needs one that \
     isn't set up, or would be clearly better with one that only works a slower way, build it anyway, have \
     the app check `LampAI.isAvailable` and say so where the feature is, and call `offer_setup` once: Lamp \
@@ -863,11 +869,12 @@ enum Agent {
 
         static let ai = """
         - AI inside the app: Apple's on-device frameworks first (text in pictures, speech, reading aloud, language, \
-        sounds, translation), then `LampAI` for open-ended text and pictures; never an AI API or a key. Decisions \
-        (`LampAI.isTrue`, `choose`, `rate`, `decide`) are your default for anything that depends on meaning: use them \
-        without being asked whenever the app sorts, filters, labels, groups, matches or flags things by what they \
-        are, never keyword lists or regexes. Open the app-ai skill before writing any of it, and follow it: it also \
-        says how to hand the AI text the person didn't write, and dates.
+        sounds, translation), then `LampAI` for open-ended text and pictures; never an AI API or a key. Where the app \
+        judges things by what they mean (sorts, filters, labels, groups, matches or flags them), decisions \
+        (`LampAI.isTrue`, `choose`, `rate`, `decide`), never keyword lists or regexes; where an exact rule decides, \
+        code. Doing what the person asks is `LampActSession`'s checked reads and writes. Open the app-ai skill before \
+        writing any of it, and follow it: it also says when AI belongs at all, what to write in APP.md, setup, how to \
+        hand the AI text the person didn't write, and dates.
         """
 
         static let icon = """
