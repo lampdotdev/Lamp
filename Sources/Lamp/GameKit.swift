@@ -427,6 +427,8 @@ enum GameKit {
         let command = "/bin/mkdir -p \"$LAMP_SCRATCH\" && /bin/cp -Rp \(Sandbox.quoted(sourceFolder)) \"$LAMP_SCRATCH/src\" "
             + "&& cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) build src/main.ts --outdir app --target browser --format esm "
             + "--splitting --packages external --chunk-naming 'chunk-[hash].[ext]' --asset-naming '[name]-[hash].[ext]' "
+            // An agent that greps for a value finds it in the bundle too; the banner sends it back to src/.
+            + "--banner '// Lamp builds this from src/ before every build and look: change src/, never this folder.' "
             + "&& cd \"$LAMP_APP\" && /bin/rm -rf \(Sandbox.quoted(compiledFolder)) && /bin/cp -Rp \"$LAMP_SCRATCH/app\" \(Sandbox.quoted(compiledFolder))"
         var output: [String] = []
         let status = await Sandbox.run(command, for: project, cwd: project.dir,
