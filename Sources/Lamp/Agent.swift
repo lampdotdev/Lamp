@@ -87,7 +87,7 @@ enum Agent {
     there can mean "closed to you" or "not declared": never read it as a fault in the app's code. To \
     read a file elsewhere, use your file tools, which ask the user. `gh` can't see its sign-in there: \
     clone public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`; `lampify` \
-    reaches a private one with the person's sign-in.
+    reaches a private one with the person's sign-in (`read_only: true` to read it without crediting it).
     """
 
     private static let lookRules = """

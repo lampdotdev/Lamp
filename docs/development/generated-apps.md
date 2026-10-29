@@ -267,7 +267,8 @@ GitHub for the default branch's latest commit (`git ls-remote`, confined, no sig
 by itself and coalesced across wishes following the same repository, and compares it with the commit the wish has.
 Which repository a wish follows (`AppUpdates.route`): a wish from another wish follows that wish (below); a wish the agent
 made from someone's own project follows the work it's based on (`Credits.basis`: the source marked `adapted`, else the
-first, as credits from before the mark have it), when that's on GitHub with the commit it was taken at. A source with
+first with no mark either way, as credits from before the mark have it; a source marked `adapted: false` is never it, so
+a wish that only uses a library has no route), when that's on GitHub with the commit it was taken at. A source with
 no commit is offered nothing. A wish made from a tag or a branch other than the default is credited at that exact
 commit, and its updates follow the default branch from there.
 
@@ -285,17 +286,21 @@ done. lampify's work is all Lamp's, so it asks no approval, and it never runs wh
   refused: moving on is an update's.
 - **What's credited is what Lamp read.** The agent's clone proves nothing about what was copied, so lampify keeps its
   own untouched copy at the pinned commit in `.lamp/lampify/<owner>/<name>@<commit>`, checked to be that commit of that
-  repository (`GitHubProjects.snapshot`). It's fetched with Lamp's confined git (`RepoImport.clone`), and with the
-  person's sign-in through `gh` for a project only they can read (`GitHubProjects.fetchAnyway`, as Put on GitHub…
-  signs in): the agent's sandbox can't see that sign-in, so a private project reaches the wish this way.
+  repository, and before each reuse checked file by file against that commit's tree, computed by Lamp rather than by
+  `git status`, which could run what the copy's own git configuration names (`GitHubProjects.untouched`); a changed
+  copy is fetched again (`GitHubProjects.snapshot`). It's fetched with Lamp's confined git (`RepoImport.clone`), and
+  with the person's sign-in through `gh` for a project only they can read (`GitHubProjects.fetchAnyway`, as Put on
+  GitHub… signs in): the agent's sandbox can't see that sign-in, so a private project reaches the wish this way. With
+  `read_only` it only fetches and gives the copy's path, for explaining a private project: nothing is credited.
 - **The credit** goes in through `Credits.add`, Lamp's own record included: the canonical address, the owner as author,
   the commit. Every license and notice file anywhere in the project (not its tools': `.git`, `node_modules`, …) is copied
-  as it came into `Licenses/<owner>-<name>/` at its path in the project (`RepoLicenses`): the license at its top in
-  `licenseFile`, the rest in `noticeFiles`. The SPDX id is recorded only when Lamp can tell it for certain from a single
-  license at the top; otherwise the credit says `LicenseRef-<owner>-<name>`, terms of its own with the texts as the
+  as it came into `Licenses/<owner>/<name>/` (two folders, so `foo-bar/baz` and `foo/bar-baz` never share one) at its
+  path in the project (`RepoLicenses`): the license at its top in `licenseFile`, the rest in `noticeFiles`. The SPDX id is recorded only when Lamp can tell it for certain from a single
+  license at the top; otherwise the credit says `LicenseRef-<owner>.<name>`, terms of its own with the texts as the
   authority, never a guessed id (GPL texts don't say "only" or "or later"). `adapted` marks the project the wish is
-  made from, which its updates follow; a wish has one, and a library or assets it uses are credited unmarked. Every
-  file a credit names goes with the shared file and comes back on import (`Credits.Source.termsFiles`,
+  made from, which its updates follow; a wish has one, and a library or assets it uses are credited `adapted: false`.
+  At most 200 license and notice files are kept, the project's own first; more than that is said in the answer as
+  something missing, never dropped silently. Every file a credit names goes with the shared file and comes back on import (`Credits.Source.termsFiles`,
   `Sharing.export`, `Sharing.open`), and sharing is refused while one is missing (`ShareCheck`).
 - **The shape** (`GitHubProjects.shape`): the app's structure (`make_app_for`), its line (`Sharing.description`, the
   wish's or its root app's) and an APP.md naming what it's based on are looked for in the wish; then the wish is made as

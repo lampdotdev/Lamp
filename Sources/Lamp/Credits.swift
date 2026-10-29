@@ -29,7 +29,7 @@ struct Credits: Codable, Equatable {
         var license: String?
         /// Where its license text is in the wish: "Web/LICENSE-slop-newyork".
         var licenseFile: String?
-        /// Its other license and notice files, each kept as it came ("Licenses/owner-name/NOTICE"): they go wherever
+        /// Its other license and notice files, each kept as it came ("Licenses/owner/name/NOTICE"): they go wherever
         /// `licenseFile` goes, so a project under two licenses, or with a NOTICE beside its license, keeps them all.
         var noticeFiles: [String]? = nil
         /// The project the wish was made from, as against the libraries and assets it uses: the one whose updates the
@@ -222,8 +222,9 @@ struct Credits: Codable, Equatable {
     }
 
     /// The work the wish is built on: the one marked as the project it was made from (`Source.adapted`), else the first
-    /// recorded, as credits from before the mark have it.
-    var basis: Source? { upstream.first { $0.adapted == true } ?? upstream.first }
+    /// with no mark either way, as credits from before the mark have it. A work marked as only used (`adapted: false`, a
+    /// library or an asset) is never what the wish is built on, so a wish that only uses things has no basis.
+    var basis: Source? { upstream.first { $0.adapted == true } ?? upstream.first { $0.adapted == nil } }
 
     /// The works with the one the wish is built on first, as they're shown.
     var basisFirst: [Source] {
@@ -333,7 +334,7 @@ extension Credits.Source {
         let notices = (noticeFiles ?? []).compactMap(Credits.validPath)
         return Credits.Source(name: name, author: Credits.text(author), url: Credits.validURL(url), commit: Credits.validCommit(commit),
                               license: Credits.validLicense(license), licenseFile: Credits.validPath(licenseFile),
-                              noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted == true ? true : nil)
+                              noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted)
     }
 
     /// The same work: the same address, or for one with none, the same name.

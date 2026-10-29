@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Someone's project on GitHub made into a Lamp app by the agent, when the person asks (the github-projects skill). The
@@ -85,7 +86,7 @@ enum GitHubProjects {
     /// of that repository: what's credited is exactly what was read.
     static func snapshot(_ source: RepoImport.Source, commit: String?, in wish: URL, using fetch: Fetch) async throws -> Snapshot {
         let fm = FileManager.default
-        if let commit, let kept = kept(source, commit: commit, in: wish) { return kept }
+        if let commit, let kept = await kept(source, commit: commit, in: wish) { return kept }
         let work = RepoImport.cloneFolder()
         defer { try? fm.removeItem(at: work) }
         var wanted = source
@@ -99,38 +100,91 @@ enum GitHubProjects {
             throw Failure(message: "GitHub gave \(got) for \(source.owner)/\(source.name), not \(commit). Check the commit is in that repository.")
         }
         let folder = wish.appendingPathComponent(Snapshot.path(owner: source.owner, name: source.name, commit: got))
-        if !fm.fileExists(atPath: folder.path) {
-            try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.moveItem(at: tree, to: folder)
-        }
+        // A copy left there that isn't what the commit holds (changed, or with files added) is replaced by this one.
+        try? fm.removeItem(at: folder)
+        try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.moveItem(at: tree, to: folder)
         return Snapshot(owner: source.owner, name: source.name, commit: got, folder: folder)
     }
 
-    private static func kept(_ source: RepoImport.Source, commit: String, in wish: URL) -> Snapshot? {
+    /// The copy already in the wish, when it's still exactly that commit of that repository: every file as the commit
+    /// holds it and no file it doesn't. Anything else in the wish can write there, so it's checked before each use.
+    private static func kept(_ source: RepoImport.Source, commit: String, in wish: URL) async -> Snapshot? {
         let folder = wish.appendingPathComponent(Snapshot.path(owner: source.owner, name: source.name, commit: commit))
         guard let at = RepoImport.repository(of: folder), at.commit == commit,
-              Credits.Source.plain(at.url) == Credits.Source.plain(source.url) else { return nil }
+              Credits.Source.plain(at.url) == Credits.Source.plain(source.url),
+              await untouched(folder) else { return nil }
         return Snapshot(owner: source.owner, name: source.name, commit: commit, folder: folder)
     }
 
+    /// Whether the files in a clone are the ones its commit holds, compared by Lamp itself: git's object ids from the
+    /// commit's tree (`ls-tree`, which reads only the repository's objects and runs nothing its configuration names, as
+    /// `status` could), against each file's id worked out here. A file changed, added, removed or made a link fails it.
+    static func untouched(_ clone: URL) async -> Bool {
+        let listed = await Subprocess.run(GitHubRepo.git, ["-c", "core.fsmonitor=false", "ls-tree", "-r", "-z", "--full-tree", "HEAD"],
+                                          cwd: clone, env: ["GIT_TERMINAL_PROMPT": "0"], mergeErrors: false, timeout: 120)
+        guard listed.ok else { return false }
+        var expected: [String: (mode: String, id: String)] = [:]
+        for entry in listed.output.split(separator: "\0") {
+            // "<mode> <type> <id>\t<path>"
+            guard let tab = entry.firstIndex(of: "\t") else { return false }
+            let fields = entry[..<tab].split(separator: " ")
+            guard fields.count == 3 else { return false }
+            if fields[1] == "commit" { continue }   // a submodule, never fetched
+            expected[String(entry[entry.index(after: tab)...])] = (String(fields[0]), String(fields[2]))
+        }
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey]
+        guard let items = fm.enumerator(at: clone, includingPropertiesForKeys: keys) else { return false }
+        var seen = 0
+        for case let item as URL in items {
+            let path = Sharing.relativePath(of: item, in: clone)
+            if path == ".git" { items.skipDescendants(); continue }
+            let values = try? item.resourceValues(forKeys: Set(keys))
+            if values?.isDirectory == true, values?.isSymbolicLink != true { continue }
+            guard let want = expected[path] else { return false }
+            let data: Data?
+            if values?.isSymbolicLink == true {
+                guard want.mode == "120000" else { return false }
+                data = (try? fm.destinationOfSymbolicLink(atPath: item.path)).map { Data($0.utf8) }
+            } else {
+                guard values?.isRegularFile == true, want.mode != "120000" else { return false }
+                data = try? Data(contentsOf: item, options: .mappedIfSafe)
+            }
+            guard let data, blobID(data) == want.id else { return false }
+            seen += 1
+        }
+        return seen == expected.count
+    }
+
+    /// git's id for a file's contents: SHA-1 of "blob <size>\0" and the contents.
+    static func blobID(_ data: Data) -> String {
+        var hash = Insecure.SHA1()
+        hash.update(data: Data("blob \(data.count)\0".utf8))
+        hash.update(data: data)
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Records the snapshot as work the wish uses: its credit at that commit (through `Credits.add`, Lamp's own record
-    /// included) and every license and notice file in it, kept in "Licenses/<owner>-<name>/" as they came. `adapted`
-    /// marks it as the project the wish is made from, which the wish's updates follow (`Credits.basis`); a wish is made
-    /// from one project only. Nothing is written when anything can't be: a credit is never left without its licenses.
+    /// included) and every license and notice file in it, kept in "Licenses/<owner>/<name>/" as they came. `adapted`
+    /// marks it as the project the wish is made from, which the wish's updates follow (`Credits.basis`), or as something
+    /// it only uses; a wish is made from one project only. Nothing is written when anything can't be: a credit is never
+    /// left without its licenses. Also says how many license and notice files there were beyond the most Lamp keeps.
     @discardableResult
-    static func credit(_ snapshot: Snapshot, adapted: Bool, in wish: LampProject) throws -> Credits.Source {
+    static func credit(_ snapshot: Snapshot, adapted: Bool, in wish: LampProject) throws -> (source: Credits.Source, beyond: Int) {
         let credits = Credits.load(wish)
         if adapted, let basis = credits.upstream.first(where: { $0.adapted == true }),
            Credits.Source.plain(basis.url ?? "") != Credits.Source.plain(snapshot.url) {
             throw Failure(message: "This wish is already made from \(basis.name) (\(basis.url ?? "")). Lampify \(snapshot.owner)/\(snapshot.name) with adapted false for something it uses, or make a new wish from it.")
         }
-        let place = "\(RepoLicenses.folder)/\(snapshot.owner)-\(snapshot.name)"
-        let terms = try RepoLicenses.keep(from: snapshot.folder, place: place, in: wish.dir)
+        // The owner and the name are folders of their own: "foo-bar/baz" and "foo/bar-baz" never share one.
+        let place = "\(RepoLicenses.folder)/\(snapshot.owner)/\(snapshot.name)"
+        let terms = try RepoLicenses.keep(from: snapshot.folder, place: place, terms: "\(snapshot.owner).\(snapshot.name)", in: wish.dir)
         let source = Credits.Source(name: snapshot.name, author: snapshot.owner, url: snapshot.url, commit: snapshot.commit,
                                     license: terms.license, licenseFile: terms.licenseFile,
-                                    noticeFiles: terms.notices.isEmpty ? nil : terms.notices, adapted: adapted ? true : nil)
+                                    noticeFiles: terms.notices.isEmpty ? nil : terms.notices, adapted: adapted)
         try Credits.add(Credits(upstream: [source]), to: wish)
-        return source
+        return (source, terms.beyond)
     }
 
     /// The wish as a Lamp repository would hold it, and what it still lacks. The structure, its line and APP.md are looked
@@ -201,18 +255,26 @@ extension Store {
         guard let source = RepoImport.source(from: arguments["url"] as? String ?? "") else {
             return (400, ["error": "url is the project's address on GitHub: https://github.com/owner/name, with /tree/<branch, tag or commit> for one that isn't its default branch."])
         }
+        // The address as it was given, branch or tag included, for whatever the answer asks the agent or the person to use.
+        let address = source.url + (source.ref.map { "/tree/\($0)" } ?? "")
         do {
             let given = (arguments["commit"] as? String)?.trimmed.nilIfEmpty
             let commit = try GitHubProjects.pin(source, given: given, credits: Credits.load(wish))
             let snapshot = try await GitHubProjects.snapshot(source, commit: commit, in: wish.dir, using: GitHubProjects.fetcher)
+            if arguments["read_only"] as? Bool == true {
+                return (200, ["text": "Lamp's copy of \(snapshot.owner)/\(snapshot.name) at commit \(snapshot.commit), for reading: \(snapshot.folder.path)\nNothing was credited and nothing was made. To make an app from it, call lampify without read_only, with commit \(snapshot.commit)."])
+            }
             guard !RepoImport.holdsWish(snapshot.folder) else {
-                return (400, ["error": "\(source.owner)/\(source.name) is a Lamp wish already: don't rebuild it. Tell the person to open it with File → Open from GitHub… and paste \(source.url)."])
+                return (400, ["error": "\(source.owner)/\(source.name) is a Lamp wish already: don't rebuild it. Tell the person to open it with File → Open from GitHub… and paste \(address)."])
             }
             let adapted = arguments["adapted"] as? Bool ?? true
             let credited = try GitHubProjects.credit(snapshot, adapted: adapted, in: wish)
             reload()
-            let shape = GitHubProjects.shape(of: self.wish(of: project))
-            return (200, ["text": GitHubProjects.answer(snapshot, credited: credited, adapted: adapted, pinnedNow: commit == nil, shape: shape)])
+            var shape = GitHubProjects.shape(of: self.wish(of: project))
+            if credited.beyond > 0 {
+                shape.missing.insert("All of \(snapshot.owner)/\(snapshot.name)'s terms: it has \(credited.beyond) license and notice files beyond the \(RepoLicenses.most) Lamp keeps, so its credit may not hold every term it comes with. Tell the person, and don't say it can be shared.", at: 0)
+            }
+            return (200, ["text": GitHubProjects.answer(snapshot, credited: credited.source, adapted: adapted, pinnedNow: commit == nil, shape: shape)])
         } catch {
             return (400, ["error": [error.localizedDescription, (error as? LocalizedError)?.recoverySuggestion].compactMap { $0 }.joined(separator: " ")])
         }
@@ -251,15 +313,16 @@ extension GitHubProjects {
 /// license, `noticeFiles` the rest), each a file of its own at its place in the project: a project under two licenses,
 /// with a NOTICE beside its license, or with a library's license in that library's folder, keeps them all apart.
 enum RepoLicenses {
-    /// Where they go in the wish: "Licenses/PavelDoGreat-WebGL-Fluid-Simulation/LICENSE".
+    /// Where they go in the wish: "Licenses/PavelDoGreat/WebGL-Fluid-Simulation/LICENSE".
     static let folder = "Licenses"
     /// Folders whose licenses are the project's tools', not anything it ships, and the most a project keeps.
     private static let skipped: Set<String> = [".git", "node_modules", ".build", "build", "Pods", ".github"]
-    private static let most = 200
+    static let most = 200
 
     /// The files anywhere in a tree that hold terms (LICENSE, LICENCE, COPYING, UNLICENSE and NOTICE, with or without an
     /// extension or suffix, as the credits can name them: `Credits.isLicenceFile`), by their paths in it. Regular files
-    /// only, none larger than a license would be, so a link or a folder of that name brings nothing in.
+    /// only, none larger than a license would be, so a link or a folder of that name brings nothing in. The project's own
+    /// at its top come first, then the rest by path, every one of them: `keep` decides how many it takes.
     static func files(in tree: URL) -> [String] {
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey]
         guard let items = FileManager.default.enumerator(at: tree, includingPropertiesForKeys: keys) else { return [] }
@@ -272,7 +335,6 @@ enum RepoLicenses {
             if values?.isDirectory == true { if skipped.contains(item.lastPathComponent) { items.skipDescendants() }; continue }
             guard values?.isRegularFile == true, (values?.fileSize ?? 0) <= 512 * 1024, Credits.isLicenceFile(item.lastPathComponent) else { continue }
             found.append(Sharing.relativePath(of: item, in: tree))
-            if found.count >= most { break }
         }
         return found.sorted { ($0.contains("/") ? 1 : 0, $0) < ($1.contains("/") ? 1 : 0, $1) }
     }
@@ -303,11 +365,13 @@ enum RepoLicenses {
     /// Copies the tree's license and notice files into the wish at `place`, each at its path in the project, and says what
     /// the credit records. The project's own license is one at its top: its SPDX id when there's one such file Lamp can
     /// tell for certain; terms of their own (`LicenseRef-`, the text the authority) when its id can't be told for
-    /// certain; none when there's no license at its top (its libraries' licenses are still kept, as notices). Throws when
-    /// a file can't be written: no credit goes without them.
-    static func keep(from tree: URL, place: String, in wish: URL) throws -> (license: String?, licenseFile: String?, notices: [String]) {
-        let found = files(in: tree)
-        guard !found.isEmpty else { return (nil, nil, []) }
+    /// certain; none when there's no license at its top (its libraries' licenses are still kept, as notices). At most
+    /// `most` are kept, its own first, and `beyond` says how many more there were, never silently left out. Throws when
+    /// a file can't be written: no credit goes without them. `terms` names terms of its own: "LicenseRef-<terms>".
+    static func keep(from tree: URL, place: String, terms: String, in wish: URL) throws -> (license: String?, licenseFile: String?, notices: [String], beyond: Int) {
+        let all = files(in: tree)
+        let found = Array(all.prefix(most))
+        guard !found.isEmpty else { return (nil, nil, [], 0) }
         let fm = FileManager.default
         for path in found {
             let copy = wish.appendingPathComponent("\(place)/\(path)")
@@ -317,11 +381,12 @@ enum RepoLicenses {
         }
         let own = found.filter { !$0.contains("/") && !isNotice($0) }
         let paths = found.map { "\(place)/\($0)" }
-        guard let first = own.first else { return (nil, nil, paths) }
+        let beyond = all.count - found.count
+        guard let first = own.first else { return (nil, nil, paths, beyond) }
         let firstPath = "\(place)/\(first)"
         // Several licenses at its top (MIT and Apache, say) may be a choice or both at once: only the project says which.
         let certain = own.count == 1 ? (try? String(contentsOf: tree.appendingPathComponent(first), encoding: .utf8)).flatMap(Self.id(of:)) : nil
-        let terms = "LicenseRef-" + String((place.split(separator: "/").last ?? "Terms").map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") ? $0 : "-" })
-        return (certain ?? terms, firstPath, paths.filter { $0 != firstPath })
+        let reference = "LicenseRef-" + String(terms.map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") ? $0 : "-" })
+        return (certain ?? reference, firstPath, paths.filter { $0 != firstPath }, beyond)
     }
 }

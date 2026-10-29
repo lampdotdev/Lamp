@@ -17,8 +17,8 @@ Clone it shallowly into the wish's reference folder and read it there:
     git clone --depth 1 https://github.com/owner/name .lamp/reference/name
 
 A branch or tag the address names: add `--branch <name>`. The folder is for reading: never build in it or point the app
-at it, it isn't part of the app. A clone that fails because the project is private: call `lampify`, which fetches it
-with the person's GitHub sign-in, and read its copy, whose path its answer gives.
+at it, it isn't part of the app. A clone that fails because the project is private: call `lampify` with `read_only: true`,
+which fetches it with the person's GitHub sign-in and credits nothing, and read its copy, whose path its answer gives.
 
 Asked to explain it: read it and answer. Nothing is credited and nothing is made.
 

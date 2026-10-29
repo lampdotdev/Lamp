@@ -528,6 +528,10 @@
           "type": "boolean",
           "description": "true (the default) for the project the app is made from, whose updates it follows; false for a library or assets it uses"
         },
+        "read_only": {
+          "type": "boolean",
+          "description": "true only to read a project your own git clone can't reach (a private one): Lamp fetches it and gives its copy's path, crediting nothing"
+        },
         "doing": {
           "type": "string",
           "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
