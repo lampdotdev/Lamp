@@ -1239,6 +1239,17 @@ extension Store {
         await restoreBegun(project, to: arrival)
     }
 
+    /// Duplicate the Original: a fresh copy of the starter a changed copy came from, as this Lamp ships it, put on the
+    /// desk as a remix link from the site puts one (`put(starter:)`), and opened with its chat. The changed copy stays.
+    func duplicateOriginal(of project: LampProject) {
+        guard let name = Starters.starter(of: project)?.name, let starter = Starters.bundled.first(where: { $0.name == name }),
+              let copy = put(starter: starter) else {
+            NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of the original \(project.name).")).runModal()
+            return
+        }
+        open(fromDesk: copy)
+    }
+
     /// Send Changes Back… from the desk: the wish's chat, with the card that sends them (`ContributeCards`), as the
     /// chat's Share menu opens it.
     func sendChangesBack(_ project: LampProject) {

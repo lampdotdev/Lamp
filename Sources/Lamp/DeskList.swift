@@ -469,6 +469,10 @@ struct DeskWishMenu: View {
         }
         .disabled(busy || !project.scaffolded || project.untitled || !AppUpdates.mayRemix(project))
         if entry?.changedFromOriginal == true {
+            // A fresh copy beside this one: only a starter, whose original this Lamp ships.
+            if entry?.isStarter == true {
+                Button("Duplicate the Original") { store.duplicateOriginal(of: project) }
+            }
             Button("Start Again from the Original") { Task { await store.startAgain(project) } }
                 .disabled(busy)
         }

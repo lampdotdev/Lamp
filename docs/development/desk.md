@@ -25,7 +25,7 @@ click goes the same way, `Store.openChat`); a wish that opens no Mac window is u
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
-(`DeskWishMenu`): Duplicate…, Start Again from the Original and Send Changes Back… where they apply, Wish Info
+(`DeskWishMenu`): Duplicate…, Duplicate the Original, Start Again from the Original and Send Changes Back… where they apply, Wish Info
 (its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
 for the menu. Dragged out
@@ -51,7 +51,9 @@ A wish that arrived from somewhere and has been changed since (`Store.original(t
 the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
 original" in the panel, with Start Again beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
 creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Again from the Original in
-its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. Send Changes Back… is
+its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. For a starter there's
+also Duplicate the Original (`Store.duplicateOriginal`): a fresh copy of the starter as this Lamp ships it, put on the
+desk as a remix link puts one, beside the changed copy. Send Changes Back… is
 in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
 wish's chat as the chat's Share menu does. A remix link from the site lands the same way: it opens the person's own
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
