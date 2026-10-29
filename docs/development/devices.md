@@ -432,7 +432,8 @@ itself (`BUN_BE_BUN=1`), in the game's sandbox, from a copy of `src/` in a scrat
 the one it builds in, which the sandbox closes in the person's own folders): nothing installed, nothing fetched, types stripped and not checked, bare
 imports left for the page's import map. Two of Vite's conventions hold so a Vite game needs few changes: `import.meta.env`
 reads as a published build's (`DEV` false, `BASE_URL` "./"), and each `src/**/*.worker.ts` is bundled as an entry of its
-own, every file flat in `Web/app/`, so a worker started at `./<name>.worker.js` beside `import.meta.url` is found. Every place then plays plain JavaScript, and a change of `src/` is a change of
+own, every file flat in `Web/app/`, so a worker started at `./<name>.worker.js` beside `import.meta.url` is found. It must
+be a module worker (`{ type: "module" }`, which Vite doesn't require): code it shares with the page is a chunk it imports. Every place then plays plain JavaScript, and a change of `src/` is a change of
 the page like any other. `src/` is shared with the game, and so is `Web/app/`, which a Lamp from before `src/` plays as it is and a newer one
 builds again (`GameFiles`).
 

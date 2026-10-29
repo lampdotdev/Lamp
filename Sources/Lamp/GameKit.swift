@@ -443,7 +443,9 @@ enum GameKit {
             + "&& cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) build src/main.ts $(/usr/bin/find src -name '*.worker.ts') "
             + "--outdir app --target browser --format esm --splitting --packages external "
             + "--entry-naming '[name].[ext]' --chunk-naming 'chunk-[hash].[ext]' --asset-naming '[name]-[hash].[ext]' "
-            // What a Vite project reads of its build (import.meta.env), as a published Vite build has it.
+            // What a Vite project reads of its build (import.meta.env), as a published Vite build has it: the object, for
+            // `const { DEV } = import.meta.env`, and each property, so a direct read is folded to its value.
+            + "--define 'import.meta.env={\"DEV\":false,\"PROD\":true,\"MODE\":\"production\",\"BASE_URL\":\"./\",\"SSR\":false}' "
             + "--define 'import.meta.env.DEV=false' --define 'import.meta.env.PROD=true' "
             + "--define 'import.meta.env.MODE=\"production\"' --define 'import.meta.env.BASE_URL=\"./\"' "
             // An agent that greps for a value finds it in the bundle too; the banner sends it back to src/.
