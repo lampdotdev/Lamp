@@ -43,12 +43,14 @@ enum AppUpdates {
 
     /// The route a wish's credits give it. A wish that came from another wish keeps following that wish, never the
     /// projects that one is based on: its maintainer brought those in, and bringing them in again would double them.
-    /// Otherwise the work it's based on (the first in `upstream`, "Based on" in the credits) when that's code on GitHub
+    /// Otherwise the work it's based on (`Credits.basis`, "Based on" in the credits) when that's code on GitHub
     /// with the commit it was taken at. A source with no commit has no base to measure an update against, and is
     /// offered nothing rather than a guess.
     static func route(for credits: Credits, own: String?) -> Route? {
         if let remix = credits.origin(own: own), remix.url.flatMap(RepoImport.source(from:)) != nil { return .wish(remix) }
-        guard let source = credits.upstream.first, let url = source.url, source.commit != nil,
+        // The project the wish was made from when its credits mark one, else the first, as wishes credited before the
+        // mark have it: never a library it uses, which would otherwise be followed if it were listed first.
+        guard let source = credits.basis, let url = source.url, source.commit != nil,
               RepoImport.source(from: url)?.ref == nil, RepoImport.source(from: url) != nil else { return nil }
         // The wish's own repository isn't where it came from.
         if let own, Credits.Source.plain(url) == Credits.Source.plain(own) { return nil }
@@ -506,7 +508,7 @@ extension Store {
                 finish(copy)
                 return
             }
-            Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).upstream.first?.name ?? project.name))
+            Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).basis?.name ?? project.name))
             send(AppUpdates.request, to: copy)
             // Handed over: the request queued behind the hold starts as it's let go.
             finish(copy)
@@ -538,7 +540,7 @@ extension Store {
         alert.addButton(withTitle: "Try Again")
         alert.addButton(withTitle: "Not Now")
         guard alert.runModal() == .alertFirstButtonReturn, begin(copy) != nil else { return }
-        Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).upstream.first?.name ?? project.name))
+        Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).basis?.name ?? project.name))
         send(AppUpdates.request, to: copy)
         showChat(copy.id)
         finish(copy)

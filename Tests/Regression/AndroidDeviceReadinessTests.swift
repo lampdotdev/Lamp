@@ -34,8 +34,10 @@ final class AndroidDeviceReadinessTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
+    /// Checked as Try On checks a device being chosen: choosing it confirms the address it's at (`Store.setAndroidDevice`),
+    /// since this one says nothing of itself that would tell another device at that address from it.
     func testADeviceIsReadyWithoutTheEmulator() async {
-        let report = await AndroidTools.check(device: "192.168.1.30:5555")
+        let report = await AndroidTools.check(device: "192.168.1.30:5555", confirmed: ["192.168.1.30:5555"])
         XCTAssertEqual(report.passed, [.tools, .device], "issue: \(String(describing: report.issue?.title))")
         XCTAssertNil(report.issue)
     }

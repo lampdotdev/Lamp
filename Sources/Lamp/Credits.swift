@@ -29,6 +29,15 @@ struct Credits: Codable, Equatable {
         var license: String?
         /// Where its license text is in the wish: "Web/LICENSE-slop-newyork".
         var licenseFile: String?
+        /// Its other license and notice files, each kept as it came ("Licenses/owner/name/NOTICE"): they go wherever
+        /// `licenseFile` goes, so a project under two licenses, or with a NOTICE beside its license, keeps them all.
+        var noticeFiles: [String]? = nil
+        /// The project the wish was made from, as against the libraries and assets it uses: the one whose updates the
+        /// wish follows (`AppUpdates.route`). At most one source says so.
+        var adapted: Bool? = nil
+
+        /// Every file of its terms the wish keeps: its license, then the others.
+        var termsFiles: [String] { (licenseFile.map { [$0] } ?? []) + (noticeFiles ?? []) }
     }
 
     /// A wish this one was made from.
@@ -159,7 +168,8 @@ struct Credits: Codable, Equatable {
             guard let newer = other.upstream.first(where: { $0.sameWork(as: source) }) else { continue }
             result.upstream[index] = Source(name: newer.name, author: newer.author ?? source.author, url: newer.url ?? source.url,
                                             commit: newer.commit ?? source.commit, license: newer.license ?? source.license,
-                                            licenseFile: newer.licenseFile ?? source.licenseFile)
+                                            licenseFile: newer.licenseFile ?? source.licenseFile,
+                                            noticeFiles: newer.noticeFiles ?? source.noticeFiles, adapted: newer.adapted ?? source.adapted)
         }
         for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameLink(as: remix) }) { result.remixOf.append(remix) }
         // A link both have keeps the address it has, or takes the one the newer file gives; its commit is the newer
@@ -211,8 +221,21 @@ struct Credits: Codable, Equatable {
         source.author.map { "\(source.name) by \($0)" } ?? source.name
     }
 
-    /// "Based on Slop New York by Mr.doob": the work the wish is built on, which is the first one recorded.
-    var basedOn: String? { upstream.first.map { "Based on " + Self.line(for: $0) } }
+    /// The work the wish is built on: the one marked as the project it was made from (`Source.adapted`), else the first
+    /// with no mark either way, as credits from before the mark have it. A work marked as only used (`adapted: false`, a
+    /// library or an asset) is never what the wish is built on, so a wish that only uses things has no basis.
+    var basis: Source? { upstream.first { $0.adapted == true } ?? upstream.first { $0.adapted == nil } }
+
+    /// The works with the one the wish is built on first, as they're shown.
+    var basisFirst: [Source] {
+        guard let basis, let index = upstream.firstIndex(of: basis) else { return upstream }
+        var ordered = upstream
+        ordered.remove(at: index)
+        return [basis] + ordered
+    }
+
+    /// "Based on Slop New York by Mr.doob": the work the wish is built on.
+    var basedOn: String? { basis.map { "Based on " + Self.line(for: $0) } }
 
     /// The page Credits.html in a Mac app's bundle, which the standard About window shows under the app's name: each
     /// work it's based on, linked where it lives, with its license, then the wishes it was remixed from.
@@ -223,11 +246,12 @@ struct Credits: Codable, Equatable {
                 .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
         var lines: [String] = []
-        for (index, source) in upstream.enumerated() {
+        // Only the work it's built on is "Based on": a wish that only uses a library or assets is based on none of them.
+        for (index, source) in basisFirst.enumerated() {
             let name = source.url.map { "<a href=\"\(escaped($0))\">\(escaped(source.name))</a>" } ?? escaped(source.name)
             let by = source.author.map { " by \(escaped($0))" } ?? ""
             let license = source.license.map { " (\(escaped($0)))" } ?? ""
-            lines.append((index == 0 ? "Based on " : "Uses ") + name + by + license)
+            lines.append((index == 0 && basis != nil ? "Based on " : "Uses ") + name + by + license)
         }
         if !generated.isEmpty { lines.append(Self.generatedLine(generated.count)) }
         if !remixOf.isEmpty {
@@ -291,7 +315,11 @@ struct Credits: Codable, Equatable {
         let name = (path as NSString).lastPathComponent
         let upper = name.uppercased()
         let ext = (name as NSString).pathExtension.lowercased()
-        return ["LICENSE", "LICENCE", "COPYING", "NOTICE"].contains(where: upper.hasPrefix) && ["", "txt", "md"].contains(ext)
+        // An extension is a format ("LICENSE.md") or the license's own name ("COPYING.LESSER", "LICENSE.APACHE2"): short,
+        // letters and digits, never a kind of file that runs.
+        return ["LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE"].contains(where: upper.hasPrefix)
+            && ext.count <= 10 && ext.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+            && !["sh", "command", "app", "js", "py", "rb", "pl", "swift", "html", "htm"].contains(ext)
     }
 
     static func validPath(_ value: String?) -> String? {
@@ -304,8 +332,10 @@ struct Credits: Codable, Equatable {
 extension Credits.Source {
     var checked: Credits.Source? {
         guard let name = Credits.text(name) else { return nil }
+        let notices = (noticeFiles ?? []).compactMap(Credits.validPath)
         return Credits.Source(name: name, author: Credits.text(author), url: Credits.validURL(url), commit: Credits.validCommit(commit),
-                              license: Credits.validLicense(license), licenseFile: Credits.validPath(licenseFile))
+                              license: Credits.validLicense(license), licenseFile: Credits.validPath(licenseFile),
+                              noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted)
     }
 
     /// The same work: the same address, or for one with none, the same name.

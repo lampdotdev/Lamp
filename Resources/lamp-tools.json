@@ -506,6 +506,40 @@
     }
   },
   {
+    "name": "lampify",
+    "label": "Lampify",
+    "description": "Gives an app made from someone's project on GitHub what a Lamp app has that the project doesn't (read the github-projects skill first): Lamp gets its own untouched copy of the project at one commit (with the person's GitHub sign-in for a private one), credits that commit in credits.json, keeps every license and notice file in Licenses/, makes the manifest (lamp-app.json) as sharing makes it, opens the result again as Lamp's importer does, and answers with what's still missing. Call it before copying any of the project's code or assets, and again when the app is done. It never moves on to a newer commit by itself: pass the commit it pinned on every later call.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The project's address on GitHub: https://github.com/owner/name, with /tree/<branch, tag or commit> for one that isn't its default branch"
+        },
+        "commit": {
+          "type": "string",
+          "description": "The full commit your clone is at (`git rev-parse HEAD`), or the one lampify pinned; left out only the first time, when Lamp pins the address's commit"
+        },
+        "adapted": {
+          "type": "boolean",
+          "description": "true (the default) for the project the app is made from, whose updates it follows; false for a library or assets it uses"
+        },
+        "read_only": {
+          "type": "boolean",
+          "description": "true only to read a project your own git clone can't reach (a private one): Lamp fetches it and gives its copy's path, crediting nothing"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
     "name": "network_devices",
     "label": "Look around the network",
     "description": "Lists the devices on the person's home network as Lamp finds them now: TVs, players, speakers and anything else that answers, each with its name, maker, model, address, what it said about itself, and whether Lamp already has a way for an app to control it; then every other host, with its hardware's maker and Bonjour services. Call it before asking the person what devices they have, whenever a wish controls, plays to or reads devices on their network, or they ask what one is.",

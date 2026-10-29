@@ -160,7 +160,7 @@ enum AndroidTools {
     /// download, which `install` does whole), the emulator Lamp makes from them, or instead the person's own device
     /// when one is chosen (`serial`), which must be plugged in or on the network with debugging allowed to this Mac.
     /// A device needs no emulator, so neither its download nor its making is asked for.
-    static func check(device serial: String? = nil) async -> Report {
+    static func check(device serial: String? = nil, confirmed: Set<String> = []) async -> Report {
         var report = Report()
         guard hasBuildTools, serial != nil || hasEmulatorPackages else {
             report.issue = Issue(step: .tools, title: "Download Android's tools",
@@ -172,14 +172,27 @@ enum AndroidTools {
         report.passed.append(.tools)
         if let serial {
             let devices = await Adb.devices()
-            guard let device = devices.first(where: { $0.udid == serial }) else {
-                report.issue = Issue(step: .device, title: "Connect your Android device",
-                                     message: "Lamp can't see it. Plug it into this Mac with its cable and unlock it, or for a TV on your Wi‑Fi, turn it on and connect it with Connect Over Wi‑Fi under Try On. Allow debugging when it asks, then click Check Again.", action: .retry)
+            let device: Device
+            switch AndroidTVs.choice(serial, among: devices, confirmed: confirmed) {
+            case .use(let found), .adopt(let found):
+                device = found
+            case .confirm(let other):
+                // A choice made over Wi‑Fi names a place, not a device: whatever answers there now is the person's to confirm.
+                report.issue = Issue(step: .device, title: "Choose \(other.name) again",
+                                     message: "To be sure it's the device you chose, choose \(other.name) under Try On, then press Play.", action: .retry)
+                return report
+            case .missing:
+                // A choice made over Wi‑Fi names the address and port it had then, which may have changed since.
+                report.issue = serial.contains(":") || AndroidTVs.isMDNS(serial)
+                    ? Issue(step: .device, title: "Choose your device again",
+                            message: "Lamp can't see it at the address it had. Turn its debugging back on, then choose it again under Try On. Then click Check Again.", action: .retry)
+                    : Issue(step: .device, title: "Connect your Android device",
+                            message: "Lamp can't see it. Plug it into this Mac with its cable and unlock it, or for a TV on your Wi‑Fi, turn it on and connect it with Connect Over Wi‑Fi under Try On. Allow debugging when it asks, then click Check Again.", action: .retry)
                 return report
             }
             if case .needs(let step) = device.setup() {
                 report.issue = Issue(step: .device, title: step,
-                                     message: Adb.advice(for: device.name, state: device.adbState) + " Then click Check Again.", action: .retry)
+                                     message: Adb.advice(for: device) + " Then click Check Again.", action: .retry)
                 return report
             }
             report.passed.append(.device)
@@ -338,24 +351,52 @@ enum Adb {
     /// tablets plugged in or on the network, with what each still needs (debugging allowed to this Mac).
     static func devices() async -> [Device] {
         guard FileManager.default.isExecutableFile(atPath: AndroidTools.adb) else { return [] }
-        let listing = await run(["devices", "-l"], timeout: 30).output
-        var found: [Device] = []
-        for line in listing.split(separator: "\n").dropFirst() {
-            let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard parts.count >= 2, !parts[0].isEmpty else { continue }
-            let serial = parts[0], state = parts[1]
-            var properties: [String: String] = [:]
-            if state == "device" { properties = await getprop(on: serial) }
-            found.append(Device.from(adb: serial, state: state, properties: properties))
+        var listing = await run(["devices", "-l"], timeout: 30).output
+        let services = AndroidTVs.services(await run(["mdns", "services"], timeout: 10).output)
+        if await AndroidTVs.reconnect(listed: listed(listing).map(\.serial), services: services, kept: AndroidTVs.kept()) {
+            listing = await run(["devices", "-l"], timeout: 30).output
         }
-        return found.sorted { ($0.kind == .androidEmulator ? 0 : 1, $0.name) < ($1.kind == .androidEmulator ? 0 : 1, $1.name) }
+        var properties: [String: [String: String]] = [:]
+        for (serial, state) in listed(listing) where state == "device" { properties[serial] = await getprop(on: serial) }
+        return sorted(AndroidTVs.resolve(read(listing, properties: properties), services: services))
+    }
+
+    /// Each line of `adb devices -l`: the selector adb takes with `-s`, and its state.
+    static func listed(_ listing: String) -> [(serial: String, state: String)] {
+        listing.split(separator: "\n").dropFirst().compactMap { line in
+            let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard parts.count >= 2, !parts[0].isEmpty else { return nil }
+            return (parts[0], parts[1])
+        }
+    }
+
+    /// The devices in adb's listing, with what each said of itself (`getprop`, by selector) and what adb's own search
+    /// sees on the network (`adb mdns services`).
+    /// Nothing is kept: this is the look alone, as a TV met for the first time.
+    static func devices(listing: String, services: String, properties: [String: [String: String]]) -> [Device] {
+        sorted(AndroidTVs.merge(read(listing, properties: properties), services: AndroidTVs.services(services), kept: []).devices)
+    }
+
+    private static func read(_ listing: String, properties: [String: [String: String]]) -> [Device] {
+        listed(listing).map { Device.from(adb: $0.serial, state: $0.state, properties: properties[$0.serial] ?? [:]) }
+    }
+
+    private static func sorted(_ found: [Device]) -> [Device] {
+        found.sorted { ($0.kind == .androidEmulator ? 0 : 1, $0.name) < ($1.kind == .androidEmulator ? 0 : 1, $1.name) }
+    }
+
+    /// Connects adb to a device listening at "address:port". True only once adb says it's connected; whether this Mac
+    /// is allowed on it is the listing's to say.
+    static func connect(target: String) async -> Bool {
+        let said = (await run(["connect", target], timeout: 10)).output.lowercased()
+        return said.contains("connected to") && !said.contains("failed") && !said.contains("cannot")
     }
 
     /// The device's own description of itself: maker, model, Android version, and its screen.
     static func getprop(on serial: String) async -> [String: String] {
         var properties: [String: String] = [:]
         let keys = ["ro.product.manufacturer", "ro.product.model", "ro.product.device", "ro.build.version.release", "ro.build.version.sdk",
-                    "ro.kernel.qemu", "ro.boot.qemu"]
+                    "ro.kernel.qemu", "ro.boot.qemu", "ro.serialno"]
         // A TV says so by its leanback feature: Google TV, Android TV, Fire TV and the Android TV emulator alike.
         let shell = keys.map { "echo \($0)=$(getprop \($0))" }.joined(separator: ";") + ";echo leanback=$(pm has-feature android.software.leanback);wm size;wm density"
         for line in (await run(["shell", shell], on: serial, timeout: 20)).output.split(separator: "\n") {
@@ -372,6 +413,25 @@ enum Adb {
     }
 
     /// What the person does about a device adb lists in a state it can't be used in.
+    static func advice(for device: Device) -> String {
+        let name = device.name
+        if device.features.contains("tv"), device.reach == .network {
+            switch device.adbState {
+            case "away" where device.transport == .legacy:
+                return "Lamp can't reach \(name). On it, turn on ADB debugging (Settings → My Fire TV → Developer options), and check it's on this Mac's Wi‑Fi."
+            case "away":
+                return "Lamp can't reach \(name). On it, turn Wireless debugging back on (Settings → System → Developer options), and check it's on this Mac's Wi‑Fi."
+            case "unsure":
+                return "Lamp sees more than one device answering as \(name). Check Again in a moment, or choose it again under Try On."
+            case "unauthorized":
+                return "On \(name), choose Allow when it asks whether to allow debugging from this Mac (tick Always allow). If it doesn't ask, connect it again from Try On with its pairing code."
+            default:
+                return "\(name) isn't answering. Check it's on and on this Mac's Wi‑Fi."
+            }
+        }
+        return advice(for: name, state: device.adbState)
+    }
+
     static func advice(for name: String, state: String) -> String {
         switch state {
         case "unauthorized": return "On \(name), choose Allow when it asks whether to allow debugging from this Mac (tick Always allow)."
@@ -434,7 +494,33 @@ enum Adb {
     }
 
     static func pid(of package: String, on serial: String) async -> Int32? {
-        Int32((await run(["shell", "pidof", package], on: serial, timeout: 20)).output.trimmed)
+        if case .running(let pid) = process(of: package, on: serial, said: await run(["shell", "pidof", package], on: serial, timeout: 20)) { return pid }
+        return nil
+    }
+
+    /// What `pidof` said of an app: its process, none, or nothing at all because the device didn't answer.
+    enum AppProcess: Equatable { case running(Int32), gone, unreachable }
+
+    /// adb itself says when it couldn't reach the device ("device '…' not found", "device offline", "no devices"), and a
+    /// command that ran out of time says nothing: neither is the app having quit. A TV's connection goes when its port
+    /// changes, with the app still open on it.
+    static func process(of package: String, on serial: String, said result: Subprocess.Result) -> AppProcess {
+        if let pid = Int32(result.output.trimmed) { return .running(pid) }
+        let said = (result.output + result.errors).lowercased()
+        if result.timedOut || said.contains("not found") || said.contains("offline") || said.contains("no devices")
+            || said.contains("unauthorized") || said.contains("closed") { return .unreachable }
+        return .gone
+    }
+
+    static func process(of package: String, on serial: String) async -> AppProcess {
+        process(of: package, on: serial, said: await run(["shell", "pidof", package], on: serial, timeout: 20))
+    }
+
+    /// The serial a device reads, to check a selector still reaches the device it did.
+    static func serialNumber(on serial: String) async -> String? {
+        let result = await run(["shell", "getprop", "ro.serialno"], on: serial, timeout: 10)
+        let value = result.output.trimmed
+        return result.ok && !value.isEmpty ? value : nil
     }
 
     static func stop(_ package: String, on serial: String) async {

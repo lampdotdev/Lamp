@@ -312,7 +312,7 @@ enum AppInfoView {
         case "showApp": NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         case "showSource": NSWorkspace.shared.activateFileViewerSelecting([project.dir])
         case basedOnPage:
-            if let page = Credits.load(project).upstream.first?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+            if let page = Credits.load(project).basis?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         case remixedFromPage:
             if let page = origin(of: project)?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         case updateFromRepository:
@@ -398,8 +398,8 @@ enum AppInfoView {
         // for the panel's one line; they're in the About window). Every row's label is its own: the panel tells rows apart
         // by their labels.
         var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from", "Updates"]
-        for (index, source) in credits.upstream.enumerated() {
-            if index == 0 {
+        for (index, source) in credits.basisFirst.enumerated() {
+            if index == 0, credits.basis != nil {
                 rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
                 rows.append(SidebarInfoRow(label: "License", value: source.license ?? "None given"))
                 continue
@@ -424,7 +424,7 @@ enum AppInfoView {
         let route = AppUpdates.route(for: credits, own: own)
         if route != nil, let update { rows.append(SidebarInfoRow(label: "Updates", value: update.line)) }
         var buttons: [SidebarInfoButton] = []
-        if let source = credits.upstream.first, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
+        if let source = credits.basis, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
         // The wish this one was most directly remixed from, where it lives (its repository on GitHub, not the one this
         // wish was put on).
         if let remix = credits.origin(own: own) {
