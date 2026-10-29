@@ -61,10 +61,12 @@ enum PageCopies {
     /// Every build a copy at `place` may have, newest first: the place's latest, and each one Lamp put on a device of the
     /// person's there (`Runtime.placed`), since a copy on one TV or iPad can be older than the place's last build. Nil for
     /// a build that recorded nothing (an earlier Lamp's).
-    static func builds(_ project: LampProject, at place: Destination) -> [Files?] {
+    /// `devices` keeps only what Lamp put on the person's own devices there, for a copy on one of them: the place's latest
+    /// build may be the simulator's or the emulator's.
+    static func builds(_ project: LampProject, at place: Destination, devices: Bool = false) -> [Files?] {
         var dated: [(String, Date)] = []
         let latest = project.at(place)
-        if let fingerprint = Runtime.builtFingerprint(latest) { dated.append((fingerprint, Runtime.builtDate(latest) ?? .distantPast)) }
+        if !devices, let fingerprint = Runtime.builtFingerprint(latest) { dated.append((fingerprint, Runtime.builtDate(latest) ?? .distantPast)) }
         for placed in Runtime.placed(project) where placed.place == place { dated.append((placed.fingerprint, placed.at)) }
         var seen: Set<String> = []
         return dated.sorted { $0.1 > $1.1 }.filter { seen.insert($0.0).inserted }.map { record(project, $0.0) }
@@ -133,8 +135,9 @@ enum PageCopies {
     /// The change for a copy at `place`; nil when it has the page and the app around it as they are. A copy whose build
     /// recorded nothing (an earlier Lamp's lamp.js, which doesn't take these words) or whose app around the page changed
     /// gets one it can't take, so it waits for Reload.
-    static func change(for project: LampProject, at place: Destination, given: [String: String]?) -> Change? {
-        let all = builds(project, at: place)
+    static func change(for project: LampProject, at place: Destination, onDevice: Bool, given: [String: String]?) -> Change? {
+        // The emulator's copy is the place's latest build; one on a device of the person's is one of those Lamp put there.
+        let all = onDevice ? builds(project, at: place, devices: true) : [builds(project, at: place).first ?? nil]
         let now = hashes(of: project), around = native(of: project)
         let known = all.compactMap { $0 }
         var changed: Set<String> = []
@@ -143,11 +146,13 @@ enum PageCopies {
         } else {
             for built in known { changed.formUnion(Set(now.keys).union(built.files.keys).filter { now[$0] != built.files[$0] }) }
         }
-        // Which build the copy has isn't known, so whether it takes these words and has the app around the page as it is
-        // now is judged by the newest build there: a device left on an older one, often off, doesn't hold back the rest.
+        // Which of a place's devices the copy is on isn't known. On a TV or the Xbox only lamp.js matters, so the newest
+        // build there says whether it takes these words, and a TV left on an older one, often off, doesn't hold back the
+        // rest. A copy in an app of Lamp's (an iPhone or iPad, Android) also needs the app around the page as it is now:
+        // unless every build Lamp put on such devices there has it, the copy is offered Reload rather than taken to have it.
         let newest = all.first ?? nil
-        let earlier = newest == nil
-        let aroundChanged = hasShell(place) && newest.map { $0.native != around } == true
+        let earlier = hasShell(place) ? all.isEmpty || all.contains { $0 == nil } : newest == nil
+        let aroundChanged = hasShell(place) && known.contains { $0.native != around }
         guard !changed.isEmpty || earlier || aroundChanged else { return nil }
         let web = project.dir.appendingPathComponent(TVTemplate.webFolder)
         var files: [String: Data] = [:]
@@ -216,6 +221,9 @@ enum PageCopies {
         }
     }
 
+    /// Whether the copy said it's on a device of the person's, rather than Lamp's emulator.
+    static func onDevice(_ device: String) -> Bool { device != "Android emulator" }
+
     /// What each copy was last given, by app and copy: the next change says only what differs from it.
     @MainActor private static var given: [String: [String: String]] = [:]
 
@@ -232,7 +240,7 @@ enum PageCopies {
             // Android's phone and TV places are one app: the copy is on whichever was built.
             if place == .android, built(project, at: .android) == nil, built(project, at: .androidTV) != nil { place = .androidTV }
             let key = project.id + "\t" + copy
-            guard let change = change(for: project, at: place, given: given[key]) else { continue }
+            guard let change = change(for: project, at: place, onDevice: onDevice(member["device"] as? String ?? ""), given: given[key]) else { continue }
             if let why = change.cannot { waiting[place] = why; continue }
             var went = true
             for word in words(change) where went {

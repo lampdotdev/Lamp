@@ -56,10 +56,12 @@ its scripts run, so what the page saved stays; what the page then asks for as it
 a script sets) is the change's file where it has one, and a script that isn't code (JSON, a template) is kept as data. Where each copy is comes from the device it says (`PageCopies.place`);
 this Mac's and the simulator's copies take changes from Lamp itself (`PageLive`), and the preview is Lamp's own. What changed
 is measured against what the copy was last given, or every build it may have (its place's latest, and each one Lamp put
-on a device of the person's there, `Runtime.placed`). Which build the copy has isn't known, so whether it takes Lamp's
-words and has the app around the page as it is now is judged by the newest build there (on a TV or the Xbox there's no
-app around the page at all): a device left on an older build doesn't hold back the rest. A copy whose newest build
-recorded nothing (built by an earlier Lamp), a change of anything but the page, a script before lamp.js, a module script or more than 3 MB of page waits for
+on a device of the person's there, `Runtime.placed`). Which of a place's devices a copy is on isn't known. On a TV or the
+Xbox only lamp.js matters, so the newest build Lamp put there says whether it takes Lamp's words, and a TV left on an
+older one doesn't hold back the rest. A copy in an app of Lamp's on the person's iPhone, iPad or Android device also needs
+the app around the page as it is now, which is taken as so only when every build Lamp put on such devices there has it
+(never the simulator's or the emulator's build, which the copy isn't); otherwise it's offered Reload. A copy with no
+such build recorded (put there by an earlier Lamp), a change of anything but the page, a script before lamp.js, a module script or more than 3 MB of page waits for
 Reload (`PageCopies.cannot`), and the chat shows its Reload line
 (`Store.placesAwaitReload`).
 
