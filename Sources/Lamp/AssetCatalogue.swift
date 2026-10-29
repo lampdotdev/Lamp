@@ -260,7 +260,7 @@ enum AssetCatalogue {
     static var downloads: URL { Edition.supportFolder.appendingPathComponent("Asset Downloads") }
 
     /// The bytes at `url`, checked against `sha256`. An archive already fetched is read from Lamp's folder, and checked again.
-    static func fetch(_ url: URL, sha256: String, bytes: Int, keep: Bool) async throws -> Data {
+    static func fetch(_ url: URL, sha256: String, keep: Bool) async throws -> Data {
         let kept = downloads.appendingPathComponent(sha256 + "." + url.pathExtension.prefix(5))
         if keep, let data = try? Data(contentsOf: kept), hash(data) == sha256 { return data }
         var request = URLRequest(url: url, timeoutInterval: 120)
@@ -290,7 +290,7 @@ enum AssetCatalogue {
             if let triangles = item.triangles, triangles > budget.triangles {
                 throw Failure(message: "it has \(triangles.formatted()) triangles, more than one model should have on \(budget.place) (about \(budget.triangles.formatted()))")
             }
-            var data = try await fetch(file, sha256: sha256, bytes: item.bytes, keep: false)
+            var data = try await fetch(file, sha256: sha256, keep: false)
             var note: String?
             if item.isModel, let texture = item.texture, texture > budget.texture,
                let smaller = GLB.shrinkingPictures(data, to: budget.texture) {
@@ -300,7 +300,7 @@ enum AssetCatalogue {
             return [("\(item.pack)/\(slug).\(file.pathExtension.lowercased())", data, note)]
         }
         guard let archive = item.archive else { throw Failure(message: "the index names no file for it") }
-        let zip = try await fetch(archive.url, sha256: archive.sha256, bytes: archive.bytes, keep: true)
+        let zip = try await fetch(archive.url, sha256: archive.sha256, keep: true)
         var result: [(String, Data, String?)] = []
         for member in item.members {
             guard var data = Zip.read(member, from: zip) else { throw Failure(message: "its archive has no \(member)") }
@@ -340,11 +340,20 @@ enum AssetCatalogue {
         var pictures: [Int: CGImage] = [:]
         await withTaskGroup(of: (Int, CGImage?).self) { group in
             for (index, item) in shown.enumerated() {
-                guard let thumb = item.thumb else { continue }
                 group.addTask {
-                    var request = URLRequest(url: thumb, timeoutInterval: 20)
-                    request.setValue("Lamp", forHTTPHeaderField: "User-Agent")
-                    guard let (data, _) = try? await URLSession.shared.data(for: request), data.count < 4 << 20,
+                    // A sprite sheet, tileset or icon is shown as itself, out of its pack's archive (fetched once and
+                    // kept): the pack's one preview would stand for every sheet in it alike.
+                    var data: Data?
+                    if flatKinds.contains(item.kind), let archive = item.archive,
+                       let member = item.members.first(where: { $0.lowercased().hasSuffix(".png") }),
+                       let zip = try? await fetch(archive.url, sha256: archive.sha256, keep: true) {
+                        data = Zip.read(member, from: zip)
+                    } else if let thumb = item.thumb {
+                        var request = URLRequest(url: thumb, timeoutInterval: 20)
+                        request.setValue("Lamp", forHTTPHeaderField: "User-Agent")
+                        data = try? await URLSession.shared.data(for: request).0
+                    }
+                    guard let data, data.count < 8 << 20,
                           let source = CGImageSourceCreateWithData(data as CFData, nil) else { return (index, nil) }
                     let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 256] as CFDictionary
                     return (index, CGImageSourceCreateThumbnailAtIndex(source, 0, options))
