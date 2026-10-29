@@ -1249,6 +1249,8 @@ extension Store {
     /// too is undone with Undo), and it opens with its chat, which says so.
     func startAgain(_ project: LampProject) async {
         guard let arrival = await original(toStartAgain: project) else { return }
+        // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
+        ContributeCards.shared.close(project)
         open(fromDesk: project)
         await restore(project, to: arrival)
     }
