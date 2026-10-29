@@ -8586,10 +8586,16 @@ enum Template {
             try? await Task.sleep(for: .seconds(1))
             LampShowcase.note("ready", "\(Int(window.frame.width))x\(Int(window.frame.height))")
             // The steps start once the recording has its first frame (the recorder leaves a `recording` file then),
-            // so nothing happens before the reel can see it; with no recorder, after a minute.
+            // so nothing happens before the reel can see it. With none after two minutes (no recorder, or macOS still
+            // asking about it), nothing is played: a take without its opening is no reel.
             let recording = LampShowcase.folder?.appendingPathComponent("recording").path ?? ""
-            for _ in 0..<600 where !FileManager.default.fileExists(atPath: recording) {
+            for _ in 0..<1200 where !FileManager.default.fileExists(atPath: recording) {
                 try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard FileManager.default.fileExists(atPath: recording) else {
+                LampShowcase.note("missing", "the recording's first frame")
+                LampShowcase.note("end")
+                return
             }
             try? await Task.sleep(for: .seconds(LampShowcase.script["lead"] as? Double ?? 0.8))
             for step in LampShowcase.script["steps"] as? [[String: Any]] ?? [] { await playShowcase(step) }
@@ -8625,10 +8631,10 @@ enum Template {
                 // The reel's cursor gets there before anything happens.
                 try? await Task.sleep(for: .seconds(0.3))
             }
-            // Taken on the main queue, as `perform` takes a step after scheduling the next: an action that opens a
-            // dialog doesn't return until it closes, and the steps after it are how it gets answered. The main queue
-            // still runs while one is open, so they do.
-            DispatchQueue.main.async { MainActor.assumeIsolated { LampShowcase.note("did", run(action)) } }
+            // Taken from a run-loop timer (`after`), as `perform` takes its steps: an action that opens a dialog doesn't
+            // return until it closes, and the steps after it are how it gets answered. Those resume on the main queue,
+            // which keeps running while the dialog is open only because the action isn't itself on that queue.
+            after(0) { LampShowcase.note("did", run(action)) }
             try? await Task.sleep(for: .milliseconds(150))
         }
 

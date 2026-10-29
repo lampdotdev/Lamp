@@ -80,6 +80,9 @@ for folder in "${folders[@]}"; do
   touch "$take/stop"
   wait $recorder || { echo "$folder: the recording failed ($take/record.log)" >&2; kill "$pid" 2>/dev/null; failed=1; continue; }
   kill "$pid" 2>/dev/null || true
+  if grep -q $'\tmissing\tthe recording\'s first frame' "$take/events.tsv"; then
+    echo "$folder: the recording never started, so nothing was played (is Screen Recording allowed?)" >&2; failed=1; continue
+  fi
   if grep -q $'\tmissing\t' "$take/events.tsv"; then
     echo "$folder: the script couldn't find: $(grep $'\tmissing\t' "$take/events.tsv" | cut -f3 | paste -sd, -)" >&2
   fi
