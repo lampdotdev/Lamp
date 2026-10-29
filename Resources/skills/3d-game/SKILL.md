@@ -76,7 +76,9 @@ device) or tell the person why 3D in a page can't run there.
 
 ## Models, light and materials
 
-- Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
+- Before building a game's buildings, vehicles, characters or trees in code, look in Lamp's free models (`assets` with
+  `find` and `show`; the assets skill): many distinct things, and anything that walks or runs, come out better
+  ready-made. Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
   mismatched models, and cost little. Build each character and prop as a `THREE.Group` of them in a function of its
   own (a body, a head, eyes that blink, wheels that turn, a tail that wags), its parts named so they can move, and
   give it a little life: a bob, a lean into a turn, a squash on landing. A model file (a .glb) is one the person

@@ -89,6 +89,11 @@ A capability given to one engine must be given to all of them that can take it, 
   Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
   or live, Lamp copies its LampStore database into its Backups folder, named after the version that wrote it
   (`DataSnapshots`, beside the app's own once-a-launch copies).
+- **Files Lamp fetches for an app** (`assets`, "3D scenes and games"): Lamp itself downloads them, unconfined, but only
+  from the addresses in its own index, checks each against the hash the index pins, and writes it into the app's folder
+  with `AppFolder` (never through a link). They're data: a model, a picture, an atlas's XML; nothing is run, opened or
+  made executable, and an archive is read by Lamp for the files the index names, never unpacked. No command runs, so
+  there's nothing to approve; what the agent fetches with its own commands is still judged as fetching (#830).
 - **The person's devices**: the agent may read a device on the network freely, but changes one (a key press, opening
   an app, volume, input, power, a setting) only once the person has said yes on Lamp's own card (`device_permission`,
   `DevicePermissions`): "Try it on your <device>?" ("Try it on <device>?" for one Lamp only found, which may not be the person's), answered Allow once (until the person next writes), Always for the
