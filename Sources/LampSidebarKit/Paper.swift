@@ -22,6 +22,9 @@ public enum Paper {
     public static let muted = shade(light: 0x5D574B, dark: 0xB9B2A1)
     /// A small heading in capitals ("YOUR DEVICES").
     public static let label = shade(light: 0xA8361F, dark: 0xEF6B4F)
+    /// The line between the desk's side, its list and its panel: ink in light, and in dark a softer cream, as a full
+    /// cream line glares on the night paper.
+    public static let divider = shade(light: 0x1B1A17, dark: 0xF2ECDA, darkAlpha: 0.22)
     /// A thin line between things, and a field's edge.
     public static let rule = shade(light: 0x1B1A17, dark: 0xF2ECDA, alpha: 0.14)
 
@@ -29,10 +32,10 @@ public enum Paper {
     public static let stripes: [Color] = [0x1F8A4A, 0x7CBF3A, 0xF6B81C, 0xF08A1C, 0xE2402A, 0xD23778].map { Color(hex: $0) }
     public static var stripeGradient: Gradient { Gradient(colors: stripes) }
 
-    private static func shade(light: UInt32, dark: UInt32, alpha: CGFloat = 1) -> Color {
+    private static func shade(light: UInt32, dark: UInt32, alpha: CGFloat = 1, darkAlpha: CGFloat? = nil) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
-            let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-            return NSColor(hex: dark, alpha: alpha)
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(hex: isDark ? dark : light, alpha: isDark ? darkAlpha ?? alpha : alpha)
         })
     }
 }

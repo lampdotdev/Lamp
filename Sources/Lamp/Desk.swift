@@ -43,8 +43,8 @@ struct WishDesk: View {
     @State private var lastLook: Date?
     /// How the side panel comes and goes.
     private static let slide = Animation.spring(response: 0.35, dampingFraction: 0.9)
-    /// The line between the side, the list and the panel: ink, from the window's top to its foot, title bar and all.
-    private static var separator: some View { Paper.ink.frame(width: 1).ignoresSafeArea() }
+    /// The line between the side, the list and the panel, from the window's top to its foot, title bar and all.
+    private static var separator: some View { Paper.divider.frame(width: 1).ignoresSafeArea() }
 
     /// Where the side's first line and the bar both start, under the window's title.
     private static let top: CGFloat = 14
