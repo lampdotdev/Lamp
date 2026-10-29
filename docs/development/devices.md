@@ -101,9 +101,11 @@ Open and every look put it on the device chosen under Try On (`Store.setDeviceAp
 one not set up opens its setup window, and with no choice the only one found is used) with the bridge's `install` and
 `launch` (`Store.installOnDeviceApp`), reading `logs` into the app's log; a device not set up gets its next step in the
 chat instead. `look_at_app` is the bridge's `look` picture with what the device answered the install
-(`IntegrationRunner.Outcome.answers`, as plain text) and the log; `use_app` takes only `key` (Lamp's names in
+(`IntegrationRunner.Outcome.answers`, as plain text) and the log, and, where the bridge has `screen`, the screen as text
+(`keep: "screen"`, `Store.deviceAppScreen`: a Roku's ECP `/query/app-ui`, SceneGraph's tree of the app's nodes with their
+text and focus, its indentation taken out and cut at 12,000 characters), shared with the agent as pictures are; `use_app` takes only `key` (Lamp's names in
 `bridge.keys`, each pressed with `use`), `type` (the bridge's `type`, once per character as `{text}`, which in a path
-Lamp encodes down to letters and digits; a Roku's `Lit_`) and `wait`. Stop runs the bridge's `stop` (a Roku's
+Lamp encodes down to letters and digits; a Roku's `Lit_`) and `wait`, then the picture and the screen as text again. Stop runs the bridge's `stop` (a Roku's
 `/exit-app/dev`), and presses `home` when there's none or the device refuses it. Lamp can't tell whether the
 app is still open on the device, so Play always puts it there again. Such an app can be one of a wish's apps, in a
 folder named for its device (Roku/, the "Wishes" guide), where all of this works in its folder as it does at a wish's

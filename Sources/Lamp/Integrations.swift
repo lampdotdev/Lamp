@@ -422,6 +422,8 @@ struct IntegrationRunner {
     /// What a sequence gave back: a picture from a look, a stream that's running.
     struct Outcome {
         var picture: Data?
+        /// The app's screen as text, from a bridge's `screen` (`keep: "screen"`).
+        var screen: String?
         /// The app's log, from a bridge's `log` (`keep: "log"`).
         var log: String?
         var streams: [DeviceStream] = []
@@ -599,6 +601,7 @@ struct IntegrationRunner {
                 }
                 switch request.keep {
                 case "picture": outcome.picture = answer.body
+                case "screen": outcome.screen = String(decoding: answer.body.prefix(512 << 10), as: UTF8.self)
                 case "log": outcome.log = String(decoding: answer.body.suffix(256 << 10), as: UTF8.self)
                 case "key":
                     let file = DeviceFolder.deviceKey(device.id)
