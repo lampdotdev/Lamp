@@ -1300,7 +1300,8 @@ extension TVTemplate {
          */
         (function () {
           'use strict';
-          if (window.__lampPageChange) return;
+          // Only in a page (not where lamp.js is run on its own, as the tests run it).
+          if (window.__lampPageChange || typeof location === 'undefined' || typeof document === 'undefined') return;
           var KEY = 'lamp:page-change', pieces = {};
           var TYPES = { css: 'text/css', js: 'text/javascript', html: 'text/html', htm: 'text/html', json: 'application/json',
                         svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
