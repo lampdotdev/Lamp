@@ -5397,6 +5397,8 @@ final class Store: ObservableObject {
         AppSecrets.forget(app: project.instance)
         if project.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(project) }
         WishKeys.forget(project)
+        // What its commands fetched may still be in a shared folder: every other wish is checked against it.
+        Fetched.retire(Self.fetchKey(project))
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
         unkeptChats[project.id] = nil
@@ -5454,6 +5456,19 @@ final class Store: ObservableObject {
     /// `said` is what the agent said the command is for, which names it in the chat (`LogLine.said`).
     private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool,
                                 said: String? = nil, call: String? = nil) async -> Bool {
+        // What Claude Code's classifier asks about was checked against the downloads before it reached the classifier.
+        guard shell, !escalated else {
+            return await decideCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said, call: call)
+        }
+        let (allowed, asked) = await fetchCheck(command, for: project, said: said) {
+            await self.decideCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said, call: call)
+        }
+        if asked, allowed { log(project, .status, "Ran: \(command)", said: said, call: call) }
+        return allowed
+    }
+
+    private func decideCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool, sandboxed: Bool,
+                               said: String?, call: String?) async -> Bool {
         switch CommandApproval.current {
         case .never:
             log(project, .status, "Ran: \(command)", said: said, call: call)
@@ -5503,6 +5518,29 @@ final class Store: ObservableObject {
         }
         if judgment.judged { turn?.judgments[key] = judgment }
         return judgment
+    }
+
+    /// Each wish's downloads checks, one at a time (`Fetched.Queue`).
+    private let fetchQueue = Fetched.Queue()
+
+    /// Where a wish's downloads are written down: by its instance, so a rename keeps them.
+    private static func fetchKey(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
+
+    /// Checks a shell command against what the wish's earlier commands fetched (`Fetched`), for every engine, before
+    /// it runs. One that may run or make executable something fetched gets the card; otherwise `decision` (the rest of
+    /// the approval) decides. One that may fetch, or copy or unpack what was fetched, is written down before the
+    /// answer goes back, so it is on the record before it can run; if it can't be written down, it doesn't run.
+    /// `asked`: the card came up for this check. Under Never nothing is checked, as that setting checks nothing.
+    private func fetchCheck(_ command: String, for project: LampProject, said: String?,
+                            decision: @escaping @MainActor () async -> Bool) async -> (allowed: Bool, asked: Bool) {
+        guard CommandApproval.current != .never else { return (await decision(), false) }
+        let step = await Fetched.step(command, wish: Self.fetchKey(project), folder: project.realDir.path, queue: fetchQueue,
+                                      decide: { state, questions in try await AppAI.decide(state: state, questions: questions).0 },
+                                      ask: { await self.requestApproval(for: project, command: command, flagged: .runsFetched, said: said,
+                                                                         mayRunOnRating: false) },
+                                      decision: decision)
+        if !step.written { log(project, .error, "Lamp couldn't write down what a command downloads, so it wasn't run.") }
+        return (step.allowed, step.asked)
     }
 
     /// Applies Settings → Building → Permissions and Privacy to one of the agent's file tools, about to touch `path`: pi's own
@@ -11494,15 +11532,31 @@ final class Store: ObservableObject {
                     if confinedCommands.count > 500 { confinedCommands.removeAll() }   // ones refused never come back
                     confinedCommands[confined] = (command, said, call)
                 }
-                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]])
+                // The downloads check comes first: what may run something fetched gets Lamp's card here, and what the
+                // person allows goes past the classifier; the rest is the classifier's to decide.
+                let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
+                let (allowed, asked) = await fetchCheck(command, for: project, said: said) { true }
+                if !allowed {
+                    return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": "The user denied this command in Lamp."]])
+                }
+                var output: [String: Any] = ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]
+                if asked { output["permissionDecision"] = "allow" }
+                return (200, ["hookSpecificOutput": output])
             }
             // Under "Only when risky" Codex's ordinary commands run in its sandbox with the network open, where no reviewer
             // sees them: this hook only keeps them off the person's devices until one is allowed.
             if request.path.contains("format=codex-devices") {
                 let allowed = DevicePermissions.allowedAddresses(wish(of: project))
-                guard DevicePermissions.devicesChanged(by: command).contains(where: { !allowed.contains($0) }) else { return (200, [:]) }
-                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                                     "permissionDecisionReason": DevicePermissions.commandRefusal]])
+                if DevicePermissions.devicesChanged(by: command).contains(where: { !allowed.contains($0) }) {
+                    return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": DevicePermissions.commandRefusal]])
+                }
+                // The downloads check, as for every engine: Codex's commands run in its own sandbox, out of its
+                // reviewer's sight, so this is where one that may run something fetched gets the card.
+                let (ran, _) = await fetchCheck(command, for: project, said: turns[project.id]?.naming) { true }
+                return (200, ran ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                                 "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.

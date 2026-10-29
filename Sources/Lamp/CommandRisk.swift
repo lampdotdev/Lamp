@@ -41,9 +41,10 @@ enum CommandRisk {
     /// it, not by its kind of file: a library saved into the app's web folder was read as "runs code from the
     /// internet" and scored between 2 and 4 (about 2.8, over the bar), where a clone of the same repository or a
     /// data file scored 2.1, so the agent was stopped for downloading what it would have cloned. Running a
-    /// download stays level 4 whenever it was downloaded. What these words can't see is a file fetched by one
-    /// command and run by a later one that names only the file: the judgment has the one command, not where its
-    /// files came from. A temporary folder counts as the project's only when the command makes it new for
+    /// download stays level 4 whenever it was downloaded. These words can't see a file fetched by one command and run
+    /// by a later one that names only the file: the judgment has the one command, not where its files came from.
+    /// That later command is `Fetched`'s, which checks every command against what the wish's commands fetched; a
+    /// program is still asked about as it is downloaded, since that check is the model's reading too. A temporary folder counts as the project's only when the command makes it new for
     /// itself: a fixed name under /tmp is a shared place, which may already hold another's file or a link, and so
     /// is a shared cache folder. Making a fetched file executable is level 4, not fetching: the later command that
     /// runs it names only the file, so the step that makes it a program is the last one the judgment can see.
@@ -193,6 +194,8 @@ enum CommandRisk {
     /// Why a command is risky, for the card: the check that flagged it, in the person's words.
     enum Reason: Equatable {
         case sendsOut, readsSecrets, hidesWhatItDoes, reachesFar, reachesBeyond
+        /// It may run or make executable something an earlier command downloaded (`Fetched`).
+        case runsFetched
 
         /// Every check that flags a command is about reaching beyond the app, so the card says high: red is
         /// what asks, and green and yellow run (`runsOnRating`).
@@ -205,6 +208,7 @@ enum CommandRisk {
             case .hidesWhatItDoes: "What it will really run can't be read from the command."
             case .reachesFar: "It needs full control of this Mac, or sends or runs something over the internet."
             case .reachesBeyond: "It reaches beyond this app: other apps, the Mac's software, or something published."
+            case .runsFetched: "It may run, or make runnable, something an earlier command downloaded from the internet."
             }
         }
     }
