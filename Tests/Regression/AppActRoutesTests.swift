@@ -3,11 +3,14 @@ import XCTest
 
 /// `/ai/act` on the routes without OpenRouter: a step asked of Claude Code, Codex or a model on this Mac as one prompt
 /// that must answer in `AppAct.planSchema`'s shape, read back into the same checked calls or reply. The answers in
-/// Tests/Fixtures/claude-code-act are Claude Code's own (2.1.310, its Sonnet), recorded on 2026-10-29 by
-/// `testRecordClaudeCodeAnswers` with the prompt and flags `AppAct.ask` uses.
+/// Tests/Fixtures/claude-code-act are Claude Code's own (2.1.310, its Sonnet) and those in Tests/Fixtures/codex-act are
+/// Codex's (0.164.0-alpha.11.1, its default model), both recorded on 2026-10-29 by `testRecordEngineAnswers` with the
+/// prompt and flags `AppAct.ask` uses.
 final class AppActRoutesTests: XCTestCase {
-    private let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("Fixtures/claude-code-act/add-bananas.json")
+    private func fixture(_ engine: Engine) -> URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/\(engine == .codex ? "codex-act" : "claude-code-act")/add-bananas.json")
+    }
 
     private let tools: [[String: Any]] = [
         ["name": "groceries", "about": "The shopping list.", "reads": true, "args": [String: Any]()],
@@ -24,24 +27,30 @@ final class AppActRoutesTests: XCTestCase {
         return try AppAct.parse(JSONSerialization.data(withJSONObject: b))
     }
 
-    private func recorded(_ name: String) throws -> String {
-        let all = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [String: Any])
+    private func recorded(_ name: String, by engine: Engine = .claude) throws -> String {
+        let all = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture(engine))) as? [String: Any])
         return try XCTUnwrap(all[name] as? String)
     }
 
-    /// Asks the signed-in Claude Code on this Mac for both steps and writes what it said to the fixture.
-    func testRecordClaudeCodeAnswers() async throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["LAMP_RECORD_ACT"] == "1", "Set LAMP_RECORD_ACT=1 to ask Claude Code")
+    /// Asks the signed-in engine on this Mac (`LAMP_RECORD_ACT=claude` or `codex`) for both steps and writes what it
+    /// said to its fixture.
+    func testRecordEngineAnswers() async throws {
+        let wanted = ProcessInfo.processInfo.environment["LAMP_RECORD_ACT"] ?? ""
+        guard let engine = ["claude": Engine.claude, "codex": .codex][wanted] else {
+            throw XCTSkip("Set LAMP_RECORD_ACT=claude or codex to ask that engine")
+        }
         EngineInstall.lookNow()
         var out: [String: Any] = [:]
         for (name, r) in [("call", try request()), ("reply", try request(["steps": [added]]))] {
             let (system, prompt) = AppAct.planPrompt(r, tag: "outside-text-1", retry: nil, schemaInPrompt: false)
-            let (text, _) = try await AppAI.viaEngine(.claude, prompt: prompt, images: [], system: system, model: "sonnet",
+            let (text, _) = try await AppAI.viaEngine(engine, prompt: prompt, images: [], system: system,
+                                                      model: engine == .claude ? "sonnet" : "",
                                                       schema: AppAct.planSchema(r), timeLimit: 60, sealed: true)
             out[name] = text
         }
-        try FileManager.default.createDirectory(at: fixture.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]).write(to: fixture)
+        let file = fixture(engine)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]).write(to: file)
     }
 
     func testClaudeCodesRecordedCallBecomesOneCheckedCallWithNullsLeftOut() throws {
@@ -54,6 +63,20 @@ final class AppActRoutesTests: XCTestCase {
 
     func testClaudeCodesRecordedReplyComesBackAsTheReply() throws {
         guard case .success(let parsed) = AppAct.parse(plan: try recorded("reply"), for: try request(["steps": [added]])),
+              case .reply(let text, let ask, _) = parsed.answer else { return XCTFail("not a reply") }
+        XCTAssertTrue(text.localizedCaseInsensitiveContains("banana"))
+        XCTAssertFalse(ask)
+    }
+
+    /// Codex looks the list up first, as the rules ask before a change: one checked read, no arguments.
+    func testCodexsRecordedCallBecomesOneCheckedRead() throws {
+        guard case .success(let parsed) = AppAct.parse(plan: try recorded("call", by: .codex), for: try request()) else { return XCTFail("not parsed") }
+        XCTAssertEqual(parsed.calls.map(\.name), ["groceries"])
+        XCTAssertEqual(parsed.calls.first?.id, "s1c1")
+    }
+
+    func testCodexsRecordedReplyComesBackAsTheReply() throws {
+        guard case .success(let parsed) = AppAct.parse(plan: try recorded("reply", by: .codex), for: try request(["steps": [added]])),
               case .reply(let text, let ask, _) = parsed.answer else { return XCTFail("not a reply") }
         XCTAssertTrue(text.localizedCaseInsensitiveContains("banana"))
         XCTAssertFalse(ask)
