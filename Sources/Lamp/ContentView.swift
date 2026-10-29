@@ -629,7 +629,8 @@ struct ImportReviewCard: View {
                             Label {
                                 Text(verbatim: feature).lineLimit(2).fixedSize(horizontal: false, vertical: true).help(feature)
                             } icon: {
-                                Image(systemName: "checkmark").foregroundStyle(.secondary)
+                                // A plain mark: what's listed is what the app does, not something Lamp approved.
+                                Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(.secondary)
                             }
                             .font(.callout)
                         }
@@ -756,6 +757,9 @@ struct ImportReviewCard: View {
         case .sensitive: list.append(Consideration(text: "Does sensitive things. Open only if you expected that", weight: .warning, icon: "exclamationmark.octagon.fill"))
         case .partlyChecked: list.append(Consideration(text: Self.partlyChecked, weight: .caution))
         case .powerful: list.append(Consideration(text: "Powerful. Check it's what you expect", weight: .caution))
+        case .checkedInParts:
+            list.append(Consideration(text: prepared ? "AI checked its code in parts. Update only if you trust where the app came from"
+                                                     : "AI checked its code in parts. Open only if you trust the sender", weight: .caution))
         case .checkedOnThisMac: list.append(Consideration(text: "Nothing worrying found, but not by a check Lamp can vouch for", weight: .caution))
         case .unchecked: list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
         case .safe: break

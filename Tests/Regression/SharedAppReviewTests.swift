@@ -213,6 +213,25 @@ final class SharedAppReviewTests: XCTestCase {
         let request = Sharing.reviewRequest(name: "Tally", description: nil, notes: nil, files: found.batches[1], batch: (1, 2))
         XCTAssertTrue(request.system.contains("this is part 2") && request.prompt.contains("That was part 2 of 2 of the app's code"))
         XCTAssertFalse(Sharing.reviewRequest(name: "Tally", description: nil, notes: nil, files: found.batches[0]).system.contains("requests, each"))
+
+        // Each part was read, but no request held all of it: a calm answer is said to be one in parts, and takes a click.
+        var review = ImportReview(inspection: found)
+        XCTAssertTrue(review.split && !review.partial)
+        review.take([.init(summary: "Counts things.", capabilities: [], concerns: [], risk: .low),
+                     .init(summary: "Counts.", capabilities: [], concerns: [], risk: .low)], by: cloud)
+        XCTAssertEqual(review.verdict, .checkedInParts)
+        XCTAssertEqual(review.opening, .byClick)
+        XCTAssertEqual(ImportReviewCard.considerations(review).map(\.text), ["AI checked its code in parts. Open only if you trust the sender"])
+    }
+
+    /// A file with no line ends past the limit is cut where the limit falls, and a large one in a single pass.
+    func testAFileWithoutLineEndsIsCutAtTheLimit() {
+        let text = String(repeating: "x", count: 25)
+        XCTAssertEqual(Sharing.batches([("a.js", text)], limit: 10).map { $0.map(\.text) }, [["xxxxxxxxxx"], ["xxxxxxxxxx"], ["xxxxx"]])
+        let large = String(repeating: "x", count: 32_000_000)
+        let started = Date()
+        XCTAssertEqual(Sharing.batches([("a.js", large)]).count, 214)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 20)
     }
 
     /// The answers for each part are one review: the first's account of the app, everything any noticed, the highest
@@ -221,6 +240,9 @@ final class SharedAppReviewTests: XCTestCase {
         let calm = Sharing.Answer(summary: "Counts things.", capabilities: ["Saves your counts"], concerns: [], risk: .low)
         let worried = Sharing.Answer(summary: "A library.", capabilities: ["saves your counts", "Sends your counts to a website"],
                                      concerns: ["Sends your counts to a website it doesn't name"], risk: .high)
+        // A first part written to fill the list never pushes a later part's concern off it.
+        let noisy = Sharing.Answer(summary: "Counts.", capabilities: [], concerns: (1...8).map { "Trivial thing \($0)" }, risk: .low)
+        XCTAssertEqual(Sharing.Answer.merged([noisy, worried])?.concerns.last, "Sends your counts to a website it doesn't name")
         var review = ImportReview(summary: "", capabilities: [], concerns: [], asked: true, detected: [])
         review.take([calm, worried], by: cloud)
         XCTAssertEqual(review.summary, "Counts things.")

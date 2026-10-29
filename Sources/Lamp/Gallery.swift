@@ -742,6 +742,12 @@ enum Gallery {
             concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
             asked: true, detected: found("Uses the camera or microphone", "Connects to the internet"), partial: true),
                description: "A driving game through real streets anywhere in the world, starting in San Francisco."),
+        review("Checked in parts", ImportReview(
+            summary: "A 3D driving game that builds real streets and buildings from map data for any place you search, starting in San Francisco, with cars, people, trains and street furniture.",
+            capabilities: ["Downloads maps of the places you drive", "Remembers the places you searched"],
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Connects to the internet"), split: true),
+               description: "A driving game through real streets anywhere in the world, starting in San Francisco."),
         review("Looks risky", ImportReview(
             summary: "Shows a daily quote, and also reads your browser's saved data and sends it to a website.",
             capabilities: ["Sends what it reads to a website"],

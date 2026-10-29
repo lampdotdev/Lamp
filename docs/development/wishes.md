@@ -212,7 +212,9 @@ TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `i
 (three.js, Rapier) that is Lamp's byte for byte is left out of the review wherever it sits (`Sharing.knownLibraries`);
 one changed in any way is the sender's code. The rest of the sender's code is read in full: in requests of at most
 `Sharing.batchLimit` characters, a long file in slices, their answers put together with the highest risk any gave
-(`Sharing.Answer.merged`), and only past `Sharing.batchCount` requests does the sheet say AI didn't check all of it. On GitHub, Lamp's files around
+(`Sharing.Answer.merged`), every concern kept. A review in more than one request is never an all-clear (`ImportReview.split`:
+"AI checked its code in parts", and a click to open), and only past `Sharing.batchCount` requests, or a request that came
+to nothing, does the sheet say AI didn't check all of it. On GitHub, Lamp's files around
 the page are the ones `GitHubRepo.ownedPaths` adds and an update leaves out (`DeviceSupport.paths`, `ScreenKit.paths`).
 
 ## Credit

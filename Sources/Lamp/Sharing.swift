@@ -959,20 +959,24 @@ struct ImportReview {
     /// (`Sharing.Inspection.truncated`), or a request for part of it that came to nothing. Whatever was said of the
     /// rest, nobody read that part, so no rating is an all-clear for the app.
     var partial = false
+    /// The code went to the reviewer in several requests (`Sharing.Inspection.batches`): each part was read, but no
+    /// one request held all of it, so what two parts do together (one reads a file, another sends what it read) may
+    /// have been missed. Such a rating isn't an all-clear either.
+    var split = false
 
     /// The rating when it comes from a reviewer whose all-clear Lamp passes on, and covers all of the code.
-    private var vouched: Risk? { reviewer?.onThisMac == false && !partial ? risk : nil }
+    private var vouched: Risk? { reviewer?.onThisMac == false && !partial && !split ? risk : nil }
 
     /// The one-line verdict: the AI's rating, lifted by what the code was seen to do. A warning stands
     /// whoever gave it; "safe" takes a low rating from a reviewer Lamp vouches for, given on all of the
     /// code. A rating on part of it says so instead, unless there is something worse to say.
-    enum Verdict: Equatable { case risky, sensitive, partlyChecked, powerful, safe, checkedOnThisMac, unchecked }
+    enum Verdict: Equatable { case risky, sensitive, partlyChecked, powerful, safe, checkedInParts, checkedOnThisMac, unchecked }
     var verdict: Verdict {
         if risk == .high { return .risky }
         if worst == .sensitive { return .sensitive }
         if partial, risk != nil { return .partlyChecked }
         if risk == .medium || worst == .powerful { return .powerful }
-        if risk == .low { return vouched == .low ? .safe : .checkedOnThisMac }
+        if risk == .low { return vouched == .low ? .safe : split && reviewer?.onThisMac == false ? .checkedInParts : .checkedOnThisMac }
         return .unchecked
     }
 
@@ -991,7 +995,8 @@ struct ImportReview {
 extension ImportReview {
     /// What Lamp knows from reading the file itself, before any AI is asked.
     init(inspection found: Sharing.Inspection) {
-        self.init(summary: "", capabilities: [], concerns: [], detected: found.detected, partial: found.truncated)
+        self.init(summary: "", capabilities: [], concerns: [], detected: found.detected, partial: found.truncated,
+                  split: found.batches.count > 1)
     }
 
     /// Adds the reviewer's answers, one for each request the code was sent in (`Sharing.Inspection.batches`), to what
@@ -1312,10 +1317,12 @@ extension Sharing {
             guard let first = answers.first else { return nil }
             func union(_ lists: [[String]]) -> [String] {
                 var seen = Set<String>()
-                return lists.joined().filter { seen.insert($0.lowercased()).inserted }.prefix(8).map { $0 }
+                return lists.joined().filter { seen.insert($0.lowercased()).inserted }
             }
             let order = ImportReview.Risk.allCases
-            return Answer(summary: first.summary, capabilities: union(answers.map(\.capabilities)),
+            // Every concern stays, whichever part raised it: the sender picks the file order, and so which part
+            // answers first. What the app does for the person is kept to the few lines a single answer has.
+            return Answer(summary: first.summary, capabilities: Array(union(answers.map(\.capabilities)).prefix(8)),
                           concerns: union(answers.map(\.concerns)),
                           risk: answers.map(\.risk).max { order.firstIndex(of: $0)! < order.firstIndex(of: $1)! }!)
         }
@@ -1389,14 +1396,14 @@ extension Sharing {
     }
 
     private static func slices(_ text: String, limit: Int) -> [String] {
-        var pieces: [String] = [], rest = Substring(text)
-        while rest.count > limit {
-            let end = rest.index(rest.startIndex, offsetBy: limit)
-            let cut = rest[..<end].lastIndex(of: "\n").map { rest.index(after: $0) } ?? end
-            pieces.append(String(rest[..<cut]))
-            rest = rest[cut...]
+        var pieces: [String] = [], start = text.startIndex
+        // Each step walks only the slice it cuts, so a file of any size is cut in one pass.
+        while let end = text.index(start, offsetBy: limit, limitedBy: text.endIndex), end < text.endIndex {
+            let cut = text[start..<end].lastIndex(of: "\n").map { text.index(after: $0) } ?? end
+            pieces.append(String(text[start..<cut]))
+            start = cut
         }
-        return pieces + (rest.isEmpty && !pieces.isEmpty ? [] : [String(rest)])
+        return pieces + (start == text.endIndex && !pieces.isEmpty ? [] : [String(text[start...])])
     }
 
     static func inspect(_ package: Package) -> Inspection {
