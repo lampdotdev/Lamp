@@ -4334,6 +4334,8 @@ final class Store: ObservableObject {
     /// Marks the app idle again, then starts anything queued while it was busy.
     func finish(_ project: LampProject) {
         settleDecided(project)
+        // A preview opened beside a page's Mac copy, for another shape, goes with the turn that opened it.
+        for app in [project] + parts(of: project) where asidePreviews.remove(app.id) != nil { TVPreview.close(app) }
         if let turn = turns[project.id], turn.reloadedWhileAway, turn.reloadedByPerson, away.carriesOn(project.id) {
             queueCarryOn(project)
         }
@@ -5907,9 +5909,11 @@ final class Store: ObservableObject {
         }
         // A game is played in the preview, wherever else it's played: the same moves give the same frames.
         if GameKit.isGame(project), !GameKit.ownsLoop(project) { return await useOnGame(project, actions: actions) }
-        // A page with the remote's focus and keys (a screen, a game made for the Xbox with a loop of its own) is used in
-        // the page preview, wherever it's shown.
-        if project.platform.target.looksInTVPreview || GameKit.ownsLoop(project) { return await useOnTV(project, actions: actions, json: json) }
+        // A page with the remote's focus and keys (a screen, a game made for the Xbox with a loop of its own) is used where
+        // it was last looked at: its Mac copy when that's what the person sees (`pageOnMac`), else the page preview.
+        let onMac = pageOnMac(project, shape: nil) && !(asidePreviews.contains(project.id) && TVPreview.isOpen(project))
+        if !onMac, project.platform.target.looksInTVPreview || GameKit.ownsLoop(project) { return await useOnTV(project, actions: actions, json: json) }
+        let project = onMac ? project.at(.mac) : project
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         if project.onTV { return await useOnTV(project, actions: actions, json: json) }
@@ -9004,8 +9008,11 @@ final class Store: ObservableObject {
             let built = Runtime.builtFingerprint(project)
             let staged = try await TVs.stage(project, folder: folder)
             previewBuilt[project.id] = built
+            // A page with a Mac copy starts from what that copy saved, the person's own data, copied one way.
+            let seed = await PageLive.shared.saved(of: project)
+            if PageLive.takes(project), project.hasMac { asidePreviews.insert(project.id) }
             note("Opening \(project.name) in \(Self.previewName(device))…", for: project)
-            let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device)
+            let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device, seed: seed)
             refreshOpenApps()
             return problem
         } catch {
@@ -9016,6 +9023,19 @@ final class Store: ObservableObject {
 
     /// Which build each device app's preview on this Mac was opened from, as `deviceRunBuilt` is for the device.
     private var previewBuilt: [String: String] = [:]
+
+    /// Pages whose preview was opened beside their Mac copy (for another shape, or while it wasn't open): `use_app` goes
+    /// where the last look was, and the preview closes at the next look in the Mac copy or when the turn ends.
+    private var asidePreviews: Set<String> = []
+
+    /// Whether a page Lamp otherwise looks at in the preview (a screen, a web app, a game with a loop of its own) is looked
+    /// at and used in its Mac copy: the window the person sees, when the page has one and it's open or at home on the Mac
+    /// (where a look opens it). Any other `shape` is the preview's, which shows a page at any size, where a Mac window
+    /// can't take a phone's or a TV's without covering the screen or changing the window the person has.
+    private func pageOnMac(_ project: LampProject, shape: String?) -> Bool {
+        guard shape == nil, project.platform.target.looksInTVPreview || GameKit.ownsLoop(project), project.hasMac else { return false }
+        return project.destination == .mac || isRunning(project)
+    }
 
     /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox"). A page
     /// looked at in the TV preview wherever it's shown (a web app at home on the Mac, a screen on a phone) stands in for a
@@ -11578,12 +11598,13 @@ final class Store: ObservableObject {
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }
-        // A game's page taking changes while it's played (`PageLive`).
+        // A page taking changes while it's open, and saying what it saved (`PageLive`).
         if route.hasPrefix("/app/page/") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             switch route {
             case "/app/page/live": return await PageLive.shared.poll(body, for: project)
             case "/app/page/file": return PageLive.shared.file(body, for: project)
+            case "/app/page/saved": return PageLive.shared.savedArrived(body, for: project)
             default: return PageLive.shared.state(body, for: project)
             }
         }
@@ -11649,6 +11670,10 @@ final class Store: ObservableObject {
             // screen among the wish's apps, so it never takes the place of the screen's own window or TV.
             if request.fromPreview, project.platform.target.looksInTVPreview, !(project.onTV && project.device == nil) {
                 return (409, ["error": "This is Lamp's preview of the screen: the screen where it's shown is the one the wish's other apps reach."])
+            }
+            // A preview holding a copy of the Mac copy's data isn't one of the wish's apps: what's done there stays there.
+            if request.fromPreview, TVPreview.isSeeded(project) {
+                return (409, ["error": "This is Lamp's preview, holding a copy of the app's data: it doesn't join the wish's other apps."])
             }
             return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host, preview: request.fromPreview)
         }
@@ -12464,16 +12489,22 @@ final class Store: ObservableObject {
         }
 
         try? await writeOwnFiles(project, all: false)
+        // A page otherwise looked at in the preview (a screen, a web app, a game with a loop of its own) is looked at in its
+        // Mac copy when that's what the person sees (`pageOnMac`): built, opened and pictured as a Mac app is, a change of
+        // its page going into the open window. A preview beside it, for another shape, closes.
+        let onMac = !onDevice && pageOnMac(project, shape: shape)
+        if onMac, asidePreviews.remove(project.id) != nil { TVPreview.close(project) }
+        let project = onMac ? project.at(.mac) : project
         // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
-        if GameKit.isGame(project), !onDevice {
+        if GameKit.isGame(project), !onDevice, !onMac {
             // One made for the Xbox with a loop of its own can't play the preview's script: it's looked at as a page is.
             if GameKit.ownsLoop(project) { return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen) }
             return await lookAtGame(project, turn: turn, motion: motion)
         }
-        // A page with the remote's focus and keys (a screen) is looked at in the TV preview, wherever it's shown, with no
+        // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
         // the preview, at any shape the agent asks for.
-        if project.platform.target.looksInTVPreview, !onDevice, !project.onTV {
+        if project.platform.target.looksInTVPreview, !onDevice, !project.onTV, !onMac {
             return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen, shape: shape)
         }
         let changed = Runtime.sourcesChanged(project)

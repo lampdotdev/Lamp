@@ -678,6 +678,9 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         view.scrollView.contentInsetAdjustmentBehavior = .never
         #endif
         changes?.start(view)
+        #if os(macOS)
+        LampPageReader.watch(view)
+        #endif
         view.load(URLRequest(url: URL(string: "\(files.scheme)://app/index.html")!))
         return view
     }
@@ -689,6 +692,73 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         if abs(view.pageZoom - zoom) > 0.001 { view.pageZoom = zoom }
     }
 }
+
+#if os(macOS)
+// MARK: - The page as text
+
+/// The page's own things for the screen as text that Lamp's builder reads and acts on (`LampPageItems` in
+/// LampSupport.swift): the accessibility tree LampSupport reads stops at a web view's edge, so the page is read by a
+/// script in it, the same one Lamp's preview reads a page with, and each thing's box is turned into pixels of the window's
+/// picture. Clicks and keys then reach the page as the person's do, at those points.
+@MainActor enum LampPageReader {
+    private static let pages = NSHashTable<WKWebView>.weakObjects()
+    /// What each window's pages held when last read, by the window's number.
+    private static var read: [Int: [LampScreen.Item]] = [:]
+    private static let script = "{{PAGE_SCREEN_SCRIPT}}"
+
+    static func watch(_ view: WKWebView) {
+        pages.add(view)
+        LampPageItems.refresh = refresh
+        LampPageItems.items = { read[$0.windowNumber] ?? [] }
+    }
+
+    /// Reads every page on screen again, then calls `done`: once each has answered, or after a second whatever there is.
+    private static func refresh(_ done: @escaping @MainActor () -> Void) {
+        let shown = pages.allObjects.filter { $0.window?.isVisible == true }
+        var waiting = shown.count, called = false
+        func finish() {
+            guard !called else { return }
+            called = true
+            done()
+        }
+        guard waiting > 0 else { read = [:]; return finish() }
+        var fresh: [Int: [LampScreen.Item]] = [:]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MainActor.assumeIsolated { finish() } }
+        for page in shown {
+            page.evaluateJavaScript(script) { result, _ in
+                MainActor.assumeIsolated {
+                    if let window = page.window, let json = result as? String,
+                       let list = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] {
+                        fresh[window.windowNumber, default: []] += items(list, of: page, in: window)
+                    }
+                    waiting -= 1
+                    if waiting == 0 {
+                        read = fresh
+                        finish()
+                    }
+                }
+            }
+        }
+    }
+
+    /// The page's things with their boxes in the window's picture: its pixels from the top left of the window with its
+    /// title bar, as LampSupport pictures it.
+    private static func items(_ list: [[String: Any]], of page: WKWebView, in window: NSWindow) -> [LampScreen.Item] {
+        guard let frame = window.contentView?.superview ?? window.contentView else { return [] }
+        let box = page.convert(page.bounds, to: frame)
+        let top = frame.isFlipped ? box.minY : frame.bounds.height - box.maxY
+        let scale = LampRuntime.scale(of: window), zoom = page.pageZoom
+        return list.compactMap { entry in
+            guard let kind = entry["kind"] as? String else { return nil }
+            func n(_ key: String) -> CGFloat { CGFloat((entry[key] as? NSNumber)?.doubleValue ?? 0) * zoom }
+            let role = ["button": "button", "field": "text field", "choice": "choice", "image": "picture"][kind] ?? "text"
+            return LampScreen.Item(role: role, label: entry["name"] as? String ?? "", value: entry["value"] as? String ?? "",
+                                   frame: CGRect(x: (box.minX + n("x")) * scale, y: (top + n("y")) * scale, width: n("w") * scale, height: n("h") * scale),
+                                   selected: entry["focused"] as? Bool ?? false)
+        }
+    }
+}
+#endif
 
 // MARK: - Changes while it's open
 
@@ -704,7 +774,9 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     private var epoch = "", gen = 0
     private var have: [String: String] = [:]
     private var served: Set<String> = []
-    private static let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("LampPage")
+    /// Under the app's own name: an app that isn't sandboxed shares the caches folder with every other.
+    private static let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent(Bundle.main.bundleIdentifier ?? "LampPage").appendingPathComponent("LampPage")
     private static var manifest: URL { cache.appendingPathComponent("changes.json") }
     /// Where this copy is, for Lamp: a phone's copy takes a change when Lamp installs it again, not this way.
     #if os(macOS)
@@ -753,6 +825,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
                 let answer = try await call("/app/page/live", ["after": gen, "epoch": epoch, "place": Self.place, "bundle": Self.bundle], timeout: 60)
                 pause = 2
                 if let e = answer["epoch"] as? String, e != epoch { epoch = e; gen = 0 }
+                if answer["send"] as? String == "saved" { await sendSaved(); continue }
                 guard let next = answer["gen"] as? Int, next > gen || answer["now"] as? Bool == true else { continue }
                 try await take(answer, gen: next)
             } catch {
@@ -796,6 +869,15 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
             page.reload()
             tell(next, "reloading")
         }
+    }
+
+    /// What the page has saved (its localStorage, where LampStore keeps it), for Lamp's preview of the app to start from:
+    /// Lamp asks for it as a preview opens, and nothing comes back from the preview.
+    private func sendSaved() async {
+        let read = "(function () { var o = {}; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); o[k] = localStorage.getItem(k); } return JSON.stringify(o); })()"
+        guard let page, let json = try? await page.evaluateJavaScript(read, in: nil, contentWorld: .defaultClient) as? String,
+              let data = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String] else { return }
+        _ = try? await call("/app/page/saved", ["place": Self.place, "data": data], timeout: 10)
     }
 
     /// A file's name in the caches, as Lamp names it: the first half of its SHA-256.

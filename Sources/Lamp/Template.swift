@@ -7243,6 +7243,13 @@ enum Template {
         /// then calls `done`. An app may picture its own windows without screen recording permission.
         @MainActor
         static func snapshot(then done: (@MainActor () -> Void)? = nil) {
+            // A page's things are read in the page, which answers a moment later.
+            guard let refresh = LampPageItems.refresh else { return snapshotNow(then: done) }
+            refresh { snapshotNow(then: done) }
+        }
+
+        @MainActor
+        private static func snapshotNow(then done: (@MainActor () -> Void)?) {
             LampDriver.keepBarPanel()
             let windows = windowsOnScreen
             guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
@@ -8412,6 +8419,15 @@ enum Template {
     }
     // end LampScreen
 
+    /// A web page in the app (LampPage.swift's): the accessibility tree `LampDriver.elements` reads stops at a web view's
+    /// edge, so a page lists its own things (`LampPageReader`), in the window's picture's pixels. `refresh` reads them
+    /// again and then calls back; `items` are those last read in a window. Nothing in an app without a page.
+    @MainActor
+    enum LampPageItems {
+        static var refresh: ((@escaping @MainActor () -> Void) -> Void)?
+        static var items: (NSWindow) -> [LampScreen.Item] = { _ in [] }
+    }
+
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
     /// menus in the front window, from inside the app, so no Accessibility permission is needed. An action names
     /// what it's for by `target`, an id or name from the screen as text (LampScreen, written beside each picture),
@@ -8638,6 +8654,8 @@ enum Template {
                         last = (line, window, LampRuntime.picture(of: window))
                     }
                     report[line] = run(action)
+                    // A page reads its things again, for the next action's target: ready well within the pause.
+                    LampPageItems.refresh? {}
                     if action.action != "bar_icon" { keepBarPanel() }
                     tellWindow()
                     // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
@@ -8757,7 +8775,7 @@ enum Template {
             // What the action names, found in the window's own accessibility tree: it's acted on where it has
             // an action of its own, and its middle is the point to click otherwise.
             var action = action
-            var named: (item: LampScreen.Item, id: String, element: AXUIElement)?
+            var named: (item: LampScreen.Item, id: String, element: AXUIElement?)?
             if let target = action.target?.trimmingCharacters(in: .whitespacesAndNewlines), !target.isEmpty, !(window is NSSavePanel) {
                 let elements = elements(in: window)
                 let items = elements.map(\.item)
@@ -8803,9 +8821,9 @@ enum Template {
                 // A thing that presses itself (a button, a switch, a link, a row's disclosure) is asked to, the
                 // way VoiceOver asks it, so the click can't miss. A picker's press would open its menu on the
                 // user's screen, and a row's or field's is a click: those go by the point.
-                if let named, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
+                if let named, let element = named.element, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
                     guard !named.item.disabled else { return label + "it's dimmed right now, so nothing happened" }
-                    if AXUIElementPerformAction(named.element, kAXPressAction as CFString) == .success { return label + "pressed" }
+                    if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success { return label + "pressed" }
                 }
                 guard frame.bounds.contains(point) else { return label + "outside the window, whose picture is \(size) pixels" }
                 guard let view = frame.hitTest(point) else { return label + "nothing there" }
@@ -8821,9 +8839,9 @@ enum Template {
                 if let named, let what {
                     // A slider or stepper takes the number; a field takes the keyboard, with the text in place of
                     // what it held, so a value typed over "0.00" isn't "0.00120".
-                    if named.item.role == "slider" || named.item.role == "stepper" {
+                    if let element = named.element, named.item.role == "slider" || named.item.role == "stepper" {
                         guard let value = Double(text) else { return "type into \(what): give it a number" }
-                        guard AXUIElementSetAttributeValue(named.element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
+                        guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
                             return "type into \(what): it didn't take the number"
                         }
                         return "set \(what) to \(LampScreen.number(value))"
@@ -8858,8 +8876,8 @@ enum Template {
                 }
                 if let named, let what {
                     // Up and down step a slider or stepper; anything else goes to the thing once it has focus.
-                    if named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
-                        let stepped = AXUIElementPerformAction(named.element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
+                    if let element = named.element, named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
+                        let stepped = AXUIElementPerformAction(element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
                         return stepped ? "stepped \(what) \(name)" : "key \(name): \(what) didn't take the step"
                     }
                     if let view = frame.hitTest(point) { _ = click(view, at: point, in: window, count: 1) }
@@ -8915,13 +8933,13 @@ enum Template {
         /// accessibility API on this app's own process, which needs no permission: it's the one way to see
         /// SwiftUI's elements, whose bridge to AppKit stays asleep until an accessibility client asks, and
         /// it shows AppKit's and SwiftUI's alike. Frames are in the picture's pixels.
-        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement)] {
+        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement?)] {
             guard let frame = window.contentView?.superview, let root = axWindow(for: window) else { return [] }
             let scale = LampRuntime.scale(of: window)
             // The accessibility API counts from the top left of the main screen, pictures from the window's.
             let origin = CGPoint(x: window.frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - window.frame.maxY)
             let bounds = CGRect(origin: origin, size: frame.bounds.size)
-            var found: [(item: LampScreen.Item, element: AXUIElement)] = []
+            var found: [(item: LampScreen.Item, element: AXUIElement?)] = []
             func string(_ value: CFTypeRef?) -> String {
                 switch value {
                 case let text as String: text
@@ -9002,7 +9020,8 @@ enum Template {
                 for child in read[10] as? [AXUIElement] ?? [] { visit(child, depth: depth + 1, under: under) }
             }
             visit(root, depth: 0, under: [])
-            return found
+            // A page's own things, read in the page (`LampPageItems`): clicked and typed into at their points.
+            return found + LampPageItems.items(window).map { ($0, nil) }
         }
 
         /// This window as the accessibility API has it: the one of this app's windows, or sheets on them, in
