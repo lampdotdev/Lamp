@@ -243,8 +243,8 @@ struct AppMenu: View {
 
     var body: some View {
         let busy = store.busy.contains(project.id)
-        // The whole wish, as Play and Stop are: each app's own menu in the toolbar is for that app alone.
-        Button("Open") { store.openWish(project) }
+        // The whole wish, as Play and Stop are: each app's own menu in the toolbar is for that app alone. Open and Remix
+        // are the desk's own, above it (`DeskWishMenu`).
         Button("Rebuild & Open") { store.runPrepared(project) }
             .disabled(busy)
         Button("Quit") { Task { await store.quitWish(project) } }
@@ -259,8 +259,6 @@ struct AppMenu: View {
         Button("Rename…") { store.renaming = project }
             // Still being found: the wish it becomes names it. A device's setup is never named.
             .disabled(busy || project.makesNoApp)
-        Button("Remix") { Task { await store.remix(project) } }
-            .disabled(busy || !project.scaffolded || project.untitled || !AppUpdates.mayRemix(project))
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
         // Only once there's an app to show: a wish not yet made has nothing in Finder.

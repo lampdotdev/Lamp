@@ -346,6 +346,13 @@ final class SidebarServer {
         local.push()
     }
 
+    /// A wish's chat opened from the desk on one of its panels (Wish Info): what the bar's buttons open, kept until the
+    /// chat is shown, which reads it as it connects.
+    func show(_ panel: SidebarPanel, for project: LampProject) {
+        panels[project.id] = panel
+        scheduleUpdate()
+    }
+
     private func scheduleUpdate() {
         guard !pending, !connections.isEmpty || !locals.isEmpty else { return }
         pending = true

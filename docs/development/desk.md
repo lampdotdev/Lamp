@@ -6,25 +6,29 @@ Lamp's window is the desk and only the desk (`WishDesk`, `Desk.swift`): no wish'
 on Lamp's paper (`Paper`, in LampSidebarKit, which the welcome and the chat draw from too): the person's wishes in one
 list, the place to make a new one above it, and down the side the filters and the person's devices. Everything someone
 makes with Lamp is a **wish** in what they read; a wish may be made of an app, a widget, a menu bar item, a watch app,
-so "app" stays where it means that piece. A wish is a thing to remix as much as to use, and it may run in several
+so "app" stays where it means that piece. A wish is a thing to change as much as to use, and it may run in several
 places, so the desk shows none of a Mac's icon grid and makes no difference between a game and an app.
 
 **The list** (`DeskList.swift`) is every wish: those Lamp came with and those the person made, together, with nothing
 set apart for the starters (a starter deleted is gone; a remix of it from the site puts it back). Each row is the wish's
 icon (narrower than a picture, and easier to find again down a list), its name and its about.json line, who made it, where
-it runs (each place its apps open, `openPlaces`), when it last changed, and **Open** with **Remix** beside it (`DeskListRow`),
+it runs (each place its apps open, `openPlaces`), when it last changed, and **Open** with the wish's menu, ⋯, beside it (`DeskListRow`, `DeskWishMore`),
 in a narrow window only the icon, the name and the buttons, the rest being in the side panel (`DeskListRow.compact`); all read from its files away from the main thread for each change to the wishes and as each turn ends (`DeskEntry`).
 Who made it is "You" for what was made or remixed here, the author of the work a starter is made from (Lamp when it
 names none), or "Shared" for a wish that came from someone else (`DeskList.madeBy`). Clicking a column's name sorts by it,
 and again the other way, kept between launches; nothing is dragged into an order. A remix made here sits under its
 original, whatever the sort, joined to it by the stripes' line (`DeskList.rows`: by the last link of its chain,
-`Credits.remixOf`, naming the original's identity). The filters are Everything and Your remixes (what the person made or
-remixed). Open (or a double click) opens it to use and change at once (`Store.open(fromDesk:)`), always with its chat
+`Credits.remixOf`, naming the original's identity). The filters are Everything and Your remixes: the wishes made with
+Remix as a New Wish… (`DeskList.Row.remix`), never one changed in place. Open (or a double click) opens it to use and change at once (`Store.open(fromDesk:)`), always with its chat
 beside whatever shows it: a Mac app with windows opens with its chat beside it (`Store.change`, below; a notification's
 click goes the same way, `Store.openChat`); a wish that opens no Mac window is used (`Store.use`) with its chat in Lamp's
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
-chat. A right-click has Open, Change… and the wish's menu (`AppMenu`: Rename…, Remix, Delete… and the rest). Dragged out
+chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
+(`DeskWishMenu`): Remix as a New Wish…, Start Again from the Original and Send Changes Back… where they apply, Wish Info
+(its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
+Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
+for the menu. Dragged out
 of Lamp a row is the wish's shared file, or the app itself in the Dock or the Applications folder (`WishDrag`). A dot
 beside a name says it's ready. The one wait the list shows is a starter opened before Lamp has built it, since nothing
 else on screen says the click did anything until it opens by itself (`openWhenReady`): "Getting it ready…" takes its
@@ -34,15 +38,29 @@ comes forward (the menu bar, a widget, the background, the person's own phone) t
 translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in
 front (⌘[).
 
-**Remix** (`Store.remix`, also Remix on the wish's menu and File → Remix) makes a new copy of the wish to change, "<name>
-Remix", with its code, history and icon on another background, and a link back to the original at the end of its chain,
-then builds it with its chat beside it; the original stays as it was. The row picked (clicked, or moved to with the arrows; the first until then) shows beside it what it is, in a panel
-the toolbar's sidebar button slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture (`Runtime.previewURL`, else the one its
-starter shipped), line, who made it and its license, where it runs and its remixes, Open, and a box to
-remix it with a change, which asks for that change as the copy's first request; a starter's own three changes are there
-to pick from. A remix made with no change asked opens its chat on the card its starter's chat opens on (the original's
-starter.md kept as `.lamp/starter-suggestions.md`, `Starters.suggestions`), never as a starter itself: its icon is
-painted and the desk counts it as the person's.
+**Changing a wish is the first thing the desk offers; a new copy is a choice made on purpose.** The row picked (clicked,
+or moved to with the arrows; the first until then) shows beside it what it is, in a panel the toolbar's sidebar button
+slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture
+(`Runtime.previewURL`, else the one its starter shipped), line, who made it and its license, where it runs and its
+remixes, Open with ⋯, and **Change it**: a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
+in its chat, which opens beside it as Open opens it; with nothing written it only opens. A starter's own three changes
+are there to put in the box. The wish changes in place, a version of its own that Undo and Versions take back. A starter
+or a wish opened from GitHub or a file is already the person's own copy, so the original is never touched.
+
+A wish that arrived from somewhere and has been changed since (`Store.original(toStartAgain:)`: its files differ from
+the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
+original" in the panel, with Start Again beside it; the same is Start Again from the Original in its menu
+(`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. Send Changes Back… is
+in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
+wish's chat as the chat's Share menu does. A remix link from the site lands the same way: it opens the person's own
+untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
+
+**Remix as a New Wish…** (`Store.remix`, in the wish's menu and File → Remix as a New Wish…) is for making something
+else of it. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
+to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
+panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
+the card its starter's chat opens on (the original's starter.md kept as `.lamp/starter-suggestions.md`,
+`Starters.suggestions`), never as a starter itself: its icon is painted and the desk counts it as the person's.
 
 **Making a new wish.** It's typed in the bar over the list, or said with the talk button beside it (`TalkButton`, moving
 with `Dictation.level`); either way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so
