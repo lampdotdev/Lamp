@@ -19,6 +19,9 @@ open class ChatLink: ObservableObject {
     @Published public var lampInstalled = true
     /// What that panel offers: the app's name and line and three things to change, from the app's own bundle.
     @Published public var remix: RemixOffer?
+    /// Lamp is open but no chat it sent could be shown for a while (`ChatWait`): the chat offers Lamp's own window
+    /// rather than waiting on.
+    @Published public var stuck = false
     /// The box's words as last typed here, with the draft version they were typed over. Lamp doesn't send back words
     /// typed here, so a box drawn again (a panel was open in the chat's place) takes them from here, not from Lamp.
     public var typed: (version: Int, text: String)?
@@ -37,6 +40,8 @@ open class ChatLink: ObservableObject {
     open func openLamp() {}
     /// Continue with Lamp, on a Mac without it: the request goes to lamp.dev, or the wish's own page.
     open func continueWithLamp(_ ask: String) {}
+    /// The chat can't come up here: Lamp shows it in its own window.
+    open func openInLamp() {}
 }
 
 /// The chat as everyone sees it: its bar, the chat or a panel in its place, and the message box. Drawn the same
@@ -61,6 +66,9 @@ public struct ChatScreen: View {
                     if link.lampAway {
                         Text("Lamp isn't open").font(.headline)
                         Button("Open Lamp") { link.openLamp() }
+                    } else if link.stuck {
+                        Text("Lamp couldn't open this chat here").font(.headline)
+                        Button("Open in Lamp") { link.openInLamp() }
                     } else {
                         ProgressView().controlSize(.small)
                     }
@@ -75,6 +83,30 @@ public struct ChatScreen: View {
             Dropped.load(providers) { files in if !files.isEmpty { link.send(.attach(files)) } }
             return true
         }
+    }
+}
+
+/// How long the chat beside an app has gone without a chat from Lamp it could show, across every connection
+/// meanwhile: a connection Lamp turns away is tried again twice a second, and one that connects but never sends
+/// a chat that can be read looks connected, so neither "Lamp isn't open" nor the chat ever comes and the spinner
+/// turned for good. Only a chat that's read starts the count again; a connection lost after one starts it then.
+public struct ChatWait {
+    /// After this long without a chat to show, the chat stops waiting and offers Lamp's own window.
+    public static let patience: TimeInterval = 10
+
+    /// Since when nothing could be shown; nil while a chat that was read is showing.
+    public private(set) var since: Date?
+
+    public init(from start: Date = Date()) { since = start }
+
+    /// A chat from Lamp was read.
+    public mutating func read() { since = nil }
+
+    /// The connection went. Lost after a chat was read, the wait starts now; lost while waiting, it goes on.
+    public mutating func dropped(at date: Date = Date()) { if since == nil { since = date } }
+
+    public func isStuck(at date: Date = Date()) -> Bool {
+        since.map { date.timeIntervalSince($0) >= Self.patience } ?? false
     }
 }
 

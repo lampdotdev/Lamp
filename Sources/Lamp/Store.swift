@@ -1697,6 +1697,8 @@ final class Store: ObservableObject {
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
         // An app's sidebar, started while Lamp wasn't open: Lamp listens for it, and its own window stays put.
         if url.host == "sidebar" { return MagicPanel.shared.opening(slug) }
+        // The chat beside an app that couldn't come up there (`ChatWait`): Lamp's own panel shows it instead.
+        if url.host == "chat" { return showChatInLamp(slug) }
         // The app's Reload button, pressed while Lamp wasn't running (`LampMagic.Opener.reload`).
         if url.host == "reload" { return reloadWaiting(slug) }
         showChat(slug)
@@ -1877,6 +1879,18 @@ final class Store: ObservableObject {
             return MagicPanel.shared.openChat(in: project)
         }
         ChatPanel.show(id)
+    }
+
+    /// A wish's chat in Lamp's panel, in front, asked by the chat beside its Mac app when it couldn't come up there.
+    /// Not `showChat`, which hands the chat back to the app while its sidebar is connected: a sidebar that's
+    /// connected but can't show the chat is the one asking. Any web page can open the link, so it only finds a wish
+    /// already listed and does nothing for any other id: no read of the apps folder, which moves installed copies and
+    /// refreshes what listens on the network. An app with a chat beside it is listed already.
+    func showChatInLamp(_ id: String) {
+        guard let project = projects.first(where: { $0.id == id }) else { return }
+        let wish = wish(of: project)
+        selection = wish.id
+        ChatPanel.show(wish.id)
     }
 
     /// The wish an open chat window shows, following it to wherever its first request moved it. Its own id
@@ -10182,6 +10196,8 @@ final class Store: ObservableObject {
             try fm.moveItem(at: app, to: project.installedURL)
         }
         swapped = true
+        // Beside `Sidebar.remember`'s line, so a sidebar refused later can be set against when its copy went in.
+        Sidebar.log.notice("swapped in \(project.id, privacy: .public) at \(project.installedURL.path, privacy: .public)")
         // A game's page: what this copy has is what a change while it's played is measured against (`PageLive`).
         PageLive.shared.installed(project, at: .mac)
         if copy.iconReady { Self.iconReachedApp(project) }

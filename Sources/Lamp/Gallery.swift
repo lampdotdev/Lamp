@@ -79,6 +79,13 @@ enum Gallery {
     /// that isn't a Mac window beside the chat, a setup card's header and its sheet, Agent Details' output, and a phone
     /// that didn't take the app.
     private static let screenEntries: [Entry] = [
+        // Beside an app, when Lamp is open but nothing it sent could be shown for a while (`ChatWait`).
+        Entry(group: "Chat screen", name: "Couldn't open beside the app") {
+            let chat = GalleryChat(nil)
+            chat.connected = false
+            chat.stuck = true
+            return AnyView(ChatScreen().environmentObject(chat as ChatLink).frame(height: 640))
+        },
         screen("A new wish", group: "Chat screen", []) { state in
             state.toolbar = nil
             state.intro = SidebarIntro(icon: nil, name: nil, namePrompt: "", line: introLine, ideas: ideas, canRename: true)

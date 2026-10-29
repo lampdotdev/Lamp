@@ -2,6 +2,7 @@ import ExtensionKit
 import SwiftUI
 import AppKit
 import LampSidebarKit
+import os
 
 /// The chat inside an app's own window: an extension Lamp puts in every Mac app it builds, which the app shows
 /// beside its content when the 🪄 is clicked (`LampSidebar` in LampSupport.swift). It runs in a process of its
@@ -77,6 +78,15 @@ final class Link: ChatLink {
     private var since = Date()
 
     private var lookedForLamp = Date.distantPast
+    /// How long nothing from Lamp could be shown, across reconnections (`ChatWait`).
+    private var wait = ChatWait()
+    /// Connections made and lost while waiting, for the log: many means Lamp keeps turning this sidebar away.
+    private var triesWhileWaiting = 0
+    /// A chat that couldn't be read is written down once for each connection, not each time it changes.
+    private var saidUnreadable = false
+    /// What the chat tells the unified log about getting a chat from Lamp (`log show --predicate 'category == "sidebar"'`):
+    /// Lamp's side says why it turned a connection away, this side what it got.
+    private let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "LampSidebar", category: "sidebar")
 
     private override init() {
         super.init()
@@ -88,7 +98,21 @@ final class Link: ChatLink {
                            shareLink: (info["LampShareLink"] as? String).flatMap { $0.isEmpty ? nil : URL(string: $0) },
                            origin: .repository(info["LampRepository"] as? String, commit: info["LampCommit"] as? String))
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            MainActor.assumeIsolated { Link.shared.tryConnecting() }
+            MainActor.assumeIsolated { Link.shared.tick() }
+        }
+        tryConnecting()
+    }
+
+    private func tick() {
+        let stuck = wait.isStuck()
+        if stuck != self.stuck {
+            self.stuck = stuck
+            if stuck {
+                log.error("""
+                    no chat from Lamp for \(ChatWait.patience, privacy: .public) s: \(self.triesWhileWaiting, privacy: .public) \
+                    connections made meanwhile, connected now \(self.connected, privacy: .public)
+                    """)
+            }
         }
         tryConnecting()
     }
@@ -117,6 +141,7 @@ final class Link: ChatLink {
         var on: Int32 = 1
         setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         fd = socket
+        if wait.since != nil { triesWhileWaiting += 1 }
         outbox = SidebarOutbox(fd: socket)
         send(.hello(SidebarWire.version))
         connected = true
@@ -136,10 +161,22 @@ final class Link: ChatLink {
         // A long line (a shared file) comes in many pieces: the buffer is looked through only once one ends a line.
         guard chunk[0..<count].contains(0x0A) else { return }
         for line in SidebarWire.lines(from: &buffer) {
-            if let state = try? JSONDecoder().decode(SidebarState.self, from: line) {
+            do {
+                let state = try JSONDecoder().decode(SidebarState.self, from: line)
                 // Sent once: kept here as it arrives, since a state decoded after it in the same read replaces this one.
                 if let sharing = state.sharing { self.sharing = sharing }
                 self.state = state
+                if wait.since != nil {
+                    log.notice("chat from Lamp after \(self.triesWhileWaiting, privacy: .public) connections")
+                    triesWhileWaiting = 0
+                }
+                wait.read()
+                if stuck { stuck = false }
+            } catch {
+                if !saidUnreadable {
+                    saidUnreadable = true
+                    log.error("a chat from Lamp couldn't be read (\(line.count, privacy: .public) bytes): \(String(describing: error), privacy: .public)")
+                }
             }
         }
     }
@@ -156,6 +193,11 @@ final class Link: ChatLink {
         buffer = Data()
         connected = false
         since = Date()
+        // What was shown came over that connection: the next one sends the chat again, and until it does there's
+        // nothing to show, so a Lamp that turns this sidebar away isn't hidden behind a chat from before.
+        state = nil
+        saidUnreadable = false
+        wait.dropped()
     }
 
     override func send(_ command: SidebarCommand) {
@@ -169,6 +211,15 @@ final class Link: ChatLink {
     /// The request goes to the wish's page, or Lamp's site, in the browser: Lamp isn't here to take it.
     override func continueWithLamp(_ ask: String) {
         guard let offer = remix, let url = RemixLink.url(for: offer, ask: ask) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Lamp shows the wish's chat in its own window, in front: this chat beside the app couldn't come up. Lamp is
+    /// started if it isn't open.
+    override func openInLamp() {
+        guard let scheme = Bundle.main.object(forInfoDictionaryKey: "LampScheme") as? String,
+              let app = Bundle.main.object(forInfoDictionaryKey: "LampApp") as? String,
+              let url = URL(string: "\(scheme)://chat?app=\(app)") else { return }
         NSWorkspace.shared.open(url)
     }
 

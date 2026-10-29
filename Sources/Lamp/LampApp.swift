@@ -112,9 +112,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Generated apps call back with lamp://edit?app=<slug> (⇧⌘E inside the app).
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
-            // An app's sidebar started Lamp, or its Reload button: what the person is doing is in that app, so Lamp's
-            // own window stays out of the way. Opened already, it stays as it was. The Dock icon brings it back.
-            let forSidebar = urls.contains { $0.scheme == Edition.urlScheme && ($0.host == "sidebar" || $0.host == "reload") }
+            // An app's sidebar started Lamp, or its Reload button, or its chat asked for Lamp's panel: what the person
+            // is doing is in that app, so Lamp's own window stays out of the way. Opened already, it stays as it was. The Dock icon brings it back.
+            let forSidebar = urls.contains { $0.scheme == Edition.urlScheme && ($0.host == "sidebar" || $0.host == "reload" || $0.host == "chat") }
             if forSidebar, Date().timeIntervalSince(launched) < 5, Onboarding.isDone { MagicPanel.keepMainWindowHidden() }
             urls.forEach(Store.shared.handle(url:))
         }
