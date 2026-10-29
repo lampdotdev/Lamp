@@ -30,10 +30,10 @@ A phone's browser, joined by a QR code, needs a phone page (`Phone/index.html` i
 `Web/`: the phone-pages skill says where) and a page on the screen that uses lamp.js's `Lamp.controllers`. Two kinds
 of app have both:
 
-- a game on Lamp's game runtime (`make_app_for` with `kind` "game"): on the Mac the game serves its phone page and
-  runs the relay itself while it's open, with Lamp open or closed, and so does it on an LG TV from webOS 5 on (a
-  service Lamp packages with it, so the Mac can be asleep or gone); Lamp does it for the game in the TV preview, or set
-  to open on a Samsung TV, an older LG TV or the person's Xbox;
+- a game on Lamp's game runtime (`make_app_for` with `kind` "game"): on the Mac, on an iPhone or iPad while it's in
+  front, and on an LG TV from webOS 5 on (a service Lamp packages with it, so the Mac can be asleep or gone), the game
+  serves its phone page and runs the relay itself, with Lamp open or closed; Lamp does it for the game in the TV
+  preview, or set to open on a Samsung TV, an older LG TV or the person's Xbox;
 - a TV app's page: while it's open on such a TV or in its TV preview on this Mac.
 
 An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
@@ -44,15 +44,18 @@ So a game played with phones as its controllers is a game like any other (`kind`
 played on the Mac or put on a Samsung or LG TV (`places` "tv") or the Xbox (`places` "xbox-one"). A wish's own iPhone app (`LampController`) joins only
 a TV app's game, not a game's.
 
+On an iPhone or iPad the game's phones play only while the game is in front: when the person leaves it, every
+phone is let go, and once they come back the game shows a new code to scan (`Lamp.controllers.onLink` hears it).
+
 Nothing else hosts the phone page yet, whatever device it's on:
 
-- a game played on an iPhone or iPad, or Android: its players there use a controller or touch, and
-  `Lamp.controllers` says it can't start (`onError`), so the game must be whole without phones;
+- a game played on Android: its players there use a controller or touch, and `Lamp.controllers` says it can't
+  start (`onError`), so the game must be whole without phones;
 - a page shown by Lamp's other hosts, and a native app, have no host's side of phones.
 
 These are limits of how Lamp hosts phones now, not of the devices. Say so plainly when the person asks for phones
-there, and offer what works: the game on the Mac, a Samsung or LG TV or the Xbox (the TV preview on this Mac hosts phones too,
-with no TV), or played with a controller, the remote or touch.
+there, and offer what works: the game on the Mac, an iPhone or iPad, a Samsung or LG TV or the Xbox (the TV preview
+on this Mac hosts phones too, with no TV), or played with a controller, the remote or touch.
 
 ## A page or an app on the phones?
 

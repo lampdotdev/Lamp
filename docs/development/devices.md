@@ -26,7 +26,8 @@ Lamp's folder would be shadowed, and those an earlier Lamp wrote are taken away 
 rules; one kept before this was asked is still read, and Lamp's shipped ones pass it (their test). Once a device is set
 up, its setup window offers a test run (`IntegrationProbe`, `DeviceTrialCard`): the integration's own scaffold made in
 Lamp's `Probes/` folder and taken through Lamp's own ways with an app (`DeviceApps.install`, `picture`, `press` on the
-arrows and select only, `type`, `stop`, an install over the open copy, and `DeviceApps.remove`), holding the device as
+arrows and select only, `type`, `stop`, an install over the open copy, each install of a new build as a change is, since an Xbox won't open the same
+version put on again, and `DeviceApps.remove`), holding the device as
 an install does, stopping at the first stage that fails and taking the app off again. Its report goes with the next
 request of the device's setup conversation (`Agent.deviceSetupNote`), whatever the engine, and a run that passes marks
 the bridge (`bridge.known`, Lamp's alone: refused from the builder, kept while the bridge is unchanged, never written
@@ -229,7 +230,10 @@ else), and an Authenticode signature (the APPX digest blob in an SpcIndirectData
 certificate kept in Lamp's folder (`MSIX.Signer`), which the device installs beside the package (`{certificate}`). The
 bridge launches it by its names (`{packageFullName}`, `{appUserModelID}`, and `{base64:…}` of either). For Xbox's Device
 Portal a request also carries cookies the device set earlier in its sequence (`{cookie:CSRF-Token}`), polls an install
-that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks.
+that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks,
+or asks again until it does (`until`), where a JSON path's `*` is any element of a list and the value may be one of
+Lamp's (`IntegrationRunner.meets`): the Xbox's install ends by waiting until the console lists `{packageFullName}`
+among its packages, since its install state says it's done before the app can be opened.
 Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
 controller-driven web app (arrow focus) wrapped as MSIX and shown in Lamp's own WebView2 host (`"host": "webview2"`, below). Its identity is
 read from wherever the console's SSDP answer points (`Read.description`), since that moves between retail and
@@ -430,7 +434,10 @@ game brought in from one stays as its authors wrote it. Before every build and e
 `GameKit.stageWeb`) Lamp bundles it into `Web/app/` (`GameKit.compileSource`) with the Bun inside its own pi, run as Bun
 itself (`BUN_BE_BUN=1`), in the game's sandbox, from a copy of `src/` in a scratch folder (Bun reads every folder above
 the one it builds in, which the sandbox closes in the person's own folders): nothing installed, nothing fetched, types stripped and not checked, bare
-imports left for the page's import map. Every place then plays plain JavaScript, and a change of `src/` is a change of
+imports left for the page's import map. Two of Vite's conventions hold so a Vite game needs few changes: `import.meta.env`
+reads as a published build's (`DEV` false, `BASE_URL` "./"), and each `src/**/*.worker.ts` is bundled as an entry of its
+own, every file flat in `Web/app/`, so a worker started at `./<name>.worker.js` beside `import.meta.url` is found. It must
+be a module worker (`{ type: "module" }`, which Vite doesn't require): code it shares with the page is a chunk it imports. Every place then plays plain JavaScript, and a change of `src/` is a change of
 the page like any other. `src/` is shared with the game, and so is `Web/app/`, which a Lamp from before `src/` plays as it is and a newer one
 builds again (`GameFiles`).
 
@@ -495,21 +502,29 @@ Swift built into the player and every compiled game as one file (`GameKit.contro
 port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
 the game quitting close both. A change of the phone page can't go into the open game as it's played, so it goes in
 with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
-told to update. Lamp serves the page itself in the TV preview and on a Samsung TV (staged with the rest,
-`TVs.stage`). On an LG TV the game runs its own phones there, with the Mac asleep or gone: Lamp packages a JS service of
-LG's kind with it (`LGPhones`, from `Resources/LGPhones`: `service.js` on the TV's service bus, `relay.js` serving the
-phone page Lamp published at the build and running the relay, the same protocol, credentials and limits as
-LampRelayKit's, with ws, put there by `scripts/update-lg-ws.sh`, for WebSocket framing), and names it in that package's
-lamp.js only (`TVTemplate.lgServiceMarker`). `Lamp.controllers` then subscribes to the service's `start` instead of asking
-Lamp: the subscription is the session, its answers are where the relay is and the page's host credential (again
-whenever the relay starts afresh or the TV's address moves), and the page cancelling it (`stop()`, or the game closing)
-ends the session, its sockets and its key, after which LG's service manager ends the service by its own idle rule.
-Only the game the service was packaged with may start it or be given a host credential (the caller's app id,
-`message.sender`). The key is made from Node's crypto for each session and kept only in the service's memory. Whether
-the service goes in is decided as the package is made, never at run time: a game that takes phones, has a phone page
-and an app id LG takes as the start of a service's name (no minus sign, no period before a digit), on a TV whose webOS
-release is 5 or later (`LGPhones.runs`: webOS TV 5.0's Node, 8.12, is the oldest ws runs on). Any other LG TV, one whose
-version Lamp hasn't read among them, keeps Lamp's phones as before; its lamp.js names no service and asks Lamp.
+told to update. On an iPhone or iPad the game does the same while it's in front: the page goes in its bundle as
+`Phone/` at the top (`GamePhones.write`: the simulator's bundle in `finishSimulatorBundle`, and the copy Xcode builds
+from in `Devices.stage`, with `Template.withPhoneFolder` in the project), the controller kit is built in with
+LampPage.swift (its one Mac-only call, the Mac's Bonjour name, is guarded in `ControllerAddresses`), and the game ends
+its session as it goes into the background, opening a new one at the page's next ask once it's back in front; no
+background mode keeps it alive. `ControllerAddresses` gives a phone only an address on the device's Wi‑Fi or wired
+network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
+the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
+window of Lamp's own, and on a Samsung TV (staged with the rest, `TVs.stage`). On an LG TV the game runs its own phones
+there, with the Mac asleep or gone: Lamp packages a JS service of LG's kind with it (`LGPhones`, from
+`Resources/LGPhones`: `service.js` on the TV's service bus, `relay.js` serving the phone page Lamp published at the
+build and running the relay, the same protocol, credentials and limits as LampRelayKit's, with ws, put there by
+`scripts/update-lg-ws.sh`, for WebSocket framing), and names it in that package's lamp.js only
+(`TVTemplate.lgServiceMarker`). `Lamp.controllers` then subscribes to the service's `start` instead of asking Lamp: the
+subscription is the session, its answers are where the relay is and the page's host credential (again whenever the
+relay starts afresh or the TV's address moves), and the page cancelling it (`stop()`, or the game closing) ends the
+session, its sockets and its key, after which LG's service manager ends the service by its own idle rule. Only the game
+the service was packaged with may start it or be given a host credential (the caller's app id, `message.sender`). The
+key is made from Node's crypto for each session and kept only in the service's memory. Whether the service goes in is
+decided as the package is made, never at run time: a game that takes phones, has a phone page and an app id LG takes as
+the start of a service's name (no minus sign, no period before a digit), on a TV whose webOS release is 5 or later
+(`LGPhones.runs`: webOS TV 5.0's Node, 8.12, is the oldest ws runs on). Any other LG TV, one whose version Lamp hasn't
+read among them, keeps Lamp's phones as before; its lamp.js names no service and asks Lamp.
 `Tests/LGPhones/relay-test.js` runs the service on real sockets under each Node an LG TV has, with LG's
 `webos-service` stood in for.
 On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
@@ -594,8 +609,12 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 Xbox. On the Xbox, `on_device`, Play and the end of a turn build for the console and put it there through the
 integration's bridge: `stop` ends
 the copy there first (installing over a running copy can leave the next launch failing with 0x800700BF), then
-`install` and `launch` (asked again after a few seconds when the console refuses a launch just after an update,
-0x80073D00); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
+`install` and `launch` through `IntegrationRunner.open`: a console only just done installing refuses the launch for a
+while (0x8D160120, 0x80073D00 or 0x80070002, longer when the copy it replaced was open) or takes it and shows its own
+"not ready yet", so a refused launch is asked again with growing pauses, and one the bridge's `running` (Device Portal's
+processes listing `{packageFullName}`) doesn't see running within a few seconds is launched again. One that never opens
+is said plainly in the chat ("still finishing installing"), never claimed open, and the activity line says "Finishing
+installing on Xbox…" while Lamp waits (`DeviceApps.install`'s `waiting`); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
 takes its app off every device Lamp put it on (the bridge's `remove`, `DeviceApps.removeEverywhere`), web apps too. The
 package is Lamp's (`MSIX.package` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
 

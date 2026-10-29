@@ -2947,7 +2947,8 @@ final class Store: ObservableObject {
     private static let duplicatedState = [".lamp/notes.md", ".lamp/models.json", ".lamp/art",
                                           ".lamp/versions", ".lamp/version-titles.json", Credits.arrivedPath]
 
-    /// Remixes a wish: a copy of it to change into something of the person's own, "<name> Remix", with the same code,
+    /// Duplicate… on the desk (Remix there changes a wish in place): a copy of it to change into something of the person's
+    /// own, "<name> Remix", with the same code,
     /// history and icon artwork on a different background, so the two tell apart at a glance, and a link back to the
     /// original at the end of its credits' chain (`Credits.remixOf`, by the original's identity), which the desk nests it
     /// under. Then builds it and, with `change`, asks for that change in the copy's chat. The original stays as it was.
@@ -7628,6 +7629,11 @@ final class Store: ObservableObject {
     func restore(_ project: LampProject, to version: AppVersion) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
+        await restoreBegun(project, to: version)
+    }
+
+    /// `restore` for a caller that has begun the wish's work itself (`begin`), and finishes it afterwards.
+    func restoreBegun(_ project: LampProject, to version: AppVersion) async {
         dropPausedRequest(project)
         let renaming = self.renaming(project, to: version, in: await Versions.list(project))
         guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version), renaming: renaming) else {
@@ -9037,7 +9043,9 @@ final class Store: ObservableObject {
         let file = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         do {
             let built = Runtime.builtFingerprint(project)
-            let run = try await DeviceApps.install(project, on: device, log: file, stillWanted: stillWanted)
+            let run = try await DeviceApps.install(project, on: device, log: file, stillWanted: stillWanted) { [weak self] in
+                self?.note("Finishing installing on \(name)…", for: project)
+            }
             guard stillWanted() else { run.end(); return "Stopped." }
             deviceRuns[project.id] = run
             deviceRunBuilt[project.id] = built
@@ -9961,7 +9969,8 @@ final class Store: ObservableObject {
         // Every usage description, from the one list, so apps made before a reason was added get it too; the app's own
         // local network reason in place of Lamp's.
         for (key, text) in Template.iosUsageDescriptions {
-            let own = key == "NSLocalNetworkUsageDescription" ? capabilities.localNetworkReason : nil
+            let own = key == "NSLocalNetworkUsageDescription"
+                ? capabilities.localNetworkReason ?? (GamePhones.takesOnIOS(project) ? GamePhones.iosNetworkReason : nil) : nil
             let reason = (own ?? text).replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
             script += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
         }
@@ -10007,6 +10016,10 @@ final class Store: ObservableObject {
         AppFolder.remove(app.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
         if fm.fileExists(atPath: assets.path) {
             try? AppFolder.copy(assets, to: app.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
+        }
+        // A game's phone page, which the game serves itself while it's in front (`GamePhones`), signed with it.
+        do { try GamePhones.write(project, to: app.appendingPathComponent(GamePhones.iosFolder), in: project.dir) } catch {
+            log(project, .error, "Lamp couldn't put the game's phone page in it: \(error)")
         }
         // The watch app's icon: watchOS takes one only from a compiled asset catalog, so Xcode's own compiler makes
         // it from the same square as the iPhone's, and Info.plist names it.

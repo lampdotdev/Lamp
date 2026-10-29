@@ -24,8 +24,13 @@ struct DeskEntry: Equatable, Sendable {
     var picture: URL?
     /// When the picture was last written: an app saves a new one under the same name each time it opens.
     var pictureDate: Date?
-    /// The changes its starter suggests, as the remix box's ideas.
+    /// The changes its starter suggests, as the change box's ideas.
     var ideas: [String] = []
+    /// It came from a repository on GitHub and can offer its changes there (`Contribute.canContribute`).
+    var sendsBack = false
+    /// It arrived from somewhere (a starter, GitHub, a shared file) and has been changed in place since: Start Again from
+    /// the Original takes it back (`Store.original(toStartAgain:)`). Read after the rest, since it asks git.
+    var changedFromOriginal = false
 
     nonisolated static func read(_ project: LampProject, apps: [LampProject]) -> DeskEntry {
         let credits = Credits.load(project)
@@ -50,14 +55,15 @@ struct DeskEntry: Equatable, Sendable {
                          identity: Sharing.identity(of: project, create: false), original: credits.remixOf.last?.wish,
                          picture: picture,
                          pictureDate: picture.flatMap { (try? fm.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date },
-                         ideas: Starters.starter(of: project)?.tweaks.map(\.title) ?? [])
+                         ideas: Starters.starter(of: project)?.tweaks.map(\.title) ?? [],
+                         sendsBack: Contribute.canContribute(project))
     }
 }
 
 /// The desk's wishes as the list shows them: each with what's known of it, remixes made here under their original.
 struct DeskList {
     enum Column: String, CaseIterable {
-        case name = "Name", madeBy = "Made by", runsOn = "Runs on", changed = "Changed"
+        case name = "Name", madeBy = "Made by", runsOn = "On your", changed = "Changed"
     }
 
     struct Row: Identifiable {
@@ -126,9 +132,8 @@ struct DeskList {
         return date.formatted(sameYear ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year())
     }
 
-    /// Open's and Remix's symbols, alone on a row's buttons and beside their words in the side panel.
+    /// Open's symbol, alone on a row's button and beside its word in the side panel.
     static let openSymbol = "arrow.up.right"
-    static let remixSymbol = "shuffle"
 
     static func symbol(_ place: Destination) -> String {
         switch place {
@@ -182,7 +187,7 @@ struct DeskListHeader: View {
 }
 
 /// One wish in the desk's list: its picture, name and line, who made it, where it runs, when it changed, and Open
-/// with Remix beside it. A remix sits under its original, joined to it by the stripes' line.
+/// with the wish's menu (⋯) beside it. A remix sits under its original, joined to it by the stripes' line.
 struct DeskListRow: View {
     @EnvironmentObject private var store: Store
     let row: DeskList.Row
@@ -209,6 +214,18 @@ struct DeskListRow: View {
     private var opening: Bool { store.openWhenReady.contains(project.id) }
 
     var body: some View {
+        drawn
+            .contextMenu { DeskWishMenu(project: project, entry: row.entry, withOpen: true) }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(project.title)
+            .accessibilityValue(status)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            // Picked as a click picks it, and opened as a double click opens it.
+            .accessibilityAction { select() }
+            .accessibilityAction(named: "Open") { store.open(fromDesk: project) }
+    }
+
+    private var drawn: some View {
         HStack(spacing: 0) {
             if row.nested { line }
             HStack(spacing: 12) {
@@ -243,11 +260,7 @@ struct DeskListRow: View {
                         .labelStyle(.iconOnly)
                         .buttonStyle(PaperButtonStyle(.ink, square: true))
                         .help("Open \(project.title)")
-                    Button { Task { await store.remix(project) } } label: { Label("Remix", systemImage: DeskList.remixSymbol) }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(PaperButtonStyle(.outline, square: true))
-                        .disabled(!canRemix)
-                        .help("Remix: make a new copy of \(project.title) to change. The original stays as it is.")
+                    DeskWishMore(project: project, entry: row.entry)
                 }
                 .frame(width: Self.buttonsWidth, alignment: .trailing)
             }
@@ -264,16 +277,6 @@ struct DeskListRow: View {
         .background(ShareAnchor(origin: .app(project.id)))
         // Dragged out of Lamp it's the wish's shared file, or the app itself in the Dock or the Applications folder.
         .background(WishDrag(project: project))
-        .contextMenu {
-            Button("Open") { store.open(fromDesk: project) }
-            Button("Change…") { store.change(project) }
-            Divider()
-            AppMenu(project: project)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(project.title)
-        .accessibilityValue(status)
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     /// What's going on with it, for VoiceOver: on screen the status line and the dot say it.
@@ -286,10 +289,6 @@ struct DeskListRow: View {
         if project.finding { return "Finding a wish" }
         if store.unread.contains(project.id) { return "Ready" }
         return ""
-    }
-
-    private var canRemix: Bool {
-        !store.busy.contains(project.id) && project.scaffolded && !project.untitled && AppUpdates.mayRemix(project)
     }
 
     private var background: Color {
@@ -314,8 +313,9 @@ struct DeskListRow: View {
     }
 }
 
-/// The wish picked in the list, beside it: its picture and what it is, a few facts, and a box to remix it with a change,
-/// which makes a new copy and asks for that change in its chat.
+/// The wish picked in the list, beside it: its picture and what it is, a few facts, Open with the wish's menu, and a box
+/// to remix it, which sends the change to this wish in its chat: a remix changes the wish itself. A new copy is the menu's
+/// Duplicate….
 struct DeskDetail: View {
     @EnvironmentObject private var store: Store
     let row: DeskList.Row
@@ -346,14 +346,27 @@ struct DeskDetail: View {
                 }
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
                     fact("Made by", [row.madeBy, row.entry?.license].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                    fact("Runs on", (row.entry?.places ?? []).map(GameKit.placeName).joined(separator: ", "))
+                    fact("On your", (row.entry?.places ?? []).map(GameKit.placeName).joined(separator: ", "))
                     if !remixes.isEmpty { fact("Remixes", remixes.map(\.title).joined(separator: ", ")) }
                 }
                 .font(.system(size: 13))
-                Button { store.open(fromDesk: project) } label: { Label("Open", systemImage: DeskList.openSymbol) }
-                    .buttonStyle(PaperButtonStyle(.outline, height: 34))
+                // Changed in place since it arrived: said where it's seen, with the way back beside it.
+                if row.entry?.changedFromOriginal == true {
+                    HStack(spacing: 8) {
+                        Text("Changed from the original").font(.system(size: 13)).foregroundStyle(Paper.muted)
+                        Button("Start Again") { Task { await store.startAgain(project) } }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 26))
+                            .disabled(store.busy.contains(project.id))
+                            .help("Go back to the original \(project.title). Undo brings your changes back.")
+                    }
+                }
+                HStack(spacing: 6) {
+                    Button { store.open(fromDesk: project) } label: { Label("Open", systemImage: DeskList.openSymbol) }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 34))
+                    DeskWishMore(project: project, entry: row.entry, request: change, height: 34) { change = "" }
+                }
                 Paper.rule.frame(height: 1)
-                remixBox
+                changeBox
             }
             .foregroundStyle(Paper.ink)
             .padding(18)
@@ -367,7 +380,7 @@ struct DeskDetail: View {
         .onChange(of: project.id) { change = "" }
     }
 
-    private var remixBox: some View {
+    private var changeBox: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Remix it").font(.system(size: 15, weight: .heavy))
             TextField("What would you change?", text: $change, axis: .vertical)
@@ -378,24 +391,23 @@ struct DeskDetail: View {
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
-                .onSubmit(remix)
+                .onSubmit(send)
             if !(row.entry?.ideas ?? []).isEmpty {
                 IdeaChips(ideas: row.entry?.ideas ?? []) { idea in
                     change = idea
                     focused = true
                 }
             }
-            Button(action: remix) { Label("Remix", systemImage: DeskList.remixSymbol) }
+            Button(action: send) { Label("Remix", systemImage: "shuffle") }
                 .buttonStyle(PaperButtonStyle(.ink, height: 34))
-                .disabled(store.busy.contains(project.id) || !project.scaffolded || project.untitled || !AppUpdates.mayRemix(project))
-                .help("Make a new copy of \(project.title) with this change. The original stays as it is.")
+                .help(change.trimmed.isEmpty ? "Open \(project.title) with its chat" : "Ask for this change in \(project.title)'s chat")
         }
     }
 
-    private func remix() {
-        let asked = change.trimmed
+    private func send() {
+        let asked = change
         change = ""
-        Task { await store.remix(project, change: asked.isEmpty ? nil : asked) }
+        store.change(project, asking: asked)
     }
 
     @ViewBuilder private func fact(_ label: String, _ value: String) -> some View {
@@ -408,7 +420,74 @@ struct DeskDetail: View {
     }
 }
 
-/// The changes a starter suggests, as small buttons that put one in the remix box.
+/// The wish's menu behind ⋯, beside Open on a row and in the side panel: the same as a row's right-click.
+struct DeskWishMore: View {
+    let project: LampProject
+    let entry: DeskEntry?
+    /// What's in the side panel's box, which a remix asks of the new copy.
+    var request = ""
+    var height: CGFloat = 30
+    var sent: () -> Void = {}
+
+    var body: some View {
+        Menu {
+            DeskWishMenu(project: project, entry: entry, request: request, sent: sent)
+        } label: {
+            Label("More", systemImage: "ellipsis")
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .labelStyle(.iconOnly)
+        .buttonStyle(PaperButtonStyle(.outline, height: height, square: true))
+        .fixedSize()
+        .help("More for \(project.title)")
+    }
+}
+
+/// What can be done with a wish from the desk. Changing it is Open and the side panel's box; a new copy, going back to
+/// the original and sending changes back are here, each only where it applies, then the wish's own menu (`AppMenu`).
+/// Open leads only the right-click: behind ⋯ it's the button beside it, and first under the pointer it would open the
+/// wish on a click meant for the menu.
+struct DeskWishMenu: View {
+    @EnvironmentObject private var store: Store
+    let project: LampProject
+    let entry: DeskEntry?
+    var request = ""
+    var sent: () -> Void = {}
+    var withOpen = false
+
+    var body: some View {
+        let busy = store.busy.contains(project.id)
+        if withOpen {
+            Button("Open") { store.open(fromDesk: project) }
+            Divider()
+        }
+        Button("Duplicate…") {
+            let asked = request.trimmed
+            sent()
+            Task { await store.remix(project, change: asked.isEmpty ? nil : asked) }
+        }
+        .disabled(busy || !project.scaffolded || project.untitled || !AppUpdates.mayRemix(project))
+        if entry?.changedFromOriginal == true {
+            // A fresh copy beside this one: only a starter, whose original this Lamp ships.
+            if entry?.isStarter == true {
+                Button("Duplicate the Original") { store.duplicateOriginal(of: project) }
+            }
+            Button("Start Again from the Original") { Task { await store.startAgain(project) } }
+                .disabled(busy)
+        }
+        // Only once there's something of the person's to send.
+        if entry?.sendsBack == true, entry?.changedFromOriginal == true {
+            Button("Send Changes Back…") { store.sendChangesBack(project) }
+        }
+        Button("Wish Info") { store.showInfo(project) }
+            .disabled(project.untitled)
+        Divider()
+        AppMenu(project: project)
+    }
+}
+
+/// The changes a starter suggests, as small buttons that put one in the change box.
 private struct IdeaChips: View {
     let ideas: [String]
     let choose: (String) -> Void

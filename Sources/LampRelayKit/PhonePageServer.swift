@@ -3,8 +3,8 @@ import Network
 
 /// One game's phone page, served by the game itself (`ControllerRuntime`) on a port of its own, as Lamp serves a TV
 /// app's page (`PhoneSites`): each game's page is an origin of its own in a phone's browser. Plain GETs of the files of
-/// the page Lamp put in the game's bundle (`ControllerSnapshot`), from a phone on the network by one of this Mac's names
-/// or addresses, or on this Mac by a loopback name; and `lamp-relay.json`, where lamp-controller.js opens its socket.
+/// the page Lamp put in the game's bundle (`ControllerSnapshot`), from a phone on the network by one of the device's names
+/// or addresses, or on the device by a loopback name; and `lamp-relay.json`, where lamp-controller.js opens its socket.
 public final class PhonePageServer: @unchecked Sendable {
     /// The port asked for (0: any the system gives), then the one it listens on once it does.
     public private(set) var port: UInt16?
@@ -17,7 +17,7 @@ public final class PhonePageServer: @unchecked Sendable {
     private var open: [ObjectIdentifier: String] = [:]
     public static let connectionLimit = (all: 64, each: 16)
     public static let headDeadline: TimeInterval = 10
-    /// The names and addresses this Mac answers as, lowercased, read when asked: they change with the network.
+    /// The names and addresses the device answers as, lowercased, read when asked: they change with the network.
     private let hosts: @Sendable () -> Set<String>
     private let relayPort: @Sendable () -> UInt16?
 
@@ -128,11 +128,11 @@ public final class PhonePageServer: @unchecked Sendable {
         return page
     }
 
-    /// A page by its path, asked for by `host`: only this Mac by one of its names, so a page elsewhere that made its own
+    /// A page by its path, asked for by `host`: only this device by one of its names, so a page elsewhere that made its own
     /// name lead here (DNS rebinding) reads nothing.
     public func answer(path full: String, host: String?) -> Page {
         guard Self.names(host, among: hosts()) else { return Page(status: 403, body: Data("Not for this host.".utf8)) }
-        let missing = Page(status: 404, body: Data("Nothing here. Open the game on the Mac first.".utf8))
+        let missing = Page(status: 404, body: Data("Nothing here. Open the game first.".utf8))
         let path = full.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
         guard path.hasPrefix("/") else { return missing }
         var names = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false).map { $0.removingPercentEncoding ?? "\0" }
@@ -204,22 +204,6 @@ public final class PhonePageServer: @unchecked Sendable {
         }
     }
 
-    /// This Mac's addresses on its Wi‑Fi and wired networks (IPv4), the ones a phone on the same network opens.
-    public static func localAddresses() -> [String] {
-        var found: [String] = []
-        var first: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&first) == 0, let first else { return [] }
-        defer { freeifaddrs(first) }
-        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            let entry = pointer.pointee
-            let name = String(cString: entry.ifa_name)
-            guard name.hasPrefix("en"), let address = entry.ifa_addr, address.pointee.sa_family == UInt8(AF_INET),
-                  entry.ifa_flags & UInt32(IFF_UP) != 0, entry.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
-            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            if getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
-                found.append(String(cString: host))
-            }
-        }
-        return found
-    }
+    /// The device's addresses on its Wi‑Fi and wired networks (`ControllerAddresses.lan`).
+    public static func localAddresses() -> [String] { ControllerAddresses.lan() }
 }

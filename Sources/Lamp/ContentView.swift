@@ -243,8 +243,8 @@ struct AppMenu: View {
 
     var body: some View {
         let busy = store.busy.contains(project.id)
-        // The whole wish, as Play and Stop are: each app's own menu in the toolbar is for that app alone.
-        Button("Open") { store.openWish(project) }
+        // The whole wish, as Play and Stop are: each app's own menu in the toolbar is for that app alone. Open and Remix
+        // are the desk's own, above it (`DeskWishMenu`).
         Button("Rebuild & Open") { store.runPrepared(project) }
             .disabled(busy)
         Button("Quit") { Task { await store.quitWish(project) } }
@@ -259,8 +259,6 @@ struct AppMenu: View {
         Button("Rename…") { store.renaming = project }
             // Still being found: the wish it becomes names it. A device's setup is never named.
             .disabled(busy || project.makesNoApp)
-        Button("Remix") { Task { await store.remix(project) } }
-            .disabled(busy || !project.scaffolded || project.untitled || !AppUpdates.mayRemix(project))
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
         // Only once there's an app to show: a wish not yet made has nothing in Finder.
@@ -290,6 +288,7 @@ enum AppInfoView {
     static let basedOnPage = "basedOnPage"
     static let remixedFromPage = "remixedFromPage"
     static let updateFromRepository = "updateFromRepository"
+    static let startAgain = "startAgain"
 
     /// Where the wish came from, when that's a repository on GitHub: the chain's last link naming one that isn't where
     /// this wish was put (`Credits.origin`), a starter's link filled in for a copy made before starters named theirs
@@ -324,13 +323,18 @@ enum AppInfoView {
             } else {
                 Store.shared.checkForUpdates(project)
             }
+        case startAgain:
+            // From the chat, which is open already.
+            Task { await Store.shared.startAgain(project, opening: false) }
         default: break
         }
     }
 
     /// What the panel says, as plain rows (a nil value is Not Ready) and the buttons under them: drawn here and in
     /// the chat beside the app (`SidebarServer`) from this one list, so the two never say different things.
-    @MainActor static func sections(for project: LampProject, models: AppModels, store: Store) -> [SidebarInfoSection] {
+    /// `changedFromOriginal` is whether the wish has changed since it arrived, as last read (`Store.original(toStartAgain:)`).
+    @MainActor static func sections(for project: LampProject, models: AppModels, store: Store,
+                                    changedFromOriginal: Bool = false) -> [SidebarInfoSection] {
         let usage = store.usage[project.id] ?? AppUsage()
         let requests = (store.logs[project.id] ?? []).filter { $0.kind == .user }.count
         var sections = [SidebarInfoSection(title: "Usage", rows: [
@@ -357,7 +361,8 @@ enum AppInfoView {
         if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }
         sections.append(SidebarInfoSection(title: "AI inside this app", rows: ai, buttons: aiButtons))
         if let credits = creditsSection(located(Credits.load(project)), own: GitHubRepo.kept(for: project)?.url,
-                                        update: store.updateAvailability(of: project)) { sections.insert(credits, at: 0) }
+                                        update: store.updateAvailability(of: project),
+                                        changedFromOriginal: changedFromOriginal) { sections.insert(credits, at: 0) }
         var building = [SidebarInfoRow(label: "Agent", value: Builder.engine.title)]
         if Builder.engine == .claude || Builder.engine == .codex {
             let model = Builder.engineModel(Builder.engine)
@@ -391,14 +396,16 @@ enum AppInfoView {
     /// `own` is where this wish was put on GitHub, which isn't where it came from.
     /// `update` is what was last heard of an update (`AppUpdates`): a row of its own, and the button that checks or
     /// reviews it, for a wish with somewhere to be updated from.
-    static func creditsSection(_ credits: Credits, own: String?, update: AppUpdates.Availability? = nil) -> SidebarInfoSection? {
+    /// `changedFromOriginal` says so in a row, with the button that starts again from the original (`Store.startAgain`).
+    static func creditsSection(_ credits: Credits, own: String?, update: AppUpdates.Availability? = nil,
+                               changedFromOriginal: Bool = false) -> SidebarInfoSection? {
         guard !credits.isEmpty else { return nil }
         var rows: [SidebarInfoRow] = []
         // The work it's based on and its license, each a row; anything else it uses a row of its own, named after it, with
         // who made it and its license when that's a plain id (terms of its own, `LicenseRef-`, would make the row too long
         // for the panel's one line; they're in the About window). Every row's label is its own: the panel tells rows apart
         // by their labels.
-        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from", "Updates"]
+        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from", "Updates", "Your copy"]
         for (index, source) in credits.basisFirst.enumerated() {
             if index == 0, credits.basis != nil {
                 rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
@@ -424,6 +431,7 @@ enum AppInfoView {
         }
         let route = AppUpdates.route(for: credits, own: own)
         if route != nil, let update { rows.append(SidebarInfoRow(label: "Updates", value: update.line)) }
+        if changedFromOriginal { rows.append(SidebarInfoRow(label: "Your copy", value: "Changed from the original")) }
         var buttons: [SidebarInfoButton] = []
         if let source = credits.basis, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
         // The wish this one was most directly remixed from, where it lives (its repository on GitHub, not the one this
@@ -435,6 +443,7 @@ enum AppInfoView {
         if route != nil {
             buttons.append(SidebarInfoButton(title: update?.reviews == true ? "Review Update…" : "Check for Updates…", action: updateFromRepository))
         }
+        if changedFromOriginal { buttons.append(SidebarInfoButton(title: "Start Again from the Original", action: startAgain)) }
         return SidebarInfoSection(title: "Credits", rows: rows, buttons: buttons)
     }
 

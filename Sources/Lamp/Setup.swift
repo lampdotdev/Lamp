@@ -1121,6 +1121,8 @@ struct LookingForDevices: View {
 struct AddDeviceSheet: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
+    /// Opened from the desk, it's drawn on the desk's paper with its buttons; from Settings, as Settings is.
+    var onPaper = false
 
     /// Found on the network and not set up: the TVs and the devices an integration finds or nothing knows yet. Phones
     /// and tablets have their own rows above, whose setup windows take each one further, so a wireless one isn't here.
@@ -1174,12 +1176,29 @@ struct AddDeviceSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                if onPaper {
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(PaperButtonStyle(.ink, height: 28))
+                } else {
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                }
             }
         }
         .padding(20)
         .frame(width: 440)
+        .modifier(OnPaper(on: onPaper))
         .onAppear { store.refreshDevices(everything: true) }
+    }
+
+    /// The desk's paper and ink, and its outlined button for every other button here (a device's next step too).
+    private struct OnPaper: ViewModifier {
+        let on: Bool
+        func body(content: Content) -> some View {
+            if on {
+                content.foregroundStyle(Paper.ink).buttonStyle(PaperButtonStyle(.outline, height: 24)).background(Paper.page)
+            } else {
+                content
+            }
+        }
     }
 
     private func kind(_ name: String, symbol: String, how: String, setUp: @escaping () -> Void) -> some View {

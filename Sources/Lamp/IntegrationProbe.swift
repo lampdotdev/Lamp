@@ -89,10 +89,14 @@ enum IntegrationProbe {
                 case "Stop it":
                     guard await DeviceApps.stop(project, on: device) else { throw DeviceApps.Failure(message: "The device refused to end the app.") }
                 case "Put it on again while it's open":
-                    // Opened, then put on again over the open copy, as every change the builder makes is.
+                    // Opened, then put on again over the open copy, as every change the builder makes is: built again
+                    // each time, so it's a newer version, as a change is. An Xbox refuses to open the same version put on
+                    // again (0x8D160120 for as long as Lamp waits), which no change of the builder's ever is.
                     opened?.end()
+                    try await DeviceApps.build(project)
                     opened = try await DeviceApps.install(project, on: device, log: nil)
                     opened?.end()
+                    try await DeviceApps.build(project)
                     opened = try await DeviceApps.install(project, on: device, log: nil)
                 case "Take it off":
                     try await DeviceApps.remove(project, from: device)

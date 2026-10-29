@@ -4,27 +4,31 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 
 Lamp's window is the desk and only the desk (`WishDesk`, `Desk.swift`): no wish's chat is ever drawn in it. It's drawn
 on Lamp's paper (`Paper`, in LampSidebarKit, which the welcome and the chat draw from too): the person's wishes in one
-list, the place to make a new one above it, and down the side the filters and the person's devices. Everything someone
+list, the place to make a new one above it, and down the side the person's devices. Everything someone
 makes with Lamp is a **wish** in what they read; a wish may be made of an app, a widget, a menu bar item, a watch app,
-so "app" stays where it means that piece. A wish is a thing to remix as much as to use, and it may run in several
+so "app" stays where it means that piece. A wish is a thing to change as much as to use, and it may run in several
 places, so the desk shows none of a Mac's icon grid and makes no difference between a game and an app.
 
 **The list** (`DeskList.swift`) is every wish: those Lamp came with and those the person made, together, with nothing
 set apart for the starters (a starter deleted is gone; a remix of it from the site puts it back). Each row is the wish's
 icon (narrower than a picture, and easier to find again down a list), its name and its about.json line, who made it, where
-it runs (each place its apps open, `openPlaces`), when it last changed, and **Open** with **Remix** beside it (`DeskListRow`),
+it runs (each place its apps open, `openPlaces`), when it last changed, and **Open** with the wish's menu, ⋯, beside it (`DeskListRow`, `DeskWishMore`),
 in a narrow window only the icon, the name and the buttons, the rest being in the side panel (`DeskListRow.compact`); all read from its files away from the main thread for each change to the wishes and as each turn ends (`DeskEntry`).
 Who made it is "You" for what was made or remixed here, the author of the work a starter is made from (Lamp when it
 names none), or "Shared" for a wish that came from someone else (`DeskList.madeBy`). Clicking a column's name sorts by it,
 and again the other way, kept between launches; nothing is dragged into an order. A remix made here sits under its
 original, whatever the sort, joined to it by the stripes' line (`DeskList.rows`: by the last link of its chain,
-`Credits.remixOf`, naming the original's identity). The filters are Everything and Your remixes (what the person made or
-remixed). Open (or a double click) opens it to use and change at once (`Store.open(fromDesk:)`), always with its chat
+`Credits.remixOf`, naming the original's identity). The list has no filters: a remix is found under its original, and
+most wishes are changed in place rather than remixed. Open (or a double click) opens it to use and change at once (`Store.open(fromDesk:)`), always with its chat
 beside whatever shows it: a Mac app with windows opens with its chat beside it (`Store.change`, below; a notification's
 click goes the same way, `Store.openChat`); a wish that opens no Mac window is used (`Store.use`) with its chat in Lamp's
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
-chat. A right-click has Open, Change… and the wish's menu (`AppMenu`: Rename…, Remix, Delete… and the rest). Dragged out
+chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
+(`DeskWishMenu`): Duplicate…, Duplicate the Original, Start Again from the Original and Send Changes Back… where they apply, Wish Info
+(its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
+Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
+for the menu. Dragged out
 of Lamp a row is the wish's shared file, or the app itself in the Dock or the Applications folder (`WishDrag`). A dot
 beside a name says it's ready. The one wait the list shows is a starter opened before Lamp has built it, since nothing
 else on screen says the click did anything until it opens by itself (`openWhenReady`): "Getting it ready…" takes its
@@ -34,15 +38,33 @@ comes forward (the menu bar, a widget, the background, the person's own phone) t
 translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in
 front (⌘[).
 
-**Remix** (`Store.remix`, also Remix on the wish's menu and File → Remix) makes a new copy of the wish to change, "<name>
-Remix", with its code, history and icon on another background, and a link back to the original at the end of its chain,
-then builds it with its chat beside it; the original stays as it was. The row picked (clicked, or moved to with the arrows; the first until then) shows beside it what it is, in a panel
-the toolbar's sidebar button slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture (`Runtime.previewURL`, else the one its
-starter shipped), line, who made it and its license, where it runs and its remixes, Open, and a box to
-remix it with a change, which asks for that change as the copy's first request; a starter's own three changes are there
-to pick from. A remix made with no change asked opens its chat on the card its starter's chat opens on (the original's
-starter.md kept as `.lamp/starter-suggestions.md`, `Starters.suggestions`), never as a starter itself: its icon is
-painted and the desk counts it as the person's.
+**Remixing a wish, which changes it in place, is the first thing the desk offers; a new copy is a choice made on purpose.** The row picked (clicked,
+or moved to with the arrows; the first until then) shows beside it what it is, in a panel the toolbar's sidebar button
+slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture
+(`Runtime.previewURL`, else the one its starter shipped), line, who made it and its license, where it runs and its
+remixes, Open with ⋯, and **Remix it**: a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
+in its chat, which opens beside it as Open opens it; with nothing written it only opens. A starter's own three changes
+are there to put in the box. The wish changes in place, a version of its own that Undo and Versions take back. A starter
+or a wish opened from GitHub or a file is already the person's own copy, so the original is never touched.
+
+A wish that arrived from somewhere and has been changed since (`Store.original(toStartAgain:)`: its files differ from
+the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
+original" in the panel, with Start Again beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
+creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Again from the Original in
+its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. For a starter there's
+also Duplicate the Original (`Store.duplicateOriginal`): a fresh copy of the starter as this Lamp ships it, put on the
+desk as a remix link puts one, beside the changed copy. Send Changes Back… is
+in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
+wish's chat as the chat's Share menu does. A remix link from the site lands the same way: it opens the person's own
+untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
+
+Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
+open the starter itself), and the shuffle mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
+wish's menu and File → Duplicate…) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
+to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
+panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
+the card its starter's chat opens on (the original's starter.md kept as `.lamp/starter-suggestions.md`,
+`Starters.suggestions`), never as a starter itself: its icon is painted and the desk counts it as the person's.
 
 **Making a new wish.** It's typed in the bar over the list, or said with the talk button beside it (`TalkButton`, moving
 with `Dictation.level`); either way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so
@@ -53,7 +75,7 @@ a window of its own over the desk, so the chat is laid out once, at its real siz
 motion, or the chat opens on another screen than the bar's, it opens at once. "Not sure?" beside the bar opens a few
 ideas (`DeskIdeas`) and Help Me Find One.
 
-**The devices** (`DeskDevices`) are down the side under the filters, since a wish for the TV or the phone is what Lamp
+**The devices** (`DeskDevices`) are down the side, since a wish for the TV or the phone is what Lamp
 is for and Settings is no place to find that out. Until Lamp has looked on the network (`localNetworkAsked`) they're an
 invitation to, whose Find My Devices is the look macOS asks about; from then on the desk looks each time it's shown or
 Lamp comes to the front, at most once a minute (`lookForDevices`), and the list is this Mac, then the person's own, then
@@ -106,7 +128,7 @@ example content they can clear. After changing LampSupport.swift, `scripts/check
 
 Each starter is made in a public repository in the Lamp team's account (github.com/lampdotdev/<folder>, the
 account `Starters.account` names), laid out as Put on GitHub lays a wish out: the app's code and files with Lamp's own
-around them (so `./build.sh` builds it there too), an MIT license, a README and, among its pictures (`.github/`), the
+around them (so `zsh build.sh` builds it there too), an MIT license, a README and, among its pictures (`.github/`), the
 drawn icon and the desk's preview. Lamp's repository holds only what names each one: `Resources/Starters/<folder>/
 starter.md`, with the starter's line and three changes, where it lives (`repository:`) and the commit this Lamp ships
 (`commit:`). The tree at that commit is fetched beside it (`scripts/fetch-starters.sh`, into `tree/`, never
@@ -128,7 +150,9 @@ wishes guide, on the repository's `gh-pages` branch for GitHub Pages, at lampdot
 links and the repository's website points to; any other starter's website is its remix link on lamp.dev. `scripts/publish-starters.sh` refreshes all of that: it clones each
 repository's latest and stages it with the built Lamp Dev (`--stage-starter-repos … --trees`, as a wish is staged,
 with an identity derived from the starter and a fixed export time, so an unchanged repository makes no commit),
-pushes one commit of what's Lamp's, never the app itself, and moves the pin in starter.md to it, fetching the tree;
+has GitHub make one commit of what's Lamp's, never the app itself (made through GitHub's API, so it shows as
+Verified under the address the account commits with on GitHub, its noreply address when it keeps its email private; a
+commit signed here verifies only under an address the signing key names), and moves the pin in starter.md to it, fetching the tree;
 `--dry-run` only stages. The pictures it puts up are the repository's, except ones changed in the fetched tree since
 its commit (an icon `StarterIconsTests` drew there, a new preview put there), which go over them; a repository it
 can't fetch stops it, so nothing older is ever pushed over a repository's latest. Run it after changing Lamp's own files, before the release that ships the change, and commit
@@ -201,7 +225,9 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
    them.
 4. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --new <folder> <the wish's folder>`, signed in
    with `gh` to an account that can make repositories in lampdotdev. It makes the public repository (and a game's
-   page) from the wish as Put on GitHub would, gives the account's starters team push access to it (the team whose
+   page) from the wish as Put on GitHub would (GitHub's API can't mark a new file executable, so in a new
+   repository `build.sh` isn't, which is why the README says `zsh build.sh`; Lamp writes it afresh, executable, before
+   building a copy), gives the account's starters team push access to it (the team whose
    members make and change starters), and fills in the starter's `repository:` and `commit:`, fetching the tree. Then its pictures: take `preview.png` as above, and paint and draw the icon into the tree with
    `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1 OPENROUTER_API_KEY=… swift test --filter
    StarterIconsTests`, look at the artwork it picked, and run `scripts/publish-starters.sh <folder>` again to put them
