@@ -15,9 +15,6 @@ import tabletFill from "@phosphor-icons/core/assets/fill/device-tablet-fill.svg?
 import phone from "@phosphor-icons/core/assets/duotone/device-mobile-duotone.svg?raw";
 import laptop from "@phosphor-icons/core/assets/duotone/laptop-duotone.svg?raw";
 import tv from "@phosphor-icons/core/assets/duotone/television-simple-duotone.svg?raw";
-import oldTV from "@phosphor-icons/core/assets/duotone/television-duotone.svg?raw";
-import streamer from "@phosphor-icons/core/assets/duotone/monitor-play-duotone.svg?raw";
-import cast from "@phosphor-icons/core/assets/duotone/screencast-duotone.svg?raw";
 import tablet from "@phosphor-icons/core/assets/duotone/device-tablet-duotone.svg?raw";
 import controller from "@phosphor-icons/core/assets/duotone/game-controller-duotone.svg?raw";
 import speaker from "@phosphor-icons/core/assets/duotone/speaker-hifi-duotone.svg?raw";
@@ -75,13 +72,11 @@ const shelf: Sleeve[] = [
 // they least likely have. Only what a kind of app or a shipped device integration really reaches
 // (Sources/Lamp/Places, Resources/Devices); a device Lamp only reaches in a simulator isn't listed. Each icon's
 // fill is one of the sleeve's colors, as if printed in two colors.
-const devices = [
+const devices: { name: string; icon: string; brands?: string }[] = [
   { name: "iPhone & iPad", icon: phone },
   { name: "Your Mac", icon: laptop },
-  { name: "Samsung TVs", icon: tv },
-  { name: "Roku", icon: streamer },
-  { name: "LG TVs", icon: oldTV },
-  { name: "Fire TV & Google TV", icon: cast },
+  // Every TV Lamp reaches is one entry: the TVs and the boxes plugged into them, named by their makers.
+  { name: "TVs", icon: tv, brands: "Samsung, LG, Roku, Fire TV, Google TV" },
   { name: "Android phones & tablets", icon: tablet },
   { name: "Sonos", icon: speaker },
   { name: "Xbox", icon: controller },
@@ -181,7 +176,10 @@ const devices = [
           devices.map((device, i) => (
             <li class="flex items-center gap-4 text-[1.375rem] leading-tight font-extrabold">
               <span class="device-icon size-14 shrink-0" style={`--tone: var(--stripe-${i % 6})`} aria-hidden="true" set:html={device.icon} />
-              {device.name}
+              <span class="flex flex-col">
+                {device.name}
+                {device.brands && <span class="text-base leading-snug font-semibold text-[#4a463c]">{device.brands}</span>}
+              </span>
             </li>
           ))
         }
