@@ -9,11 +9,11 @@ import LampRelayKit
 /// takes them in place, keeping what it saved (lamp.js, "A change while it's open"). The copies on this Mac and in the
 /// simulator take a change from Lamp itself (`PageLive`), so they're left out here, and so is Lamp's own preview.
 ///
-/// A copy is given the whole page as it is, so it doesn't matter which build it has; what changed (which decides whether
-/// a stylesheet is swapped as the page runs) is measured against what it was last given, or every build it may have:
-/// each build of a page records its files and the rest of the app by their hashes (`record`, from `Runtime.markBuilt`).
-/// A copy whose build recorded nothing has a lamp.js that knows nothing of these words, and one whose app around the
-/// page changed needs it put there again: each waits for Reload, which puts the app on every place.
+/// Lamp asks each copy first what it has: lamp.js answers with the app around the page as its build had it (`native`,
+/// written into lamp.js as it's built, `TVTemplate.withShell`). A copy that doesn't answer has an earlier Lamp's lamp.js,
+/// and one in an app of Lamp's (an iPhone or iPad, Android) whose app around the page changed needs it put there again:
+/// each waits for Reload, which puts the app on every place. Every other copy is given the whole page as it is, and the
+/// change counts as reaching it only once the page says it took it (or why it couldn't, which waits for Reload too).
 enum PageCopies {
     /// The page's files by their path in Web/, each by the hash of its contents: Lamp's own files left out, since they
     /// differ from place to place and the page never takes them in place.
@@ -61,12 +61,10 @@ enum PageCopies {
     /// Every build a copy at `place` may have, newest first: the place's latest, and each one Lamp put on a device of the
     /// person's there (`Runtime.placed`), since a copy on one TV or iPad can be older than the place's last build. Nil for
     /// a build that recorded nothing (an earlier Lamp's).
-    /// `devices` keeps only what Lamp put on the person's own devices there, for a copy on one of them: the place's latest
-    /// build may be the simulator's or the emulator's.
-    static func builds(_ project: LampProject, at place: Destination, devices: Bool = false) -> [Files?] {
+    static func builds(_ project: LampProject, at place: Destination) -> [Files?] {
         var dated: [(String, Date)] = []
         let latest = project.at(place)
-        if !devices, let fingerprint = Runtime.builtFingerprint(latest) { dated.append((fingerprint, Runtime.builtDate(latest) ?? .distantPast)) }
+        if let fingerprint = Runtime.builtFingerprint(latest) { dated.append((fingerprint, Runtime.builtDate(latest) ?? .distantPast)) }
         for placed in Runtime.placed(project) where placed.place == place { dated.append((placed.fingerprint, placed.at)) }
         var seen: Set<String> = []
         return dated.sorted { $0.1 > $1.1 }.filter { seen.insert($0.0).inserted }.map { record(project, $0.0) }
@@ -87,20 +85,23 @@ enum PageCopies {
         return found
     }
 
-    /// Everything the app is built from but its page: its Swift, its package, what it declares, its Android app.
+    /// Everything the app is built from but its page and Lamp's own files: its Swift, what it declares, its Android app.
+    /// Lamp's own files change only with Lamp, whose update rebuilds the app, and some are written after lamp.js, which
+    /// carries this.
     static func native(of project: LampProject) -> String {
         var hasher = SHA256()
+        let owned = Set(DeviceSupport.paths(for: project))
         for folder in ["Sources", GameAndroid.folder] {
             let dir = project.dir.appendingPathComponent(folder)
             // What a build leaves there (Gradle's and Kotlin's caches, build/) isn't what the app is made from, and is big.
             for name in ((try? FileManager.default.subpathsOfDirectory(atPath: dir.path)) ?? []).sorted()
-            where !name.split(separator: "/").contains(where: { $0 == "build" || $0.hasPrefix(".") }) {
+            where !name.split(separator: "/").contains(where: { $0 == "build" || $0.hasPrefix(".") }) && !owned.contains(folder + "/" + name) {
                 guard let data = AppFile.read(dir.appendingPathComponent(name), in: project) else { continue }
                 hasher.update(data: Data((folder + "/" + name).utf8))
                 hasher.update(data: data)
             }
         }
-        for name in ["Package.swift", Template.Capabilities.file] {
+        for name in [Template.Capabilities.file] {
             hasher.update(data: Data(name.utf8))
             hasher.update(data: AppFile.read(project.dir.appendingPathComponent(name), in: project) ?? Data())
         }
@@ -132,38 +133,22 @@ enum PageCopies {
         var cannot: String?
     }
 
-    /// The change for a copy at `place`; nil when it has the page and the app around it as they are. A copy whose build
-    /// recorded nothing (an earlier Lamp's lamp.js, which doesn't take these words) or whose app around the page changed
-    /// gets one it can't take, so it waits for Reload.
-    static func change(for project: LampProject, at place: Destination, onDevice: Bool, given: [String: String]?) -> Change? {
-        // The emulator's copy is the place's latest build; one on a device of the person's is one of those Lamp put there.
-        let all = onDevice ? builds(project, at: place, devices: true) : [builds(project, at: place).first ?? nil]
-        let now = hashes(of: project), around = native(of: project)
-        let known = all.compactMap { $0 }
-        var changed: Set<String> = []
-        if let given {
-            changed = Set(now.keys).union(given.keys).filter { now[$0] != given[$0] }
-        } else {
-            for built in known { changed.formUnion(Set(now.keys).union(built.files.keys).filter { now[$0] != built.files[$0] }) }
-        }
-        // Which of a place's devices the copy is on isn't known. On a TV or the Xbox only lamp.js matters, so the newest
-        // build there says whether it takes these words, and a TV left on an older one, often off, doesn't hold back the
-        // rest. A copy in an app of Lamp's (an iPhone or iPad, Android) also needs the app around the page as it is now:
-        // unless every build Lamp put on such devices there has it, the copy is offered Reload rather than taken to have it.
-        let newest = all.first ?? nil
-        let earlier = hasShell(place) ? all.isEmpty || all.contains { $0 == nil } : newest == nil
-        let aroundChanged = hasShell(place) && known.contains { $0.native != around }
-        guard !changed.isEmpty || earlier || aroundChanged else { return nil }
+    /// The change for a copy that said what it has (`shell`, nil when it said nothing: an earlier Lamp's lamp.js); nil when
+    /// it has the page as it is.
+    static func change(for project: LampProject, at place: Destination, shell: String?, given: [String: String]?) -> Change? {
+        let now = hashes(of: project)
+        let changed = given.map { given in Set(now.keys).union(given.keys).filter { now[$0] != given[$0] } } ?? Set(now.keys)
+        let around = hasShell(place) && shell != nil && shell != native(of: project)
+        guard !changed.isEmpty || shell == nil || around else { return nil }
         let web = project.dir.appendingPathComponent(TVTemplate.webFolder)
         var files: [String: Data] = [:]
         for path in now.keys {
             guard let data = AppFile.read(web.appendingPathComponent(path), in: project) else { continue }
             files[path] = data
         }
-        let gone = Set(known.flatMap(\.files.keys)).subtracting(now.keys).sorted()
-        var change = Change(files: files, gone: gone, changed: changed.sorted())
-        change.cannot = earlier ? "it was put there by an earlier Lamp"
-            : aroundChanged ? "the app around the page changed" : cannot(project, change)
+        var change = Change(files: files, gone: [], changed: changed.sorted())
+        change.cannot = shell == nil ? "it was put there by an earlier Lamp"
+            : around ? "the app around the page changed" : cannot(project, change)
         return change
     }
 
@@ -187,7 +172,7 @@ enum PageCopies {
     }
 
     /// The change as Lamp's words to a copy: its files as JSON, in pieces the page puts together again.
-    static func words(_ change: Change) -> [[String: Any]] {
+    static func words(_ change: Change, id: String) -> [[String: Any]] {
         var files: [String: Any] = [:]
         for (path, data) in change.files {
             let ext = (path as NSString).pathExtension.lowercased()
@@ -200,7 +185,6 @@ enum PageCopies {
         let whole: [String: Any] = ["v": 1, "files": files, "gone": change.gone, "changed": change.changed]
         guard let json = try? JSONSerialization.data(withJSONObject: whole) else { return [] }
         let text = json.base64EncodedString()
-        let id = UUID().uuidString.lowercased()
         let count = max(1, (text.count + piece - 1) / piece)
         return (0..<count).map { i in
             let start = text.index(text.startIndex, offsetBy: i * piece)
@@ -221,36 +205,78 @@ enum PageCopies {
         }
     }
 
-    /// Whether the copy said it's on a device of the person's, rather than Lamp's emulator.
-    static func onDevice(_ device: String) -> Bool { device != "Android emulator" }
-
     /// What each copy was last given, by app and copy: the next change says only what differs from it.
     @MainActor private static var given: [String: [String: String]] = [:]
+    /// What copies have said to Lamp, by room and copy, waited for by `ask`: what they have, and what they did with a change.
+    @MainActor private static var waiters: [String: CheckedContinuation<[String: Any]?, Never>] = [:]
+
+    /// What a copy said to Lamp through its room (`Relay.onHeard`): handed to whoever waits for it.
+    @MainActor static func heard(_ copy: String, in room: String, _ data: Any) {
+        guard let said = (data as? [String: Any])?["lampPage"] as? [String: Any], let state = said["state"] as? String else { return }
+        let id = said["id"] as? String ?? ""
+        waiters.removeValue(forKey: room + "\t" + copy + "\t" + (state == "here" ? "" : id))?.resume(returning: said)
+    }
+
+    /// Waits for a copy to say something to Lamp (`id` "" for what it has), a few seconds at most.
+    @MainActor private static func answer(from copy: String, in room: String, id: String, seconds: Int) async -> [String: Any]? {
+        let key = room + "\t" + copy + "\t" + id
+        waiters.removeValue(forKey: key)?.resume(returning: nil)
+        return await withCheckedContinuation { answer in
+            waiters[key] = answer
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(seconds))
+                waiters.removeValue(forKey: key)?.resume(returning: nil)
+            }
+        }
+    }
+
+    /// Where a change went, by place: the places whose copy said it took it, those whose copy can't take it as it's open
+    /// (with why), which wait for Reload, and those whose copy didn't answer.
+    struct Outcome {
+        var took: Set<Destination> = []
+        var waiting: [Destination: String] = [:]
+        var silent: Set<Destination> = []
+    }
 
     /// Puts the page as it is now into every copy of `project` open in its wish's room on a device Lamp doesn't reach
-    /// itself. Answers the places it went to, and those whose copy is open but can't take it in place (with why), which
-    /// wait for Reload.
-    @MainActor static func put(_ project: LampProject, wish: LampProject) async -> (reached: Set<Destination>, waiting: [Destination: String]) {
-        guard project.platform.target.changesAreWeb(project) else { return ([], [:]) }
+    /// itself: each is asked what it has, given the change when it can take it, and counted once it says it did.
+    @MainActor static func put(_ project: LampProject, wish: LampProject) async -> Outcome {
+        guard project.platform.target.changesAreWeb(project) else { return Outcome() }
         let room = WishRooms.key(for: wish), app = WishRooms.peer(project, in: wish)
-        var reached: Set<Destination> = [], waiting: [Destination: String] = [:]
+        var outcome = Outcome()
         for member in WishRooms.presence(of: wish) {
             guard let copy = member["peer"] as? String, WishChannel.app(of: copy) == app,
                   var place = (member["device"] as? String).flatMap(place(of:)) else { continue }
             // Android's phone and TV places are one app: the copy is on whichever was built.
             if place == .android, built(project, at: .android) == nil, built(project, at: .androidTV) != nil { place = .androidTV }
             let key = project.id + "\t" + copy
-            guard let change = change(for: project, at: place, onDevice: onDevice(member["device"] as? String ?? ""), given: given[key]) else { continue }
-            if let why = change.cannot { waiting[place] = why; continue }
+            // What it has: an earlier Lamp's lamp.js says nothing.
+            let asking = Task { await Self.answer(from: copy, in: room, id: "", seconds: 6) }
+            guard await ControllerRelay.say(in: room, to: [copy], data: ["lampPage": ["ask": true]]) == [copy] else { asking.cancel(); continue }
+            let here = await asking.value
+            guard let change = change(for: project, at: place, shell: here?["shell"] as? String, given: given[key]) else { continue }
+            if let why = change.cannot { outcome.waiting[place] = why; continue }
+            let id = UUID().uuidString.lowercased()
+            // Its answer comes once the page has opened again from the change, which can take a TV a while.
+            let answer = Task { await Self.answer(from: copy, in: room, id: id, seconds: 45) }
             var went = true
-            for word in words(change) where went {
+            for word in words(change, id: id) where went {
                 went = await ControllerRelay.say(in: room, to: [copy], data: word) == [copy]
             }
-            guard went else { continue }
-            given[key] = hashes(of: project)
-            reached.insert(place)
+            let said = went ? await answer.value : nil
+            if !went { answer.cancel() }
+            switch said?["state"] as? String {
+            case "took":
+                given[key] = hashes(of: project)
+                outcome.took.insert(place)
+            case "failed":
+                given[key] = nil
+                outcome.waiting[place] = (said?["why"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "the page couldn't take it"
+            default:
+                outcome.silent.insert(place)
+            }
         }
-        return (reached, waiting)
+        return outcome
     }
 
     /// The copies were given the app again (Reload, Play): what each has is its build's.

@@ -239,6 +239,9 @@ enum ControllerRelay {
                     guard let room = said["app"] as? String else { continue }
                     let members = said["peers"] as? [[String: Any]] ?? []
                     Task { @MainActor in if Self.process === process, rooms[room] != nil { presence[room] = members } }
+                case "heard":
+                    guard let room = said["app"] as? String, let copy = said["from"] as? String, let data = said["data"] else { continue }
+                    Task { @MainActor in if Self.process === process { PageCopies.heard(copy, in: room, data) } }
                 case "said":
                     let ask = said["ask"] as? Int ?? 0, reached = said["to"] as? [String] ?? []
                     Task { @MainActor in saying.removeValue(forKey: ask)?.resume(returning: reached) }

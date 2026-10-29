@@ -680,6 +680,12 @@ enum Gallery {
                 ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Hot Shelf"), button: "Reload", prominent: true) {}
             })
         },
+        // A wish on several places: Reload says where it opens the app again and where it only puts the change.
+        Entry(group: "Activity", name: "Reload on every place") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise",
+                                        text: ReloadLine.text("Home HQ", reopens: ["this Mac", "Kitchen iPad"], updates: ["Living Room TV"]),
+                                        button: "Reload", prominent: true) {})
+        },
         // Reload pressed while the agent is still at work on the app: it goes in once that's done.
         Entry(group: "Activity", name: "Reload, waiting for the request") {
             AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.queued("Hot Shelf"), button: "Reload",

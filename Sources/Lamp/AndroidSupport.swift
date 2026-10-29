@@ -1346,6 +1346,16 @@ extension Template {
             return true
         }
 
+        /** A word for Lamp itself, through its room: what a page in this app has of a change Lamp put into it. Nothing
+         *  when Lamp's room isn't reached; it goes nowhere else. */
+        fun toLamp(data: Any?) {
+            val current = link ?: return
+            if (current.sealer == null) return
+            val value = try { LampAI.jsonValue(data) } catch (e: Exception) { return }
+            val text = JSONObject().put("t", "send").put("to", "lamp").put("data", value).toString()
+            if (text.toByteArray().size <= messageLimit) toRoom(current, text)
+        }
+
         // The wish's key, which Lamp wrote into the app's own storage as it put it here, with where Lamp is. It never
         // crosses the network: the app proves it holds it.
         private val wishKey: ByteArray? by lazy {

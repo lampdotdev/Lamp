@@ -372,7 +372,7 @@ enum GameKit {
     /// joining from the game's Phone/ page), and `Lamp.wish`, the TV app's block for the wish's other apps and its own
     /// other copies, for a game that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        DeviceSupport.webJS + controllersJS + (Template.carriesWish(project) ? TVTemplate.wishJS : "")
+        DeviceSupport.webJS + controllersJS + (Template.carriesWish(project) ? TVTemplate.withShell(TVTemplate.wishJS, for: project) : "")
     }
 
     /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the blocks make one to hang from.

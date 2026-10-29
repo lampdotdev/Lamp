@@ -474,6 +474,9 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
             tellValues([])
         case "stop":
             wish.stop()
+        case "toLamp":
+            guard let data = Self.json(call["data"]) else { return }
+            wish.toLamp(data)
         case "send":
             guard let data = Self.json(call["data"]) else { return }
             wish.send(data, to: call["to"] as? String)

@@ -180,8 +180,14 @@ enum TVTemplate {
 
     /// lamp.js as an app is given it: with `Lamp.wish` for a TV app that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.carriesWish(project) ? lampJS
+        Template.carriesWish(project) ? withShell(lampJS, for: project)
             : DeviceSupport.webJS + remoteJS.replacingOccurrences(of: wishLine, with: "") + controllersJS
+    }
+
+    /// lamp.js with the app around the page as this build has it (`PageCopies.native`), which a copy tells Lamp before
+    /// it's given a change.
+    static func withShell(_ js: String, for project: LampProject) -> String {
+        js.replacingOccurrences(of: "/*LAMP_SHELL*/''", with: "'\(PageCopies.native(of: project))'")
     }
 
     private static let wishLine = " * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below\n"
@@ -1303,6 +1309,13 @@ extension TVTemplate {
           // Only in a page (not where lamp.js is run on its own, as the tests run it).
           if (window.__lampPageChange || typeof location === 'undefined' || typeof document === 'undefined') return;
           var KEY = 'lamp:page-change', pieces = {};
+          // The app around this page as Lamp built it, written in by Lamp: a change of it needs the app put here again.
+          var SHELL = /*LAMP_SHELL*/'';
+          // What this copy has of a change, told to Lamp, which says it's in only once the page says so.
+          function report(state, id, why) {
+            var wish = window.Lamp && window.Lamp.wish;
+            if (wish && wish._toLamp) wish._toLamp({ lampPage: { state: state, id: id || '', why: why ? String(why).slice(0, 300) : '', shell: SHELL } });
+          }
           var TYPES = { css: 'text/css', js: 'text/javascript', html: 'text/html', htm: 'text/html', json: 'application/json',
                         svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
                         woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf', mp3: 'audio/mpeg', m4a: 'audio/mp4',
@@ -1494,18 +1507,24 @@ extension TVTemplate {
           }
 
           function take(change) {
-            if (!change || typeof change.files !== 'object' || !(change.changed instanceof Array)) return;
+            if (!change || typeof change.files !== 'object' || !(change.changed instanceof Array)) return report('failed', change && change.id, 'the change came malformed');
             var stylesOnly = change.changed.length > 0;
             for (var i = 0; i < change.changed.length; i++) if (!/\.css$/i.test(change.changed[i]) || !change.files[change.changed[i]]) stylesOnly = false;
             var kept = JSON.stringify(change);
-            try { sessionStorage.setItem(KEY, kept); } catch (e) { return say('this change is too big to take as the page is open; Reload puts it here.'); }
-            if (stylesOnly && swapStyles(change)) return say('the page took the change.');
+            try { sessionStorage.setItem(KEY, kept); } catch (e) {
+              say('this change is too big to take as the page is open; Reload puts it here.');
+              return report('failed', change.id, 'the page could not keep the change');
+            }
+            if (stylesOnly && swapStyles(change)) { say('the page took the change.'); return report('took', change.id); }
             say('the page opens again with the change.');
+            try { sessionStorage.setItem(KEY + ':told', ''); } catch (e) {}
             location.reload();
           }
 
           // One piece of a change, as Lamp sent it through the wish's room: the change is taken once every piece is here.
           window.__lampPageChange = function (piece) {
+            // Lamp asking what this copy has, before it sends a change.
+            if (piece && piece.ask) return report('here');
             if (!piece || typeof piece.id !== 'string' || typeof piece.s !== 'string' || !(piece.n > 0) || !(piece.i >= 0) || piece.i >= piece.n) return;
             var got = pieces[piece.id] || (pieces[piece.id] = { n: piece.n, parts: [], have: 0 });
             if (got.parts[piece.i] === undefined) { got.parts[piece.i] = piece.s; got.have++; }
@@ -1513,14 +1532,41 @@ extension TVTemplate {
             delete pieces[piece.id];
             var whole = text(got.parts.join(''));
             var change;
-            try { change = JSON.parse(whole); } catch (e) { return say('a change from Lamp did not arrive whole.'); }
+            try { change = JSON.parse(whole); } catch (e) { say('a change from Lamp did not arrive whole.'); return report('failed', piece.id, 'the change did not arrive whole'); }
+            change.id = piece.id;
             take(change);
           };
 
-          var opening;
-          try { opening = sessionStorage.getItem(KEY); } catch (e) {}
+          var opening, told = null;
+          try { opening = sessionStorage.getItem(KEY); told = sessionStorage.getItem(KEY + ':told'); } catch (e) {}
           if (opening) {
-            try { rebuild(JSON.parse(opening)); } catch (e) { say('the change kept for this page could not be put in: ' + e); }
+            var kept = null, failed = null;
+            try { kept = JSON.parse(opening); } catch (e) {}
+            // What goes wrong while the page starts again from the change (a script that throws, one that didn't load) is
+            // what it says to Lamp, which offers Reload; the page's own later errors aren't.
+            var watching = true;
+            var caught = function (e) { if (watching && !failed) failed = (e && (e.message || (e.target && (e.target.src || e.target.href)))) || 'the page failed to start'; };
+            window.addEventListener('error', caught, true);
+            try { if (!kept || !rebuild(kept)) failed = 'the page could not open again from the change'; } catch (e) { failed = String(e); }
+            var tell = function () {
+              watching = false;
+              window.removeEventListener('error', caught, true);
+              // Told once per change: opening the page again later in the session says nothing more.
+              if (!kept || told === kept.id || told === null) return;
+              try { sessionStorage.setItem(KEY + ':told', kept.id || ''); } catch (e) {}
+              report(failed ? 'failed' : 'took', kept.id, failed);
+            };
+            // Once its scripts have run and it has had a moment to start; told to Lamp once the room is reached again.
+            var started = window.__lampPageStarted;
+            window.__lampPageStarted = function () { if (started) started(); setTimeout(tellWhenLinked, 1500); };
+            var tries = 0;
+            var tellWhenLinked = function () {
+              var wish = window.Lamp && window.Lamp.wish;
+              var linked = wish && wish.state && wish.state() === 'connected';
+              if (linked || ++tries > 20) return tell();
+              setTimeout(tellWhenLinked, 1000);
+            };
+            if (failed) setTimeout(tellWhenLinked, 0);
           }
         })();
         """#
@@ -3466,6 +3512,12 @@ extension TVTemplate {
             };
             store.here = function (name, id) { subscribe(name); return !!here_[name + '\t' + id]; };
           }
+          // A word for Lamp itself (lamp.js's "A change while it's open"): through the app around the page when it's hosted,
+          // else sealed into Lamp's room; nothing while Lamp's room isn't reached.
+          api._toLamp = function (data) {
+            if (host) { try { host.postMessage({ op: 'toLamp', data: data }); } catch (e) {} return; }
+            if (socket && socket.readyState === 1 && sendKey) seal(JSON.stringify({ t: 'send', to: 'lamp', data: data }));
+          };
           if (host) hosted();
           else if (stranded) {
             var standStill = function () { started = true; setState('away', STRANDED); };

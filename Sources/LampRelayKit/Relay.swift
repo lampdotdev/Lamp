@@ -170,6 +170,8 @@ public final class Relay: @unchecked Sendable {
     private var proving: [ObjectIdentifier: (peer: RelayPeer, from: String)] = [:]
     /// Who is in a room, each time that changes: the room's key and its members (`peer`, `kind`, `name`, `device`, `since`).
     public var onRoomChanged: @Sendable (_ room: String, _ members: [[String: Any]]) -> Void = { _, _ in }
+    /// What a copy said to Lamp itself (`send` to the relay's name): what it has of a page's change. For Lamp alone.
+    public var onHeard: @Sendable (_ room: String, _ copy: String, _ data: Any) -> Void = { _, _, _ in }
     /// Sockets not yet past their hello: held here, since nothing else holds them until they're a player or a host.
     private var greeting: [ObjectIdentifier: (peer: RelayPeer, from: String)] = [:]
     /// How many sockets may wait to say hello at once, in all and from one address (an IPv6 one by its network, since a
@@ -530,6 +532,7 @@ public final class Relay: @unchecked Sendable {
         if kind == "pad" || kind.hasPrefix("file") { return fileOrPad(room, id: id, member: member, kind: kind, message: message) }
         guard kind == "send", member.rate.allowed(member.peer), let data = message["data"] else { return }
         let to = message["to"] as? String
+        if to == WishChannel.relayName { return onHeard(key, id, data) }
         let out = Self.json(["t": "message", "from": id, "data": data, "at": Self.now])
         if let to {
             // To one copy, or to every copy of one app. Told when none is there, or the one it's for has stopped reading,
