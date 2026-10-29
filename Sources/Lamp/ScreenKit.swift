@@ -321,6 +321,15 @@ extension Agent.Rules {
         return shapes.map { "\"\($0.shape)\" (\($0.what))" }.joined(separator: ", ")
     }
 
+    /// What `make_app_for` says once a web app's places are set: the shapes to look at it in, from the places it has now,
+    /// since the change rules it was given with its kind were written before they were (`Store.change`).
+    static func screenPlaced(_ project: LampProject) -> String {
+        (ScreenKit.fillsAnyShape(project)
+            ? "It's the same page everywhere, filling each screen; before you finish, look at it with `look_at_app`'s `shape` in the "
+                + "shapes of its places: \(shapesToLook(project.openPlaces)). "
+            : "It's the same page everywhere, laid out at 1920x1080 and scaled to each screen. ") + screenPlaces(project)
+    }
+
     /// Where a screen is shown, for the request's device line.
     static func screenPlaces(_ project: LampProject) -> String {
         "It's shown on \(GameKit.spoken(project.openPlaces).replacingOccurrences(of: "your ", with: "the person's ")), and Try On points at the "

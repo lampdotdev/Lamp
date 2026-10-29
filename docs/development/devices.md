@@ -634,9 +634,11 @@ width and height in CSS pixels, "390x844") turns the preview's window to it and 
 staged and looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the
 request's device line says where it's shown (`Rules.screenPlaces`). The preview stands in for a TV only while Try On
 points at one; elsewhere it's just "the preview", its window titled "<name> Preview" (`Store.previewDevice`), so a web
-app at home on the Mac is never told it's on a TV. Before finishing, the agent looks at it in the shapes of the places
-it's shown and no others (`Rules.screenDesign`, `screenShapes`), whether it was made a web app or made into one
-(`Target.webApp`'s change rules).
+app at home on the Mac is never told it's on a TV; the name follows Try On while the preview stays open
+(`TVPreview.follow`). Before finishing, the agent looks at it in the shapes of the places it's shown and no others
+(`Rules.screenDesign`, `screenShapes`). An app made into one is given its kind before `make_app_for` sets its places,
+so its change rules read the shapes off the request's device line, and `make_app_for`'s answer names those of the
+places set (`Rules.screenPlaced`).
 
 Designing for a TV seen from across the room is the `tv-design` skill, offered by the rows of the table that are TVs
 (`Place.skills`, an integration's `skills` in its JSON: the Apple TV, Android TV, Samsung and LG, the Roku) to any app on

@@ -79,6 +79,19 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// The window's title: the app on its device ("Clock on TV"), or the app's preview when it stands in for none.
     static func title(of name: String, device: String?) -> String { device.map { "\(name) on \($0)" } ?? "\(name) Preview" }
 
+    /// Keeps each open preview's name with where Try On points: a page shown on the Mac and on a TV, its preview open, is
+    /// "on TV" while Try On points at the TV and just the preview once it points at the Mac, with no reload (a look reuses
+    /// a preview that's up to date). What it stands in for decides Back too, as `show` would.
+    static func follow(_ projects: [LampProject]) {
+        for (id, preview) in open {
+            guard let project = projects.first(where: { $0.id == id }) else { continue }
+            let device = Store.previewDevice(project)
+            guard device != preview.device else { continue }
+            preview.device = device
+            preview.window.title = title(of: project.name, device: device)
+        }
+    }
+
     /// The shape the page is shown at now, in CSS pixels.
     static func shape(of project: LampProject) -> CGSize { open[project.id]?.shape ?? CGSize(width: 1920, height: 1080) }
 

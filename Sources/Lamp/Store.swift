@@ -490,6 +490,7 @@ final class Store: ObservableObject {
     @Published var projects: [LampProject] = [] {
         didSet {
             syncLocalNetwork()   // the network listener follows which apps open on a phone
+            TVPreview.follow(projects)   // an open preview's name follows Try On
         }
     }
     /// Wishes a newer Lamp laid out, shown on the desk and otherwise left alone (`NewerWish`).
@@ -6590,9 +6591,7 @@ final class Store: ObservableObject {
             if !placed.hasPrefix("It's already") || said.isEmpty { said.append(placed) }
             if let now = current(app) {
                 said.append(ScreenKit.isWebApp(kind)
-                    ? (ScreenKit.fillsAnyShape(now)
-                       ? "It's the same page everywhere, filling each screen; look at it in each new place's shape with `look_at_app`'s `shape`. "
-                       : "It's the same page everywhere, laid out at 1920x1080 and scaled to each screen. ") + Agent.Rules.screenPlaces(now)
+                    ? Agent.Rules.screenPlaced(now)
                     : "It's the same game everywhere: the kit gives each place its screen, controls and sound. " + Agent.Rules.gamePlaces(now))
             }
         } else if let family = target.family, kind.reaches(.ios), family != now.family {
