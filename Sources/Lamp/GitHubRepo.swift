@@ -81,7 +81,9 @@ enum GitHubRepo {
     /// for someone without Lamp) when there is one: refused, with why, when the wish can't leave this Mac.
     /// Without a repository it's staged as it would be for one not yet made (a check of what it would hold,
     /// `GitHubProjects.check`): the chain ends with the wish as its shared file does, and the README names no address.
-    static func stage(_ project: LampProject, repo: String?, link: URL?) throws -> Staged {
+    /// `isPublic` is whether anyone will be able to read the repository: its README then offers it by a link of Lamp's
+    /// site (`Showcase.remix`), which Lamp fetches without a sign-in.
+    static func stage(_ project: LampProject, repo: String?, link: URL?, isPublic: Bool = true) throws -> Staged {
         let fm = FileManager.default
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
@@ -126,7 +128,11 @@ enum GitHubRepo {
         // The icon the shared file carries, as it's drawn: never a picture of the app running, which could show the
         // person's data.
         let icon = fm.fileExists(atPath: tree.appendingPathComponent(LampFile.iconEntry).path) ? LampFile.iconEntry : nil
-        try Data(readme(for: project, credits: credits, open: open, build: build, repo: repo, showcase: Showcase(icon: icon)).utf8)
+        // The ideas its chat offers beside it on a Mac without Lamp (`RemixSuggestions`), each a remix of its own.
+        let ideas = (RemixSuggestions.load(project) ?? []).map(\.text)
+        var showcase = Showcase(icon: icon, ideas: ideas)
+        if isPublic, repo != nil { try writeButtons(in: tree); showcase.remix = true }
+        try Data(readme(for: project, credits: credits, open: open, build: build, repo: repo, showcase: showcase).utf8)
             .write(to: tree.appendingPathComponent("README.md"))
 
         let leaks = ShareCheck.secrets(in: tree, known: Sharing.knownSecrets(project))
@@ -195,6 +201,47 @@ enum GitHubRepo {
         var ideasTitle: String? = nil
         /// The repository carries an MIT license.
         var license = false
+        /// Anyone can read the repository, so the README offers it by a link of Lamp's site, which opens Lamp on a fresh
+        /// copy (`RemixLink.site`), with the button `writeButtons` drew; each idea is such a link with its request. A private one is opened from its file instead, since Lamp fetches a repository without a sign-in.
+        var remix = false
+    }
+
+    /// The README's buttons, in the repository's pictures (`Starters.picturesFolder`): Open in Lamp, and for a game
+    /// with a page, Play in your browser before it, since someone who hasn't tried a thing wants to try it first.
+    static let openButton = ".github/open-in-lamp.svg"
+    static let playButton = ".github/play-in-browser.svg"
+
+    /// The buttons drawn as lamp.dev's are: Open in Lamp in the paper's color on ink beside the sleeves' stripes, Play in
+    /// the stripes' yellow with ink; each edged so it holds on GitHub's dark theme as on its light one.
+    static func writeButtons(in tree: URL) throws {
+        let stripes = ["#1f8a4a", "#7cbf3a", "#f6b81c", "#f08a1c", "#e2402a", "#d23778"].enumerated()
+            .map { "<rect x=\"16\" y=\"\(12 + $0.offset * 4)\" width=\"26\" height=\"4\" fill=\"\($0.element)\"/>" }.joined()
+        let font = "font-family=\"-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif\" font-size=\"18\" font-weight=\"800\""
+        let open = """
+            <svg xmlns="http://www.w3.org/2000/svg" width="196" height="48" viewBox="0 0 196 48" role="img" aria-label="Open in Lamp">\
+            <rect x="1" y="1" width="194" height="46" rx="7" fill="#1b1a17" stroke="#f2ecda" stroke-width="2"/>\(stripes)\
+            <text x="56" y="31" fill="#f2ecda" \(font)>Open in Lamp</text></svg>
+
+            """
+        let play = """
+            <svg xmlns="http://www.w3.org/2000/svg" width="236" height="48" viewBox="0 0 236 48" role="img" aria-label="Play in your browser">\
+            <rect x="1" y="1" width="234" height="46" rx="7" fill="#f6b81c" stroke="#1b1a17" stroke-width="2"/>\
+            <path d="M20 14 L36 24 L20 34 Z" fill="#1b1a17"/>\
+            <text x="48" y="31" fill="#1b1a17" \(font)>Play in your browser</text></svg>
+
+            """
+        for (path, svg) in [(openButton, open), (playButton, play)] {
+            let file = tree.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(svg.utf8).write(to: file)
+        }
+    }
+
+    /// The repository remixed on Lamp's site, with a request when given.
+    /// Parentheses are encoded too, so the link ends where Markdown's does.
+    static func remixLink(_ repo: String, ask: String? = nil, from: String = "readme") -> String {
+        RemixLink.site(for: .repository(url: url(repo), commit: nil), ask: ask, from: from).absoluteString
+            .replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
     }
 
     /// The repository's README: the wish first (its icon, what it is, a picture of it, where to play it, ideas to try),
@@ -206,28 +253,51 @@ enum GitHubRepo {
         if let icon = showcase.icon { text += "<p align=\"center\"><img src=\"\(icon)\" width=\"128\" height=\"128\" alt=\"\"></p>\n\n" }
         text += "<h1 align=\"center\">\(name)</h1>\n\n"
         if let line = Sharing.description(of: project) { text += "<p align=\"center\">\(Publish.escaped(line))</p>\n\n" }
+        let remix = showcase.remix ? repo : nil
         var links: [String] = []
-        if let play = showcase.play { links.append("<a href=\"\(play)\"><b>Play it in your browser</b></a>") }
-        links.append("<a href=\"#remix-it-with-lamp\">Remix it with Lamp</a>")
+        if remix == nil {
+            if let play = showcase.play { links.append("<a href=\"\(play)\"><b>Play it in your browser</b></a>") }
+            links.append("<a href=\"#remix-it-with-lamp\">Remix it with Lamp</a>")
+        }
         if build.alone { links.append("<a href=\"#build-it-yourself\">Build it yourself</a>") }
-        text += "<p align=\"center\">" + links.joined(separator: " · ") + "</p>\n\n"
+        // Trying it comes first, as buttons where the eye lands under the name: a game's page to play, then Lamp, which
+        // opens a copy of it to use and to change.
+        if let remix {
+            var buttons: [String] = []
+            if let play = showcase.play {
+                buttons.append("<a href=\"\(Publish.escaped(play))\"><img src=\"\(playButton)\" width=\"236\" height=\"48\" alt=\"Play in your browser\"></a>")
+            }
+            buttons.append("<a href=\"\(Publish.escaped(remixLink(remix)))\"><img src=\"\(openButton)\" width=\"196\" height=\"48\" alt=\"Open in Lamp\"></a>")
+            text += "<p align=\"center\">" + buttons.joined(separator: "&nbsp;&nbsp;") + "</p>\n\n"
+        }
+        if !links.isEmpty { text += "<p align=\"center\">" + links.joined(separator: " · ") + "</p>\n\n" }
         if let preview = showcase.preview { text += "<p align=\"center\"><img src=\"\(preview)\" width=\"720\" alt=\"\(name)\"></p>\n\n" }
         if !showcase.ideas.isEmpty {
-            text += "## \(showcase.ideasTitle ?? "Ideas to try")\n\nIt's yours to change by asking Lamp. A few places to start:\n\n"
-            text += showcase.ideas.map { "- \($0)" }.joined(separator: "\n") + "\n\n"
+            text += "## \(showcase.ideasTitle ?? "Ideas to try")\n\n"
+            if let remix {
+                text += "Each opens Lamp with a copy of \(name) and that change, ready to send:\n\n"
+                text += showcase.ideas.map { "- [\(markdownText($0))](\(remixLink(remix, ask: $0)))" }.joined(separator: "\n") + "\n\n"
+            } else {
+                text += "It's yours to change by asking Lamp. A few places to start:\n\n"
+                text += showcase.ideas.map { "- \($0)" }.joined(separator: "\n") + "\n\n"
+            }
         }
-        text += "## Remix it with Lamp\n\n"
+        text += remix == nil ? "## Remix it with Lamp\n\n" : "## Open it in Lamp\n\n"
         text += "[Lamp](https://lamp.dev) is a Mac app that builds apps from a description and changes them as you ask. "
-        if let link = open.link {
-            text += "[Make your own](\(link.absoluteString)) from this wish, with Lamp or by getting Lamp from that page. "
-        }
-        if let repo {
-            text += (open.link == nil ? "In" : "Or, in") + " Lamp, choose File → Open from GitHub… and paste `\(url(repo))`: "
-                + "you get this exact wish, yours to change, with the credits below kept."
-            if let file = open.file { text += " [\(file)](\(file)) is the same wish as a file Lamp opens." }
-        } else if let file = open.file {
-            text += (open.link == nil ? "Download" : "Or download") + " [\(file)](\(file)) and open it with Lamp (double-click it, or File → Import Shared Wish…): "
-                + "you get this exact wish, yours to change, with the credits below kept. The code here is what that file holds."
+        if let remix {
+            text += "[Open \(name) in Lamp](\(remixLink(remix))) for a copy of your own, to use and to change as you like, with the credits below kept. "
+                + "Or, in Lamp, choose File → Open from GitHub… and paste `\(url(remix))`."
+        } else {
+            if let link = open.link {
+                text += "[Make your own](\(link.absoluteString)) from this wish, with Lamp or by getting Lamp from that page. "
+            }
+            if let file = open.file {
+                text += (open.link == nil ? "Download" : "Or download") + " [\(file)](\(file)) and open it with Lamp (double-click it, or File → Import Shared Wish…): "
+                    + "you get this exact wish, yours to change, with the credits below kept. The code here is what that file holds."
+            } else if let repo {
+                text += (open.link == nil ? "In" : "Or, in") + " Lamp, choose File → Open from GitHub… and paste `\(url(repo))`: "
+                    + "you get this exact wish, yours to change, with the credits below kept."
+            }
         }
         if build.alone {
             text += "\n\n## Build it yourself\n\n"
@@ -240,6 +310,11 @@ enum GitHubRepo {
         text += Publish.creditsSection(credits)
         if showcase.license { text += "## License\n\nMIT. See [LICENSE](LICENSE).\n" }
         return text
+    }
+
+    /// An idea as a link's words: Markdown's own characters escaped, so a bracket can't end the link.
+    static func markdownText(_ text: String) -> String {
+        String(text.flatMap { "\\`*_[]<>#|".contains($0) ? ["\\", $0] : [$0] })
     }
 
     /// The MIT license, in the person's name.
@@ -397,6 +472,14 @@ enum GitHubRepo {
     }
 
     /// The commit a work folder is at, as the credits take one.
+    /// A public repository with no website of its own gets the remix link as one, which GitHub shows beside its
+    /// description. One the person set is never changed.
+    static func offerRemixAsWebsite(_ repo: String, gh: String) async {
+        let now = await Subprocess.run(gh, ["repo", "view", repo, "--json", "homepageUrl", "--jq", ".homepageUrl"], mergeErrors: false, timeout: 30)
+        guard now.ok, now.output.trimmed.isEmpty else { return }
+        _ = await Subprocess.run(gh, ["repo", "edit", repo, "--homepage", remixLink(repo, from: "github")], timeout: 30)
+    }
+
     /// Whether anyone can read the repository, as GitHub says now; nil when it can't be asked.
     static func isPublic(_ repo: String, gh: String) async -> Bool? {
         let answer = await Subprocess.run(gh, ["repo", "view", repo, "--json", "visibility", "--jq", ".visibility"], mergeErrors: false, timeout: 30)
@@ -462,9 +545,20 @@ enum GitHubRepo {
             guard let gh = await Publish.gh() else { return set(project, .needsGitHub(.install)) }
             guard let login = await Publish.login(gh: gh) else { return set(project, .needsGitHub(.signIn)) }
             let repo: String
-            if let known = GitHubRepo.kept(for: project)?.repo { repo = known } else { repo = await Publish.freeName(for: project, login: login, gh: gh) }
+            let isPublic: Bool
+            // The README offers a remix by link only where anyone can read it: as GitHub says for one that's up, as
+            // chosen for a new one (choosing again stages it again, `setPrivate`).
+            if let known = GitHubRepo.kept(for: project)?.repo {
+                repo = known
+                isPublic = await GitHubRepo.isPublic(known, gh: gh) ?? false
+            } else {
+                repo = await Publish.freeName(for: project, login: login, gh: gh)
+                isPublic = !(cards[project.id]?.isPrivate ?? false)
+            }
             do {
-                let staged = try await Task.detached(priority: .userInitiated) { try GitHubRepo.stage(project, repo: repo, link: WishLink.kept(for: project)?.url) }.value
+                let staged = try await Task.detached(priority: .userInitiated) {
+                    try GitHubRepo.stage(project, repo: repo, link: WishLink.kept(for: project)?.url, isPublic: isPublic)
+                }.value
                 guard cards[project.id] != nil else {
                     try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
                     return
@@ -483,7 +577,12 @@ enum GitHubRepo {
 
     private func set(_ project: LampProject, _ stage: RepoCard.Stage) { cards[project.id]?.stage = stage }
 
-    func setPrivate(_ project: LampProject, _ isPrivate: Bool) { cards[project.id]?.isPrivate = isPrivate }
+    func setPrivate(_ project: LampProject, _ isPrivate: Bool) {
+        guard cards[project.id]?.isPrivate != isPrivate else { return }
+        cards[project.id]?.isPrivate = isPrivate
+        // A new repository's README offers a remix by link only if it's public: staged again for the choice.
+        if cards[project.id]?.kept == nil { prepare(project) }
+    }
     func setLicense(_ project: LampProject, _ license: Bool) { cards[project.id]?.license = license }
 
     func put(_ project: LampProject) {
@@ -502,6 +601,7 @@ enum GitHubRepo {
                 let before = GitHubRepo.kept(for: project)
                 GitHubRepo.keep(kept, for: project)
                 // The chat beside the installed app names the repository and commit for a remix (`Sidebar.install`).
+                if kept.isPublic == true { await GitHubRepo.offerRemixAsWebsite(kept.repo, gh: gh) }
                 if before?.repo != kept.repo || before?.commit != kept.commit || before?.isPublic != kept.isPublic || before?.version != kept.version {
                     for app in Store.shared.apps(of: project) { Store.shared.refreshInstalled(app) }
                 }

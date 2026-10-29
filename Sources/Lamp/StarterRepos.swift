@@ -147,7 +147,9 @@ enum StarterRepos {
         }
         // The pictures, kept in the repository (`Starters.picturesFolder`): the drawn icon, whole, and the preview, which
         // shows only example content.
-        var showcase = GitHubRepo.Showcase(ideas: starter.tweaks.map(\.title), ideasTitle: starter.offer.isEmpty ? nil : starter.offer, license: license)
+        // Every starter's repository is public, so its README offers it remixed by link, each idea too.
+        var showcase = GitHubRepo.Showcase(ideas: starter.tweaks.map(\.title), ideasTitle: starter.offer.isEmpty ? nil : starter.offer, license: license,
+                                           remix: true)
         let pictures = tree.appendingPathComponent(Starters.picturesFolder)
         for from in [Starters.iconFolder(of: starter), Starters.preview(of: starter)] {
             guard fm.fileExists(atPath: from.path) else { continue }
