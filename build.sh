@@ -192,7 +192,6 @@ cp Resources/vendors.xz "$APP/Contents/Resources/"   # network hardware makers b
 rm -rf "$APP/Contents/Resources/Devices" && if [[ -d Resources/Devices ]]; then cp -R Resources/Devices "$APP/Contents/Resources/Devices"; fi   # the device integrations Lamp ships (Integrations)
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
-cp -R Resources/Onboarding "$APP/Contents/Resources/"
 # The wishes Lamp comes with (Starters.swift): each one's tree is its repository at the commit starter.md pins, fetched
 # here (never committed), and copied without the fetch's own git history.
 scripts/fetch-starters.sh

@@ -1,4 +1,5 @@
 import SwiftUI
+import LampSidebarKit
 
 /// A wish whose folder a newer Lamp laid out differently (its meta.json's `layout` is above `NewerWish.layout`). This
 /// Lamp would read such a folder as an empty draft and write a new app into it on the first message, so it's left
@@ -47,53 +48,40 @@ struct NewerWish: Identifiable, Hashable {
     }
 }
 
-/// A newer Lamp's wish on the desk: its icon faded and its name, with what it is under it. A click offers the update
-/// that opens it, rather than opening it here.
-struct NewerWishIcon: View {
+/// A newer Lamp's wish in the desk's list: its icon faded and its name, with what it is beside it. A click offers the
+/// update that opens it, rather than opening it here.
+struct NewerWishRow: View {
     let wish: NewerWish
     @State private var icon: NSImage?
 
     static let words = "Made by a newer Lamp"
 
     var body: some View {
-        VStack(spacing: 6) {
+        HStack(spacing: 12) {
             Group {
                 if let icon {
                     Image(nsImage: icon).resizable().interpolation(.high)
                 } else {
-                    BlueprintIcon(letter: wish.name.first, size: 76)
+                    BlueprintIcon(letter: wish.name.first, size: 30)
                 }
             }
-            .frame(width: 76, height: 76)
+            .frame(width: 30, height: 30)
+            .frame(width: DeskListRow.pictureWidth, height: 40)
             .opacity(0.5)
-            VStack(spacing: 2) {
-                Text(wish.name)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .truncationMode(.tail)
-                    .foregroundStyle(.secondary)
-                Text(Self.words)
-                    .font(.caption)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(wish.name).font(.system(size: 14.5, weight: .bold)).lineLimit(1)
+                Text(Self.words).font(.system(size: 12.5)).lineLimit(1)
             }
+            .foregroundStyle(.secondary)
+            Spacer()
+            Button("Update Lamp") { Updater.shared.checkForUpdates() }
+                .buttonStyle(PaperButtonStyle(.outline))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8).padding(.horizontal, 4)
-        .contentShape(Rectangle())
-        .onTapGesture { Updater.shared.checkForUpdates() }
+        .padding(.horizontal, 10).padding(.vertical, 6)
         .help("Update Lamp to open \(wish.name)")
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(wish.name)
         .accessibilityValue(Self.words)
-        .accessibilityHint("Update Lamp to open it")
-        .accessibilityAction { Updater.shared.checkForUpdates() }
-        // With keyboard navigation on, Tab reaches it and Return asks for the update, as with the desk's other tiles.
-        .focusable(interactions: .activate)
-        .onKeyPress(.return) { Updater.shared.checkForUpdates(); return .handled }
         .task(id: wish.dir) {
             let wish = wish
             icon = await Task.detached { wish.icon }.value

@@ -19,10 +19,10 @@ public enum ChatLook {
             Text(text)
                 .textSelection(.enabled)
                 .lineSpacing(2)
-                .foregroundStyle(.white)
-                .tint(.white)
+                .foregroundStyle(Paper.onInk)
+                .tint(Paper.onInk)
                 .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(Bubble(.trailing).fill(Color.accentColor))
+                .background(Bubble(.trailing).fill(Paper.ink))
                 .opacity(waiting ? 0.7 : 1)
                 .padding(.trailing, ChatLook.tailRoom)
         }
@@ -582,7 +582,7 @@ public enum ChatLook {
                 // Pressing anywhere in the field, not only on the text, is for typing: the field's padding hands
                 // focus to the text. Behind the text and what's attached, so clicks on those stay theirs.
                 .background {
-                    Self.fieldShape.fill(Color(nsColor: .textBackgroundColor))
+                    Self.fieldShape.fill(Paper.card)
                         .onTapGesture(perform: focus)
                 }
                 .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
@@ -626,14 +626,14 @@ public enum ChatLook {
             let size = MessageBar<EmptyView, EmptyView, EmptyView>.buttonSide
             configuration.label
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(prominent ? (isEnabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
+                .foregroundStyle(prominent ? (isEnabled ? AnyShapeStyle(Paper.onInk) : AnyShapeStyle(.tertiary))
                                            : AnyShapeStyle(.secondary))
                 .frame(width: size, height: size)
                 .background {
                     if prominent {
-                        Circle().fill(isEnabled ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary))
+                        Circle().fill(isEnabled ? AnyShapeStyle(Paper.ink) : AnyShapeStyle(.quaternary))
                     } else {
-                        Circle().fill(Color(nsColor: .textBackgroundColor))
+                        Circle().fill(Paper.card)
                             .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
                     }
                 }
@@ -671,13 +671,9 @@ public enum ChatLook {
         busy ? "Working… describe the next change" : empty ? "Describe what you'd like…" : "Describe a change…"
     }
 
-    /// What the chat sits on: an off-white a touch warm, calmer than a text view's white, so the cards and the
-    /// answers to choose from (still white) stand a little above it. A warm near-black in dark mode.
-    public static let paper = Color(nsColor: NSColor(name: "LampChatPaper") { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
-            : NSColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
-    })
+    /// What the chat sits on: Lamp's paper (`Paper.page`), so the cards and the answers to choose from stand a little
+    /// above it. A warm near-black in dark mode.
+    public static let paper = Paper.page
 
     /// Parsed once per message: parsing markdown on every redraw adds up while an agent is streaming.
     @MainActor private static var proseCache: [String: AttributedString] = [:]

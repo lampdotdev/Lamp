@@ -490,7 +490,6 @@ final class Store: ObservableObject {
     @Published var projects: [LampProject] = [] {
         didSet {
             syncLocalNetwork()   // the network listener follows which apps open on a phone
-            DeskArrangement.shared.adopt(wishes)
         }
     }
     /// Wishes a newer Lamp laid out, shown on the desk and otherwise left alone (`NewerWish`).
@@ -1764,8 +1763,8 @@ final class Store: ObservableObject {
 
     /// A remix the site's link (or, on a first open, its Download) brought: a fresh copy of what it names, opened with
     /// its chat and the request in the box, never sent. A repository goes the way File → Open from GitHub… does, with
-    /// its fetch, review and credit; a starter only when this Lamp ships it and it runs on this Mac, copied as Starter
-    /// wishes' Add copies one (`put(starter:)`: credited to the starter at the commit this Lamp ships).
+    /// its fetch, review and credit; a starter only when this Lamp ships it and it runs on this Mac, copied as the first
+    /// launch copies one (`put(starter:)`: credited to the starter at the commit this Lamp ships).
     func take(remix: Wish.Remix) {
         NSApp.activate()
         if let source = remix.source { return importRepository(source, request: remix.text) }
@@ -2942,16 +2941,18 @@ final class Store: ObservableObject {
     private static let duplicatedState = [".lamp/notes.md", ".lamp/models.json", ".lamp/art",
                                           ".lamp/versions", ".lamp/version-titles.json", Credits.arrivedPath]
 
-    /// Makes a copy of an app to try a variation on: "<name> copy", with the same code, history and
-    /// icon artwork on a different background, so the two tell apart at a glance. Then builds it.
-    func duplicate(_ project: LampProject) async {
-        guard AppUpdates.mayDuplicate(project) else {
+    /// Remixes a wish: a copy of it to change into something of the person's own, "<name> Remix", with the same code,
+    /// history and icon artwork on a different background, so the two tell apart at a glance, and a link back to the
+    /// original at the end of its credits' chain (`Credits.remixOf`, by the original's identity), which the desk nests it
+    /// under. Then builds it and, with `change`, asks for that change in the copy's chat. The original stays as it was.
+    func remix(_ project: LampProject, change: String? = nil) async {
+        guard AppUpdates.mayRemix(project) else {
             log(project, .status, "This update can be kept with Keep Both once you've reviewed it.")
             return
         }
         guard project.scaffolded, !project.untitled, begin(project) != nil else { return }
         let fm = FileManager.default
-        let name = uniqueName("\(project.name) copy")
+        let name = uniqueName("\(project.name) Remix")
         let exe = Template.identifier(from: name)
         let slug = Template.freeSlug(for: exe, in: root)
         // Everything it is comes along (its kind, where it opens, a game's places and engine, the apps the wish should
@@ -2978,6 +2979,9 @@ final class Store: ObservableObject {
                 try fm.copyItem(at: project.dir.appendingPathComponent(path), to: copy.dir.appendingPathComponent(path))
             }
             try Template.saveMeta(copy)
+            if let original = Sharing.identity(of: project) {
+                try Credits.add(Credits(remixOf: [Credits.Remix(name: project.name, wish: original)]), to: copy)
+            }
             for dir in [copy.dir] + parts(of: project).map({ copy.dir.appendingPathComponent($0.dir.lastPathComponent) }) {
                 Self.retitle(dir, from: project.name, to: name)
             }
@@ -3005,15 +3009,19 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return
         }
-        // Listed before the original is given back, so a second Duplicate can't choose the same name.
+        // Listed before the original is given back, so a second Remix can't choose the same name.
         reload()
         finish(project)
         guard begin(copy) != nil else { return }
-        _ = await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: copy.dir, env: ["LAMP_MESSAGE": "Copy of \(project.name)"])
+        _ = await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: copy.dir, env: ["LAMP_MESSAGE": "Remix of \(project.name)"])
         if let spec = Icons.load(copy) { await renderIcon(copy, spec: spec) }
         finish(copy)
         showChat(copy.id)
-        log(copy, .status, "A copy of \(project.name). Building it now…")
+        log(copy, .status, "A new copy of \(project.name). \(project.name) stays as it is.")
+        if let change = change?.trimmed, !change.isEmpty {
+            send(change, to: current(copy) ?? copy)
+            return
+        }
         await run(copy)
         await rebuildParts(of: current(copy) ?? copy)
     }
@@ -7010,7 +7018,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A starter put back on the desk after the first launch (Starter wishes' Add): added, shown on the desk, and
+    /// A starter put on the desk after the first launch (a remix of one from the site, once it was deleted): added, shown on the desk, and
     /// saved and built out of sight like the first launch's (`prepareStarters`).
     @discardableResult func put(starter: Starters.Starter) -> LampProject? {
         guard let added = add(starter: starter) else { return nil }

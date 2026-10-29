@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LampSidebarKit
 
 /// The first-launch welcome: what Lamp is and getting set up, then the desk, where the wishes Lamp comes
 /// with (`Starters`) are waiting to be used and changed. A wish brought from the site skips the hello and is
@@ -35,8 +36,7 @@ enum Onboarding {
 }
 
 private enum Step: Int, CaseIterable {
-    // The numbers are the backdrop's pictures (`LampBackdrop`): setup keeps the one it had when a step for
-    // the first idea came between.
+    // Saved by number (`Onboarding.stepKey`), so a welcome left at setup by an earlier Lamp opens there again.
     case hello = 0, setup = 2
 
     /// Where the welcome opens: at setup if that's where it was left, otherwise from the start.
@@ -48,13 +48,12 @@ private enum Step: Int, CaseIterable {
     }
 }
 
-/// Lamp's colors: near-black ink on a warm white page, where the porcelain lamp behind the welcome sits.
+/// Lamp's colors (`Paper`): dark ink on warm paper, as on lamp.dev.
 private enum Palette {
-    static let ground = Color(nsColor: LampBackdrop.page)
-    static let accent = Color(red: 0.2, green: 0.19, blue: 0.18)
-    static let accentDeep = Color(red: 0.08, green: 0.075, blue: 0.07)
-    static let ink = Color(red: 0.11, green: 0.10, blue: 0.10)
-    static let card = Color.white.opacity(0.72)
+    static let ground = Paper.page
+    static let accent = Paper.ink
+    static let ink = Paper.ink
+    static let card = Paper.card
 }
 
 struct OnboardingView: View {
@@ -77,7 +76,9 @@ struct OnboardingView: View {
                 }
             }
             .id(step)
-            .transition(.asymmetric(insertion: .stage(from: forward ? 1 : -1), removal: .stage(from: forward ? -1 : 1)))
+            // With Reduce Motion a step fades in its place, as the stage behind it doesn't move either.
+            .transition(reduceMotion ? .opacity
+                        : .asymmetric(insertion: .stage(from: forward ? 1 : -1), removal: .stage(from: forward ? -1 : 1)))
             .opacity(leaving ? 0 : 1)
             .scaleEffect(leaving ? 1.03 : 1)
         }
@@ -85,8 +86,8 @@ struct OnboardingView: View {
         .background {
             ZStack {
                 Palette.ground
-                LampBackdrop(step: step.rawValue)
-                // Behind the later steps' content the lamp fades into the page, so it never competes with it.
+                WelcomeScene(atHello: step == .hello)
+                // Behind the later steps' content the stage fades into the page, so it never competes with it.
                 LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Palette.ground.opacity(0.425), location: 0.24),
                                        .init(color: Palette.ground.opacity(0.425), location: 0.76), .init(color: .clear, location: 1)],
                                startPoint: .leading, endPoint: .trailing)
@@ -128,7 +129,9 @@ struct OnboardingView: View {
         forward = next.rawValue > step.rawValue
         UserDefaults.standard.set(next.rawValue, forKey: Onboarding.stepKey)
         Analytics.capture(.welcomeStep, ["step": "\(next)", "back": !forward])
-        withAnimation(.spring(response: 0.6, dampingFraction: 0.88)) { step = next }
+        // As long and as eased as the camera's move along the stage, so the step rides with it; a short fade where the
+        // person asked for less motion.
+        withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : .easeInOut(duration: 0.9)) { step = next }
     }
 
     /// Takes a wish from the site: one its link brought or, the first time the welcome is ever shown, one its
@@ -237,42 +240,59 @@ struct OnboardingView: View {
 
 // MARK: - Steps
 
-/// 1. What Lamp is, over the lamp itself: software that keeps changing for the person.
+/// 1. What Lamp is, as lamp.dev says it: remixable software, over the stage of a few of the things it comes with.
 private struct HelloStep: View {
     let next: () -> Void
     @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
-                Text("Software that changes\nwhenever you do.")
-                    .font(.system(size: 54, weight: .bold))
-                    .tracking(-1.2)
-                    .multilineTextAlignment(.center)
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // A line each, set tight: lines this large read as one block with their usual spacing halved.
+                    VStack(alignment: .leading, spacing: -22) {
+                        ForEach(["Make", "remixable", "software."], id: \.self) { Text($0) }
+                    }
+                    .font(.system(size: 92, weight: .heavy))
+                    .tracking(-3.6)
                     .foregroundStyle(Palette.ink)
+                    .fixedSize()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Make remixable software.")
+                    .accessibilityAddTraits(.isHeader)
                     .reveal(shown, delay: 0.1)
-                Text("Start with one of ours or your own idea. Change anything, any time, even while you're using it.")
-                    .font(.system(size: 19))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 620)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 12)
-                    .reveal(shown, delay: 0.2)
-                BigButton(title: "Get Started", action: next)
-                    .keyboardShortcut(.defaultAction)
-                    .padding(.top, 30)
-                    .reveal(shown, delay: 0.35, rise: 8)
+                    Text("Start from scratch or from something someone made. Change it live. Run it on the things you already own.")
+                        .font(.system(size: 19))
+                        .foregroundStyle(Paper.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 22)
+                        .reveal(shown, delay: 0.2)
+                    BigButton(title: "Get Started", action: next)
+                        .keyboardShortcut(.defaultAction)
+                        .padding(.top, 30)
+                        .reveal(shown, delay: 0.35, rise: 8)
+                }
+                .frame(maxWidth: 470, alignment: .leading)
+                .padding(.leading, 84)
+                // The stage behind is on this side: the stripes and the boxes (`WelcomeScene`).
+                Spacer(minLength: 0)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        // A moment after appearing, once the window has its size.
+        // As the boxes start down behind them, the first time; a moment after appearing, once the window has its size,
+        // when it's already there or nothing moves.
         .task {
-            try? await Task.sleep(for: .seconds(0.15))
+            let first = !wordsShown && !reduceMotion
+            wordsShown = true
+            try? await Task.sleep(for: .seconds(first ? WelcomeStage.arrival : 0.15))
             shown = true
         }
     }
 }
+
+/// The hello's words have been shown this launch: back from setup, they don't wait for the stage again.
+@MainActor private var wordsShown = false
 
 /// 2. Apple's tools, and what builds the apps.
 private struct SetupStep: View {
@@ -410,6 +430,7 @@ private struct ToolsCard: View {
                         store.requestBuildTools()
                         Analytics.capture(.welcomeToolsInstall, ["by": "button"])
                     }
+                    .buttonStyle(PaperButtonStyle(.ink))
                 }
             }
         }
@@ -448,7 +469,7 @@ private struct InlineButton: View {
 
     var body: some View {
         Button(title, action: action)
-            .buttonStyle(.bordered).controlSize(.small)
+            .buttonStyle(PaperButtonStyle(.outline, height: 24))
     }
 }
 
@@ -529,7 +550,7 @@ private struct BuilderCard: View {
             if !installed, let failure = downloads.failure[which] {
                 Text(failure).font(.system(size: 13)).foregroundStyle(Color.orange)
                 Spacer()
-                Button("Try Again") { downloads.start(which) }
+                Button("Try Again") { downloads.start(which) }.buttonStyle(PaperButtonStyle(.outline))
             } else if !installed {
                 ProgressView(value: downloads.progress[which] ?? 0).frame(width: 120)
                 Text("Getting \(name) ready…").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -543,7 +564,7 @@ private struct BuilderCard: View {
                 Text("Finish signing in to \(app) in your browser…").font(.system(size: 13)).foregroundStyle(.secondary)
                 Spacer()
                 // A sign-in page opened in the wrong browser profile or for the wrong account can't be finished.
-                Button("Cancel") { EngineSignIn.cancelSignIn(which) }
+                Button("Cancel") { EngineSignIn.cancelSignIn(which) }.buttonStyle(PaperButtonStyle(.outline))
             } else if signedIn[which] == nil {
                 ProgressView().controlSize(.small)
                 Text("Checking your \(app) sign-in…").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -553,7 +574,7 @@ private struct BuilderCard: View {
                 Text(problem ?? "Sign in so \(name) can build.\(which == .claude ? " It needs a paid Claude plan." : "")")
                     .font(.system(size: 13)).foregroundStyle(problem == nil ? Color.secondary : Color.orange)
                 Spacer()
-                Button("Sign In…") { signIn(which) }
+                Button("Sign In…") { signIn(which) }.buttonStyle(PaperButtonStyle(.ink))
             }
         }
         .padding(.top, 2)
@@ -732,12 +753,13 @@ private struct LampAgentOptions: View {
                 Spacer()
                 if let progress = local.progress[spec.id] {
                     ProgressView(value: progress).frame(width: 100)
-                    Button("Cancel") { local.cancel(spec.id) }
+                    Button("Cancel") { local.cancel(spec.id) }.buttonStyle(PaperButtonStyle(.outline))
                 } else {
                     Button("Download") {
                         local.download(spec)
                         Analytics.capture(.welcomeModelDownload, ["model": spec.id])
                     }
+                    .buttonStyle(PaperButtonStyle(.ink))
                 }
             }
             if let error = local.errors[spec.id] {
@@ -764,17 +786,24 @@ private struct LampAgentOptions: View {
     @ViewBuilder
     private func keyField(name: String, url: String, save: @escaping () -> Void) -> some View {
         HStack(spacing: 10) {
+            // A field as the desk draws one: paper, with a thin ink edge.
             SecureField("Paste your \(name) key", text: $key)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(Paper.card, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
                 .onSubmit(save)
                 .onChange(of: key) { problem = nil }
             if checkingKey {
                 ProgressView().controlSize(.small)
             } else {
                 Button("Save", action: save).disabled(key.trimmed.isEmpty)
+                    .buttonStyle(PaperButtonStyle(.ink))
             }
             Link("Get a key", destination: URL(string: url)!)
-                .font(.system(size: 13, weight: .medium))
+                .buttonStyle(PaperButtonStyle(.outline))
         }
         if let problem {
             Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(.orange)
@@ -926,17 +955,15 @@ private struct BigButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Paper.onInk)
                 .padding(.horizontal, 30).frame(height: 46)
                 .background(
-                    Capsule().fill(LinearGradient(colors: [Palette.accent, Palette.accentDeep], startPoint: .top, endPoint: .bottom))
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Palette.accent)
                 )
-                .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                .shadow(color: Palette.accentDeep.opacity(enabled ? (hovering ? 0.4 : 0.28) : 0), radius: hovering ? 16 : 10, y: 6)
-                .scaleEffect(hovering && enabled ? 1.03 : 1)
+                .offset(y: hovering && enabled ? -2 : 0)
                 .opacity(enabled ? 1 : 0.35)
-                .contentShape(Capsule())
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -947,9 +974,10 @@ private struct BigButton: View {
 // MARK: - Motion
 
 private extension AnyTransition {
-    /// A step slides in from the side it's coming from, sharpening out of a blur.
+    /// A step slides in from the side it's coming from, far and with the camera behind it (`WelcomeStage.look`), as if
+    /// it were further along the same stage.
     static func stage(from side: CGFloat) -> AnyTransition {
-        .modifier(active: StageModifier(offset: 60 * side, blur: 14, opacity: 0),
+        .modifier(active: StageModifier(offset: 520 * side, blur: 0, opacity: 0),
                   identity: StageModifier(offset: 0, blur: 0, opacity: 1))
     }
 }

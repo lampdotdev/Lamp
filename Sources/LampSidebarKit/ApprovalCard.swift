@@ -69,7 +69,7 @@ extension ChatLook {
                 }
             }
             .padding(16)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+            .background(Paper.card, in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Paper.rule))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
             .accessibilityElement(children: .contain)
             .accessibilityLabel(title)
@@ -82,7 +82,7 @@ extension ChatLook {
                     Text(title)
                 } icon: {
                     Image(systemName: highRisk ? "exclamationmark.shield.fill" : "hand.raised.fill")
-                        .foregroundStyle(rated ? ApprovalHelp.color(of: explanation?.risk) : Color.accentColor)
+                        .foregroundStyle(rated ? ApprovalHelp.color(of: explanation?.risk) : Paper.ink)
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

@@ -280,13 +280,13 @@ final class AppUpdateBoundaryTests: XCTestCase {
                                                job: AppUpdates.Job(url: job.url, base: job.base, target: job.target, wish: job.wish)))
     }
 
-    /// A copy waiting for its review can't be duplicated: the duplicate would be an app of its own with no review to
+    /// A copy waiting for its review can't be remixed: the remix would be an app of its own with no review to
     /// pass, and would be built and opened at once.
-    func testACopyAwaitingReviewCannotBeDuplicated() throws {
+    func testACopyAwaitingReviewCannotBeRemixed() throws {
         let copy = LampProject(id: "newyorkupdate", name: "New York Update", exe: "NewYorkUpdate", dir: root)
-        XCTAssertTrue(AppUpdates.mayDuplicate(copy))
+        XCTAssertTrue(AppUpdates.mayRemix(copy))
         try AppUpdates.Job(url: "https://github.com/mrdoob/slop-newyork", base: "dcb453f", target: "13dd142", wish: "newyork").save(in: copy)
-        XCTAssertFalse(AppUpdates.mayDuplicate(copy))
+        XCTAssertFalse(AppUpdates.mayRemix(copy))
     }
 
     /// A message waiting for a copy that Update deletes reaches the app with every file it names: its own attached file,

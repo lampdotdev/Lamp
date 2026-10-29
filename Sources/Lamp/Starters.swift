@@ -77,13 +77,6 @@ enum Starters {
         Agent.Rules.scenes || !Template.importsRealityKit(tree.appendingPathComponent("Sources"))
     }
 
-    /// The starters this Lamp ships that aren't on the desk: never added, or deleted since. The desk offers them
-    /// (`MoreFromLamp`).
-    static func missing(from projects: [LampProject]) -> [Starter] {
-        let here = Set(projects.compactMap { starter(of: $0)?.name })
-        return bundled.filter { !here.contains($0.name) }
-    }
-
     /// Where a starter's drawn icon is in its tree (`iconFolder` under the pictures), and its preview.
     static func iconFolder(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(iconFolder) }
     static func preview(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent("preview.png") }

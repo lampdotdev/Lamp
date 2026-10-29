@@ -245,9 +245,9 @@ enum AppUpdates {
         return messages.contains { $0.text == request || $0.card.map { cards.contains($0.uuidString) } == true }
     }
 
-    /// Whether an app may be duplicated: not a copy waiting for its review, whose duplicate would be an app of its own
+    /// Whether an app may be remixed: not a copy waiting for its review, whose remix would be an app of its own
     /// with no review to pass. Keep Both is how such a copy is kept.
-    static func mayDuplicate(_ project: LampProject) -> Bool { mayOpen(project) }
+    static func mayRemix(_ project: LampProject) -> Bool { mayOpen(project) }
 
     /// The request that makes someone's project into an app, at the version the person opened: the branch, tag or
     /// commit the address named, at the commit Lamp fetched, so the agent works from exactly that.

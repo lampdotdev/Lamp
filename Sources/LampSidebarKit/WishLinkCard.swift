@@ -126,7 +126,7 @@ public struct WishLinkCard: View {
                     .scrollContentBackground(.hidden)
                     .padding(6)
                     .frame(height: 110)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
                     .accessibilityLabel("The wish")
             }
@@ -184,7 +184,7 @@ public struct WishLinkCard: View {
         }
         .font(.callout)
         .padding(10)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .background(Paper.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Paper.rule))
     }
 
     @ViewBuilder private var buttons: some View {
