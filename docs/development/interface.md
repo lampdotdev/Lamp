@@ -31,7 +31,7 @@ parts), check:
   A new screen takes its colors and its two buttons (`PaperButtonStyle`) from there, never the system's accent.
   The welcome's hello is a SceneKit stage behind its words (`WelcomeScene`; SceneKit, as Lamp still runs on macOS 14):
   the stripes come down a wall and along the floor, three starters float over them as thin rounded slabs that lean a
-  little toward the pointer, the words follow, and Get Started moves the camera right as the next step slides in,
+  little toward the pointer, the words coming in with them, and Get Started moves the camera right as the next step slides in,
   the slabs fading and the stripes kept at the frame's left. With Reduce Motion it's all there at once and still.
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
   (`Engine.title`: "ChatGPT", "Claude": what people call them, not the coding tools' names), never a literal.

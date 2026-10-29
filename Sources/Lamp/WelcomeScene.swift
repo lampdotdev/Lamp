@@ -4,7 +4,7 @@ import LampSidebarKit
 
 /// The welcome's stage, in 3D behind its words: the site's six stripes coming down a back wall and running along the
 /// floor toward the person, and three of the things Lamp comes with coming down to float over them as thin boxes, each
-/// with its picture on the front and its shadow on the stripes. The stripes come first, then the boxes; the words follow
+/// with its picture on the front and its shadow on the stripes. The stripes come first, then the boxes, the words with them
 /// (`HelloStep`). The boxes lean a little toward the pointer. Going on to setup, the camera moves right, so the stage
 /// slides left as setup comes in, its stripes staying at the frame's left edge.
 struct WelcomeScene: NSViewRepresentable {
@@ -69,8 +69,8 @@ struct WelcomeScene: NSViewRepresentable {
 final class WelcomeStage {
     /// The stage plays its arrival once a launch: going back to the hello finds it already set.
     static var arrived = false
-    /// How long the stripes and boxes take to arrive, for the words to wait on (`HelloStep`).
-    static let arrival: Double = 1.7
+    /// When the boxes start down, the stripes in place: the words come in with them (`HelloStep`).
+    static let arrival: Double = 0.6
     static let page = NSColor(hex: 0xF6F1E4)
 
     let scene = SCNScene()
@@ -201,7 +201,7 @@ final class WelcomeStage {
             box.node.opacity = 0
             let fall = SCNAction.move(to: rest, duration: 0.75)
             fall.timingMode = .easeOut
-            box.node.runAction(.sequence([.wait(duration: 1.0 + 0.16 * Double(index)),
+            box.node.runAction(.sequence([.wait(duration: Self.arrival + 0.16 * Double(index)),
                                           .group([.fadeIn(duration: 0.2), fall]), Self.bob(index)]))
         }
     }

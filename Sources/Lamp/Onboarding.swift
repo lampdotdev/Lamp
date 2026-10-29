@@ -277,7 +277,7 @@ private struct HelloStep: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        // Once the stage behind has arrived, the first time; a moment after appearing, once the window has its size,
+        // As the boxes start down behind them, the first time; a moment after appearing, once the window has its size,
         // when it's already there or nothing moves.
         .task {
             let first = !wordsShown && !reduceMotion
