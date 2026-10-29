@@ -15,7 +15,7 @@ import LampSidebarKit
 /// The tree is the same every time for the same starter, so a starter that didn't change makes no new commit: its
 /// identity is derived from the starter (never a random one), its export time is fixed, and the shared file isn't in
 /// it (a zip differs every time it's made; the tree is what Lamp opens). Its README leads with the starter: its icon
-/// and preview (in `.github/`, out of the code's way), what it is, the changes its chat offers, and for a game, the
+/// and its reel or preview (in `.github/`, out of the code's way), what it is, the changes its chat offers, and for a game, the
 /// page it plays on: the game staged as Publish stages one (`page`), which the script puts on the repository's
 /// `gh-pages` branch for GitHub Pages.
 enum StarterRepos {
@@ -162,6 +162,15 @@ enum StarterRepos {
             showcase.icon = "\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png"
         }
         if fm.fileExists(atPath: pictures.appendingPathComponent("preview.png").path) { showcase.preview = "\(Starters.picturesFolder)/preview.png" }
+        // Its reel, when it has one: the loop the README shows in the preview's place, and the video it links.
+        let reel = Starters.showcase(of: starter)
+        if fm.fileExists(atPath: reel.appendingPathComponent("loop.webp").path), fm.fileExists(atPath: reel.appendingPathComponent("reel.mp4").path) {
+            let to = pictures.appendingPathComponent(Starters.showcaseFolder)
+            try fm.createDirectory(at: pictures, withIntermediateDirectories: true)
+            try? fm.removeItem(at: to)
+            try fm.copyItem(at: reel, to: to)
+            showcase.reel = "\(Starters.picturesFolder)/\(Starters.showcaseFolder)"
+        }
         let page = try stagePage(project, starter: starter, repo: repo, in: root)
         if page != nil { showcase.play = Publish.pageURL(repo) }
         let (app, parts) = Sharing.layout(of: project)

@@ -3291,6 +3291,7 @@ enum Template {
     #endif
     import UniformTypeIdentifiers
     import UserNotifications
+    import AVFoundation
     #if canImport(CloudKit)
     import CloudKit
     #endif
@@ -3818,6 +3819,7 @@ enum Template {
     struct LampCommands: Commands {
         init() {
             LampRuntime.start
+            LampShowcase.start
             LampWindows.start
             LampWidget.start
             LampMagic.start
@@ -7888,8 +7890,165 @@ enum Template {
     /// first change of each launch, the database is copied to Backups/ (the newest 20 are kept). Anything this
     /// version of the app can't read is left untouched: the user is told once, and it loads again once fixed.
     /// `folder` suits other files the app keeps, such as images (store their names, not their bytes).
+    /// Showcase mode, for a reel of the app. Launched with LAMP_SHOWCASE set to a folder holding a showcase.json (its
+    /// storyboard, with any files it brings), the app keeps its data in that folder, takes its AI's answers, its location
+    /// and the person's spoken lines from the script, and sends no notifications and runs no schedules; on a Mac it then
+    /// plays the script's `steps` on its own window (`LampDriver.playShowcase`). What happens is logged to events.tsv
+    /// with the time, for the reel's edit to put the sound, captions and camera where it happened. Nothing of the
+    /// person's is read, so the reel shows none of it.
+    ///
+    /// The app's own microphone, camera or speech code asks the script while it's on:
+    ///
+    ///     if LampShowcase.isOn { reply = await LampShowcase.hear { transcript = $0 } ?? ""; return }
+    ///     if LampShowcase.isOn { await LampShowcase.speak(utterance); return }
+    ///     if LampShowcase.isOn, let photo = LampShowcase.file("bottle.jpg") { … }      // beside showcase.json
+    enum LampShowcase {
+        static let folder: URL? = ProcessInfo.processInfo.environment["LAMP_SHOWCASE"]
+            .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+        static var isOn: Bool { folder != nil }
+        nonisolated(unsafe) static let script: [String: Any] = folder
+            .flatMap { try? Data(contentsOf: $0.appendingPathComponent("showcase.json")) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        /// How long each word of a spoken line takes to be heard.
+        static let wordTime = 0.34
+
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var taken: [String: Int] = [:]
+        nonisolated(unsafe) private static var answered: Set<Int> = []
+
+        /// Logs something that happened, with the time, for the reel.
+        static func note(_ event: String, _ fields: String...) {
+            guard let folder else { return }
+            let clean = fields.map { $0.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ") }
+            let line = ([String(format: "%.3f", Date().timeIntervalSince1970), event] + clean).joined(separator: "\t") + "\n"
+            lock.lock(); defer { lock.unlock() }
+            let url = folder.appendingPathComponent("events.tsv")
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close()
+            } else {
+                try? Data(line.utf8).write(to: url)
+            }
+        }
+
+        /// A file the script brought beside showcase.json (a photo for the camera, a recording for the microphone).
+        static func file(_ name: String) -> URL? {
+            guard let url = folder?.appendingPathComponent(name), FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+
+        /// The next of the script's `lines[name]`, in order, the last one again once they run out: what the person
+        /// says or types at that point. Each is a string, or `{"text": …, "caption": …}` with the words in English.
+        static func line(_ name: String = "spoken") -> (text: String, caption: String)? {
+            guard let list = (script["lines"] as? [String: Any])?[name] as? [Any], !list.isEmpty else { return nil }
+            let entry = list[min(take(name), list.count - 1)]
+            if let text = entry as? String { return (text, "") }
+            guard let entry = entry as? [String: Any], let text = entry["text"] as? String else { return nil }
+            return (text, entry["caption"] as? String ?? "")
+        }
+
+        private static func take(_ key: String) -> Int {
+            lock.lock(); defer { lock.unlock() }
+            let next = taken[key, default: 0]
+            taken[key] = next + 1
+            return next
+        }
+
+        /// The person saying the next of `lines[name]`: `partial` gets the words as they'd be recognized, one at a time,
+        /// and the whole line is answered once it's said. Nil when the script has none.
+        @MainActor static func hear(_ name: String = "spoken", partial: (String) -> Void = { _ in }) async -> String? {
+            guard let line = line(name) else { return nil }
+            note("hear", line.text, line.caption)
+            try? await Task.sleep(for: .seconds(0.5))
+            var words: [Substring] = []
+            for word in line.text.split(separator: " ") {
+                words.append(word)
+                partial(words.joined(separator: " "))
+                try? await Task.sleep(for: .seconds(wordTime))
+            }
+            note("hear-end")
+            return line.text
+        }
+
+        /// What the script's `captions` says a line means, for the reel's subtitles.
+        static func caption(_ text: String) -> String { (script["captions"] as? [String: String])?[text] ?? "" }
+
+        /// Says `utterance` into a file beside the log instead of the speakers, then waits as long as it lasts, so the
+        /// app behaves as if it spoke and the reel hears it where it did.
+        @MainActor static func speak(_ utterance: AVSpeechUtterance) async {
+            guard let folder else { return }
+            final class Recording: @unchecked Sendable {
+                var file: AVAudioFile?
+                var frames: AVAudioFramePosition = 0
+                var rate = 22050.0
+                var finished = false
+            }
+            let url = folder.appendingPathComponent("voice-\(take("voice") + 1).caf")
+            let synthesizer = AVSpeechSynthesizer()
+            let recording = Recording()
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                synthesizer.write(utterance) { buffer in
+                    guard !recording.finished, let pcm = buffer as? AVAudioPCMBuffer else { return }
+                    if pcm.frameLength == 0 { recording.finished = true; done.resume(); return }
+                    if recording.file == nil {
+                        recording.rate = pcm.format.sampleRate
+                        recording.file = try? AVAudioFile(forWriting: url, settings: pcm.format.settings,
+                                                          commonFormat: pcm.format.commonFormat, interleaved: pcm.format.isInterleaved)
+                    }
+                    try? recording.file?.write(from: pcm)
+                    recording.frames += AVAudioFramePosition(pcm.frameLength)
+                }
+            }
+            note("say", url.lastPathComponent, utterance.speechString, caption(utterance.speechString))
+            try? await Task.sleep(for: .seconds(Double(recording.frames) / recording.rate))
+            note("say-end")
+        }
+
+        /// The script's answer to one of LampAI's calls: the first unused entry of `ai` for that route ("/ai" when it
+        /// names none) whose `match`, if it has one, is in the request. Its `text` is the answer, `json` an object sent
+        /// as the answer's text, or `reply` the whole reply. A call the script has no answer for fails as AI does
+        /// when it isn't connected.
+        static func answer(_ path: String, _ body: Data) async throws -> [String: Any] {
+            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
+            let request = String(decoding: body, as: UTF8.self)
+            let entries = script["ai"] as? [[String: Any]] ?? []
+            let index: Int? = {
+                lock.lock(); defer { lock.unlock() }
+                let found = entries.indices.first { i in
+                    !answered.contains(i) && (entries[i]["route"] as? String ?? "/ai") == path
+                        && (entries[i]["match"] as? String).map { request.contains($0) } ?? true
+                }
+                if let found { answered.insert(found) }
+                return found
+            }()
+            note("ai", path)
+            try? await Task.sleep(for: .seconds(script["aiSeconds"] as? Double ?? 2.2))
+            note("ai-end", path)
+            guard let index else { throw LampAI.Failure(message: "The AI isn't connected.") }
+            let entry = entries[index]
+            if let reply = entry["reply"] as? [String: Any] { return reply }
+            if let json = entry["json"], let data = try? JSONSerialization.data(withJSONObject: json) {
+                return ["text": String(decoding: data, as: UTF8.self)]
+            }
+            return ["text": entry["text"] as? String ?? ""]
+        }
+
+        /// Where the script says the person is.
+        static var place: LampLocation.Place? {
+            guard let place = script["location"] as? [String: Any], let latitude = place["latitude"] as? Double,
+                  let longitude = place["longitude"] as? Double else { return nil }
+            return LampLocation.Place(latitude: latitude, longitude: longitude, accuracy: 20, date: Date(), name: place["name"] as? String)
+        }
+    }
+    // end LampShowcase
+
     enum LampStore {
         static let folder: URL = {
+            // A reel's take keeps its own, starting empty, so it shows nothing of the person's.
+            if let showcase = LampShowcase.folder {
+                let url = showcase.appendingPathComponent("data")
+                try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                return url
+            }
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             #if os(macOS)
             // On a Mac the data is kept under the app's plain id, whatever the app is signed as: an app made for
@@ -8391,6 +8550,103 @@ enum Template {
             "x and y are for what isn't listed:"
     }
     // end LampScreen
+
+    extension LampShowcase {
+        /// Runs once, at launch: the script's steps are played once the window is up.
+        static let start: Void = {
+            guard isOn else { return }
+            Task { @MainActor in await LampDriver.playShowcase() }
+        }()
+    }
+
+    extension LampDriver {
+        /// Plays showcase.json's `steps` on the app's own window, the way `use_app` would, logging where each thing
+        /// it acts on is (fractions of the window: x,y,width,height) so the reel's cursor goes there. A step is one of
+        /// use_app's actions (`{"action": "click", "target": "Take my seat"}`, which waits for its target to be there
+        /// and not dimmed), `{"wait": seconds}`, `{"wait_for": "Speak Italian"}`, `{"focus": "Send my reply"}` (or a
+        /// list of names, "window", or `[x, y, width, height]` in fractions of the window: where the reel's camera goes) or `{"mark": "words"}`. The script's `window`
+        /// (`{"width": 960, "height": 720}`) sizes the window first; it's brought to the front unless `front` is false,
+        /// since a window in the back is drawn with gray controls.
+        static func playShowcase() async {
+            var window: NSWindow?
+            for _ in 0..<150 {
+                window = LampRuntime.windowsOnScreen.first
+                if window != nil { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let window else { LampShowcase.note("missing", "window"); return }
+            if let size = LampShowcase.script["window"] as? [String: Double], let width = size["width"], let height = size["height"] {
+                window.setContentSize(NSSize(width: width, height: height))
+                window.center()
+            }
+            if LampShowcase.script["front"] as? Bool ?? true {
+                NSApp.activate()
+                window.makeKeyAndOrderFront(nil)
+            }
+            try? await Task.sleep(for: .seconds(1))
+            LampShowcase.note("ready", "\(Int(window.frame.width))x\(Int(window.frame.height))")
+            // The recording starts on "ready", a moment before the first step.
+            try? await Task.sleep(for: .seconds(LampShowcase.script["lead"] as? Double ?? 1.5))
+            for step in LampShowcase.script["steps"] as? [[String: Any]] ?? [] { await playShowcase(step) }
+            LampShowcase.note("end")
+        }
+
+        private static func playShowcase(_ step: [String: Any]) async {
+            let timeout = step["timeout"] as? Double ?? 30
+            if let seconds = step["wait"] as? Double { try? await Task.sleep(for: .seconds(seconds)); return }
+            if let target = step["wait_for"] as? String { _ = await showcaseFrame(of: target, timeout: timeout); return }
+            if let mark = step["mark"] as? String { LampShowcase.note("mark", mark); return }
+            if let rect = step["focus"] as? [Double], rect.count == 4 {
+                LampShowcase.note("focus", rect.map { String($0) }.joined(separator: ","), "region"); return
+            }
+            if let focus = step["focus"] {
+                let names = (focus as? [String]) ?? [focus as? String ?? "window"]
+                if names == ["window"] { LampShowcase.note("focus", "0,0,1,1", "window"); return }
+                var union: CGRect?
+                for name in names {
+                    guard let frame = await showcaseFrame(of: name, timeout: timeout, dimmed: true) else { continue }
+                    union = union.map { $0.union(frame) } ?? frame
+                }
+                if let union { LampShowcase.note("focus", showcaseText(union), names.joined(separator: ", ")) }
+                return
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: step),
+                  let action = try? JSONDecoder().decode(Action.self, from: data) else {
+                LampShowcase.note("missing", "a step it can't read"); return
+            }
+            if let target = action.target {
+                guard let frame = await showcaseFrame(of: target, timeout: timeout) else { return }
+                LampShowcase.note("act", showcaseText(frame), action.action, target)
+                // The reel's cursor gets there before anything happens.
+                try? await Task.sleep(for: .seconds(0.3))
+            }
+            LampShowcase.note("did", run(action))
+        }
+
+        /// Where `target` is in the front window, as fractions of it, once it's there (and not dimmed, unless that
+        /// doesn't matter: the camera can go to a button that isn't ready yet).
+        private static func showcaseFrame(of target: String, timeout: Double, dimmed: Bool = false) async -> CGRect? {
+            let end = Date().addingTimeInterval(timeout)
+            while Date() < end {
+                if let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview {
+                    let items = elements(in: window).map(\.item)
+                    if case .one(let index) = LampScreen.find(target, in: items), dimmed || !items[index].disabled {
+                        let scale = LampRuntime.scale(of: window)
+                        let size = CGSize(width: frame.bounds.width * scale, height: frame.bounds.height * scale)
+                        let f = items[index].frame
+                        return CGRect(x: f.minX / size.width, y: f.minY / size.height, width: f.width / size.width, height: f.height / size.height)
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            LampShowcase.note("missing", target)
+            return nil
+        }
+
+        private static func showcaseText(_ r: CGRect) -> String {
+            String(format: "%.4f,%.4f,%.4f,%.4f", r.minX, r.minY, r.width, r.height)
+        }
+    }
 
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
     /// menus in the front window, from inside the app, so no Accessibility permission is needed. An action names
@@ -10355,6 +10611,7 @@ enum Template {
         /// Asks once (while in use, or always for watching in the background); true when allowed. A question
         /// the system won't ask again (refused, restricted, Always asked before) answers straight away.
         static func authorize(always: Bool = false) async -> Bool {
+            if LampShowcase.isOn { return true }
             let me = shared
             let status = me.manager.authorizationStatus
             if status == .denied || status == .restricted { return false }
@@ -10407,6 +10664,7 @@ enum Template {
 
         /// Where the person is now, named when the map knows the place.
         static func current() async throws -> Place {
+            if let place = LampShowcase.place { shared.current = place; return place }
             guard await authorize() else { throw Failure(message: "The app isn't allowed to know where the person is. They can allow it in Settings.") }
             let location: CLLocation = try await withCheckedThrowingContinuation { continuation in
                 shared.once.append(continuation)
@@ -13773,6 +14031,7 @@ enum Template {
         }
 
         private static func post(_ path: String, body: Data, timeout: TimeInterval = 240) async throws -> [String: Any] {
+            if LampShowcase.isOn { return try await LampShowcase.answer(path, body) }
             #if os(iOS) && !targetEnvironment(simulator)
             // Away from the Mac, the phone answers for itself when it has a key: when the Mac didn't answer
             // the last check, and when a call to it fails to connect meanwhile.
@@ -16982,7 +17241,7 @@ enum Template {
         }
 
         private func arm() {
-            guard running == nil else { return }
+            guard running == nil, !LampShowcase.isOn else { return }
             timer?.invalidate()
             let delay = max(0, due.timeIntervalSinceNow)
             timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in self?.fire() }
@@ -17067,7 +17326,7 @@ enum Template {
         }
 
         private func arm() {
-            guard running == nil else { return }
+            guard running == nil, !LampShowcase.isOn else { return }
             timer?.invalidate()
             let delay = max(0, due.timeIntervalSinceNow)
             timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
@@ -17888,6 +18147,11 @@ enum Template {
 
         static func send(_ title: String, body: String = "", sound: Bool = true, at date: Date? = nil, id: String? = nil,
                          actions: [String] = [], timeSensitive: Bool = false) {
+            // A reel shows what would arrive now; what's planned for later days isn't part of it.
+            if LampShowcase.isOn {
+                if (date ?? Date()).timeIntervalSinceNow < 60 { LampShowcase.note("notification", title, body) }
+                return
+            }
             let center = UNUserNotificationCenter.current()
             if center.delegate == nil { center.delegate = presenter }
             let id = id ?? UUID().uuidString
