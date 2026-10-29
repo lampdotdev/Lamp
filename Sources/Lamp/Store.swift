@@ -11205,10 +11205,10 @@ final class Store: ObservableObject {
         project.hasTV && ((project.onTV && project.device != nil) || TVPreview.window(project) != nil)
     }
 
-    /// A game set to open on the person's Xbox (its integration's device), which Lamp can't watch either: the host there
-    /// opens the page's link to the relay for it.
+    /// A game set to open on the person's Xbox (its integration's device: the one chosen under Try On, else theirs),
+    /// which Lamp can't watch either: the host there opens the page's link to the relay for it.
     static func onDevice(_ project: LampProject) -> Bool {
-        project.platform.target.takesPhones && project.onDevice && project.device != nil
+        project.platform.target.takesPhones && project.onDevice
     }
 
     /// A TV app's phone page (`TVTemplate.phoneFolder`, as staged): GET /phone/<app>/<file>, from a phone on the
