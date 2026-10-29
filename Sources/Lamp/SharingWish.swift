@@ -43,22 +43,50 @@ enum TVFiles {
 
     // MARK: - The review
 
-    /// Where a TV app's code reaches beyond itself, in the words the review uses for a Mac app's: a page's scripts fetch
-    /// and send over the network, can load a script from the internet and can run text as code, which hide what the app
-    /// does as loading code at runtime does in Swift. Lamp's AI blocks are the web library's (`DeviceSupport.webJS`).
+    /// Where a TV app's code reaches beyond itself, in the words the review uses for a Mac app's: a page's scripts can
+    /// load a script from the internet and can run text as code, which hide what the app does as loading code at runtime
+    /// does in Swift. Lamp's AI blocks are the web library's (`DeviceSupport.webJS`). Where its requests go is worked out
+    /// from the code (`WebReach`), not from words in it.
     static let checks: [Sharing.Capability] = [
         Sharing.Capability(label: "Uses AI (your OpenRouter credit)", icon: "sparkles", level: .ordinary, patterns: ["LampAI.", "LampQuestion."]),
-        Sharing.Capability(label: "Connects to the internet", icon: "network", level: .ordinary,
-                           patterns: ["fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "http://", "https://"]),
-        Sharing.Capability(label: "Loads code from the internet (can hide what it does)", icon: "eye.slash", level: .sensitive,
-                           patterns: ["<script src=\"http", "<script src='http", "import(\"http", "import('http", "importScripts("]),
+        remoteCode,
         Sharing.Capability(label: "Loads code at runtime (can hide what it does)", icon: "eye.slash", level: .sensitive,
                            patterns: ["eval(", "new Function(", "document.write("]),
     ]
 
-    static func detected(in sources: [URL]) -> [Sharing.Capability] {
-        let everything = sources.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
-        return checks.filter { item in item.patterns.contains { everything.contains($0) } }
+    static let remoteCode = Sharing.Capability(label: "Loads code from the internet (can hide what it does)", icon: "eye.slash", level: .sensitive,
+                                               patterns: ["<script src=\"http", "<script src='http", "import(\"http", "import('http", "importScripts("])
+    static let mayConnect = Sharing.Capability(label: "May connect outside this app", icon: "network", level: .ordinary, patterns: [])
+    static let opensWebsites = Sharing.Capability(label: "Opens websites when clicked", icon: "link", level: .ordinary, patterns: [])
+
+    /// "Connects to open-meteo.com": the sites the page's requests go to, by the names people know them by.
+    static func connects(_ reach: WebReach.Result) -> Sharing.Capability? {
+        guard reach.connects else { return nil }
+        var sites = Array(Set(reach.hosts.map(WebReach.site))).sorted()
+        let label: String
+        if sites.isEmpty {
+            label = "Connects to the internet"
+        } else {
+            let more = sites.count > 3 ? sites.count - 2 : 0
+            if more > 0 { sites = Array(sites.prefix(2)) + ["\(more) more"] }
+            if reach.unnamed && more == 0 { sites.append("other sites") }
+            label = "Connects to " + (sites.count == 1 ? sites[0] : sites.dropLast().joined(separator: ", ") + " and " + sites.last!)
+        }
+        return Sharing.Capability(label: label, icon: "network", level: .ordinary, patterns: [])
+    }
+
+    static func detected(in sources: [URL], data: [URL] = []) -> [Sharing.Capability] {
+        let code = sources.compactMap { url in (try? String(contentsOf: url, encoding: .utf8)).map { (url.lastPathComponent, $0) } }
+        let everything = code.map(\.1).joined(separator: "\n")
+        let models = data.filter { ["gltf", "glb"].contains($0.pathExtension.lowercased()) }
+            .compactMap { url in (try? Data(contentsOf: url)).map { (url.lastPathComponent, $0) } }
+        let reach = WebReach.analyze(code: code, data: models)
+        var found = checks.filter { item in item.patterns.contains { everything.contains($0) } }
+        if reach.remoteCode, !found.contains(remoteCode) { found.append(remoteCode) }
+        if let connects = connects(reach) { found.insert(connects, at: min(1, found.count)) }
+        if reach.unknown { found.append(mayConnect) }
+        if reach.links { found.append(opensWebsites) }
+        return found
     }
 }
 

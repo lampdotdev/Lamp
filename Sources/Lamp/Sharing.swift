@@ -1446,7 +1446,7 @@ extension Sharing {
                 let swift = sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
                     .joined(separator: "\n").split(separator: "\n", omittingEmptySubsequences: false)
                     .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
-                add(TVFiles.detected(in: sources) + checklist.filter { item in
+                add(TVFiles.detected(in: sources, data: app.webData) + checklist.filter { item in
                     item.patterns.contains { swift.contains($0) }
                 })
             } else {
@@ -1456,7 +1456,7 @@ extension Sharing {
                     // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
                     add(AndroidFiles.detected(in: app))
                 case .web:
-                    add(TVFiles.detected(in: sources))
+                    add(TVFiles.detected(in: sources, data: app.webData))
                 default:
                     add(checklist.filter { item in
                         item.patterns.contains { everything.contains($0) }
