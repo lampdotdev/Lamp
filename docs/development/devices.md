@@ -158,7 +158,9 @@ A Roku app Lamp made before this is BrightScript (`DeviceApps.isOlderScaffold`: 
 is in its folder). Its code stays as it was, and it isn't built: Play says it was made the way Lamp made Roku apps before
 and that any change writes it again. The next request puts the new scaffold beside the old code and tells the agent,
 with the request, to write the whole app again in it from what the old code does, keeping every key it saves under,
-then to delete the old files (`DeviceApps.startRewrite`, in `runAgent`, for every engine). Its saved data stays on the
+then to delete the old files (`DeviceApps.startRewrite`, in `runAgent`, for every engine). It stays an app to write again,
+told so with each request and not built, from the moment its scaffold starts to go in until a run that was told so
+ends without a failure or a Stop (`.lamp/rewrite`, `isRewriting`, `finishRewrite`). Its saved data stays on the
 Roku: the TypeScript LampStore reads the same registry section, `lamp-store:<app id>`, and the same JSON, and the token
 the same `lamp-install` key.
 

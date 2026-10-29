@@ -4855,6 +4855,8 @@ final class Store: ObservableObject {
     /// errors, a crash), which an engine switched to meanwhile needs the turn's messages for (`CatchUp`).
     private func runAgent(_ request: String, files: [String] = [], sendsRequest: Bool = false, on project: LampProject) async -> Bool {
         var prompt = request
+        // Apps this run tells the agent to write again, done once it ends well (`DeviceApps.finishRewrite`).
+        var rewriting: [LampProject] = []
         // A turn started at launch (one waiting from before) may come before the look for the person's own
         // Claude Code or Codex has finished: it waits for it rather than finding no copy.
         if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
@@ -4902,7 +4904,10 @@ final class Store: ObservableObject {
         // A device app whose code is built with packages has them installed before the agent reads or writes it, and one
         // made the way its kind was made before gets the scaffold its kind has now, to be written again in.
         for app in [project] + parts(of: project) where app.platform == .device {
-            if sendsRequest, let rewrite = DeviceApps.startRewrite(app) { prompt += rewrite }
+            if sendsRequest, let rewrite = DeviceApps.startRewrite(app) {
+                prompt += rewrite
+                rewriting.append(app)
+            }
             if let problem = await DeviceApps.prepare(app, starting: { self.log(project, .status, "Getting what the app is built with…") }) {
                 log(project, .status, "Lamp couldn't install what the app is built with yet:\n" + problem)
             }
@@ -5146,6 +5151,7 @@ final class Store: ObservableObject {
         }
         // Ended by Lamp on the agent's own questions: the engine's exit says nothing went wrong.
         if turn.endedOnQuestions { return true }
+        if status == 0, failure == nil { rewriting.forEach(DeviceApps.finishRewrite) }
         if let failure, failure.hasPrefix("The model ") {
             log(project, .error, failure + " Try again, or pick a stronger model in Settings.")
             return false
@@ -8925,7 +8931,7 @@ final class Store: ObservableObject {
             logged = tail
             text += "\n\nWhat it printed (the device's log):\n\(tail)"
         }
-        text += await RokuSDK.notes(for: project, on: run.device, log: logged)
+        text += await RokuSDK.notes(for: project, on: run.device, log: logged) { [weak self] in self?.deviceRuns[project.id] === run }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
     }
@@ -9005,7 +9011,7 @@ final class Store: ObservableObject {
         text += "\n\n" + (await deviceAppPicture(project, run: run))
         let tail = Privacy.sharesLog ? Runtime.logTail(project) : nil
         if let tail { text += "\n\nWhat it printed:\n" + tail }
-        text += await RokuSDK.notes(for: project, on: run.device, log: tail)
+        text += await RokuSDK.notes(for: project, on: run.device, log: tail) { [weak self] in self?.deviceRuns[project.id] === run }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
     }

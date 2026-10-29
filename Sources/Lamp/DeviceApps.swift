@@ -128,13 +128,26 @@ enum DeviceApps {
         return files.allSatisfy { !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent($0).path) }
     }
 
+    /// Where an app being written again notes it, from the moment its new scaffold starts to go in until a run of the
+    /// agent that was told to write it again has ended (`finishRewrite`): a Stop before then, or a scaffold that only
+    /// partly went in, leaves the app still to be written again, and still not built.
+    static func rewriteMark(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/rewrite") }
+
+    static func isRewriting(_ project: LampProject) -> Bool {
+        isOlderScaffold(project) || FileManager.default.fileExists(atPath: rewriteMark(project).path)
+    }
+
     /// Puts the kind's scaffold now beside an app made from an earlier one, leaving its own files and APP.md as they
     /// are, and gives what the agent is told with the request: write the app again in it, from what the old code does.
     /// Nil when the app isn't one.
     static func startRewrite(_ project: LampProject) -> String? {
-        guard isOlderScaffold(project), let integration = integration(for: project), let declared = integration.app?.declared else { return nil }
+        guard isRewriting(project), let integration = integration(for: project), let declared = integration.app?.declared else { return nil }
         do {
-            for (path, contents) in declared.files.sorted(by: { $0.key < $1.key }) where IntegrationCheck.isAppPath(path) {
+            try FileManager.default.createDirectory(at: rewriteMark(project).deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data().write(to: rewriteMark(project))
+            // Only what isn't there yet: a second start after a Stop keeps what the agent has written since.
+            for (path, contents) in declared.files.sorted(by: { $0.key < $1.key }) where IntegrationCheck.isAppPath(path)
+                && !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(path).path) {
                 try Template.write(contents, to: path, for: project)
             }
             try Template.write(gitignore(declared), to: ".gitignore", for: project)
@@ -156,6 +169,11 @@ enum DeviceApps {
         pictures Lamp drew where the old app had them), and say in one sentence that the app was written again the new way \
         and works as before.)
         """
+    }
+
+    /// The agent was told to write the app again and its run ended without a failure or a Stop.
+    static func finishRewrite(_ project: LampProject) {
+        try? FileManager.default.removeItem(at: rewriteMark(project))
     }
 
     static func appMd(_ integration: Integration) -> String {
@@ -225,7 +243,7 @@ enum DeviceApps {
             try wrapMSIX(data, for: project, entry: .program("App.exe"))
             return
         }
-        if isOlderScaffold(project) {
+        if isRewriting(project) {
             let name = integration(for: project)?.name ?? "device"
             throw Failure(message: "This \(name) app was made the way Lamp made \(name) apps before, which Lamp no longer builds. Ask for any "
                           + "change and Lamp writes it again the new way, keeping what it does and what it saved; until then it can't be put on "

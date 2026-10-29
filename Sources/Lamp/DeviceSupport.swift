@@ -1744,6 +1744,19 @@ enum DeviceSupport {
         return app ? "lamp-store:" + app.app : "lamp-store";
     }
 
+    // A saved value read, changed and written again with no wait between the three, so two changes made at once (two
+    // puts to one collection) can't read the same value and lose one of them.
+    async function change<T>(key: string, fallback: T, update: (value: T) => T): Promise<boolean> {
+        const { registry, section: kept } = await section(storeName());
+        let value = fallback;
+        const text = kept.read(key);
+        if (text !== null && text !== undefined) {
+            try { value = JSON.parse(text) as T; } catch { /* the fallback */ }
+        }
+        if (!kept.write(key, JSON.stringify(update(value)))) return false;
+        return registry.flush();
+    }
+
     export const LampStore = {
         async load<T>(key: string, fallback: T): Promise<T> {
             const { section: kept } = await section(storeName());
@@ -1765,10 +1778,8 @@ enum DeviceSupport {
         collection<T extends { id: string | number }>(name: string) {
             const key = "collection:" + name;
             return {
-                async put(item: T) {
-                    const all = await LampStore.load<Record<string, T>>(key, {});
-                    all[String(item.id)] = item;
-                    return LampStore.save(all, key);
+                put(item: T) {
+                    return change<Record<string, T>>(key, {}, all => ({ ...all, [String(item.id)]: item }));
                 },
                 async get(id: string | number): Promise<T | undefined> {
                     return (await LampStore.load<Record<string, T>>(key, {}))[String(id)];
@@ -1776,10 +1787,12 @@ enum DeviceSupport {
                 async all(): Promise<T[]> {
                     return Object.values(await LampStore.load<Record<string, T>>(key, {}));
                 },
-                async delete(id: string | number) {
-                    const all = await LampStore.load<Record<string, T>>(key, {});
-                    delete all[String(id)];
-                    return LampStore.save(all, key);
+                delete(id: string | number) {
+                    return change<Record<string, T>>(key, {}, all => {
+                        const rest = { ...all };
+                        delete rest[String(id)];
+                        return rest;
+                    });
                 },
             };
         },

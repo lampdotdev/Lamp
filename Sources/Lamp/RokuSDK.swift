@@ -16,18 +16,21 @@ enum RokuSDK {
     }
 
     /// What follows the picture in `look_at_app` and `use_app`: the screen's nodes, and the decoded stack of a crash in
-    /// what the app logged. Empty when this kind has neither, or neither could be read.
-    static func notes(for project: LampProject, on device: Device, log: String?) async -> String {
+    /// what the app logged. Empty when this kind has neither, or neither could be read. `current` says the app is still
+    /// the one Lamp put on the device: a tree read while another app took its place is that app's, and is dropped.
+    static func notes(for project: LampProject, on device: Device, log: String?, current: @escaping @MainActor () -> Bool) async -> String {
         guard inspects(project), let address = device.address else { return "" }
         let source = DeviceApps.buildFolder(for: project).appendingPathComponent("source")
         guard FileManager.default.fileExists(atPath: source.appendingPathComponent("node_modules/.bin/rk").path) else { return "" }
         var text = ""
         if Privacy.sharesPictures,
-           let tree = await call("ecp", ["command": "query/app-ui", "host": address], in: source, for: project) {
+           let tree = await call("ecp", ["command": "query/app-ui", "host": address], in: source, for: project),
+           await current(), Privacy.sharesPictures {
             text += "\n\nThe screen as SceneGraph's nodes (from the Roku's own UI tree):\n" + cut(tree, to: 12_000)
         }
         if Privacy.sharesLog, let log, log.range(of: #"index\.js:\d+:\d+"#, options: .regularExpression) != nil,
-           let decoded = await call("decode_stack_trace", ["stackTrace": String(log.suffix(20_000)), "context": 2], in: source, for: project) {
+           let decoded = await call("decode_stack_trace", ["stackTrace": String(log.suffix(20_000)), "context": 2], in: source, for: project),
+           Privacy.sharesLog {
             text += "\n\nThe stack in what it logged, read back to the app's TypeScript:\n" + cut(decoded, to: 6_000)
         }
         return text
