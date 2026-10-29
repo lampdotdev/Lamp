@@ -423,6 +423,14 @@ clock and random numbers fixed, pausing at each `shot` while Lamp pictures the w
 included; the same script gives the same pixels. Its stats count draws and triangles (three.js's `renderer.info`, or the
 WebGL calls lamp-phaser.js counts).
 
+A game may be written in TypeScript, its source in `src/` with `src/main.ts` its entry as a Vite project keeps it, so a
+game brought in from one stays as its authors wrote it. Before every build and every look (`Store.build`,
+`GameKit.stageWeb`) Lamp bundles it into `Web/app/` (`GameKit.compileSource`) with the Bun inside its own pi, run as Bun
+itself (`BUN_BE_BUN=1`), in the game's sandbox, from a copy of `src/` in a scratch folder (Bun reads every folder above
+the one it builds in, which the sandbox closes in the person's own folders): nothing installed, nothing fetched, types stripped and not checked, bare
+imports left for the page's import map. Every place then plays plain JavaScript, and a change of `src/` is a change of
+the page like any other. `src/` is shared with the game and `Web/app/` never is (`GameFiles`).
+
 A game made before three.js games is C++ on Lamp's kit (a device app of "xbox-one:game" then). It reads as a game whose
 engine is `native` and whose one place is the Xbox (`GameKit.migrated`, in `Store.readWish`; its folder's old
 `.lamp-device` marker still reads as a game's, `GameKit.isMade`, the kind `refines` the device kind, until its next build

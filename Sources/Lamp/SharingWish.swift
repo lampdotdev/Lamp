@@ -5,7 +5,7 @@ import Foundation
 /// Mac that opens the file writes itself, never a hidden file or a link, and nothing from anywhere else in the app's folder.
 enum TVFiles {
     /// Files read as code: what the review is shown, and what must be plain text.
-    static let codeExtensions: Set<String> = ["html", "htm", "css", "js", "mjs", "json", "svg", "txt", "md", "xml", "csv"]
+    static let codeExtensions: Set<String> = ["html", "htm", "css", "js", "mjs", "ts", "tsx", "json", "svg", "txt", "md", "xml", "csv"]
     static let folders = [TVTemplate.webFolder, TVTemplate.phoneFolder]
 
     static func list(in root: URL) -> (code: [URL], data: [URL]) {
@@ -121,7 +121,8 @@ extension Sharing {
     }
 }
 
-/// A web game's files in a shared file (`Sharing`): its page in Web/ and the page phones join it from in Phone/, the
+/// A web game's files in a shared file (`Sharing`): its page in Web/ (and a TypeScript game's source in src/, never what
+/// Lamp bundled from it), and the page phones join it from in Phone/, the
 /// agent's HTML, CSS and JavaScript as code and its models, pictures and sounds as data, and the Swift that answers the page's calls of the device
 /// (Sources/Native.swift) as code too. Never Lamp's runtime beside the page (lamp-game.js, lamp-phaser.js, lamp-controllers.js,
 /// lamp.js, three/, phaser/) or the app around it, which the Mac that opens the file writes itself (`GameKit.write`), never a hidden file
@@ -135,13 +136,15 @@ enum GameFiles {
             || relative == GameKit.phaserRuntime || relative.hasPrefix(GameKit.phaserFolder + "/")
             || relative == "\(GameKit.webFolder)/\(GamePage.deviceFile)"
             || relative.hasPrefix("\(GameKit.webFolder)/three/")
+            // A TypeScript game's page as Lamp bundled it from src/, which is what's shared.
+            || relative.hasPrefix(GameKit.compiledFolder + "/")
     }
 
     static func list(in root: URL) -> (code: [URL], data: [URL]) {
         let fm = FileManager.default
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
         var code: [URL] = [], data: [URL] = []
-        for folder in [GameKit.webFolder, TVTemplate.phoneFolder] {
+        for folder in [GameKit.webFolder, GameKit.sourceFolder, TVTemplate.phoneFolder] {
             guard let items = fm.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: Array(keys)) else { continue }
             for case let url as URL in items {
                 if url.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
@@ -163,10 +166,11 @@ enum GameFiles {
         // with Lamp's own, written again by `GameKit.write`, not the one it had.
         try? fm.removeItem(at: project.dir.appendingPathComponent(GameKit.webFolder))
         try? fm.removeItem(at: project.dir.appendingPathComponent(TVTemplate.phoneFolder))
+        try? fm.removeItem(at: project.dir.appendingPathComponent(GameKit.sourceFolder))
         try? fm.removeItem(at: project.dir.appendingPathComponent(native))
         for file in package.sources + package.webData {
             let relative = package.path(of: file)
-            let page = relative.hasPrefix(GameKit.webFolder + "/") || relative.hasPrefix(TVTemplate.phoneFolder + "/")
+            let page = [GameKit.webFolder, GameKit.sourceFolder, TVTemplate.phoneFolder].contains { relative.hasPrefix($0 + "/") }
             guard !relative.contains(".."), relative == native || page, !isLamps(relative) else { continue }
             let target = project.dir.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)

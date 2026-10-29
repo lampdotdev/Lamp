@@ -7868,6 +7868,12 @@ final class Store: ObservableObject {
         if let owner, owner.stopped || turns[project.id] !== owner { return "Stopped." }
         // An APK from before each place had its own record is accounted for before this build writes the first of them.
         Runtime.recordAndroidBuiltBefore(project)
+        // A game written in TypeScript is bundled into its page first, wherever it's built for, and before the fingerprint,
+        // which then counts the page it made.
+        do { try await GameKit.compileSource(project) } catch {
+            log(project, .detail, "Build failed:\n" + error.localizedDescription)
+            return error.localizedDescription
+        }
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         // A game's page for phones is copied where Lamp serves it from, wherever the game is built for (on a TV, with the

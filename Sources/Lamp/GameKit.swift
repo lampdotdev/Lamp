@@ -400,6 +400,42 @@ enum GameKit {
 
     /// Where a web game's page is: the folder an Xbox web app keeps its page in, so the game goes on the Xbox as one.
     static let webFolder = "Web"
+
+    /// A game written in TypeScript keeps its source in src/, with src/main.ts its entry, as a Vite project does, so a
+    /// game brought in from one stays as its authors wrote it. Lamp bundles it into Web/app/ (`compileSource`) before
+    /// every build and every look: every place plays plain JavaScript beside the rest of Web/, and index.html loads
+    /// app/main.js (and app/main.css when the source imports CSS). Bare imports ("three", "lamp-game") stay as they are,
+    /// for the page's import map.
+    static let sourceFolder = "src"
+    static let compiledFolder = "\(webFolder)/app"
+
+    static func compilesSource(_ project: LampProject) -> Bool {
+        FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("\(sourceFolder)/main.ts").path)
+    }
+
+    /// Bundles a TypeScript game's src/ into Web/app/ with the Bun inside Lamp's own pi (run as Bun itself), in the
+    /// game's sandbox: nothing to install and nothing fetched. It strips the types and doesn't check them. What fails
+    /// is the build's failure, in Bun's words.
+    static func compileSource(_ project: LampProject) async throws {
+        guard engine(project) == .web, compilesSource(project) else { return }
+        guard let bun = Agent.executable else { throw Failure(message: "This copy of Lamp is missing what compiles the game's TypeScript.") }
+        // Bun looks for its settings in every folder above the one it builds in, which the game's sandbox doesn't let
+        // it read in the person's own folders: it builds a copy of src/ in a scratch folder the sandbox opens, and the
+        // page it made is put in Web/app/ from there.
+        let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-ts-\(project.id)-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let command = "/bin/mkdir -p \"$LAMP_SCRATCH\" && /bin/cp -Rp \(Sandbox.quoted(sourceFolder)) \"$LAMP_SCRATCH/src\" "
+            + "&& cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) build src/main.ts --outdir app --target browser --format esm "
+            + "--splitting --packages external --chunk-naming 'chunk-[hash].[ext]' --asset-naming '[name]-[hash].[ext]' "
+            + "&& cd \"$LAMP_APP\" && /bin/rm -rf \(Sandbox.quoted(compiledFolder)) && /bin/cp -Rp \"$LAMP_SCRATCH/app\" \(Sandbox.quoted(compiledFolder))"
+        var output: [String] = []
+        let status = await Sandbox.run(command, for: project, cwd: project.dir,
+                                       env: ["LAMP_SCRATCH": scratch.path, "LAMP_APP": project.dir.path],
+                                       opening: [scratch.path], reading: [bun.deletingLastPathComponent().path]) { output.append($0) }
+        guard status == 0 else {
+            throw Failure(message: (["The game's TypeScript doesn't build:"] + output.suffix(30)).joined(separator: "\n"))
+        }
+    }
     /// Where Rapier goes in a game whose page imports it, by the name its import map gives it.
     static let rapierFolder = "\(webFolder)/rapier"
     static let rapierImport = "@dimforge/rapier3d-compat"
@@ -813,6 +849,7 @@ enum GameKit {
         try? fm.removeItem(at: page)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         try write(for: project)
+        try await compileSource(project)
         let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(webFolder)) \"$LAMP_TO\""
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the game's files.") }
         var output: [String] = []
