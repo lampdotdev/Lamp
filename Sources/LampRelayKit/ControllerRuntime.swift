@@ -1,8 +1,7 @@
 import CryptoKit
 import Foundation
-import SystemConfiguration
 
-/// One game's phones as controllers, run by the game itself on the Mac: its phone page, served from the copy Lamp put
+/// One game's phones as controllers, run by the game itself on the Mac, an iPhone or an iPad: its phone page, served from the copy Lamp put
 /// in the game's bundle (`PhonePageServer`), and the relay its phones and its page meet at (`Relay`), both in the
 /// game's own process, each on a port the system gives it free. The game's page asks for its session (`/app/controller`,
 /// which the app around the page answers from here) as `Lamp.controllers` starts and every few seconds after; the first
@@ -13,8 +12,8 @@ import SystemConfiguration
 /// page's files, its JavaScript, the link a phone opens or the bundle. A session that stops and starts again has a new
 /// key, so nothing handed out before gets in.
 ///
-/// Lamp builds this file into its own relay (LampRelayKit), where the tests reach it, and into every game on the Mac
-/// (`GameKit.controllerKit`), where LampPage.swift runs it.
+/// Lamp builds this file into its own relay (LampRelayKit), where the tests reach it, and into every game on the Mac,
+/// the iPhone and the iPad, and the TV preview's player (`GameKit.controllerKit`), where LampPage.swift runs it.
 public final class ControllerRuntime: @unchecked Sendable {
     public let app: String
     private let root: URL
@@ -23,11 +22,12 @@ public final class ControllerRuntime: @unchecked Sendable {
     private var relay: Relay?
     private var relayPort: UInt16?
     private var site: PhonePageServer?
-    /// This Mac's names and addresses, and the address a phone's link carries. Changed by tests.
-    public var hosts: @Sendable () -> Set<String> = ControllerRuntime.macNames
-    public var linkHost: @Sendable () -> String = { PhonePageServer.localAddresses().first ?? ControllerRuntime.localHostName() ?? "127.0.0.1" }
+    /// The device's names and addresses, and the host a phone's link carries (nil: on no network a phone can share).
+    /// Changed by tests.
+    public var hosts: @Sendable () -> Set<String> = { ControllerAddresses.names() }
+    public var linkHost: @Sendable () -> String? = { ControllerAddresses.linkHost() }
 
-    /// How often the page asks again, which tells the relay where the page is now (the Mac's address moves with the network).
+    /// How often the page asks again, which tells the relay where the page is now (the device's address moves with the network).
     public static let renew = 15
 
     /// `root`: the game's phone page, as Lamp put it in the bundle.
@@ -61,6 +61,12 @@ public final class ControllerRuntime: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: root.appendingPathComponent("index.html").path) else {
             return (409, ["error": "The game has no phone page yet: put one in Phone/index.html."])
         }
+        // Never a loopback link: a phone opening it would reach itself. The page's next ask tries again, once the device
+        // is back on a network.
+        guard let link = linkHost() else {
+            close()
+            return (503, ["error": "This device isn't on a Wi‑Fi network phones can join. Join one, and phones can play again."])
+        }
         let key = self.key ?? SymmetricKey(size: .bits256)
         self.key = key
         guard let relayPort = openRelay(key) else {
@@ -72,11 +78,26 @@ public final class ControllerRuntime: @unchecked Sendable {
             close()
             return (503, ["error": "The phone page couldn't open on this Mac."])
         }
-        relay?.configure(app: app, Relay.Session(generation: 0, pagePort: pagePort, page: "http://\(linkHost()):\(pagePort)/",
+        relay?.configure(app: app, Relay.Session(generation: 0, pagePort: pagePort, page: Self.address(link, pagePort),
                                                  hosts: Array(hosts()).sorted()))
         let credential = ControllerToken.issue(kind: .host, app: app, generation: 0, key: key)
         return (200, ["links": [["kind": "relay", "socket": "ws://127.0.0.1:\(relayPort)/", "app": app, "credential": credential]],
                       "renew": Self.renew])
+    }
+
+    /// Where the game's phone page is now, opening the session if it isn't (`Lamp.phonePage` in a TV app's page, which
+    /// asks as it opens and now and then after).
+    public func phonePage(_ done: @escaping @Sendable (_ status: Int, _ answer: [String: Any]) -> Void) {
+        queue.async {
+            let (status, answer) = self.open()
+            guard status == 200, let port = self.site?.port, let link = self.linkHost() else { return done(status, answer) }
+            done(200, ["url": Self.address(link, port)])
+        }
+    }
+
+    /// A page's address at `host`, an IPv6 one in brackets.
+    static func address(_ host: String, _ port: UInt16) -> String {
+        "http://\(host.contains(":") ? "[\(host)]" : host):\(port)/"
     }
 
     private func close() {
@@ -133,22 +154,6 @@ public final class ControllerRuntime: @unchecked Sendable {
     private var sharedRelayPort: UInt16?
     private var currentRelayPort: UInt16? { portLock.withLock { sharedRelayPort } }
     private func share(_ port: UInt16?) { portLock.withLock { sharedRelayPort = port } }
-
-    // MARK: This Mac
-
-    /// This Mac's Bonjour name, as phones may reach it ("name.local").
-    public static func localHostName() -> String? {
-        guard let name = SCDynamicStoreCopyLocalHostName(nil) as String?, !name.isEmpty else { return nil }
-        return name + ".local"
-    }
-
-    /// The names and addresses a page is served as: this Mac's on its networks, and the loopback ones.
-    public static func macNames() -> Set<String> {
-        var names: Set<String> = ["127.0.0.1", "localhost", "::1"]
-        if let name = localHostName() { names.insert(name.lowercased()) }
-        for address in PhonePageServer.localAddresses() { names.insert(address.lowercased()) }
-        return names
-    }
 }
 
 /// What a callback on another queue says, read after a semaphore says it has.

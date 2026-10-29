@@ -8899,7 +8899,7 @@ final class Store: ObservableObject {
             owner.tookOver = true
             log(project, .status, Self.stoppedByYou)
         }
-        if let window = TVPreview.window(project) { trial.show(window: CGWindowID(window.windowNumber)) }
+        if let window = await TVPreview.windowID(project) { trial.show(window: window) }
         defer { trial.end() }
         let report = await TVPreview.perform(decoded, on: project) { [weak self] in
             guard let self else { return false }
@@ -9961,7 +9961,8 @@ final class Store: ObservableObject {
         // Every usage description, from the one list, so apps made before a reason was added get it too; the app's own
         // local network reason in place of Lamp's.
         for (key, text) in Template.iosUsageDescriptions {
-            let own = key == "NSLocalNetworkUsageDescription" ? capabilities.localNetworkReason : nil
+            let own = key == "NSLocalNetworkUsageDescription"
+                ? capabilities.localNetworkReason ?? (GamePhones.takesOnIOS(project) ? GamePhones.iosNetworkReason : nil) : nil
             let reason = (own ?? text).replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
             script += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
         }
@@ -10007,6 +10008,10 @@ final class Store: ObservableObject {
         AppFolder.remove(app.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
         if fm.fileExists(atPath: assets.path) {
             try? AppFolder.copy(assets, to: app.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
+        }
+        // A game's phone page, which the game serves itself while it's in front (`GamePhones`), signed with it.
+        do { try GamePhones.write(project, to: app.appendingPathComponent(GamePhones.iosFolder), in: project.dir) } catch {
+            log(project, .error, "Lamp couldn't put the game's phone page in it: \(error)")
         }
         // The watch app's icon: watchOS takes one only from a compiled asset catalog, so Xcode's own compiler makes
         // it from the same square as the iPhone's, and Info.plist names it.

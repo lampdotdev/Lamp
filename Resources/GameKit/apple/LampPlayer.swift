@@ -17,20 +17,24 @@ enum LampPlayer {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? ProcessInfo.processInfo.processName
     }
 
-    /// A game's window, or any other page's. A copy that says neither was made wrong: it stops, saying so, rather than
-    /// open as something it isn't.
-    static let isGame: Bool = {
+    enum Kind { case game, page, preview }
+
+    /// A game's window, any other page's, or the TV preview's (LampPreview.swift). A copy that says none of them was
+    /// made wrong: it stops, saying so, rather than open as something it isn't.
+    static let kind: Kind = {
         switch info["kind"] as? String {
-        case "game": return true
-        case "page": return false
+        case "game": return .game
+        case "page": return .page
+        case "preview": return .preview
         default: fatalError("This app's Info.plist doesn't say what kind of page it is (LampPlayer.kind).")
         }
     }()
+    static var isGame: Bool { kind == .game }
 
     /// Where a page is served, which is where what it saves is kept: its kind's own address, for good. A game's is its
     /// own (`LampGamePage`); any other page has to name one of the addresses Lamp gives.
     static let scheme: String = {
-        guard let scheme = info["scheme"] as? String, ["lamp-screen", "lamp-web-app"].contains(scheme) else {
+        guard let scheme = info["scheme"] as? String, ["lamp-screen", "lamp-web-app", "lamp-tv"].contains(scheme) else {
             fatalError("This app's Info.plist doesn't name the address its page is served at (LampPlayer.scheme).")
         }
         return scheme
@@ -43,4 +47,8 @@ enum LampPlayer {
     }
 }
 
-if LampPlayer.isGame { LampGameApp.main() } else { LampWebApp.main() }
+switch LampPlayer.kind {
+case .game: LampGameApp.main()
+case .page: LampWebApp.main()
+case .preview: MainActor.assumeIsolated { LampPreviewApp.run() }
+}

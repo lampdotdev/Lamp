@@ -175,6 +175,9 @@ enum Devices {
         let files = dir.appendingPathComponent("app")
         try? fm.removeItem(at: files)
         try fm.createDirectory(at: files, withIntermediateDirectories: true)
+        // A game's phone page as it is in the app's folder now, published as a Mac build publishes it (`TVs.stagePhone`,
+        // which turns away links), before the project is written: whether it has one decides the project's resources.
+        if GamePhones.takesOnIOS(project) { try await TVs.stagePhone(project) }
         try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files, wishKey: wishKey)
         let names = ["Sources", Sharing.Assets.folder, Template.widgetFolder, Template.shareFolder, Template.watchFolder]
             + (Template.showsPage(project) ? [TVTemplate.webFolder] : [])
@@ -190,6 +193,8 @@ enum Devices {
         do { try checkUnlinked(dir) } catch { try? fm.removeItem(at: files); throw error }
         // A game's page is told the device it's going on (the project's family's row).
         if GameKit.isGame(project) { try GamePage.stage(files.appendingPathComponent(TVTemplate.webFolder), in: files, for: GamePage.place(for: project, at: .ios)) }
+        // And its phone page, which the game serves itself while it's in front (`GamePhones`), from its resources.
+        try GamePhones.write(project, to: files.appendingPathComponent(GamePhones.iosFolder), in: files)
         return files
     }
 

@@ -82,7 +82,7 @@ import UIKit
 /// The page's way to Lamp: only the routes LampAI uses, and where phones join a game (`Lamp.controllers`), with the
 /// app's own token.
 final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
-    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/app/controller"]
+    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/app/controller", "/app/phone-page"]
     private let scheme: String
     init(scheme: String) { self.scheme = scheme }
 
@@ -93,17 +93,18 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
               let url = URL(string: lampGateway + path) else {
             return replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
         }
-        // A game's phones are its own on the Mac: it serves their page and runs their relay itself (`LampControllers`),
-        // so they go on playing, and new ones join, whether Lamp is open or not.
-        #if os(macOS)
-        if path == "/app/controller" {
+        // A game's phones are its own, on the Mac, the iPhone and the iPad: it serves their page and runs their relay
+        // itself (`LampControllers`), so they go on playing, and new ones join, whether Lamp is open or not. Never asked
+        // of Lamp: a game that can't open its own says why, rather than lean on Lamp after all.
+        if path == "/app/controller" || path == "/app/phone-page" {
             let body = (call["body"] as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any] ?? [:]
-            return LampControllers.answer(stop: body["stop"] as? Bool == true) { status, answer in
+            let reply: @Sendable (Int, [String: Any]) -> Void = { status, answer in
                 let text = (try? JSONSerialization.data(withJSONObject: answer)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 DispatchQueue.main.async { replyHandler(["status": status, "body": text], nil) }
             }
+            if path == "/app/phone-page" { return LampControllers.phonePage(reply) }
+            return LampControllers.answer(stop: body["stop"] as? Bool == true, reply)
         }
-        #endif
         Self.ask(url, body: call["body"] as? String) { status, body in replyHandler(["status": status, "body": body], nil) }
     }
 
@@ -121,22 +122,52 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
     }
 }
 
-#if os(macOS)
 /// The game's phones as controllers (`ControllerRuntime`, in LampControllerKit.swift): its phone page from the copy Lamp
-/// put in the bundle (Resources/Phone) and the relay its phones join, in this process, opened as the page's
-/// `Lamp.controllers` starts and closed as it stops or the game quits.
+/// put in the bundle (Phone/, in Resources on the Mac and at the bundle's top on an iPhone or iPad) and the relay its
+/// phones join, in this process, opened as the page's `Lamp.controllers` starts and closed as it stops or the game quits.
+///
+/// On an iPhone or iPad only while the game is in front: a game the person leaves is suspended by the system, which
+/// would leave phones holding buttons on a game that can't hear them, so leaving ends the session (every phone let go,
+/// both listeners closed) and coming back opens a new one at the page's next ask, which phones join by scanning its
+/// code again. A moment away that isn't leaving (a permission's alert, the app switcher pulled half up) ends nothing.
 enum LampControllers {
-    private static let runtime = ControllerRuntime(app: LampInstall.slug.isEmpty ? (Bundle.main.bundleIdentifier ?? "game") : LampInstall.slug,
-                                                   page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"))
+    private static let runtime: ControllerRuntime = {
+        let runtime = ControllerRuntime(app: LampInstall.slug.isEmpty ? (Bundle.main.bundleIdentifier ?? "game") : LampInstall.slug,
+                                        page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"))
+        #if os(iOS)
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
+            runtime.stop {}
+        }
+        #endif
+        return runtime
+    }()
 
     static func answer(stop: Bool, _ done: @escaping @Sendable (Int, [String: Any]) -> Void) {
         // Both on the runtime's own queue, in the order the page asked: a stop then a start for the next round opens a
         // fresh session, never one the stop then closes.
         if stop { return runtime.stop { done(200, [:]) } }
+        guard inFront else { return done(409, ["error": "The game is in the background: phones join again when it's back in front."]) }
         runtime.start(done)
     }
+
+    /// Where the game's phone page is, for `Lamp.phonePage` (a TV app's page in the TV preview asks).
+    static func phonePage(_ done: @escaping @Sendable (Int, [String: Any]) -> Void) {
+        guard inFront else { return done(409, ["error": "The game is in the background: phones join again when it's back in front."]) }
+        runtime.phonePage(done)
+    }
+
+    /// Whether the game may host phones now: always on the Mac; on an iPhone or iPad unless it's in the background.
+    private static var inFront: Bool {
+        #if os(iOS)
+        // Asked from the page's bridge, on the main thread, where the app's state is read.
+        let state = Thread.isMainThread ? MainActor.assumeIsolated { UIApplication.shared.applicationState }
+            : DispatchQueue.main.sync { UIApplication.shared.applicationState }
+        return state != .background
+        #else
+        return true
+        #endif
+    }
 }
-#endif
 
 /// The page's `LampVoice` (Web/lamp.js): what the person says, recorded by this device's microphone as 16 kHz mono
 /// 16-bit PCM in a WAV, for the page to have transcribed (`LampAI.hear`); and what the page says back, read out. Asking
@@ -567,9 +598,16 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
 
 /// What the page logs, into the app's log.
 final class LampPageLog: NSObject, WKScriptMessageHandler {
+    /// Where the lines go: the app's standard error, or a file of its own (the TV preview's, LampPreview.swift).
+    nonisolated(unsafe) static var file: FileHandle?
+
+    static func write(_ line: String) {
+        (file ?? FileHandle.standardError).write(Data((line.prefix(2000) + "\n").utf8))
+    }
+
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let line = message.body as? String else { return }
-        FileHandle.standardError.write(Data((line.prefix(2000) + "\n").utf8))
+        Self.write(line)
     }
 }
 
@@ -579,7 +617,12 @@ final class LampPageLog: NSObject, WKScriptMessageHandler {
 /// changed since the bundle was built, while the app is open (`LampPageLive`), from the copies it was handed.
 final class LampPageFiles: NSObject, WKURLSchemeHandler {
     let scheme: String
-    private let folder = Bundle.main.resourceURL?.appendingPathComponent("Web")
+    /// Web/ in the bundle; for the TV preview, the version of the page it has open (LampPreview.swift).
+    var folder: URL? {
+        get { lock.withLock { served } }
+        set { lock.withLock { served = newValue } }
+    }
+    private var served = Bundle.main.resourceURL?.appendingPathComponent("Web")
     /// The files Lamp changed since this bundle was built, by their path in Web/, and those it took away.
     private let lock = NSLock()
     private var changed: [String: URL] = [:]
@@ -612,7 +655,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 
     private func file(at url: URL) -> Data? {
-        guard let folder, url.host == "app" else { return nil }
+        guard let folder = self.folder, url.host == "app" else { return nil }
         let root = folder.standardizedFileURL.path + "/"
         let path = url.path.isEmpty || url.path.hasSuffix("/") ? url.path + "index.html" : url.path
         let relative = String(path.drop(while: { $0 == "/" }))

@@ -126,6 +126,42 @@ final class ControllerRuntimeTests: XCTestCase {
         XCTAssertEqual(welcome["role"] as? String, "host")
     }
 
+    /// A device on no network a phone could share (an iPhone with Wi‑Fi off, a Mac unplugged) says so, rather than hand
+    /// out a loopback link that would point a phone at itself, and leaves nothing listening.
+    func testOnNoNetworkThereIsNoLinkAndNothingListens() throws {
+        let runtime = try runtime()
+        defer { runtime.stop() }
+        runtime.linkHost = { nil }
+        let (status, answer) = runtime.startNow()
+        XCTAssertEqual(status, 503)
+        XCTAssertNil(answer["links"])
+        XCTAssertFalse(runtime.isRunning)
+        let page = DispatchSemaphore(value: 0)
+        let said = Box()
+        runtime.phonePage { status, answer in said.value = (status, answer["url"] as? String); page.signal() }
+        XCTAssertEqual(page.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual(said.value?.0, 503)
+        XCTAssertNil(said.value?.1, "no address for the phone page either")
+    }
+
+    /// The page's address as `Lamp.phonePage` asks for it: the network host given, at the page's own port.
+    func testThePhonePageAddressIsTheDevicesOnTheNetwork() throws {
+        let runtime = try runtime()
+        defer { runtime.stop() }
+        runtime.linkHost = { "192.168.1.20" }
+        let page = DispatchSemaphore(value: 0)
+        let said = Box()
+        runtime.phonePage { status, answer in said.value = (status, answer["url"] as? String); page.signal() }
+        XCTAssertEqual(page.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual(said.value?.0, 200)
+        XCTAssertEqual(said.value?.1, "http://192.168.1.20:\(try XCTUnwrap(runtime.pagePort))/")
+    }
+
+    func testTheDevicesAddressesForPhonesAreNeverLoopback() {
+        XCTAssertFalse(ControllerAddresses.lan().contains { $0.hasPrefix("127.") })
+        XCTAssertNotEqual(ControllerAddresses.linkHost(), "127.0.0.1")
+    }
+
     func testAGameWithoutAPhonePageOpensNothing() throws {
         let runtime = ControllerRuntime(app: game, page: folder.appendingPathComponent("Phone"))
         XCTAssertEqual(runtime.startNow().status, 409)
@@ -203,4 +239,8 @@ final class ControllerRuntimeTests: XCTestCase {
             return value
         }
     }
+}
+
+private final class Box: @unchecked Sendable {
+    var value: (Int, String?)?
 }
