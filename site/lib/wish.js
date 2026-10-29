@@ -37,16 +37,19 @@ export function wishLink(text) {
  */
 export async function copyWish(text, { clipboard = globalThis.navigator?.clipboard, Item = globalThis.ClipboardItem, origin = null } = {}) {
   const wish = tidy(text);
-  if (!wish || !clipboard) return "none";
+  // A remix is worth copying with no words: Lamp still opens on a copy of what it starts from. Lamp only looks at a
+  // copy that has both forms, so the plain one is a space, which it trims to no request.
+  if ((!wish && !origin) || !clipboard) return "none";
   try {
     if (clipboard.write && Item) {
       await clipboard.write([new Item({
-        "text/plain": new Blob([wish], { type: "text/plain" }),
+        "text/plain": new Blob([wish || " "], { type: "text/plain" }),
         "text/html": new Blob([wishHTML(wish, origin)], { type: "text/html" }),
       })]);
       return "marked";
     }
   } catch {}
+  if (!wish) return "none";
   try {
     await clipboard.writeText(wish);
     return "plain";

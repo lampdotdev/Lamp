@@ -5,18 +5,16 @@ import ChangeStory from "../components/ChangeStory.astro";
 import RemixDialog from "../components/RemixDialog.astro";
 import { together } from "../lib/text";
 import { DOWNLOAD_URL } from "../lib/download";
-import type { Sleeve, Tape } from "../lib/tapes";
+import type { Sleeve } from "../lib/tapes";
 import { STARTERS } from "../lib/starters";
 import newYork from "../assets/starters/newyork.png";
 import laptopFill from "@phosphor-icons/core/assets/fill/laptop-fill.svg?raw";
 import controllerFill from "@phosphor-icons/core/assets/fill/game-controller-fill.svg?raw";
 import tvFill from "@phosphor-icons/core/assets/fill/television-simple-fill.svg?raw";
+import tabletFill from "@phosphor-icons/core/assets/fill/device-tablet-fill.svg?raw";
 import phone from "@phosphor-icons/core/assets/duotone/device-mobile-duotone.svg?raw";
 import laptop from "@phosphor-icons/core/assets/duotone/laptop-duotone.svg?raw";
 import tv from "@phosphor-icons/core/assets/duotone/television-simple-duotone.svg?raw";
-import oldTV from "@phosphor-icons/core/assets/duotone/television-duotone.svg?raw";
-import streamer from "@phosphor-icons/core/assets/duotone/monitor-play-duotone.svg?raw";
-import cast from "@phosphor-icons/core/assets/duotone/screencast-duotone.svg?raw";
 import tablet from "@phosphor-icons/core/assets/duotone/device-tablet-duotone.svg?raw";
 import controller from "@phosphor-icons/core/assets/duotone/game-controller-duotone.svg?raw";
 import speaker from "@phosphor-icons/core/assets/duotone/speaker-hifi-duotone.svg?raw";
@@ -29,7 +27,7 @@ import picture from "@phosphor-icons/core/assets/duotone/image-duotone.svg?raw";
 const pitch = "Start from scratch or an app/game someone made. Change it live. Run it wherever you want.";
 const description = `Remixable software. ${pitch} No code.`;
 
-// The screenshots the 3D tapes print on their labels (lib/tapes.ts), one for each starter.
+// The screenshots the 3D sleeves are printed with (lib/tapes.ts), one for each starter.
 const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { eager: true, import: "default" });
 const shot = async (id: string) => (await getImage({ src: pictures[`../assets/starters/${id}.png`], width: 1000, format: "webp" })).src;
 const shots: Record<string, string> = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => [starter.id, await shot(starter.id)])));
@@ -37,46 +35,52 @@ const shots: Record<string, string> = Object.fromEntries(await Promise.all(START
 /** The `d` of each path in one of Phosphor's icons, joined, to draw on a canvas. */
 const iconPath = (svg: string) => [...svg.matchAll(/ d="([^"]+)"/g)].map((match) => match[1]).join(" ");
 
-// New York's sleeve in the hero: its screenshot and where it plays on the front, the changes its starter suggests on
-// the back, and its printed "Remix me" going to its repository, whose page shows it and says how to remix it.
-const sleeve: Sleeve = {
-  title: "New York", by: "Made by Mr.doob", kind: "Game · 3D", line: "Walk, drive, bike or fly", shot: shots.newyork,
-  tweaks: ["Make it a snowy winter night", "Make it a lot more fun", "Move the city to the Moon"],
-  places: [
-    { label: "Mac", icon: iconPath(laptopFill) },
-    { label: "Xbox", icon: iconPath(controllerFill) },
-    { label: "TV", icon: iconPath(tvFill) },
-  ],
-  remix: "https://github.com/lampdotdev/newyork",
+// Where something plays, as a sleeve's icons show it.
+const PLACES: Record<string, string> = {
+  Mac: iconPath(laptopFill), iPad: iconPath(tabletFill), Xbox: iconPath(controllerFill), TV: iconPath(tvFill),
 };
+const places = (labels: string[]) => labels.map((label) => ({ label, icon: PLACES[label] }));
 
-// The shelf: one stack of a few starters, each original with a remix of it under it, and a blank tape at the
-// bottom. Originals alternate their sleeves' two printings, with their screenshot on the spine; remixes are written
-// on in the marker colors, in turn.
-const SHELF = ["homehq", "newyork", "fireside", "localcrossings"];
+/** A starter's sleeve: the original's, or, given one of its changes, a remix's, its "Remix me" opening the remix dialog
+ * for the starter (RemixDialog.astro), as a link to the homepage with `?starter=` would, with a remix's change in it. */
 const inks = ["#b8264f", "#1f7a42", "#a8361f"];
-const tapes: Tape[] = [
-  ...SHELF.flatMap((id, i): Tape[] => {
+function sleeveOf(id: string, change?: { text: string; ink: string }): Sleeve {
+  const starter = STARTERS.find((starter) => starter.id === id)!;
+  const common = { title: starter.name, kind: starter.kind, shot: shots[id], tweaks: starter.tweaks, places: places(starter.places) };
+  return change
+    ? { ...common, look: "remix", by: `A remix of ${starter.name}`, line: change.text, ink: change.ink, treat: starter.treat,
+        remix: `?starter=${id}&ask=${encodeURIComponent(change.text)}` }
+    : { ...common, look: "original", by: `Made by ${starter.by}`, line: starter.about, remix: `?starter=${id}` };
+}
+
+// New York's sleeve in the hero.
+const sleeve: Sleeve = sleeveOf("newyork");
+
+// The shelf: the same sleeves for a few starters, each original with a remix of it under it, and a blank one at the
+// bottom; remixes are written on in the marker colors, in turn.
+const SHELF = ["homehq", "newyork", "fireside", "localcrossings"];
+const shelf: Sleeve[] = [
+  ...SHELF.flatMap((id, i) => {
     const starter = STARTERS.find((starter) => starter.id === id)!;
-    return [
-      { look: "original", stripes: i % 2 ? "cool" : "warm", title: starter.name, caption: `THE ORIGINAL · BY ${starter.by.toUpperCase()}`, side: `A${i + 1}`, shot: shots[id] },
-      { look: "marker", title: starter.remix, caption: `REMIX OF ${starter.name.toUpperCase()}`, side: `B${i + 1}`, ink: inks[i % inks.length], shot: shots[id], treat: starter.treat },
-    ];
+    return [sleeveOf(id), sleeveOf(id, { text: starter.remix, ink: inks[i % inks.length] })];
   }),
-  { look: "blank", title: "your idea here…", caption: "" },
+  // Its back is about Lamp, with a Download for Mac.
+  {
+    look: "blank", title: "your idea here…", by: "", kind: "", line: "Remixable software for the things you already own.",
+    tweaks: ["Start from scratch, or from what someone made", "Change it live, while it runs", "Put it on your TV, your phone, your Xbox", "No code, and free"],
+    places: [], download: DOWNLOAD_URL,
+  },
 ];
 
 // What Lamp can put something on today, as people name their things, from what a visitor most likely has to what
 // they least likely have. Only what a kind of app or a shipped device integration really reaches
 // (Sources/Lamp/Places, Resources/Devices); a device Lamp only reaches in a simulator isn't listed. Each icon's
 // fill is one of the sleeve's colors, as if printed in two colors.
-const devices = [
+const devices: { name: string; icon: string; brands?: string }[] = [
   { name: "iPhone & iPad", icon: phone },
   { name: "Your Mac", icon: laptop },
-  { name: "Samsung TVs", icon: tv },
-  { name: "Roku", icon: streamer },
-  { name: "LG TVs", icon: oldTV },
-  { name: "Fire TV & Google TV", icon: cast },
+  // Every TV Lamp reaches is one entry: the TVs and the boxes plugged into them, named by their makers.
+  { name: "TVs", icon: tv, brands: "Samsung, LG, Roku, Fire TV, Google TV" },
   { name: "Android phones & tablets", icon: tablet },
   { name: "Sonos", icon: speaker },
   { name: "Xbox", icon: controller },
@@ -122,7 +126,7 @@ const devices = [
             </div>
           </figure>
         </div>
-        <a href={sleeve.remix} class="remix-link tape-button tape-button-paper">Remix New York</a>
+        <a href={`/${sleeve.remix}`} data-remix-sleeve class="remix-link tape-button tape-button-paper">Remix New York</a>
         <button type="button" class="tape-control" data-turn aria-pressed="false" aria-controls="sleeve-back">Turn New York's sleeve over</button>
       </div>
     </div>
@@ -139,23 +143,37 @@ const devices = [
       </div>
     </section>
 
-    <!-- From the shelf: a stack of tapes, in 3D once lib/tapes.ts has drawn it, each original with its screenshot on
-         its spine and a remix of it under it. A tape that's clicked flies out and shows the screenshot on its label.
-         Without WebGL, and for screen readers, the same tapes as a list, as tall as it needs; a keyboard reaches a
-         button for each tape that flies it out as a click does. -->
+    <!-- From the shelf: a stack of sleeves, in 3D once lib/tapes.ts has drawn it, the hero's sleeve for each starter,
+         lying flat with its spine out, each original with a remix of it under it. One that's clicked comes out and
+         stands up as the hero's does, its "Remix me" opening the remix dialog. Without WebGL, and for screen readers,
+         the same sleeves as a list, as tall as it needs, each linking to its remix, and the blank one with what's on its
+         back; a keyboard reaches a button for each that opens the remix dialog for it, as its "Remix me" does, and
+         the blank one's Download. -->
     <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
-      <div class="tape-host order-last min-h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:min-h-[40rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
+      <div class="tape-host order-last min-h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:min-h-[40rem] lg:order-none" data-tape-stack data-sleeves={JSON.stringify(shelf)}>
         <ul class="tape-fallback flex h-full flex-col justify-center gap-2">
           {
-            tapes.map((tape) => (
-              <li class:list={["flex min-h-14 flex-col justify-center px-4 py-2", tape.look === "marker" ? "bg-[#f7f2e3] ring-1 ring-tape/20" : "bg-[#26241f] text-paper"]}>
-                <span class:list={[tape.look === "original" ? "text-lg font-black" : "font-marker text-lg", tape.look === "marker" && "text-[#b8264f]"]}>{tape.title}</span>
-                {tape.caption && <span class="text-[11px] font-bold tracking-wider">{tape.caption}</span>}
+            shelf.map((item) => (
+              <li class:list={["flex min-h-14 flex-col justify-center px-4 py-2", item.look === "remix" ? "bg-[#f7f2e3] ring-1 ring-tape/20" : "bg-[#26241f] text-paper"]}>
+                {item.remix ? (
+                  <a href={`/${item.remix}`} data-remix-link class:list={["underline-offset-4 hover:underline", item.look === "original" ? "text-lg font-black" : "font-marker text-lg text-[#b8264f]"]}>{item.look === "remix" ? item.line : item.title}</a>
+                ) : (
+                  <span class="font-marker text-lg">{item.title}</span>
+                )}
+                {item.by && <span class="text-[11px] font-bold tracking-wider uppercase">{item.by}</span>}
+                {item.download && (
+                  <div class="flex flex-col gap-1 pt-1 text-sm">
+                    <p class="font-bold">{item.line}</p>
+                    <ul class="list-disc pl-5">{item.tweaks.map((point) => <li>{point}</li>)}</ul>
+                    <a href={item.download} data-download-place="shelf" class="font-bold underline underline-offset-4">Download Lamp for Mac</a>
+                  </div>
+                )}
               </li>
             ))
           }
         </ul>
-        {tapes.map((tape, i) => tape.shot && <button type="button" class="tape-control" data-tape={i}>Show what's on {tape.title}</button>)}
+        {shelf.map((item, i) => item.remix && <button type="button" class="tape-control" data-sleeve={i}>Remix {item.look === "remix" ? `${item.title}: ${item.line}` : item.title}</button>)}
+        {shelf.map((item) => item.download && <a href={item.download} data-download-place="shelf" class="tape-control">Download Lamp for Mac</a>)}
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
         <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>
@@ -171,7 +189,10 @@ const devices = [
           devices.map((device, i) => (
             <li class="flex items-center gap-4 text-[1.375rem] leading-tight font-extrabold">
               <span class="device-icon size-14 shrink-0" style={`--tone: var(--stripe-${i % 6})`} aria-hidden="true" set:html={device.icon} />
-              {device.name}
+              <span class="flex flex-col">
+                {device.name}
+                {device.brands && <span class="text-base leading-snug font-semibold text-[#4a463c]">{device.brands}</span>}
+              </span>
             </li>
           ))
         }
@@ -200,6 +221,14 @@ const devices = [
   const sleeve = document.querySelector<HTMLElement>("[data-tape-sleeve]");
   const stack = document.querySelector<HTMLElement>("[data-tape-stack]");
   if (sleeve) mountSleeve(sleeve);
+  // The sleeve's link and the flat shelf's (for a keyboard, or without WebGL) open the remix dialog in place, as the
+  // printed "Remix me" buttons do.
+  document.querySelectorAll<HTMLAnchorElement>("[data-remix-sleeve], [data-remix-link]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      document.dispatchEvent(new CustomEvent("lamp:remix", { detail: new URL(link.href).search }));
+    });
+  });
   if (stack) mountStack(stack);
 </script>
 
@@ -216,14 +245,27 @@ const devices = [
   .stripe-warm { background: linear-gradient(180deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
   .beam { background: linear-gradient(90deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
 
-  /* The hero's field: the stripes on the slant, magenta at the top left through to green at the bottom right. The
-     words sit on the top-left half, so it's widened there into deeper magentas and reds that hold white words at 3:1
-     or more (all of them large); the paler orange, yellow and lime come after the words, under the sleeve. */
-  .technicolor {
-    background: linear-gradient(150deg,
-      #b8235f 0 12%, var(--stripe-5) 0 26%, #dc3d52 0 40%, var(--stripe-4) 0 54%, #e5562a 0 66%, var(--stripe-3) 0 76%,
-      var(--stripe-2) 0 86%, var(--stripe-1) 0 93%, var(--stripe-0) 0);
+  /* The hero's field: the stripes on the slant, magenta through to green and round again, wide in the deep magentas
+     and reds that hold white words and narrow in the pale yellow and lime. They drift slowly up the slant, a whole
+     round every three minutes, on a layer larger than the hero that moves exactly one round and starts over, so the loop never
+     shows a seam. When a pale band passes under the words, a soft shadow behind them keeps them readable. */
+  .technicolor { position: relative; isolation: isolate; --round: 90rem; }
+  .technicolor::before {
+    content: ""; position: absolute; inset: calc(-1 * var(--round)); z-index: -1;
+    background: repeating-linear-gradient(150deg,
+      #b8235f 0 10.8rem, var(--stripe-5) 0 23.4rem, #dc3d52 0 36rem, var(--stripe-4) 0 48.6rem, #e5562a 0 59.4rem,
+      var(--stripe-3) 0 68.4rem, var(--stripe-2) 0 77.4rem, var(--stripe-1) 0 83.7rem, var(--stripe-0) 0 var(--round));
+    animation: hero-drift 180s linear infinite;
   }
+  /* One round back along the stripes' own direction (150deg points across by sin and down by -cos; this goes the
+     other way, up and to the left). */
+  @keyframes hero-drift {
+    to { translate: calc(var(--round) * -0.5) calc(var(--round) * -0.866); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .technicolor::before { animation: none; }
+  }
+  .technicolor :is(h1, p) { text-shadow: 0 1px 2px rgb(60 10 20 / 0.2), 0 2px 24px rgb(60 10 20 / 0.25); }
 
   /* Headings keep plain ink; the stripes sit above them, as a tab cut from the sleeve. */
   .chip-heading::before {
@@ -258,12 +300,13 @@ const devices = [
   .tape-button:hover { translate: 0 -2px; }
   .tape-button:focus-visible { outline: 3px solid var(--stripe-0); outline-offset: 3px; }
   .tape-button-paper { background: var(--color-paper); color: var(--color-tape); }
-  .tape-button-outline-white { background: transparent; color: #fff; box-shadow: inset 0 0 0 2px #fff; }
+  /* Over the drifting stripes, on a dark wash of its own: white stays readable over the pale bands as they pass. */
+  .tape-button-outline-white { background: rgb(31 28 23 / 0.6); color: #fff; box-shadow: inset 0 0 0 2px #fff; }
   /* On the dark last section, in the yellow of the lamp's light. */
   .tape-button-lit { background: var(--stripe-2); color: var(--color-tape); }
 
-  /* The sleeve's link to remix it: under the flat sleeve, and once the 3D one is drawn (whose printed button
-     follows it), seen only when a keyboard reaches it. */
+  /* The sleeve's link to remix it, which opens the remix dialog: under the flat sleeve, and once the 3D one is drawn
+     (whose printed button does the same), seen only when a keyboard reaches it. */
   .remix-link { position: absolute; bottom: 1rem; left: 50%; translate: -50% 0; z-index: 1; }
   .tape-host.is-3d > .remix-link:not(:focus-visible) {
     width: 1px; height: 1px; padding: 0; min-height: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap;

@@ -9,7 +9,7 @@ const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { e
 const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => {
   const picture = pictures[`../assets/starters/${starter.id}.png`];
   const shot = picture ? (await getImage({ src: picture, width: 720, format: "webp" })).src : "";
-  return [starter.id, { name: starter.name, by: starter.by, shot }];
+  return [starter.id, { name: starter.name, by: starter.by, about: starter.about, shot }];
 })));
 ---
 
@@ -20,19 +20,28 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   request in a box to change, then Open in Lamp on a Mac (a link Lamp opens on a fresh copy with the request waiting in
   its chat) and Download for Mac, which copies the request with Lamp's mark, naming the starter or repository, for
   Lamp's first open. The ideas page keeps its own card (WishDialog.astro); this one is dressed as the homepage is.
+  It's a slab with real thickness, as the sleeve in the hero is a box: its face is the dialog, with a back and four
+  edges behind it in 3D, rising into place from the bottom when it opens and leaning a little toward the pointer.
 -->
 <dialog data-remix aria-labelledby="remix-title" aria-describedby="remix-from" class="remix-dialog" data-starters={JSON.stringify(known)}>
+  <div data-slab class="remix-slab">
+  <div class="remix-back" aria-hidden="true"></div>
+  <div class="remix-edge remix-edge-top" aria-hidden="true"></div>
+  <div class="remix-edge remix-edge-bottom" aria-hidden="true"></div>
+  <div class="remix-edge remix-edge-left" aria-hidden="true"></div>
+  <div class="remix-edge remix-edge-right" aria-hidden="true"></div>
+  <div class="remix-face">
   <div class="remix-stripes" aria-hidden="true"></div>
   <button type="button" data-close aria-label="Close" class="remix-close">
     <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
   </button>
   <div class="remix-body">
-    <!-- What it starts from: the starter's picture on a tape's label, or, for a repository or a wish alone, a blank
-         label with its name written on it. -->
+    <!-- What it starts from, on the dark: the starter's picture and what it is, or, for a repository or a wish alone,
+         a blank label with its name written on it. -->
     <figure data-label class="remix-label">
       <img data-shot alt="" hidden />
       <p data-written class="remix-written" hidden></p>
-      <figcaption data-side class="remix-side" aria-hidden="true">SIDE A</figcaption>
+      <figcaption data-about class="remix-about" hidden></figcaption>
     </figure>
     <div class="remix-words">
       <p data-by class="remix-by"></p>
@@ -47,40 +56,76 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       <p data-status class="remix-status" role="status" aria-live="polite">{together("For Macs with Apple Silicon and macOS 14 Sonoma or later")}</p>
     </div>
   </div>
+  </div>
+  </div>
 </dialog>
 
 <script>
   import { askFrom, copyWish, remixFrom, remixLink, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
 
-  type Known = Record<string, { name: string; by: string; shot: string }>;
+  type Known = Record<string, { name: string; by: string; about: string; shot: string }>;
   const dialog = document.querySelector<HTMLDialogElement>("[data-remix]")!;
-  const asked = askFrom(location.search);
-  const named = remixFrom(location.search);
   const starters = JSON.parse(dialog.dataset.starters ?? "{}") as Known;
-  // Only a starter this site knows by its id; the request alone otherwise. Lamp checks the link again.
-  const starter = named?.starter ? starters[named.starter] : undefined;
-  const origin = named?.starter ? (starter ? named : null) : named;
+  const q = <T extends HTMLElement>(selector: string) => dialog.querySelector<T>(selector)!;
+  const title = q("[data-title]"), by = q("[data-by]"), from = q("[data-from]"), status = q("[data-status]");
+  const shot = q<HTMLImageElement>("[data-shot]"), written = q("[data-written]"), about = q("[data-about]");
+  const text = q<HTMLTextAreaElement>("[data-text]"), ask = q("[data-ask]");
+  const openLink = q<HTMLButtonElement>("[data-open]"), download = q<HTMLAnchorElement>("[data-download]");
+  // The dialog's words as they first are, put back each time it's set up for another remix.
+  const first = { status: status.textContent, ask: ask.textContent, download: download.textContent };
+  // The query the dialog is set up for, and what undoes that setup's listeners when it's set up for another.
+  let shown: string | undefined;
+  let setup: AbortController | undefined;
 
-  if (asked || origin) {
-    const q = <T extends HTMLElement>(selector: string) => dialog.querySelector<T>(selector)!;
-    const title = q("[data-title]"), by = q("[data-by]"), from = q("[data-from]"), status = q("[data-status]");
-    const shot = q<HTMLImageElement>("[data-shot]"), written = q("[data-written]"), side = q("[data-side]");
-    const text = q<HTMLTextAreaElement>("[data-text]");
-    const openLink = q<HTMLButtonElement>("[data-open]"), download = q<HTMLAnchorElement>("[data-download]");
+  // Opens the dialog for a link's query (`?ask=`, `starter=`, `repo=`), when it names a request or something to
+  // remix: from the page's own address when it arrives, or from the page itself (the hero sleeve's and the shelf's
+  // Remix me send `lamp:remix` with the query a link would carry). The same query again reopens it as it was left;
+  // another sets it up afresh.
+  function present(search: string) {
+    if (setup && search === shown) return dialog.showModal();
+    const asked = askFrom(search);
+    const named = remixFrom(search);
+    // Only a starter this site knows by its id; the request alone otherwise. Lamp checks the link again.
+    const starter = named?.starter ? starters[named.starter] : undefined;
+    const origin = named?.starter ? (starter ? named : null) : named;
+    if (!asked && !origin) return;
+    setup?.abort();
+    setup = new AbortController();
+    const { signal } = setup;
+    shown = search;
+    shot.hidden = written.hidden = about.hidden = true;
+    by.textContent = from.textContent = "";
+    ask.textContent = first.ask;
+    status.textContent = first.status;
+    download.textContent = first.download;
+    openLink.textContent = "Open in Lamp";
+    dialog.removeAttribute("data-missing");
+    dialog.setAttribute("aria-describedby", "remix-from");
     const idea = starter?.name ?? origin?.name ?? "your wish";
 
+    // "Remix", written in by hand, before the name printed on the original and who made it.
+    const remixOf = (name: string, maker: string) => {
+      const word = document.createElement("span");
+      word.className = "remix-word";
+      word.textContent = "Remix";
+      const credit = document.createElement("span");
+      credit.className = "remix-maker";
+      credit.textContent = `by ${maker}`;
+      const app = document.createElement("span");
+      app.className = "remix-app";
+      app.textContent = name;
+      title.replaceChildren(word, " ", app, " ", credit);
+    };
     if (starter) {
-      title.textContent = `Remix ${starter.name}`;
-      by.textContent = `The original · by ${starter.by}`;
-      from.textContent = "Lamp opens a fresh copy with your change ready to send.";
+      remixOf(starter.name, starter.by);
+      about.textContent = starter.about;
+      about.hidden = false;
       shot.src = starter.shot;
       shot.alt = `${starter.name}, the original`;
       shot.hidden = false;
     } else if (origin?.repo) {
-      title.textContent = `Remix ${origin.name}`;
-      by.textContent = `From github.com/${origin.owner}`;
-      from.textContent = "Lamp opens a fresh copy with your change ready to send.";
+      remixOf(origin.name, origin.owner);
       written.textContent = origin.name;
       written.hidden = false;
     } else {
@@ -88,35 +133,88 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       by.textContent = "From an app made with Lamp";
       from.textContent = "Lamp makes it for you, starting with these words.";
       written.textContent = "your idea here…";
-      q("[data-ask]").textContent = "YOUR WISH";
+      ask.textContent = "YOUR WISH";
       written.hidden = false;
-      side.textContent = "SIDE B";
     }
     text.value = asked ?? "";
+    // Only a wish alone says where it's from and what Lamp will do with it; a remix's title says it already.
+    by.hidden = !by.textContent;
+    from.hidden = !from.textContent;
+    if (from.hidden) dialog.removeAttribute("aria-describedby");
+
+    // The slab leans toward the pointer while it's open, as the sleeve does, if not as far: turned toward it across,
+    // tipped back from it up and down.
+    const slab = q("[data-slab]");
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      addEventListener("pointermove", (event) => {
+        if (!dialog.open) return;
+        const x = (event.clientX / innerWidth) * 2 - 1, y = (event.clientY / innerHeight) * 2 - 1;
+        slab.style.setProperty("--lean-x", `${(y * 7).toFixed(2)}deg`);
+        slab.style.setProperty("--lean-y", `${(x * 9).toFixed(2)}deg`);
+      }, { passive: true, signal });
+    }
 
     // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
     openLink.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
     const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
-    text.addEventListener("input", fit);
+    text.addEventListener("input", fit, { signal });
 
     // Closed, the page is the homepage again: a reload doesn't bring the dialog back.
     dialog.addEventListener("close", () => {
       const url = new URL(location.href);
       for (const name of ["ask", "starter", "repo", "commit"]) url.searchParams.delete(name);
       history.replaceState(history.state, "", url);
-    });
-    q("[data-close]").addEventListener("click", () => dialog.close());
-    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+    }, { signal });
+    q("[data-close]").addEventListener("click", () => dialog.close(), { signal });
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); }, { signal });
+
+    // A page can't ask whether Lamp is installed, but it can tell whether Lamp answered: opening it takes the browser's
+    // focus away (or hides the page). If nothing has after a moment, Lamp isn't on this Mac, and the dialog turns to
+    // getting it, with Download first. Should Lamp open late (a browser asking first, answered slowly), it turns back.
+    // On the dev server, `?scheme=` opens another Lamp (a Lamp Dev's, or one that's on no Mac) to try either way.
+    const scheme = import.meta.env.DEV ? new URLSearchParams(location.search).get("scheme") : null;
+    // Only while an Open is pending, or for a while after it was given up on, does losing focus mean Lamp answered;
+    // later, switching away is only switching away.
+    let trying: ReturnType<typeof setTimeout> | undefined;
+    let late = 0;
+    const opened = () => {
+      if (!trying && Date.now() > late) return;
+      clearTimeout(trying);
+      trying = undefined;
+      late = 0;
+      dialog.removeAttribute("data-missing");
+      openLink.textContent = "Open in Lamp";
+      status.textContent = "Opened in Lamp. Your change is waiting in its chat.";
+    };
+    addEventListener("blur", opened, { signal });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) opened(); }, { signal });
+    addEventListener("pagehide", opened, { signal });
+    signal.addEventListener("abort", () => clearTimeout(trying));
+    dialog.addEventListener("close", () => { clearTimeout(trying); trying = undefined; late = 0; }, { signal });
 
     openLink.addEventListener("click", () => {
-      const link = origin ? remixLink(origin, text.value) : wishLink(text.value);
+      let link = origin ? remixLink(origin, text.value) : wishLink(text.value);
       if (!link) return text.focus();
+      if (scheme) link = link.replace(/^lamp:/, `${scheme}:`);
       track("idea_sent", { idea, place: "remix" });
-      status.textContent = "Off it goes. Nothing opened? Download Lamp first.";
+      status.textContent = "Opening Lamp…";
+      clearTimeout(trying);
+      trying = setTimeout(() => {
+        trying = undefined;
+        if (!document.hasFocus() || document.hidden) return;
+        late = Date.now() + 15000;
+        dialog.setAttribute("data-missing", "");
+        openLink.textContent = "Try again";
+        status.textContent = "Lamp didn't open, so it's probably not on this Mac yet. Download it, and your change will be waiting when it opens.";
+        track("idea_missing", { idea, place: "remix" });
+      }, 2000);
       location.href = link;
-    });
+    }, { signal });
 
     download.addEventListener("click", () => {
+      clearTimeout(trying);
+      trying = undefined;
+      late = 0;
       track("idea_download", { idea, place: "remix" });
       // The download leaves this page where it is, so the copy finishes and the dialog can say what happens next.
       copyWish(text.value, { origin }).then((copied) => {
@@ -126,12 +224,12 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
           : copied === "plain" ? "Your change is copied. Paste it into Lamp when it's ready."
           : text.value.trim() ? "Copy your change, and paste it into Lamp when it's ready." : "Open Lamp when it's ready.";
       });
-    });
+    }, { signal });
 
     dialog.showModal();
     fit();
     requestAnimationFrame(fit);
-    addEventListener("load", fit, { once: true });
+    addEventListener("load", fit, { once: true, signal });
     // Ready to change, with the cursor at the end, where there's a pointer and a keyboard; on a touch screen the
     // keyboard would cover the dialog before it's been read.
     if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
@@ -140,21 +238,62 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     }
     track("idea_opened", { idea, place: "remix" });
   }
+
+  present(location.search);
+  document.addEventListener("lamp:remix", (event) => present((event as CustomEvent<string>).detail));
 </script>
 
 <style>
   /* The homepage's sleeve: cream paper in an ink frame with a hard shadow, the stripes across its top, the picture on a
      tape's label, and the marker for what's written by hand. */
+  /* The dialog holds the slab in perspective and is otherwise unseen. */
   .remix-dialog {
     --stripe-0: #1f8a4a; --stripe-1: #7cbf3a; --stripe-2: #f6b81c; --stripe-3: #f08a1c; --stripe-4: #e2402a; --stripe-5: #d23778;
-    margin: auto; padding: 0; width: min(56rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow-y: auto;
-    background: #f7f2e3; color: var(--color-tape); border: 2px solid var(--color-tape);
-    box-shadow: 10px 10px 0 var(--color-tape); font-family: var(--font-sans);
+    --depth: 26px;
+    margin: auto; padding: 0; width: min(56rem, calc(100vw - 2rem)); max-height: none; overflow: visible;
+    background: transparent; border: 0; color: var(--color-tape); font-family: var(--font-sans); perspective: 1800px;
   }
-  .remix-dialog::backdrop { background: rgb(27 26 23 / 0.55); backdrop-filter: blur(4px); }
+  .remix-dialog::backdrop { background: rgb(27 26 23 / 0.6); }
+  .remix-dialog[open]::backdrop { animation: remix-dim 0.4s ease both; }
+
+  /* The slab: its face is the dialog, with a back and four edges as deep as --depth behind it. It rests turned a
+     little, so its thickness shows, and leans further as --lean-x and --lean-y say (the pointer, from the script); it
+     rises from the bottom when the dialog opens. */
+  .remix-slab {
+    position: relative; transform-style: preserve-3d;
+    transform: rotateX(calc(3deg + var(--lean-x, 0deg))) rotateY(calc(-6deg + var(--lean-y, 0deg)));
+    transition: transform 0.35s ease-out;
+  }
+  .remix-dialog[open] .remix-slab { animation: remix-rise 0.7s cubic-bezier(0.2, 0.9, 0.25, 1.05) both; }
+  @keyframes remix-rise {
+    from { translate: 0 70vh; rotate: x 18deg; opacity: 0; }
+    40% { opacity: 1; }
+    to { translate: 0 0; rotate: x 0deg; opacity: 1; }
+  }
+  @keyframes remix-dim { from { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .remix-dialog[open] .remix-slab, .remix-dialog[open]::backdrop { animation: none; }
+    .remix-slab { transform: none; }
+  }
+  .remix-face {
+    position: relative; max-height: calc(100dvh - 2rem); overflow-y: auto; background: #f7f2e3;
+    border-radius: 3px; transform: translateZ(0);
+  }
+  .remix-back {
+    position: absolute; inset: 0; border-radius: 3px; background: var(--color-tape);
+    transform: translateZ(calc(-1 * var(--depth))); box-shadow: 0 40px 80px -20px rgb(0 0 0 / 0.7);
+  }
+  /* Each edge stands out of the face's own edge and runs back to the back, lit from above. */
+  .remix-edge { position: absolute; background: #2e2a24; }
+  .remix-edge-top { top: 0; left: 0; width: 100%; height: var(--depth); transform-origin: top; transform: rotateX(-90deg); background: #4a443b; }
+  .remix-edge-bottom { bottom: 0; left: 0; width: 100%; height: var(--depth); transform-origin: bottom; transform: rotateX(90deg); background: #14130f; }
+  .remix-edge-left { top: 0; left: 0; width: var(--depth); height: 100%; transform-origin: left; transform: rotateY(90deg); }
+  .remix-edge-right { top: 0; right: 0; width: var(--depth); height: 100%; transform-origin: right; transform: rotateY(-90deg); }
+  /* The face: the sleeve's stripes up its left edge, then the dialog. */
+  .remix-face { display: flex; }
   .remix-stripes {
-    height: 1.75rem; border-bottom: 2px solid var(--color-tape);
-    background: linear-gradient(180deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%,
+    flex: 0 0 1.75rem; border-right: 2px solid var(--color-tape);
+    background: linear-gradient(90deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%,
       var(--stripe-4) 0 83.3%, var(--stripe-5) 0);
   }
   .remix-close {
@@ -162,30 +301,34 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     border-radius: 6px; background: var(--color-paper); color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); cursor: pointer;
   }
   .remix-close svg { width: 0.875rem; height: 0.875rem; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; }
-  .remix-body { display: grid; gap: 1.75rem; padding: 1.75rem; grid-template-columns: 1fr; }
-  @media (min-width: 48rem) { .remix-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); padding: 2.25rem; } }
+  .remix-body { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr; }
+  @media (min-width: 48rem) { .remix-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); } }
 
-  /* A tape's label, a little askew, as the shelf's are. */
-  .remix-label {
-    position: relative; align-self: start; margin: 0.5rem 0 0; rotate: -1.5deg; background: var(--color-tape);
-    padding: 0.625rem; box-shadow: 6px 6px 0 rgb(27 26 23 / 0.25);
-  }
-  .remix-label img { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border: 2px solid var(--color-paper); }
+  /* The left side, on the dark: the picture flat in its light outline, and what it is under it in white. */
+  .remix-label { margin: 0; padding: 1.75rem; background: var(--color-tape); color: #fff; }
+  @media (min-width: 48rem) { .remix-label { padding: 2.25rem; } }
+  .remix-label img { display: block; width: 100%; height: auto; border: 2px solid var(--color-paper); }
+  .remix-about { margin-top: 1.25rem; font-size: 1.0625rem; line-height: 1.5; color: #fff; }
   .remix-written {
     display: grid; place-items: center; aspect-ratio: 3 / 2; margin: 0; padding: 1rem; background: #fbf8ee; color: #b8264f;
     font-family: var(--font-marker); font-size: clamp(1.75rem, 4vw, 2.5rem); line-height: 1.1; text-align: center; overflow-wrap: anywhere;
     background-image: repeating-linear-gradient(180deg, transparent 0 2.4rem, rgb(27 26 23 / 0.12) 2.4rem 2.5rem);
   }
-  .remix-side { margin-top: 0.5rem; color: var(--color-paper); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; }
 
-  .remix-words { display: flex; flex-direction: column; min-width: 0; }
+  .remix-words { display: flex; flex-direction: column; min-width: 0; padding: 1.75rem; }
+  @media (min-width: 48rem) { .remix-words { padding: 2.25rem; } }
   .remix-by { margin: 0 3rem 0.25rem 0; font-size: 1.125rem; font-weight: 800; font-style: italic; }
   .remix-title { margin: 0 3rem 0 0; font-size: clamp(2.5rem, 5.5vw, 3.75rem); line-height: 0.92; font-weight: 900; letter-spacing: -0.04em; overflow-wrap: anywhere; }
+  /* Three lines: "Remix", written in by hand a little smaller, in the title's own ink; the app's name; and who made it,
+     as large as the name but lighter. */
+  .remix-title :global(:is(.remix-word, .remix-app, .remix-maker)) { display: block; }
+  .remix-title :global(.remix-word) { margin-bottom: 0.1em; font-family: var(--font-marker); font-size: 0.6em; font-weight: 400; letter-spacing: 0; }
+  .remix-title :global(.remix-maker) { margin-top: 0.15em; font-size: 0.6em; font-weight: 500; letter-spacing: -0.02em; }
   .remix-from { margin: 0.875rem 0 0; font-size: 1.0625rem; line-height: 1.45; color: #4a463c; }
   .remix-ask { margin: 1.5rem 0 0.5rem; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; color: #a8361f; }
   .remix-words textarea {
     width: 100%; min-height: 5.5rem; resize: none; padding: 0.75rem 0.875rem; border-radius: 4px; background: #fffdf6;
-    border: 2px solid var(--color-tape); color: #b8264f; font-family: var(--font-marker); font-size: 1.375rem; line-height: 1.35;
+    border: 2px solid var(--color-tape); color: var(--color-tape); font-family: var(--font-sans); font-size: 1.125rem; line-height: 1.45;
   }
   .remix-words textarea::placeholder { color: #8c8577; }
   .remix-words textarea:focus-visible { outline: 3px solid var(--stripe-0); outline-offset: 2px; }
@@ -200,5 +343,9 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   .remix-button-ink { background: var(--color-tape); color: var(--color-paper); }
   .remix-button-lit { background: var(--stripe-2); color: var(--color-tape); }
   .remix-status { margin: 0.875rem 0 0; font-size: 0.875rem; color: #4a463c; }
+  /* Lamp didn't open: getting it comes first, trying again second, and the line says why. */
+  .remix-dialog[data-missing] [data-download] { order: -1; }
+  .remix-dialog[data-missing] [data-open] { background: transparent; color: var(--color-tape); }
+  .remix-dialog[data-missing] .remix-status { color: var(--color-tape); font-size: 1rem; font-weight: 700; }
   @media (prefers-reduced-motion: reduce) { .remix-button { transition: none; } .remix-label { rotate: 0deg; } }
 </style>

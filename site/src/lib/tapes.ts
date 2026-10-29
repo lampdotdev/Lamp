@@ -14,28 +14,29 @@ async function three(): Promise<Three> {
   return { ...core, RoundedBoxGeometry };
 }
 
-/** One tape in the stack, as index.astro describes it. */
-export type Tape = {
-  /** How its spine is printed: a printed original, a remix written on in marker, or a blank one. */
-  look: "original" | "marker" | "blank";
+/** A sleeve, as index.astro describes it: the hero's, and each on the shelf. Its front has its screenshot (as a remix
+ * changed it), what it is and where it plays, and a "Remix me" that opens the remix dialog with `remix`
+ * (`lamp:remix`, RemixDialog.astro); its back, the changes its starter suggests; its spine, the screenshot, the name or
+ * a remix's change, and the stripes. Each place's icon is the `d` of a 256-unit SVG path. */
+export type Sleeve = {
+  /** An original, a remix of one (its change written on in marker), or a blank one waiting for an idea. */
+  look: "original" | "remix" | "blank";
+  /** The app's name, and the line over it: who made it, or what it's a remix of. */
   title: string;
-  caption: string;
-  /** The tag at the spine's end (A1, B2…). */
-  side?: string;
-  /** The color of the marker it's written in. */
-  ink?: string;
-  /** An original's stripes. */
-  stripes?: "warm" | "cool";
-  /** Its screenshot, and what the remix did to it. */
+  by: string;
+  /** What kind of thing it is, and what it is in a line (a remix: its change; the blank one: what Lamp is). */
+  kind: string;
+  line: string;
   shot?: string;
   treat?: "snow" | "frame";
-};
-
-/** The hero's sleeve: its screenshot and where it plays on the front, the changes it suggests on the back, and where
- * its printed "Remix me" button goes. Each place's icon is the `d` of a 256-unit SVG path. */
-export type Sleeve = {
-  title: string; by: string; kind: string; line: string; shot: string; tweaks: string[];
-  places: { label: string; icon: string }[]; remix: string;
+  /** The changes on its back; on the blank one's, what Lamp does. */
+  tweaks: string[];
+  places: { label: string; icon: string }[];
+  remix?: string;
+  /** Where its back's "Download for Mac" goes: the blank sleeve's, whose back is about Lamp. */
+  download?: string;
+  /** The marker a remix's change is written in. */
+  ink?: string;
 };
 
 const INK = "#1b1a17";
@@ -45,7 +46,6 @@ const PLASTIC = "#26241f";
 const RED = "#a8361f";
 const MAGENTA = "#b8264f";
 const WARM = ["#1f8a4a", "#7cbf3a", "#f6b81c", "#f08a1c", "#e2402a", "#d23778"];
-const COOL = ["#1f8a4a", "#f6b81c", "#e2402a"];
 
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -91,9 +91,9 @@ function image(src: string) {
   });
 }
 
-/** A screenshot filling a box, cropped to it, with what a remix did to it. `top` is how much of the picture's top to
- * leave out (a window's own bar). */
-function shot(ctx: CanvasRenderingContext2D, img: HTMLImageElement | undefined, x: number, y: number, w: number, h: number, treat?: Tape["treat"], top = 0) {
+/** A screenshot shown whole in a box, as large as fits, on the box's ink, with what a remix did to it. `top` is how much
+ * of the picture's top to leave out (none, as the sleeves have it: nothing of a screenshot is cut). */
+function shot(ctx: CanvasRenderingContext2D, img: HTMLImageElement | undefined, x: number, y: number, w: number, h: number, treat?: Sleeve["treat"], top = 0) {
   ctx.save();
   ctx.fillStyle = INK;
   ctx.fillRect(x, y, w, h);
@@ -111,7 +111,7 @@ function shot(ctx: CanvasRenderingContext2D, img: HTMLImageElement | undefined, 
   ctx.clip();
   if (img) {
     const [sy, sh] = [img.height * top, img.height * (1 - top)];
-    const scale = Math.max(bw / img.width, bh / sh);
+    const scale = Math.min(bw / img.width, bh / sh);
     const dw = img.width * scale;
     const dh = sh * scale;
     ctx.drawImage(img, 0, sy, img.width, sh, bx + (bw - dw) / 2, by + (bh - dh) / 2, dw, dh);
@@ -140,15 +140,28 @@ function bands(ctx: CanvasRenderingContext2D, colors: string[], x: number, y: nu
   });
 }
 
-function tag(ctx: CanvasRenderingContext2D, text: string, right: number, middle: number) {
-  font(ctx, "700", 34, MONO);
-  const w = ctx.measureText(text).width + 24;
-  ctx.strokeStyle = "#a39c88";
+/** Words broken into lines no wider than `width`, as many as `most`, the last cut short with an ellipsis. */
+function lines(ctx: CanvasRenderingContext2D, text: string, width: number, most: number) {
+  const out: string[] = [];
+  for (const word of text.split(/\s+/)) {
+    const line = out.length ? `${out[out.length - 1]} ${word}` : word;
+    if (out.length && ctx.measureText(line).width <= width) out[out.length - 1] = line;
+    else out.push(word);
+  }
+  if (out.length > most) out.splice(most - 1, out.length, `${out.slice(most - 1).join(" ").slice(0, 24)}…`);
+  return out;
+}
+
+/** Ruled lines across a box, as on a blank label. */
+function ruled(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, every: number) {
+  ctx.strokeStyle = "rgb(42 111 176 / 0.3)";
   ctx.lineWidth = 3;
-  ctx.strokeRect(right - w, middle - 26, w, 52);
-  ctx.fillStyle = PAPER;
-  ctx.textAlign = "left";
-  ctx.fillText(text, right - w + 12, middle + 12);
+  for (let at = y + every; at < y + h; at += every) {
+    ctx.beginPath();
+    ctx.moveTo(x, at);
+    ctx.lineTo(x + w, at);
+    ctx.stroke();
+  }
 }
 
 // The sleeve's front, back and spine, laid out at 800 units to its 1.05 of width and drawn at 1.28 pixels a unit,
@@ -160,15 +173,27 @@ function sleeveSheet(width: number) {
   return page;
 }
 
-/** The front's "Remix me" button, in the front's units: also where a click on the sleeve follows its link. */
+/** The front's "Remix me" button, in the front's units: also where a click on the sleeve opens the remix dialog. */
 const REMIX_BUTTON = { x: 56, y: 1280, w: 688, h: 112 };
 
-function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined) {
+/** `pointed` draws the "Remix me" button outlined, as it is while the pointer is over it. */
+function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined, pointed = false) {
   const { canvas, ctx } = sleeveSheet(800);
   ctx.fillStyle = LABEL;
   ctx.fillRect(0, 0, 800, 1448);
+  if (sleeve.look === "blank") {
+    ruled(ctx, 0, 0, 800, 1448, 80);
+    ctx.fillStyle = "#6f6857";
+    ctx.save();
+    ctx.translate(70, 640);
+    ctx.rotate(-0.05);
+    font(ctx, "", 120, MARKER);
+    lines(ctx, sleeve.title, 660, 3).forEach((line, i) => ctx.fillText(line, 0, i * 150));
+    ctx.restore();
+    return canvas;
+  }
   ctx.fillStyle = INK;
-  font(ctx, "italic 800", 48, SANS);
+  font(ctx, "italic 800", 48, SANS, sleeve.by, 520);
   ctx.fillText(sleeve.by, 56, 110);
   ctx.fillStyle = RED;
   font(ctx, "700", 30, MONO);
@@ -178,9 +203,9 @@ function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined) {
   ctx.fillStyle = INK;
   font(ctx, "900", 150, SANS, sleeve.title, 688);
   ctx.fillText(sleeve.title, 50, 250);
-  // The game itself, without the window's bar across its top.
+  // The app itself, without the window's bar across its top.
   ctx.fillRect(56, 290, 688, 430);
-  shot(ctx, img, 64, 298, 672, 414, undefined, 0.09);
+  shot(ctx, img, 64, 298, 672, 414, sleeve.treat);
   bands(ctx, WARM, 0, 760, 800, 140);
   ctx.fillStyle = INK;
   ctx.beginPath();
@@ -188,55 +213,120 @@ function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined) {
   ctx.lineTo(800, 930);
   ctx.lineTo(650, 830);
   ctx.fill();
-  font(ctx, "italic 800", 42, SANS, sleeve.line, 688);
-  ctx.fillText(sleeve.line, 56, 990);
+  // A remix's change, in its marker, under the stripes; what an original is goes on the back, leaving the front room.
+  const remix = sleeve.look === "remix";
+  if (remix) {
+    ctx.fillStyle = sleeve.ink ?? MAGENTA;
+    font(ctx, "", 48, MARKER);
+    const said = lines(ctx, sleeve.line, 688, 2);
+    said.forEach((line, i) => ctx.fillText(line, 56, (said.length > 1 ? 972 : 990) + i * 50));
+  }
   // Where it plays: each place's icon over its name.
+  const [plays, icon] = remix ? [1078, 76] : [1004, 92];
   ctx.fillStyle = RED;
   font(ctx, "700", 24, MONO);
-  ctx.fillText("PLAYS ON", 58, 1058);
+  ctx.fillText("PLAYS ON", 58, plays);
   sleeve.places.forEach((place, i) => {
     const x = 56 + i * 170;
     ctx.save();
-    ctx.translate(x, 1082);
-    ctx.scale(84 / 256, 84 / 256);
+    ctx.translate(x, plays + 20);
+    ctx.scale(icon / 256, icon / 256);
     ctx.fillStyle = INK;
     ctx.fill(new Path2D(place.icon));
     ctx.restore();
     ctx.fillStyle = INK;
-    font(ctx, "700", 28, SANS);
-    ctx.fillText(place.label, x + 2, 1206);
+    font(ctx, "700", remix ? 26 : 30, SANS);
+    ctx.fillText(place.label, x + 2, plays + icon + 56);
   });
-  // The call to remix it, printed as a button.
+  // The call to remix it, printed as a button, with an ink outline around it while it's pointed at.
+  if (sleeve.remix) {
+    const b = REMIX_BUTTON;
+    if (pointed) {
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.roundRect(b.x - 9, b.y - 9, b.w + 18, b.h + 18, 24);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#c23a20";
+    ctx.beginPath();
+    ctx.roundRect(b.x, b.y, b.w, b.h, 18);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    font(ctx, "900", 54, SANS);
+    ctx.fillText("Remix me →", b.x + b.w / 2, b.y + 74);
+    ctx.textAlign = "left";
+  }
+  return canvas;
+}
+
+// The blank sleeve's back is about Lamp itself: what it is (its line), what it does (its tweaks), and a "Download for
+// Mac" where a front has its "Remix me", outlined while it's pointed at. The page lists the same words for whoever
+// can't see the canvas.
+function blankBack(sleeve: Sleeve, ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, pointed: boolean) {
+  bands(ctx, WARM, 0, 0, 800, 120);
+  ctx.fillStyle = INK;
+  font(ctx, "900", 132, SANS);
+  ctx.fillText("lamp", 52, 300);
+  font(ctx, "italic 800", 44, SANS);
+  lines(ctx, sleeve.line, 688, 3).forEach((line, i) => ctx.fillText(line, 58, 390 + i * 56));
+  sleeve.tweaks.slice(0, 4).forEach((point, i) => {
+    const y = 600 + i * 150;
+    bands(ctx, WARM, 58, y - 40, 14, 56, true);
+    ctx.fillStyle = INK;
+    font(ctx, "700", 40, SANS);
+    lines(ctx, point, 620, 2).forEach((line, j) => ctx.fillText(line, 100, y + j * 50));
+  });
   const b = REMIX_BUTTON;
-  ctx.fillStyle = "#c23a20";
+  if (pointed) {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.roundRect(b.x - 9, b.y - 9, b.w + 18, b.h + 18, 24);
+    ctx.stroke();
+  }
+  ctx.fillStyle = INK;
   ctx.beginPath();
   ctx.roundRect(b.x, b.y, b.w, b.h, 18);
   ctx.fill();
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = LABEL;
   ctx.textAlign = "center";
-  font(ctx, "900", 54, SANS);
-  ctx.fillText("Remix me →", b.x + b.w / 2, b.y + 74);
+  font(ctx, "900", 52, SANS);
+  ctx.fillText("Download for Mac", b.x + b.w / 2, b.y + 72);
+  font(ctx, "500", 24, SANS);
+  ctx.fillStyle = "#4a463c";
+  ctx.fillText("For Macs with Apple Silicon, macOS 14 or later", 400, 1428);
   ctx.textAlign = "left";
   return canvas;
 }
 
-function sleeveBack(sleeve: Sleeve) {
+/** `pointed` draws the blank sleeve's "Download for Mac" outlined, as it is while the pointer is over it. */
+function sleeveBack(sleeve: Sleeve, pointed = false) {
   const { canvas, ctx } = sleeveSheet(800);
   ctx.fillStyle = LABEL;
   ctx.fillRect(0, 0, 800, 1448);
+  if (sleeve.look === "blank") return blankBack(sleeve, ctx, canvas, pointed);
   ctx.fillStyle = INK;
   font(ctx, "900", 110, SANS, sleeve.title, 688);
   ctx.fillText(sleeve.title, 52, 170);
-  font(ctx, "italic 800", 44, SANS);
-  ctx.fillText(`by ${sleeve.by.replace(/^Made by /, "")}`, 58, 236);
+  font(ctx, "italic 800", 44, SANS, sleeve.by, 688);
+  ctx.fillText(sleeve.by, 58, 236);
+  // What an original is, in full (a remix's change is on its front).
+  let below = 300;
+  if (sleeve.look === "original" && sleeve.line) {
+    font(ctx, "500", 40, SANS);
+    lines(ctx, sleeve.line, 688, 4).forEach((line, i) => ctx.fillText(line, 58, 340 + i * 54));
+    below = 340 + lines(ctx, sleeve.line, 688, 4).length * 54;
+  }
   ctx.fillStyle = RED;
   font(ctx, "700", 26, MONO);
-  ctx.fillText("IDEAS FOR YOUR REMIX", 58, 360);
+  ctx.fillText("IDEAS FOR YOUR REMIX", 58, below + 70);
   const inks = [MAGENTA, "#1f7a42", RED];
   sleeve.tweaks.forEach((tweak, i) => {
     ctx.fillStyle = inks[i % inks.length];
     ctx.save();
-    ctx.translate(58, 460 + i * 110);
+    ctx.translate(58, below + 170 + i * 110);
     ctx.rotate(i % 2 ? 0.02 : -0.025);
     font(ctx, "", 56, MARKER, tweak, 680);
     ctx.fillText(tweak, 0, 0);
@@ -244,144 +334,50 @@ function sleeveBack(sleeve: Sleeve) {
   });
   ctx.fillStyle = INK;
   font(ctx, "italic 800", 40, SANS);
-  ctx.fillText("Remix it with Lamp. No code.", 58, 1120);
+  ctx.fillText("Remix it with Lamp. No code.", 58, 1196);
   bands(ctx, WARM, 0, 1240, 800, 208);
   return canvas;
 }
 
-function sleeveSpine(sleeve: Sleeve) {
+// The spine runs the sleeve's length; it's drawn on its side, 1448 across and 220 high, read from its bottom end up as
+// it stands, and from left to right as it lies on the shelf: the screenshot, the name (a remix: its change, in marker,
+// over what it's a remix of), and the stripes upright at its far end.
+function sleeveSpine(sleeve: Sleeve, img: HTMLImageElement | undefined) {
   const { canvas, ctx } = sleeveSheet(220);
-  ctx.fillStyle = INK;
-  ctx.fillRect(0, 0, 220, 1448);
-  bands(ctx, WARM, 0, 0, 220, 300);
-  ctx.save();
-  ctx.translate(140, 1360);
+  ctx.translate(0, 1448);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillStyle = PAPER;
-  font(ctx, "900", 96, SANS, sleeve.title.toUpperCase(), 1000);
-  ctx.fillText(sleeve.title.toUpperCase(), 0, 0);
-  ctx.restore();
-  return canvas;
-}
-
-// A tape's spine, at 1480 by 200, and the top of the cassette with its label, at 1480 by 826.
-// An original shows its screenshot at the spine's left end and the sleeve's stripes, upright, at its right.
-function tapeSpine(tape: Tape, img?: HTMLImageElement) {
-  const { canvas, ctx } = sheet(1480, 200);
-  const printed = tape.look === "original" && tape.stripes !== "cool";
-  ctx.fillStyle = printed ? LABEL : PLASTIC;
-  ctx.fillRect(0, 0, 1480, 200);
-  if (printed) {
-    shot(ctx, img, 0, 0, 440, 200, undefined, 0.06);
-    bands(ctx, WARM, 1300, 0, 180, 200, true);
-    ctx.fillStyle = INK;
-    font(ctx, "900", 92, SANS, tape.title, 780);
-    ctx.fillText(tape.title, 490, 112);
-    font(ctx, "700", 28, SANS, tape.caption, 780);
-    ctx.fillText(tape.caption, 494, 160);
-  } else if (tape.look === "original") {
-    shot(ctx, img, 50, 26, 280, 148, undefined, 0.06);
-    bands(ctx, COOL, 1330, 26, 120, 148, true);
-    ctx.fillStyle = PAPER;
-    font(ctx, "900", 78, SANS, tape.title.toUpperCase(), 760);
-    ctx.fillText(tape.title.toUpperCase(), 370, 112);
-    ctx.fillStyle = "#cfc8b2";
-    font(ctx, "700", 26, SANS, tape.caption, 760);
-    ctx.fillText(tape.caption, 372, 156);
-  } else {
-    ctx.save();
-    ctx.translate(58, 150);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillStyle = "#a39c88";
-    font(ctx, "500", 24, MONO);
-    ctx.fillText(tape.look === "blank" ? "T‑120" : "E‑180", 0, 0);
-    ctx.restore();
+  const original = sleeve.look === "original";
+  ctx.fillStyle = original ? LABEL : PLASTIC;
+  ctx.fillRect(0, 0, 1448, 220);
+  if (sleeve.look === "blank") {
     ctx.fillStyle = LABEL;
-    ctx.fillRect(100, 20, 1180, 160);
-    if (tape.look === "blank") {
-      ctx.strokeStyle = "rgb(42 111 176 / 0.35)";
-      ctx.lineWidth = 2;
-      for (let y = 60; y < 180; y += 38) {
-        ctx.beginPath();
-        ctx.moveTo(100, y);
-        ctx.lineTo(1280, y);
-        ctx.stroke();
-      }
-    }
+    ctx.fillRect(24, 24, 1400, 172);
+    ruled(ctx, 24, 24, 1400, 172, 44);
+    ctx.fillStyle = "#6f6857";
+    font(ctx, "", 66, MARKER);
+    ctx.fillText(sleeve.title, 60, 134);
+    return canvas;
+  }
+  shot(ctx, img, 0, 0, 340, 220, sleeve.treat);
+  bands(ctx, WARM, 1268, 0, 180, 220, true);
+  if (original) {
+    ctx.fillStyle = INK;
+    font(ctx, "900", 96, SANS, sleeve.title, 860);
+    ctx.fillText(sleeve.title, 380, 126);
+    font(ctx, "700", 26, SANS, sleeve.by.toUpperCase(), 860);
+    ctx.fillText(sleeve.by.toUpperCase(), 384, 176);
+  } else {
+    ctx.fillStyle = LABEL;
+    ctx.fillRect(364, 22, 880, 176);
     ctx.textAlign = "center";
-    ctx.fillStyle = tape.look === "blank" ? "#6f6857" : (tape.ink ?? MAGENTA);
-    font(ctx, "", 72, MARKER, tape.title, 1100);
-    ctx.fillText(tape.title, 690, tape.look === "blank" ? 125 : 105);
-    if (tape.look !== "blank") {
-      ctx.fillStyle = INK;
-      font(ctx, "700", 26, SANS);
-      ctx.fillText(tape.caption, 690, 160);
-    }
+    ctx.fillStyle = sleeve.ink ?? MAGENTA;
+    font(ctx, "", 64, MARKER, sleeve.line, 840);
+    ctx.fillText(sleeve.line, 804, 112);
+    ctx.fillStyle = INK;
+    font(ctx, "700", 24, SANS, sleeve.by.toUpperCase(), 840);
+    ctx.fillText(sleeve.by.toUpperCase(), 804, 166);
     ctx.textAlign = "left";
   }
-  if (tape.look === "blank") {
-    ctx.fillStyle = "#c23a20";
-    ctx.fillRect(1310, 62, 150, 76);
-    ctx.fillStyle = PAPER;
-    font(ctx, "900", 34, SANS);
-    ctx.fillText("● REC", 1326, 112);
-  } else if (tape.side && !printed) {
-    tag(ctx, tape.side, tape.look === "original" ? 1300 : 1450, 100);
-  }
-  return canvas;
-}
-
-function tapeTop(tape: Tape, img: HTMLImageElement | undefined) {
-  const { canvas, ctx } = sheet(1480, 826);
-  ctx.fillStyle = PLASTIC;
-  ctx.fillRect(0, 0, 1480, 826);
-  // The plastic's ribs.
-  ctx.fillStyle = "rgb(255 255 255 / 0.04)";
-  for (let y = 0; y < 826; y += 14) ctx.fillRect(0, y, 1480, 6);
-  ctx.fillStyle = LABEL;
-  ctx.fillRect(40, 40, 1020, 746);
-  if (tape.look === "blank") {
-    ctx.strokeStyle = "rgb(42 111 176 / 0.35)";
-    ctx.lineWidth = 3;
-    for (let y = 120; y < 780; y += 60) {
-      ctx.beginPath();
-      ctx.moveTo(40, y);
-      ctx.lineTo(1060, y);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "#6f6857";
-    ctx.save();
-    ctx.translate(90, 440);
-    ctx.rotate(-0.04);
-    font(ctx, "", 110, MARKER);
-    ctx.fillText(tape.title, 0, 0);
-    ctx.restore();
-  } else {
-    shot(ctx, img, 70, 70, 960, 540, tape.treat);
-    ctx.fillStyle = tape.look === "marker" ? (tape.ink ?? MAGENTA) : INK;
-    if (tape.look === "marker") font(ctx, "", 64, MARKER, tape.title, 940);
-    else font(ctx, "900", 70, SANS, tape.title, 940);
-    ctx.fillText(tape.title, 72, 692);
-    ctx.fillStyle = INK;
-    font(ctx, "700", 30, SANS, tape.caption, 940);
-    ctx.fillText(tape.caption, 74, 748);
-  }
-  // The tape's window, with its two reels.
-  ctx.fillStyle = "#0f0e0c";
-  ctx.fillRect(1110, 300, 330, 230);
-  ctx.strokeStyle = "#5c574a";
-  ctx.lineWidth = 6;
-  for (const x of [1190, 1360]) {
-    ctx.beginPath();
-    ctx.arc(x, 415, 56, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.fillStyle = PAPER;
-  font(ctx, "900", 84, SANS);
-  ctx.fillText("VHS", 1150, 200);
-  ctx.fillStyle = "#a39c88";
-  font(ctx, "500", 28, MONO);
-  ctx.fillText(tape.side ? `SIDE ${tape.side}` : "T‑120", 1152, 640);
   return canvas;
 }
 
@@ -447,9 +443,12 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
     return mesh;
   };
 
-  // Where the pointer is, from -1 to 1 across the host's own box.
+  // Where the pointer is, from -1 to 1 across the host's own box. While a dialog is open over the page (the remix
+  // dialog), the tapes behind it hold still and take no clicks.
+  const covered = () => !!document.querySelector("dialog[open]");
   const pointer = { x: 0, y: 0 };
   addEventListener("pointermove", (event) => {
+    if (covered()) return;
     const box = host.getBoundingClientRect();
     pointer.x = Math.max(-1, Math.min(1, ((event.clientX - box.left) / box.width) * 2 - 1));
     pointer.y = Math.max(-1, Math.min(1, ((event.clientY - box.top) / box.height) * 2 - 1));
@@ -468,7 +467,7 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
     document.addEventListener(type, (event) => {
       const box = canvas.getBoundingClientRect();
       const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
-      if (inside && !(event.target as Element | null)?.closest?.("a, button, input")) act(event);
+      if (inside && !covered() && !(event.target as Element | null)?.closest?.("a, button, input")) act(event);
       else if (type === "pointermove") act(new MouseEvent("pointermove", { clientX: -1e6, clientY: -1e6 }));
     });
   };
@@ -515,56 +514,158 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
     }).observe(host);
     host.prepend(canvas);
     host.classList.add("is-3d");
+    // The flat version stays for screen readers, but its links are out of a keyboard's way: they're not seen, and
+    // the controls beside them do the same.
+    for (const link of host.querySelectorAll<HTMLElement>(".tape-fallback a, .tape-fallback button")) link.tabIndex = -1;
   };
 
   return { THREE, scene, camera, canvas, texture, flat, solid, pointer, hit, on, hand, run };
 }
 
+/** Whether a sleeve has been turned over in this browser, after which the arrow that shows the way never shows again. */
+const TURNED = "lamp.sleeveTurned";
+const turned = {
+  once: (() => { try { return localStorage.getItem(TURNED) === "1"; } catch { return false; } })(),
+  now() {
+    this.once = true;
+    try { localStorage.setItem(TURNED, "1"); } catch { /* kept for this visit only */ }
+  },
+};
+
 /** Eases `value` toward `target`, by how long the frame took. */
 const ease = (value: number, target: number, dt: number, speed = 7) => value + (target - value) * (1 - Math.exp(-dt * speed));
+
+// MARK: A sleeve
+
+/** A sleeve as a lit box: its faces (the front twice, plain and with its "Remix me" outlined, for while the pointer is
+ * over the button), and whether a hit on it is on that button. */
+function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sleeve: Sleeve, img: HTMLImageElement | undefined) {
+  const spine = s.texture(sleeveSpine(sleeve, img));
+  const [front, frontPointed] = [s.texture(sleeveFront(sleeve, img)), s.texture(sleeveFront(sleeve, img, true))];
+  const [back, backPointed] = [s.texture(sleeveBack(sleeve)), s.texture(sleeveBack(sleeve, true))];
+  const faces = [spine, spine, s.flat(INK), s.flat(INK), front, back];
+  const box = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(1.05, 1.9, 0.3, 3, 0.025), faces));
+  // A button sits in the same place on either side: the front's "Remix me", or the blank sleeve's "Download for Mac"
+  // on its back. `onButton` says whether a hit is on one, and keeps which, for `point` and `press`.
+  let side = 4;
+  const onButton = (found: ThreeTypes.Intersection | undefined) => {
+    const face = found?.face?.materialIndex;
+    const has = face === 4 ? !!sleeve.remix : face === 5 && !!sleeve.download;
+    if (!has || found?.object !== box || !found.uv) return false;
+    const [x, y] = [found.uv.x * 800, (1 - found.uv.y) * 1448];
+    const b = REMIX_BUTTON;
+    const on = x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+    if (on) side = face;
+    return on;
+  };
+  /** Outlines the button last found, or neither. */
+  const point = (on: boolean) => {
+    faces[4] = on && side === 4 ? frontPointed : front;
+    faces[5] = on && side === 5 ? backPointed : back;
+    box.material = faces;
+  };
+  const remix = () => { if (sleeve.remix) document.dispatchEvent(new CustomEvent("lamp:remix", { detail: sleeve.remix })); };
+  /** Does what the button last found does: remix, or download Lamp as the page's own Download links do. */
+  const press = () => {
+    if (side === 4) return remix();
+    const link = Object.assign(document.createElement("a"), { href: sleeve.download! });
+    link.dataset.downloadPlace = "shelf";
+    document.body.append(link);
+    link.click();
+    link.remove();
+  };
+
+  // The turn it takes when clicked (its right side swinging toward the viewer), shown by a flat magenta arrow, a little
+  // see-through, round its right side from the back to the front, its tail fading in from nothing and its head in
+  // front pointing the way the front goes: seen while the pointer is on the sleeve and not on its button, until a
+  // sleeve has been turned over once (`turned`). It's placed by whoever shows the sleeve, at its place and lean but
+  // never its turn, and fades in and out as `aim` asks.
+  const arrow = new THREE.Group();
+  const fadeIn = sheet(256, 1);
+  const ramp = fadeIn.ctx.createLinearGradient(0, 0, 256, 0);
+  ramp.addColorStop(0, "rgb(255 255 255 / 0)");
+  ramp.addColorStop(0.75, "rgb(255 255 255 / 1)");
+  fadeIn.ctx.fillStyle = ramp;
+  fadeIn.ctx.fillRect(0, 0, 256, 1);
+  const ink = new THREE.MeshBasicMaterial({
+    color: "#d23778", map: new THREE.CanvasTexture(fadeIn.canvas), transparent: true, opacity: 0,
+    side: THREE.DoubleSide, depthWrite: false,
+  });
+  const along = (t: number) => new THREE.Vector3(0.86 * Math.cos(t), 0, 0.48 * Math.sin(t));
+  const [from, to, steps, band] = [-1.25, 1.25, 48, 0.07];
+  // A band standing round the sleeve, as tall as `band`, its texture running from the tail (0) to the head (1).
+  const ribbon: number[] = [], uvs: number[] = [], order: number[] = [];
+  for (let i = 0; i < steps; i++) {
+    const at = along(from + ((to - from) * i) / (steps - 1));
+    ribbon.push(at.x, -band / 2, at.z, at.x, band / 2, at.z);
+    uvs.push(i / (steps - 1), 0, i / (steps - 1), 1);
+    if (i) order.push(2 * i - 2, 2 * i - 1, 2 * i, 2 * i - 1, 2 * i + 1, 2 * i);
+  }
+  // Its head: a flat triangle in the band, twice as tall, pointing on along the curve.
+  const end = along(to);
+  const ahead = end.clone().sub(along(to - 0.05)).normalize();
+  const tip = end.clone().addScaledVector(ahead, 0.2);
+  const base = steps * 2;
+  ribbon.push(end.x, -band * 1.6, end.z, end.x, band * 1.6, end.z, tip.x, 0, tip.z);
+  uvs.push(1, 0, 1, 1, 1, 0.5);
+  order.push(base, base + 1, base + 2);
+  const shape = new THREE.BufferGeometry();
+  shape.setAttribute("position", new THREE.Float32BufferAttribute(ribbon, 3));
+  shape.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  shape.setIndex(order);
+  arrow.add(new THREE.Mesh(shape, ink));
+  arrow.visible = false;
+  let aimed = false;
+  /** Shows the arrow, or not; never again once a sleeve has been turned. */
+  const aim = (on: boolean) => { aimed = on && !turned.once; };
+  /** Fades the arrow toward what `aim` asked, by how long the frame took. */
+  const fade = (dt: number) => {
+    if (turned.once) aimed = false;
+    ink.opacity = ease(ink.opacity, aimed ? 0.65 : 0, dt, aimed ? 10 : 6);
+    arrow.visible = ink.opacity > 0.01;
+  };
+  return { box, onButton, point, remix, press, arrow, aim, fade };
+}
 
 // MARK: The hero's sleeve
 
 export async function mountSleeve(host: HTMLElement) {
   const sleeve = JSON.parse(host.dataset.sleeve!) as Sleeve;
-  const [THREE, img] = await Promise.all([three(), image(sleeve.shot), fontsReady()]);
+  const [THREE, img] = await Promise.all([three(), sleeve.shot ? image(sleeve.shot) : Promise.resolve(undefined), fontsReady()]);
   const s = stage(THREE, host, { wall: -0.75, reach: 3, bleed: { x: 0.15, y: 0.2 } });
   if (!s) return;
-  const spine = s.texture(sleeveSpine(sleeve));
-  const box = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(1.05, 1.9, 0.3, 3, 0.025), [
-    spine, spine, s.flat(INK), s.flat(INK), s.texture(sleeveFront(sleeve, img)), s.texture(sleeveBack(sleeve)),
-  ]));
+  const built = buildSleeve(s, THREE, sleeve, img);
+  const box = built.box;
   // On its own, it only casts its shadow: catching its own would shade its front with the slightest error.
   box.receiveShadow = false;
   const sleeveGroup = new THREE.Group();
   sleeveGroup.add(box);
-  s.scene.add(sleeveGroup);
+  s.scene.add(sleeveGroup, built.arrow);
 
-  // Clicked, it turns over: a turn and a half, landing on whichever side it wasn't on, with a hop. A click on the
-  // front's printed "Remix me" button follows its link instead. The button that turns it (for a keyboard) says which
+  // Clicked, it flips over: half a turn, onto whichever side it wasn't on. A click on the front's printed "Remix me"
+  // button opens the remix dialog instead. The button that turns it (for a keyboard) says which
   // way up it is.
   const button = host.querySelector<HTMLButtonElement>("[data-turn]");
   let spin = 0;
-  let hop = 0;
   let back = false;
   const turn = () => {
-    spin += Math.PI * 3;
-    hop = 1;
+    turned.now();
+    spin -= Math.PI;
     back = !back;
     button?.setAttribute("aria-pressed", String(back));
   };
-  const onRemix = (found: ThreeTypes.Intersection | undefined) => {
-    if (!found?.uv || found.face?.materialIndex !== 4) return false;
-    const [x, y] = [found.uv.x * 800, (1 - found.uv.y) * 1448];
-    const b = REMIX_BUTTON;
-    return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
-  };
   s.on("click", (event) => {
     const found = s.hit(event, [box]);
-    if (onRemix(found)) open(sleeve.remix, "_blank", "noopener");
+    if (built.onButton(found)) built.press();
     else if (found) turn();
   });
-  s.on("pointermove", (event) => s.hand(!!s.hit(event, [box])));
+  s.on("pointermove", (event) => {
+    const found = s.hit(event, [box]);
+    s.hand(!!found);
+    const onButton = built.onButton(found);
+    built.point(onButton);
+    built.aim(!!found && !onButton);
+  });
   button?.addEventListener("click", turn);
 
   let rotation = { x: 0, y: -0.35 };
@@ -575,11 +676,14 @@ export async function mountSleeve(host: HTMLElement) {
     },
     (dt, time) => {
       const tilt = reduced ? { x: 0, y: 0 } : s.pointer;
-      rotation = { x: ease(rotation.x, 0.06 + tilt.y * 0.3, dt, 5), y: ease(rotation.y, -0.35 + tilt.x * 0.6, dt, 5) };
-      spun = ease(spun, spin, dt, reduced ? 12 : 3.2);
-      hop = ease(hop, 0, dt, 2.5);
-      sleeveGroup.rotation.set(rotation.x, rotation.y + spun, Math.sin(spun) * 0.12);
-      sleeveGroup.position.y = (reduced ? 0 : Math.sin(time * 1.3) * 0.04) + Math.sin(hop * Math.PI) * 0.35;
+      // It turns toward the pointer across, and leans back from it up and down: below it, the front tips up.
+      rotation = { x: ease(rotation.x, 0.06 - tilt.y * 0.3, dt, 5), y: ease(rotation.y, -0.35 + tilt.x * 0.6, dt, 5) };
+      spun = ease(spun, spin, dt, reduced ? 12 : 5);
+      sleeveGroup.rotation.set(rotation.x, rotation.y + spun, 0);
+      sleeveGroup.position.y = reduced ? 0 : Math.sin(time * 1.3) * 0.04;
+      built.arrow.rotation.set(rotation.x, rotation.y, 0);
+      built.arrow.position.copy(sleeveGroup.position);
+      built.fade(dt);
     },
   );
 }
@@ -588,102 +692,117 @@ export async function mountSleeve(host: HTMLElement) {
 
 const STACK_BLEED = { x: 0.12, y: 0.3 };
 
-// The shelf: a stack of a few starters' tapes, each original with its remix under it, a little untidy, as a real
-// stack is. The originals' spines carry their screenshots, so those are loaded up front; a tape's top, with the
-// screenshot on its label, is drawn the first time it's chosen.
+// The shelf: the same sleeves, lying flat in a stack with their spines out, each original with its remix under it, a
+// little untidy, as a real stack is. One that's clicked comes out and stands up facing the viewer, as the hero's does:
+// it leans toward the pointer, turns over when clicked again, and its "Remix me" opens the remix dialog. Clicked
+// anywhere else, it goes back.
 export async function mountStack(host: HTMLElement) {
-  const tapes = JSON.parse(host.dataset.tapes!) as Tape[];
-  const [THREE, spineShots] = await Promise.all([
+  const sleeves = JSON.parse(host.dataset.sleeves!) as Sleeve[];
+  const [THREE, shots] = await Promise.all([
     three(),
-    Promise.all(tapes.map((tape) => (tape.look === "original" && tape.shot ? image(tape.shot) : Promise.resolve(undefined)))),
+    Promise.all(sleeves.map((sleeve) => (sleeve.shot ? image(sleeve.shot) : Promise.resolve(undefined)))),
     fontsReady(),
   ]);
-  const s = stage(THREE, host, { wall: -1.6, reach: 7, bleed: STACK_BLEED });
+  const s = stage(THREE, host, { wall: -1.6, reach: 6, bleed: STACK_BLEED });
   if (!s) return;
-  const [W, H, D, GAP] = [3.4, 0.46, 1.9, 0.06];
-  const side = s.flat("#1f1d19");
-  const back = s.flat("#2c2a25");
+  // Lying flat, a sleeve's length runs across, its depth is its height in the stack, and its spine faces the viewer.
+  const [W, H, GAP] = [1.9, 0.3, 0.05];
+  const flat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0)));
   const stack = new THREE.Group();
   s.scene.add(stack);
 
-  const jitter = [0.1, -0.08, 0.14, -0.05, 0.06, -0.12, 0.03];
-  const height = tapes.length * (H + GAP);
-  const meshes = tapes.map((tape, i) => {
-    const mesh = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(W, H, D, 3, 0.035), [
-      side, side, back, back, s.texture(tapeSpine(tape, spineShots[i])), back,
-    ]));
-    const home = { x: jitter[i % jitter.length], y: height / 2 - H / 2 - i * (H + GAP), z: 0, rx: 0, ry: jitter[(i + 2) % jitter.length] * 0.3, rz: 0 };
-    stack.add(mesh);
-    // Turned about the upright first, so a tape tipped up to show its top still spins like a record, and turning it
-    // back by the stack's own lean holds it square to the viewer.
-    mesh.rotation.order = "YXZ";
-    mesh.position.set(home.x, home.y, home.z);
-    return { tape, mesh, home, now: { ...home }, spins: 0, drawn: false };
+  const jitter = [0.06, -0.05, 0.09, -0.03, 0.04, -0.08, 0.02];
+  const height = sleeves.length * (H + GAP);
+  const up = new THREE.Vector3(0, 1, 0);
+  const items = sleeves.map((sleeve, i) => {
+    const built = buildSleeve(s, THREE, sleeve, shots[i]);
+    stack.add(built.box, built.arrow);
+    const home = {
+      position: new THREE.Vector3(jitter[i % jitter.length], height / 2 - H / 2 - i * (H + GAP), 0),
+      quaternion: new THREE.Quaternion().setFromAxisAngle(up, jitter[(i + 2) % jitter.length] * 0.4).multiply(flat),
+    };
+    built.box.position.copy(home.position);
+    built.box.quaternion.copy(home.quaternion);
+    return { built, home, turns: 0 };
   });
 
   let chosen = -1;
   let hovered = -1;
-  const choose = (i: number) => {
-    if (chosen === i) {
-      chosen = -1;
-      return;
-    }
-    chosen = i;
-    const tape = meshes[i];
-    tape.spins += 1;
-    if (!tape.drawn) {
-      tape.drawn = true;
-      const shot = tape.tape.shot;
-      (shot ? image(shot) : Promise.resolve(undefined)).then((img) => {
-        (tape.mesh.material as ThreeTypes.Material[])[2] = s.texture(tapeTop(tape.tape, img));
-      });
-    }
-  };
-  const which = (event: MouseEvent) => {
-    const object = s.hit(event, meshes.map(({ mesh }) => mesh))?.object;
-    return meshes.findIndex(({ mesh }) => mesh === object);
+  /** The sleeve under the pointer, and whether it's on the chosen one's "Remix me". */
+  const pointedAt = (event: MouseEvent) => {
+    const found = s.hit(event, items.map(({ built }) => built.box));
+    const i = items.findIndex(({ built }) => built.box === found?.object);
+    return { i, onButton: i >= 0 && i === chosen && items[i].built.onButton(found) };
   };
   s.on("click", (event) => {
-    const i = which(event);
-    if (i >= 0) choose(i);
-    else chosen = -1;
+    const { i, onButton } = pointedAt(event);
+    if (onButton) items[i].built.press();
+    else if (i >= 0 && i === chosen) {
+      items[i].turns += 1;
+      turned.now();
+    }
+    else if (i >= 0) {
+      chosen = i;
+      items[i].turns = 0;
+    } else chosen = -1;
   });
   s.on("pointermove", (event) => {
-    hovered = which(event);
-    s.hand(hovered >= 0);
+    const { i, onButton } = pointedAt(event);
+    hovered = i;
+    s.hand(i >= 0);
+    items.forEach(({ built }, j) => {
+      built.point(onButton && j === i);
+      built.aim(j === i && i === chosen && !onButton);
+    });
   });
-  // For a keyboard, a button for each tape with a picture does what a click on the tape does.
-  host.querySelectorAll<HTMLButtonElement>("[data-tape]").forEach((button) => {
-    button.addEventListener("click", () => choose(Number(button.dataset.tape)));
+  // For a keyboard, a button for each sleeve that can be remixed opens the remix dialog for it, as its "Remix me" does.
+  host.querySelectorAll<HTMLButtonElement>("[data-sleeve]").forEach((button) => {
+    button.addEventListener("click", () => items[Number(button.dataset.sleeve)]?.built.remix());
   });
 
   let tilt = { x: 0, y: 0 };
-  // How far in front of the stack a chosen tape is held.
+  // How far in front of the stack a chosen sleeve stands.
   let held = 2.2;
+  const target = new THREE.Vector3();
+  const facing = new THREE.Quaternion();
+  const euler = new THREE.Euler();
   s.run(
     (aspect, tan) => {
-      // The whole stack fits the host, and so does a chosen tape held up close in front of it, which may only rise
-      // into the bleed above and below.
-      const distance = Math.max((height + 0.4) / (2 * tan), 4.6 / (2 * tan * aspect));
-      const near = Math.max(2.4 / (2 * tan * (1 + STACK_BLEED.y)), 4 / (2 * tan * aspect));
+      // The whole stack fits the host, and so does a chosen sleeve standing in front of it, with room to lean.
+      const distance = Math.max((height + 0.5) / (2 * tan), (W + 1.2) / (2 * tan * aspect));
+      const near = Math.max(2.35 / (2 * tan), 1.6 / (2 * tan * aspect));
       held = Math.max(0, distance - near);
       s.camera.position.set(0, 0, distance);
     },
-    (dt, time) => {
+    (dt) => {
       const p = reduced ? { x: 0, y: 0 } : s.pointer;
-      tilt = { x: ease(tilt.x, 0.14 + p.y * 0.18, dt, 4), y: ease(tilt.y, p.x * 0.32, dt, 4) };
+      tilt = { x: ease(tilt.x, 0.14 + p.y * 0.18, dt, 4), y: ease(tilt.y, p.x * 0.3, dt, 4) };
       stack.rotation.set(tilt.x, tilt.y, 0);
-      meshes.forEach((tape, i) => {
-        const up = chosen === i;
-        const near = hovered === i && !up;
-        // Chosen, it flies out, spins once and shows its top; the rest sit back a little.
-        const target = up
-          ? { x: 0, y: 0.05 + (reduced ? 0 : Math.sin(time * 1.6) * 0.03), z: held, rx: Math.PI / 2 - 0.22 - tilt.x, ry: tape.spins * Math.PI * 2 - tilt.y, rz: -0.05 }
-          : { ...tape.home, z: chosen >= 0 ? -0.3 : near ? 0.35 : 0, rx: near ? -0.12 : 0, ry: tape.home.ry + tape.spins * Math.PI * 2 };
-        const speed = up ? 4.5 : 6;
-        for (const key of ["x", "y", "z", "rx", "ry", "rz"] as const) tape.now[key] = ease(tape.now[key], target[key], dt, reduced ? 14 : speed);
-        tape.mesh.position.set(tape.now.x, tape.now.y, tape.now.z);
-        tape.mesh.rotation.set(tape.now.rx, tape.now.ry, tape.now.rz);
+      const k = 1 - Math.exp(-dt * (reduced ? 14 : 5));
+      items.forEach((item, i) => {
+        const box = item.built.box;
+        if (i === chosen) {
+          // Standing in front of the stack, square to the viewer whatever the stack's lean, turned toward the pointer
+          // across and tipped back from it up and down, as the hero's sleeve is; turned over as many times as asked.
+          euler.set(-p.y * 0.25, p.x * 0.4 - item.turns * Math.PI, 0);
+          facing.setFromEuler(euler).premultiply(stack.quaternion.clone().invert());
+          target.set(0, 0, held).applyQuaternion(stack.quaternion.clone().invert());
+          box.position.lerp(target, k);
+          box.quaternion.slerp(facing, k);
+          // The arrow round it leans as it does, but never turns with it.
+          euler.set(-p.y * 0.25, p.x * 0.4, 0);
+          item.built.arrow.quaternion.setFromEuler(euler).premultiply(stack.quaternion.clone().invert());
+          item.built.arrow.position.copy(box.position);
+        } else {
+          // In its place; pulled out a little under the pointer, pushed back a little while another is out.
+          target.copy(item.home.position);
+          target.z += chosen >= 0 ? -0.2 : hovered === i ? 0.3 : 0;
+          box.position.lerp(target, k);
+          box.quaternion.slerp(item.home.quaternion, k);
+          item.built.aim(false);
+        }
+        item.built.fade(dt);
       });
     },
   );
