@@ -475,7 +475,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 
     static func text(_ items: [Item]) -> String {
-        guard !items.isEmpty else { return "The TV preview's screen as text: nothing on it can be read." }
+        guard !items.isEmpty else { return "The preview's screen as text: nothing on it can be read." }
         let lines = items.prefix(150).map { item -> String in
             var line = "\(item.id) \(item.kind)"
             if !item.name.isEmpty { line += " \"\(item.name.prefix(80))\"" }
@@ -483,7 +483,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
             if item.focused { line += ", has focus" }
             return line + " @\(Int(item.frame.midX.rounded())),\(Int(item.frame.midY.rounded())) \(Int(item.frame.width.rounded()))x\(Int(item.frame.height.rounded()))"
         }
-        return "The TV preview's screen as text, in reading order. Each line is a thing's id, what it is, its name, \"= \" what it holds, whether it "
+        return "The preview's screen as text, in reading order. Each line is a thing's id, what it is, its name, \"= \" what it holds, whether it "
             + "has the remote's focus, then @x,y (its middle in the picture) and its size. Act on a thing with `target` set to its id "
             + "or exact name; x and y are for what isn't listed:\n" + lines.joined(separator: "\n")
             + (items.count > 150 ? "\n… and \(items.count - 150) more" : "")

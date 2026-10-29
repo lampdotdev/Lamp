@@ -455,8 +455,9 @@ where Try On points, with the Xbox one of its places and its console still the o
 as a game and updated as before. Only meta.json changes, and its folder reads as a game in every version
 (`GameKit.isXboxWebGame`, in `isMade`), so a restore keeps it one. An Xbox app of menus and pages says nothing of a game
 and stays the Xbox's, as does a wish whose Xbox app is one of several. Its page runs its own loop, not Lamp's game runtime,
-so until it's moved onto `game()` (`GameKit.ownsLoop`: none of its own files load lamp-game.js) it's looked at and used in
-the page preview it had as the Xbox's web app, as a screen is, and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
+so until it's moved onto `game()` (`GameKit.ownsLoop`: none of its own files load lamp-game.js) it's looked at and used as a
+screen is: in its window on this Mac while that's open or Try On points at the Mac, else in the page preview it had as the
+Xbox's web app ("Where the agent looks at it", under "Screens"), and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
 
 On the Mac and on iOS a web game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
 `GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
@@ -634,7 +635,7 @@ game skill's "Fun" and "Playtesting".
 A web app (`Platform.webApp`, `Targets/WebAppTarget.swift`) is what `make_app_for` makes of an app made with web: the
 screen's recipe (`ScreenKit`, with `ScreenKit.webAppPage`: its own mark `.lamp-web-app`, its own page address
 lamp-web-app://app/ and so its own saved data, `Sources/LampWebApp.swift`, its page laid out at the window's size with
-no fixed canvas, and Web Apps/ to install in), going wherever a page goes and looked at in the TV preview. A screen is
+no fixed canvas, and Web Apps/ to install in), going wherever a page goes and looked at as a screen is (below). A screen is
 never made into a web app or back: each keeps its own address and saves.
 
 ## Screens
@@ -660,17 +661,44 @@ to change its viewport first when it's to go somewhere tall. On the person's own
 project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a web
 game.
 
-Wherever it's shown the agent looks at it in the TV preview on the Mac (`Target.looksInTVPreview`,
-`openDevicePreview`), so a change is seen without a build of the Mac app, and at any shape: `look_at_app`'s `shape` (a
-width and height in CSS pixels, "390x844") turns the preview's window to it and lays the page out at that size
-(`TVPreview.reshape`), the picture drawn with its long side 960 pixels and `use_app`'s points measured in it
-(`TVPreview.scale`); the preview keeps that shape for later looks, and starts at a TV's 1920x1080. Pointed at a TV it's
-staged and looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the
-request's device line says where it's shown (`Rules.screenPlaces`). The preview stands in for a TV only while Try On
-points at one; elsewhere it's just "the preview", its window titled "<name> Preview" (`Store.previewDevice`), so a web
-app at home on the Mac is never told it's on a TV; the name follows Try On while the preview stays open
-(`TVPreview.follow`). Before finishing, the agent looks at it in the shapes of the places it's shown and no others
-(`Rules.screenDesign`, `screenShapes`). An app made into one is given its kind before `make_app_for` sets its places,
+**Where the agent looks at it.** The agent looks at it and uses it where the person sees it: its Mac copy, when the page
+has one (`hasMac`) and it's open or Try On points at the Mac, where a look opens it (`Store.pageOnMac`, the same for a
+web app and a game with a loop of its own, `GameKit.ownsLoop`). That copy is looked at as a Mac app is: built (a change
+of the page alone goes into the open window, `PageLive`, which a screen's and a web app's host take as a game's does,
+the page opening again with what it saved), pictured by LampSupport, and used through `LampDriver`. The accessibility
+tree LampSupport reads stops at a web view's edge, so the page lists its own things for the screen as text
+(`LampPageReader` in LampPage.swift, behind LampSupport's `LampPageItems`): the same script the preview reads a page
+with (`PageScreen`, written in by `GameKit.page`), each box turned into pixels of the window's picture, read again
+before each picture and after each action; clicks, keys and typing reach the page at those points as the person's do,
+and a remote's back, OK and enter are sent as Escape and Return. No preview opens then.
+
+The preview on the Mac (`TVPreview`, `openDevicePreview`) is for the rest: a page that nothing on this Mac shows (only on
+a TV or the Xbox, with no Mac place, or one whose Mac copy is closed while Try On points elsewhere), and any other shape.
+`look_at_app`'s `shape` (a width and height in CSS pixels, "390x844") is always the preview's: it turns the preview's
+window to it and lays the page out at that size (`TVPreview.reshape`), the picture drawn with its long side 960 pixels
+and `use_app`'s points measured in it (`TVPreview.scale`); the preview keeps that shape for later looks, and starts at a
+TV's 1920x1080. Turning the person's own window to a phone's or a TV's shape was ruled out: a Mac window has a minimum
+size and the screen's, it's the window the person is using, and putting it back would fight their own resizing. A
+preview opened beside a Mac copy (`asidePreviews`) is where `use_app` acts until the next look without `shape`, which
+closes it, as the turn's end does. Pointed at a TV with no Mac copy it's staged and looked at as a TV app is.
+
+**The preview holds the person's data, one way.** It's a web view with a store of its own (`TVPreview.store(for:)`), so
+it never sees what the Mac copy saved. When a page with a Mac copy opens there, Lamp asks the open copy for its page's
+localStorage (where LampStore keeps everything: `PageLive.saved`, answered over the copy's own `/app/page/live` poll with
+`/app/page/saved`; what it said last is kept in memory while Lamp runs, for a copy since closed) and the preview's store
+is emptied and filled with it before the page's scripts run (`TVPreview.show`'s `seed`). Nothing goes back: a seeded
+preview never joins the wish's room (`TVPreview.isSeeded`, refused at `/app/wish`), so what the agent's `use_app` does
+there never reaches the family's data on any screen. Joining the wish as a copy was ruled out for that reason: the
+preview would push every click of the agent's into the shared collections. A preview with nothing to start from (the
+Mac copy hasn't been open while Lamp ran) says so to the agent; a TV app's preview, which no Mac copy has, keeps its own
+store and joins its wish as before.
+
+`make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the request's device line says where
+it's shown (`Rules.screenPlaces`) and where looks go (`DeviceNote.macWindow`). The preview stands in for a TV only while
+Try On points at one; elsewhere it's just "the preview", its window titled "<name> Preview" (`Store.previewDevice`), so a
+web app at home on the Mac is never told it's on a TV; the name follows Try On while the preview stays open
+(`TVPreview.follow`). Before finishing, the agent looks at it in the places it's shown and no others
+(`Rules.screenDesign`, `screenShapes`): the Mac in its window, without `shape`, and every other place at its shapes. An app made into one is given its kind before `make_app_for` sets its places,
 so its change rules read the shapes off the request's device line, and `make_app_for`'s answer names those of the
 places set (`Rules.screenPlaced`).
 

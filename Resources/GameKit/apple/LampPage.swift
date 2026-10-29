@@ -710,6 +710,84 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         pages.add(view)
         LampPageItems.refresh = refresh
         LampPageItems.items = { read[$0.windowNumber] ?? [] }
+        LampPageItems.act = act
+    }
+
+    /// The keys an action names, as the page reads them (`e.key`, and the code lamp.js and older pages read).
+    private static let keys: [String: (key: String, code: Int)] = [
+        "left": ("ArrowLeft", 37), "up": ("ArrowUp", 38), "right": ("ArrowRight", 39), "down": ("ArrowDown", 40),
+        "return": ("Enter", 13), "enter": ("Enter", 13), "escape": ("Escape", 27), "space": (" ", 32), "tab": ("Tab", 9),
+        "delete": ("Backspace", 8),
+    ]
+
+    /// A click, a key or typing on a page, carried out in the page: the point (in the window's frame view) turned into
+    /// the page's own, or, with none, whatever the page has focused while it holds the window's keyboard.
+    private static func act(_ action: LampDriver.Action, at point: NSPoint?, in window: NSWindow) -> String? {
+        guard let frame = window.contentView?.superview ?? window.contentView else { return nil }
+        let shown = pages.allObjects.filter { $0.window === window }
+        let page: WKWebView, spot: String
+        if let point {
+            guard let hit = shown.first(where: { $0.frame.contains($0.superview?.convert(point, from: frame) ?? .zero) }) else { return nil }
+            let local = hit.convert(point, from: frame), zoom = max(hit.pageZoom, 0.01)
+            let y = hit.isFlipped ? local.y : hit.bounds.height - local.y
+            page = hit
+            spot = "document.elementFromPoint(\(local.x / zoom), \(y / zoom))"
+        } else {
+            guard let focused = shown.first(where: { page in
+                (window.firstResponder as? NSView).map { $0 === page || $0.isDescendant(of: page) } ?? false
+            }) ?? (shown.count == 1 ? shown.first : nil) else { return nil }
+            page = focused
+            spot = "document.activeElement || document.body"
+        }
+        func run(_ source: String) { page.evaluateJavaScript("(function () { var el = \(spot); if (!el) return ''; \(source) return ''; })();") }
+        switch action.action {
+        case "click", "double_click":
+            guard point != nil else { return nil }
+            let clicks = action.action == "click" ? 1 : 2
+            run("""
+                var focusable = el.closest('[data-focus], button, a[href], input, select, textarea, [tabindex]') || el;
+                if (focusable.focus) focusable.focus();
+                for (var i = 0; i < \(clicks); i++) if (focusable.click) focusable.click();
+                if (\(clicks) === 2) focusable.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+                """)
+            return clicks == 1 ? "clicked in the page" : "double-clicked in the page"
+        case "type":
+            let text = action.text ?? ""
+            let quoted = String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data("[\"\"]".utf8), as: UTF8.self)
+            run("""
+                if (!('value' in el)) return '';
+                el.focus();
+                el.value = \(quoted)[0];
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                """)
+            return text.isEmpty ? "cleared it" : "typed \"\(text)\" in the page"
+        case "key":
+            let name = (action.key ?? "").lowercased()
+            let single = name.count == 1 ? name.unicodeScalars.first : nil
+            guard let key = keys[name] ?? single.flatMap({ $0.isASCII && CharacterSet.alphanumerics.contains($0) ? (String($0), Int(String($0).uppercased().unicodeScalars.first!.value)) : nil }) else {
+                return nil   // a shortcut with ⌘ and the like: the app's menus have it
+            }
+            let hold = min(max(action.amount ?? 0, 0), 10)
+            let fire = """
+                function fire(type) {
+                  var e = new KeyboardEvent(type, { bubbles: true, cancelable: true, key: \(String(reflecting: key.key)) });
+                  Object.defineProperty(e, 'keyCode', { get: function () { return \(key.code); } });
+                  Object.defineProperty(e, 'which', { get: function () { return \(key.code); } });
+                  return el.dispatchEvent(e);
+                }
+                """
+            if point != nil { run("if (el.focus) el.focus();") }
+            run(fire + """
+                var allowed = fire('keydown');
+                if (allowed && \(key.code) === 13 && /^(BUTTON|A)$/.test(el.tagName)) el.click();
+                if (\(hold > 0 ? "false" : "true")) fire('keyup');
+                """)
+            if hold > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + hold) { MainActor.assumeIsolated { run(fire + "fire('keyup');") } } }
+            return hold > 0 ? "held \(name) for \(LampScreen.number(hold)) s in the page" : "pressed \(name) in the page"
+        default:
+            return nil
+        }
     }
 
     /// Reads every page on screen again, then calls `done`: once each has answered, or after a second whatever there is.

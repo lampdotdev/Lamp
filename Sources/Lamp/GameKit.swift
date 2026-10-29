@@ -1012,12 +1012,14 @@ extension Agent.Rules {
     """
 
     static let gameOwnLoopTry = """
-    - `look_at_app` opens the page in the Xbox preview on this Mac, a 1920x1080 window running it in this Mac's browser, and \
-    shows you a picture of it with its screen as text and what its console printed; it's the preview, not the person's \
-    Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys there: the arrows, enter, \
-    back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's move), then shows it again. Try it by \
-    playing it. `look_at_app` with `on_device` opens it where Try On points (its window on this Mac, or the Xbox) and \
-    shows that screen and its log.
+    - `look_at_app` shows you the game in its window on this Mac while that's open, or when Try On points at the Mac \
+    (where it opens it): the window the person sees, a change of the page going in as you save. Otherwise it opens the \
+    page in the Xbox preview on this Mac, a 1920x1080 window running it in this Mac's browser, which starts from a copy of \
+    what the Mac window saved. Either way you get a picture with its screen as text and what its console printed; neither \
+    is the person's Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys where you \
+    last looked: the arrows, enter, back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's \
+    move), then shows it again. Try it by playing it. `look_at_app` with `on_device` opens it where Try On points (its \
+    window on this Mac, or the Xbox) and shows that screen and its log.
 
     """
 
@@ -1046,7 +1048,8 @@ extension Agent.Rules {
     static let screenAmongApps = placesAmongApps("screen", verb: "shown") + """
 
     - The screen reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
-    values and files, wherever it's shown, the Xbox included. Lamp's TV preview, where you look at it, joins them only when the screen is shown there, so what \
+    values and files, wherever it's shown, the Xbox included. Its window on this Mac is one of them; Lamp's preview \
+    never is while it holds a copy of that window's data, and otherwise only when the screen is shown there, so what \
     another app sends shows where the screen is shown. What every place shows (a list, the calendar, photos) goes in \
     `LampStore.shared` and `LampStore.sharedFiles`, kept the same on every copy of the screen (and with `{ wish: true }` \
     in every app of the wish), with a copy that can read the calendar or the album (on the Mac, an iPhone or an iPad, \

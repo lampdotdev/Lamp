@@ -7196,7 +7196,9 @@ enum Template {
             // ...and stops part way through when the person takes the app back with Lamp's Stop.
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name(LampInstall.note + "useAppStop." + LampInstall.slug), object: nil, queue: .main) { note in
-                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStop"] as? String
+                // Under a key long enough to be kept whole in the binary, which Lamp looks for (a name of 15 bytes or
+                // fewer is compiled into the code itself, so the old key's wasn't always found).
+                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStopSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.Handover.stop(id: id, signature: signature, token: LampInstall.token) }
             }
             // ...and, before it asks the app to quit for a rebuild, whether it still answers, so it can tell the
@@ -8426,6 +8428,10 @@ enum Template {
     enum LampPageItems {
         static var refresh: ((@escaping @MainActor () -> Void) -> Void)?
         static var items: (NSWindow) -> [LampScreen.Item] = { _ in [] }
+        /// Carries out an action aimed at a page (`point`, in the window's frame view, on it; or none, with the page
+        /// holding the keyboard) in the page's own script, which takes it whether or not the app is in front, where
+        /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's.
+        static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
     }
 
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
@@ -8553,7 +8559,7 @@ enum Template {
 
         /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
         /// builds that check it; notifications reach every process, so the token itself never travels). Builds
-        /// that take Lamp's Stop (`Handover`) have "lampUseAppStop" in them.
+        /// that take Lamp's Stop (`Handover`) have "lampUseAppStopSignature" in them (older ones "lampUseAppStop").
         static func perform(_ json: String?, id: String?, signature: String?) {
             guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
@@ -8809,6 +8815,11 @@ enum Template {
                 default:
                     return "\(action.action): " + filePanel(panel)
                 }
+            }
+            // On a page (LampPage.swift's), the page carries the action out itself.
+            if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
+               let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
+                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
             }
             if isBarPanel(window), action.action == "key", action.key?.lowercased() == "escape" {
                 releaseBarPanel()

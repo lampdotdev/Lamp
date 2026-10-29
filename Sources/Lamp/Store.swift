@@ -5904,7 +5904,7 @@ final class Store: ObservableObject {
         if turn.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
-              let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
+              var json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
         // A game is played in the preview, wherever else it's played: the same moves give the same frames.
@@ -5914,6 +5914,15 @@ final class Store: ObservableObject {
         let onMac = pageOnMac(project, shape: nil) && !(asidePreviews.contains(project.id) && TVPreview.isOpen(project))
         if !onMac, project.platform.target.looksInTVPreview || GameKit.ownsLoop(project) { return await useOnTV(project, actions: actions, json: json) }
         let project = onMac ? project.at(.mac) : project
+        // The remote's keys the page's rules name, as a Mac keyboard sends them (lamp.js reads Escape as Back).
+        if onMac {
+            let keys = ["back": "escape", "ok": "return", "enter": "return"]
+            let mapped = actions.map { action -> [String: Any] in
+                guard action["action"] as? String == "key", let key = (action["key"] as? String)?.lowercased(), let mac = keys[key] else { return action }
+                return action.merging(["key": mac]) { $1 }
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: mapped) { json = String(decoding: data, as: UTF8.self) }
+        }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         if project.onTV { return await useOnTV(project, actions: actions, json: json) }
@@ -5926,7 +5935,7 @@ final class Store: ObservableObject {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         // An app that can't be stopped part way (built before `LampDriver.Handover`) is rebuilt first: the person
-        // is shown Stop, and it has to work.
+        // is shown Stop, and it has to work. "lampUseAppStop" also finds the longer key newer apps carry.
         guard Self.binary(of: project, contains: "lampUseAppSignature"), Self.binary(of: project, contains: "lampUseAppStop") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
@@ -5942,7 +5951,11 @@ final class Store: ObservableObject {
         var stoppedAt: Date?
         let trial = Handover(label: "\(Self.lampName) is trying \(project.name)") {
             stoppedAt = Date()
-            Self.signal(project, "useAppStop", ["id": id], signedAs: "lampUseAppStop", over: "stop\n\(id)")
+            // Under both keys: an app built before the longer one reads the first.
+            let stop = Self.signature(over: "stop\n\(id)", token: Template.token(for: project))
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name(Edition.notificationPrefix + "useAppStop.\(project.id)"), object: nil,
+                userInfo: ["id": id, "lampUseAppStop": stop, "lampUseAppStopSignature": stop], deliverImmediately: true)
         }
         if let window = Handover.frontWindow(of: app.processIdentifier) { trial.show(window: window) }
         // Where each action is about to happen and how long until it does, from the app (`LampDriver.aimed`), for
@@ -8873,6 +8886,8 @@ final class Store: ObservableObject {
             size = asked
         }
         var summary = "The app is open in \(preview) on this Mac."
+        // A page with a window on this Mac: the preview is beside it, and holds a copy of what it saved, or doesn't.
+        let aside = PageLive.takes(project) && project.hasMac
         // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
         let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
         if changed || stale || !TVPreview.isOpen(project) || reopen {
@@ -8906,6 +8921,11 @@ final class Store: ObservableObject {
         if let taken, !screenshots.isEmpty, Privacy.sharesPictures {
             text += " " + TVPreview.takenNote(taken)
             if !taken.moving { text += " " + TVPreview.stillNote }
+        }
+        if aside {
+            text += TVPreview.isSeeded(project)
+                ? " It started from a copy of what the app's window on this Mac saved, the person's own data: what you do here stays here and never reaches it."
+                : " The app's window on this Mac wasn't open while Lamp ran, so the preview has only what it saved itself, not the person's data; open the window (a look without `shape`) and look here again for theirs."
         }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesPictures { text += "\n\n" + TVPreview.text(await TVPreview.items(project)) }

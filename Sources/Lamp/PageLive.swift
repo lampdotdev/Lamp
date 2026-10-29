@@ -68,7 +68,7 @@ import Foundation
     /// Whether a project's open copy can take changes this way: a page in an app of Lamp's own (a game drawn on Lamp's
     /// game runtime, a screen, a web app). A page without the game runtime is opened again with what it saved, keeping
     /// its window where the person has it.
-    static func takes(_ project: LampProject) -> Bool {
+    nonisolated static func takes(_ project: LampProject) -> Bool {
         GameKit.hostsPage(project)
     }
 
