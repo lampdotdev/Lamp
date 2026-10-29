@@ -82,7 +82,7 @@ import UIKit
 /// The page's way to Lamp: only the routes LampAI uses, and where phones join a game (`Lamp.controllers`), with the
 /// app's own token.
 final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
-    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/app/controller", "/app/phone-page"]
+    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/app/controller"]
     private let scheme: String
     init(scheme: String) { self.scheme = scheme }
 
@@ -96,13 +96,12 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
         // A game's phones are its own, on the Mac, the iPhone and the iPad: it serves their page and runs their relay
         // itself (`LampControllers`), so they go on playing, and new ones join, whether Lamp is open or not. Never asked
         // of Lamp: a game that can't open its own says why, rather than lean on Lamp after all.
-        if path == "/app/controller" || path == "/app/phone-page" {
+        if path == "/app/controller" {
             let body = (call["body"] as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any] ?? [:]
             let reply: @Sendable (Int, [String: Any]) -> Void = { status, answer in
                 let text = (try? JSONSerialization.data(withJSONObject: answer)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 DispatchQueue.main.async { replyHandler(["status": status, "body": text], nil) }
             }
-            if path == "/app/phone-page" { return LampControllers.phonePage(reply) }
             return LampControllers.answer(stop: body["stop"] as? Bool == true, reply)
         }
         Self.ask(url, body: call["body"] as? String) { status, body in replyHandler(["status": status, "body": body], nil) }
@@ -148,12 +147,6 @@ enum LampControllers {
         if stop { return runtime.stop { done(200, [:]) } }
         guard inFront else { return done(409, ["error": "The game is in the background: phones join again when it's back in front."]) }
         runtime.start(done)
-    }
-
-    /// Where the game's phone page is, for `Lamp.phonePage` (a TV app's page in the TV preview asks).
-    static func phonePage(_ done: @escaping @Sendable (Int, [String: Any]) -> Void) {
-        guard inFront else { return done(409, ["error": "The game is in the background: phones join again when it's back in front."]) }
-        runtime.phonePage(done)
     }
 
     /// Whether the game may host phones now: always on the Mac; on an iPhone or iPad unless it's in the background.
@@ -598,16 +591,9 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
 
 /// What the page logs, into the app's log.
 final class LampPageLog: NSObject, WKScriptMessageHandler {
-    /// Where the lines go: the app's standard error, or a file of its own (the TV preview's, LampPreview.swift).
-    nonisolated(unsafe) static var file: FileHandle?
-
-    static func write(_ line: String) {
-        (file ?? FileHandle.standardError).write(Data((line.prefix(2000) + "\n").utf8))
-    }
-
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let line = message.body as? String else { return }
-        Self.write(line)
+        FileHandle.standardError.write(Data((line.prefix(2000) + "\n").utf8))
     }
 }
 
@@ -617,12 +603,7 @@ final class LampPageLog: NSObject, WKScriptMessageHandler {
 /// changed since the bundle was built, while the app is open (`LampPageLive`), from the copies it was handed.
 final class LampPageFiles: NSObject, WKURLSchemeHandler {
     let scheme: String
-    /// Web/ in the bundle; for the TV preview, the version of the page it has open (LampPreview.swift).
-    var folder: URL? {
-        get { lock.withLock { served } }
-        set { lock.withLock { served = newValue } }
-    }
-    private var served = Bundle.main.resourceURL?.appendingPathComponent("Web")
+    private let folder = Bundle.main.resourceURL?.appendingPathComponent("Web")
     /// The files Lamp changed since this bundle was built, by their path in Web/, and those it took away.
     private let lock = NSLock()
     private var changed: [String: URL] = [:]
@@ -655,7 +636,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 
     private func file(at url: URL) -> Data? {
-        guard let folder = self.folder, url.host == "app" else { return nil }
+        guard let folder, url.host == "app" else { return nil }
         let root = folder.standardizedFileURL.path + "/"
         let path = url.path.isEmpty || url.path.hasSuffix("/") ? url.path + "index.html" : url.path
         let relative = String(path.drop(while: { $0 == "/" }))

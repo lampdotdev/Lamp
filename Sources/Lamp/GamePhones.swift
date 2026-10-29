@@ -34,12 +34,6 @@ enum GamePhones {
     /// The page as the game is to serve it, nil when the game has none.
     static func page(for project: LampProject) throws -> ControllerSnapshot? {
         guard takes(project) || takesOnIOS(project), TVs.hasPhonePage(project) else { return nil }
-        return try snapshot(of: project)
-    }
-
-    /// The published page with Lamp's lamp-controller.js, checked: for any copy that serves it itself, a game's or the
-    /// TV preview's (`PreviewPlayers`).
-    static func snapshot(of project: LampProject) throws -> ControllerSnapshot {
         let published = try ControllerSnapshot.read(TVs.phoneFolder(for: project))
         let page = ControllerSnapshot(files: published.files.filter { $0.path != "lamp-controller.js" }
             + [ControllerSnapshot.File(path: "lamp-controller.js", data: Data(TVTemplate.phoneControllerJS.utf8))])

@@ -8899,7 +8899,7 @@ final class Store: ObservableObject {
             owner.tookOver = true
             log(project, .status, Self.stoppedByYou)
         }
-        if let window = await TVPreview.windowID(project) { trial.show(window: window) }
+        if let window = TVPreview.window(project) { trial.show(window: CGWindowID(window.windowNumber)) }
         defer { trial.end() }
         let report = await TVPreview.perform(decoded, on: project) { [weak self] in
             guard let self else { return false }

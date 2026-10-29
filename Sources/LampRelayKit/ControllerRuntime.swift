@@ -13,7 +13,7 @@ import Foundation
 /// key, so nothing handed out before gets in.
 ///
 /// Lamp builds this file into its own relay (LampRelayKit), where the tests reach it, and into every game on the Mac,
-/// the iPhone and the iPad, and the TV preview's player (`GameKit.controllerKit`), where LampPage.swift runs it.
+/// the iPhone and the iPad (`GameKit.controllerKit`), where LampPage.swift runs it.
 public final class ControllerRuntime: @unchecked Sendable {
     public let app: String
     private let root: URL
@@ -83,16 +83,6 @@ public final class ControllerRuntime: @unchecked Sendable {
         let credential = ControllerToken.issue(kind: .host, app: app, generation: 0, key: key)
         return (200, ["links": [["kind": "relay", "socket": "ws://127.0.0.1:\(relayPort)/", "app": app, "credential": credential]],
                       "renew": Self.renew])
-    }
-
-    /// Where the game's phone page is now, opening the session if it isn't (`Lamp.phonePage` in a TV app's page, which
-    /// asks as it opens and now and then after).
-    public func phonePage(_ done: @escaping @Sendable (_ status: Int, _ answer: [String: Any]) -> Void) {
-        queue.async {
-            let (status, answer) = self.open()
-            guard status == 200, let port = self.site?.port, let link = self.linkHost() else { return done(status, answer) }
-            done(200, ["url": Self.address(link, port)])
-        }
     }
 
     /// A page's address at `host`, an IPv6 one in brackets.

@@ -502,20 +502,8 @@ LampPage.swift (its one Mac-only call, the Mac's Bonjour name, is guarded in `Co
 its session as it goes into the background, opening a new one at the page's next ask once it's back in front; no
 background mode keeps it alive. `ControllerAddresses` gives a phone only an address on the device's Wi‑Fi or wired
 network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
-the kit and LampPage.swift for the Mac, the simulator and a device.
-
-The TV preview of an app phones play (a TV app with a phone page, or a game in its TV or Xbox preview, but not an app
-of a wish of several, whose apps reach each other through Lamp) is an app of its own, so it outlives Lamp too
-(`PreviewPlayers`): a copy of Lamp's player made for that app in Lamp's folder (`Previews/<app>/Preview.app`, with its
-phone page in `Contents/Resources/Phone` and kind "preview", LampPreview.swift), opened with `NSWorkspace` and closed
-with its window or by Stop. It serves versions of the page Lamp hands it (`Pages/<version>`, never changed after),
-runs the app's phones with the same `ControllerRuntime` and answers `/app/phone-page` itself. Lamp looks at it and
-uses it for the agent (pictures, the screen as text, the remote's keys) over a loopback socket whose port and key the
-copy writes to `control.json` (0600) for each opening; a Lamp that opens again finds it there rather than opening a
-second one, and reads what it printed (`console.log`) into the app's log. What the page saved in Lamp's own preview is
-handed over once (`carry.json`, marked done by the copy once it reads the values back from its own store, `carry.done`;
-Lamp's store is left as it was). Every other preview is still a window of Lamp's (`TVPreview`), and Lamp serves the
-page itself for it and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
+the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
+window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
 On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
 relay's plain link itself: `Lamp.controllers` opens it through the WebView2 host's pipe (`TVTemplate.linksJS`, shared
 with `Lamp.wish`), and Lamp serves the game's phones while it's set to open on the Xbox (`Store.onDevice`), which Lamp

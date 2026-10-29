@@ -31,10 +31,9 @@ A phone's browser, joined by a QR code, needs a phone page (`Phone/index.html` i
 of app have both:
 
 - a game on Lamp's game runtime (`make_app_for` with `kind` "game"): on the Mac, and on an iPhone or iPad while
-  it's in front, the game serves its phone page and runs the relay itself, with Lamp open or closed; in the TV
-  preview on this Mac it does too, and the preview goes on after Lamp closes; Lamp does it for the game set to open
-  on a Samsung or LG TV or the person's Xbox;
-- a TV app's page: in its TV preview on this Mac (which goes on after Lamp closes), or while it's open on such a TV.
+  it's in front, the game serves its phone page and runs the relay itself, with Lamp open or closed; Lamp does it for
+  the game in the TV preview, or set to open on a Samsung or LG TV or the person's Xbox;
+- a TV app's page: while it's open on such a TV or in its TV preview on this Mac.
 
 An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
 over `LampWish`. An Android app has no `LampController` and doesn't join as a player. Every app of the wish's talks to

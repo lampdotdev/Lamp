@@ -253,8 +253,8 @@ enum GameKit {
     /// what Lamp fills in for each one read from the copy's Info.plist instead (`LampPlayer`), and both apps' `@main`
     /// left to main.swift, which picks one as the copy opens.
     static var playerSources: [(path: String, text: String)]? {
-        let host = read([("", "apple/LampWebApp.swift"), ("", "apple/LampPlayer.swift"), ("", "apple/LampPreview.swift")])
-        guard let game = webFiles.first(where: { $0.path == "Sources/LampGame.swift" }), let page, let native, let controllerKit, host.count == 3 else { return nil }
+        let host = read([("", "apple/LampWebApp.swift"), ("", "apple/LampPlayer.swift")])
+        guard let game = webFiles.first(where: { $0.path == "Sources/LampGame.swift" }), let page, let native, let controllerKit, host.count == 2 else { return nil }
         func filled(_ text: String) -> String {
             text.replacingOccurrences(of: "@main\n", with: "")
                 .replacingOccurrences(of: "\"{{NAME}}\"", with: "LampPlayer.name")
@@ -263,7 +263,7 @@ enum GameKit {
         }
         return [("Sources/main.swift", host[1].text), ("Sources/LampGame.swift", filled(game.text)), ("Sources/LampWebApp.swift", filled(host[0].text)),
                 ("Sources/LampPage.swift", page.text), ("Sources/Native.swift", native.text), ("Sources/LampSupport.swift", Template.lampSupportSwift),
-                (controllerKit.path, controllerKit.text), ("Sources/LampPreview.swift", host[2].text),
+                (controllerKit.path, controllerKit.text),
                 ("Package.swift", webPackageSwift.replacingOccurrences(of: "{{EXE}}", with: playerExe))]
     }
 
