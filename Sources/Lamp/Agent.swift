@@ -611,10 +611,12 @@ enum Agent {
 
         /// Said with `make_app_for`'s answer when it makes a new app, which is read just before the app is built: the
         /// AI rule (`setupRules`) at the moment it decides what goes in, so it isn't lost among the setup rules.
-        static let newAppAI = "Before writing it: no AI goes in unless the request asked for what AI does. If AI would really add "
-            + "something to this app (understanding what they type or say, reading what they hand it, drafting), first ask with one "
-            + "`ask` (\"I see you're making… Want AI to…?\", No thanks or Yes) and write nothing until the answer comes; build "
-            + "that AI only after a yes. If it wouldn't, build without it and say nothing about AI."
+        static let newAppAI = "Before writing it, decide about AI. None goes in unless the request asked for what AI does. Would "
+            + "AI do something for them here that code can't: understand what they type or say, read what they paste or drop in, "
+            + "draft? A recipe box (turn a pasted recipe into a card), meeting notes (a summary and the follow-ups) and a "
+            + "journal (looking back over a month) would; a timer, a calculator, a habit tracker or a unit converter wouldn't. "
+            + "If it would, your next call is one `ask` (\"I see you're making… Want AI to…?\", No thanks then Yes): write nothing "
+            + "until the answer comes, and build that AI only after a yes. If it wouldn't, build without it and say nothing about AI."
 
         static let edit = """
         - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.
