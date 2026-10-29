@@ -416,7 +416,8 @@ once, without the few seconds' wait for a chat that was never put in.
 A Mac app's About window credits what the wish is based on: Lamp writes `Contents/Resources/Credits.html` from the
 wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About
 window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)", linked), so no app code is needed and an
-app with no credits has none.
+app with no credits has none. Only `Credits.basis` is "Based on", there, in the info panel, the README and the credit
+bar; everything else, and a library in a wish with no basis, is "Uses".
 
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac

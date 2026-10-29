@@ -508,7 +508,7 @@ extension Store {
                 finish(copy)
                 return
             }
-            Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).upstream.first?.name ?? project.name))
+            Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).basis?.name ?? project.name))
             send(AppUpdates.request, to: copy)
             // Handed over: the request queued behind the hold starts as it's let go.
             finish(copy)
@@ -540,7 +540,7 @@ extension Store {
         alert.addButton(withTitle: "Try Again")
         alert.addButton(withTitle: "Not Now")
         guard alert.runModal() == .alertFirstButtonReturn, begin(copy) != nil else { return }
-        Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).upstream.first?.name ?? project.name))
+        Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).basis?.name ?? project.name))
         send(AppUpdates.request, to: copy)
         showChat(copy.id)
         finish(copy)

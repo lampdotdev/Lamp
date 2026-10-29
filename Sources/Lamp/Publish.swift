@@ -172,9 +172,10 @@ enum Publish {
     static func withCreditBar(_ html: String, credits: Credits, open: OpenInLamp, suggestions: [RemixIdea] = RemixOffer.fallback,
                               name: String = "", about: String? = nil) -> String {
         var parts: [String] = []
-        if let source = credits.upstream.first {
+        // The work it's built on, else the first thing it uses: a library is credited, never as what it's based on.
+        if let source = credits.basis ?? credits.upstream.first {
             let name = source.url.map { "<a href=\"\(escaped($0))\" target=\"_blank\" rel=\"noopener\">\(escaped(source.name))</a>" } ?? escaped(source.name)
-            parts.append("Based on \(name)" + (source.author.map { " by \(escaped($0))" } ?? ""))
+            parts.append((credits.basis != nil ? "Based on " : "Uses ") + name + (source.author.map { " by \(escaped($0))" } ?? ""))
         }
         if !credits.generated.isEmpty { parts.append(escaped(Credits.generatedLine(credits.generated.count))) }
         if let link = open.link {
@@ -275,9 +276,9 @@ enum Publish {
         var text = ""
         if !credits.upstream.isEmpty {
             text += "## Credits\n\n"
-            for (index, source) in credits.upstream.enumerated() {
+            for (index, source) in credits.basisFirst.enumerated() {
                 let name = source.url.map { "[\(source.name)](\($0))" } ?? source.name
-                var line = (index == 0 ? "Based on " : "Uses ") + name + (source.author.map { " by \($0)" } ?? "")
+                var line = (index == 0 && credits.basis != nil ? "Based on " : "Uses ") + name + (source.author.map { " by \($0)" } ?? "")
                 if let license = source.license { line += ", \(license)" }
                 if let commit = source.commit { line += ", at commit `\(commit.prefix(12))`" }
                 if let file = source.licenseFile { line += " (license: `\(file.hasPrefix("Web/") ? String(file.dropFirst(4)) : file)`)" }

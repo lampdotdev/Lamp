@@ -259,9 +259,12 @@ extension Store {
         let address = source.url + (source.ref.map { "/tree/\($0)" } ?? "")
         do {
             let given = (arguments["commit"] as? String)?.trimmed.nilIfEmpty
-            let commit = try GitHubProjects.pin(source, given: given, credits: Credits.load(wish))
+            // Reading credits nothing, so it reads the version asked for (the commit given, else the address's), whatever
+            // the wish is credited at: the pin to the credited commit is for what the app is made from.
+            let reading = arguments["read_only"] as? Bool == true
+            let commit = try GitHubProjects.pin(source, given: given, credits: reading ? Credits() : Credits.load(wish))
             let snapshot = try await GitHubProjects.snapshot(source, commit: commit, in: wish.dir, using: GitHubProjects.fetcher)
-            if arguments["read_only"] as? Bool == true {
+            if reading {
                 return (200, ["text": "Lamp's copy of \(snapshot.owner)/\(snapshot.name) at commit \(snapshot.commit), for reading: \(snapshot.folder.path)\nNothing was credited and nothing was made. To make an app from it, call lampify without read_only, with commit \(snapshot.commit)."])
             }
             guard !RepoImport.holdsWish(snapshot.folder) else {

@@ -246,11 +246,12 @@ struct Credits: Codable, Equatable {
                 .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
         var lines: [String] = []
+        // Only the work it's built on is "Based on": a wish that only uses a library or assets is based on none of them.
         for (index, source) in basisFirst.enumerated() {
             let name = source.url.map { "<a href=\"\(escaped($0))\">\(escaped(source.name))</a>" } ?? escaped(source.name)
             let by = source.author.map { " by \(escaped($0))" } ?? ""
             let license = source.license.map { " (\(escaped($0)))" } ?? ""
-            lines.append((index == 0 ? "Based on " : "Uses ") + name + by + license)
+            lines.append((index == 0 && basis != nil ? "Based on " : "Uses ") + name + by + license)
         }
         if !generated.isEmpty { lines.append(Self.generatedLine(generated.count)) }
         if !remixOf.isEmpty {

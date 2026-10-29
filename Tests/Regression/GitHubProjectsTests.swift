@@ -159,11 +159,27 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertNil(credits.basedOn)
         XCTAssertNil(AppUpdates.route(of: try XCTUnwrap(store.projects.first { $0.id == wish.id })), "a library's updates aren't the app's")
 
+        // Nowhere it's shown is the library what the app is based on: the info panel, the About window, the README, the
+        // published page's credit bar.
+        let section = try XCTUnwrap(AppInfoView.creditsSection(credits, own: nil))
+        XCTAssertFalse(section.rows.contains { $0.label == "Based on" }, "\(section.rows.map(\.label))")
+        XCTAssertTrue(section.rows.contains { $0.label == "d3-celestial" })
+        let about = try XCTUnwrap(credits.aboutPage)
+        XCTAssertFalse(about.contains("Based on"), about)
+        XCTAssertTrue(about.contains("Uses <a href=\"https://github.com/ofrohn/d3-celestial\">d3-celestial</a>"), about)
+        XCTAssertTrue(Publish.creditsSection(credits).contains("- Uses [d3-celestial](https://github.com/ofrohn/d3-celestial)"))
+        XCTAssertFalse(Publish.creditsSection(credits).contains("Based on"))
+        let bar = Publish.withCreditBar("<html><body></body></html>", credits: credits, open: Publish.OpenInLamp(link: nil, file: nil))
+        XCTAssertFalse(bar.contains("Based on"))
+        XCTAssertTrue(bar.contains("Uses <a href=\"https://github.com/ofrohn/d3-celestial\""))
+
         // Credits from before the mark: the first is what the wish is built on, as ever.
         let legacy = Credits(upstream: [Credits.Source(name: "Slop New York", author: "Mr.doob", url: "https://github.com/mrdoob/slop-newyork"),
                                         Credits.Source(name: "three.js", url: "https://github.com/mrdoob/three.js", adapted: false)])
         XCTAssertEqual(legacy.basis?.name, "Slop New York")
         XCTAssertEqual(Credits(upstream: legacy.upstream.reversed()).basis?.name, "Slop New York", "never the one marked as only used")
+        XCTAssertTrue(try XCTUnwrap(Credits(upstream: legacy.upstream.reversed()).aboutPage).contains("<p>Based on <a href=\"https://github.com/mrdoob/slop-newyork\">Slop New York</a> by Mr.doob</p>"))
+        XCTAssertEqual(AppInfoView.creditsSection(legacy, own: nil)?.rows.first { $0.label == "Based on" }?.value, "Slop New York by Mr.doob")
     }
 
     func testTwoProjectsNeverShareALicenseFolder() async throws {
@@ -227,6 +243,24 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent("Licenses").path))
         let path = try XCTUnwrap(answer.split(separator: "\n").first?.components(separatedBy: "for reading: ").last)
         XCTAssertTrue(FileManager.default.fileExists(atPath: path + "/index.html"))
+
+        // A wish made from the project at one commit reads another version of it as asked, and stays credited as it was.
+        _ = try await call(store, ["url": fluid], on: wish)
+        let credited = try XCTUnwrap(Credits.read(wish.dir.appendingPathComponent(Credits.file))?.upstream.first?.commit)
+        let v2 = ["LICENSE": text("webgl-fluid-simulation-LICENSE"), "index.html": "<canvas id=v2></canvas>\n"]
+        let (scratch, scratchWish) = try makeWish()
+        GitHubProjects.fetcher = fake(v2)
+        _ = try await call(scratch, ["url": fluid], on: scratchWish)
+        let other = try XCTUnwrap(Credits.read(scratchWish.dir.appendingPathComponent(Credits.file))?.upstream.first?.commit)
+        XCTAssertNotEqual(other, credited)
+        var asked: [String?] = []
+        GitHubProjects.fetcher = { source, folder in asked.append(source.ref); return try await self.fake(v2)(source, folder) }
+        let byCommit = try await call(store, ["url": fluid, "commit": other, "read_only": true], on: wish)
+        XCTAssertTrue(byCommit.contains("at commit \(other)"), byCommit)
+        let byTag = try await call(store, ["url": fluid + "/tree/v2", "read_only": true], on: wish)
+        XCTAssertTrue(byTag.contains("at commit \(other)"), byTag)
+        XCTAssertEqual(asked, [other, "v2"], "the version asked for, never the credited one")
+        XCTAssertEqual(Credits.read(wish.dir.appendingPathComponent(Credits.file))?.upstream.map(\.commit), [credited])
     }
 
     func testEveryLicenseAndNoticeFileGoesWithTheSharedFileAndComesBack() async throws {

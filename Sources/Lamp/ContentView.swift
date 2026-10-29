@@ -399,7 +399,7 @@ enum AppInfoView {
         // by their labels.
         var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from", "Updates"]
         for (index, source) in credits.basisFirst.enumerated() {
-            if index == 0 {
+            if index == 0, credits.basis != nil {
                 rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
                 rows.append(SidebarInfoRow(label: "License", value: source.license ?? "None given"))
                 continue
