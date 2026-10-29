@@ -31,20 +31,20 @@ A phone's browser, joined by a QR code, needs a phone page (`Phone/index.html` i
 of app have both:
 
 - a game on Lamp's game runtime (`make_app_for` with `kind` "game");
-- a TV app's page.
+- a TV app's page: while it's open on a Samsung or LG TV or in its TV preview on this Mac.
 
-Who runs the phone page and the link phones join is chosen as the screen starts them (`Lamp.controllers.start`, the
-phone-pages skill says how):
+Who serves the phone page and runs the link phones join is the game's choice, `Lamp.controllers.start({ host })`
+(the phone-pages skill):
 
-- **Game-owned hosting** (`{ host: 'game' }`) runs with the game and needs no Lamp: on the Mac, the Xbox, and an
-  iPhone or iPad while the game is in front.
-- **Lamp hosting** (`{ host: 'lamp' }`) needs Lamp open and the Mac reachable: the TV preview, a Samsung or LG TV,
-  and the Xbox.
-- **Device networking can affect either one**: a console or TV on another network, a guest Wi‑Fi that keeps devices
-  apart, a firewall.
+- Game-owned hosting (`'game'`) runs with the game and needs no Lamp. The game has it on the Mac, on an iPhone or iPad
+  while it's in front, on an LG TV from webOS 5 on, where Lamp packages a service with the game, and on the Xbox,
+  where the game's own host runs it.
+- Lamp hosting (`'lamp'`) needs Lamp open and the Mac reachable. Lamp has it for the TV preview, a Samsung or LG TV and
+  the Xbox.
+- Device networking and store rules can affect either one.
 
-They're options, not an order, and another approach is fine. A host that isn't there says so in `onError`; the other
-one is never used in its place.
+They're options, not an order, and another approach is fine. A host that isn't there, or fails, is said in
+`onError`; the game never moves to the other one by itself. `start()` with no host keeps where each device ran before.
 
 An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
 over `LampWish`. An Android app has no `LampController` and doesn't join as a player. Every app of the wish's talks to
@@ -66,7 +66,8 @@ choice.
 
 ## Away from home
 
-Phones reach the phone page on the same Wi‑Fi, whichever host runs it. Friends in other homes can't join through it: say so if that's what they want. Apps of the wish's that talk through `LampWish` work
+Phones reach the phone page on the same Wi‑Fi, whichever host serves it. Friends in other
+homes can't join through it: say so if that's what they want. Apps of the wish's that talk through `LampWish` work
 by its own rules (the wish-links skill).
 
 ## Building it

@@ -5801,7 +5801,8 @@ final class Store: ObservableObject {
             if await updateForThisForge(project) { return }
         }
         // Its App Intents or its share extension were left out for want of a team to sign it for, and there is one
-        // now: built again, since the build that left them out has none to put back.
+        // now: built again, since signing for the team is part of the build. Only when the build has them to give
+        // (`intentsCanComeBack`, `shareCanComeBack`), else it would be built again on every open.
         let intentsBack = await Self.intentsCanComeBack(project)
         let shareBack = await Self.shareCanComeBack(project)
         if intentsBack || shareBack, !busy.contains(project.id),
@@ -5826,7 +5827,10 @@ final class Store: ObservableObject {
             // replaced New Window can't open one), something has to be on screen: if there's nothing, relaunch it.
             let shown = await acknowledged.wait(seconds: 1.5)
             guard !running.isTerminated else { return }   // it's relaunching itself (LampWindows.relaunch)
-            guard !shown, !Self.hasWindow(running.processIdentifier) else { return noteOpened(true, for: project) }
+            guard !shown, !Self.hasWindow(running.processIdentifier) else {
+                await sayWhereItIs(project)
+                return noteOpened(true, for: project)
+            }
             // Only if it goes when asked: one that doesn't may hold something, and is left as it is.
             let asked = Date()
             guard await AppQuit.close(running, id: project.id, runtime: Runtime.macFolder(project),
@@ -5848,6 +5852,7 @@ final class Store: ObservableObject {
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
             noteOpened(true, for: project)
+            await sayWhereItIs(project)
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
             noteOpened(false, for: project)
@@ -8565,6 +8570,37 @@ final class Store: ObservableObject {
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
     /// `early` returns as soon as the app has shown itself rather than once its first seconds have passed: for a look,
     /// which tells of a death after that with its next answer (`lateCrash`).
+    /// "… is ready" in the chat, in place of those before it when nothing has been said since: opened again and
+    /// again from the desk, an app would otherwise stack a line for each time. Lines in passing ("Building…") and
+    /// details don't count as something said.
+    private func sayReady(_ project: LampProject, _ words: String) {
+        let ready = "\(project.name) is ready"
+        var lines = logs[project.id] ?? []
+        while let last = lines.lastIndex(where: { !($0.kind == .detail || $0.kind == .status && $0.text.hasSuffix("…")) }),
+              lines[last].kind == .status, lines[last].text.hasPrefix(ready) {
+            lines.remove(at: last)
+        }
+        if lines.count != logs[project.id]?.count { logs[project.id] = lines }
+        log(project, .status, words)
+    }
+
+    /// An app opened as it was, with no build to say "… is ready": one out of sight in the menu bar still says where
+    /// it is, as `readyWords` does after a build. One with a window shows itself and says nothing.
+    private func sayWhereItIs(_ project: LampProject) async {
+        let words = await readyWords(project)
+        if words != "\(project.name) is ready" { sayReady(project, words) }
+    }
+
+    /// What the chat says once an app opens in front. One that lives in the menu bar says so: its panel drops down
+    /// as it opens (`LampMenuBar`), but closes at the first click elsewhere, and nothing else on screen says where
+    /// the app went.
+    private func readyWords(_ project: LampProject) async -> String {
+        guard project.platform == .mac, await Task.detached(operation: { WishPlace.of(project) }).value == .menuBar else {
+            return "\(project.name) is ready"
+        }
+        return "\(project.name) is ready, in your menu bar at the top right of the screen"
+    }
+
     /// `saysReady` false keeps "… is ready" out of the chat, for a reopen in the middle of a request (`reloadInTurn`),
     /// whose end says what the request came to.
     /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
@@ -8738,7 +8774,7 @@ final class Store: ObservableObject {
             await watchWidget(of: project)
             // In place is all there is to it: a card that said it didn't get there says so no longer.
             noteOpened(true, for: project)
-            if inFront { log(project, .status, "\(project.name) is ready") }
+            if inFront { sayReady(project, "\(project.name) is ready") }
             upgradeIconArt(project)
             refreshOpenApps()
             stamps[project.id] = BuildStamp.read(project.installedURL)
@@ -8765,7 +8801,7 @@ final class Store: ObservableObject {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
                 owner?.shown.append(Date())
-                if inFront, saysReady { log(project, .status, "\(project.name) is ready") }
+                if inFront, saysReady { sayReady(project, await readyWords(project)) }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
@@ -11569,15 +11605,15 @@ final class Store: ObservableObject {
         guard project.hasTV || project.platform.target.takesPhones else {
             return (409, ["error": "This app was built by an earlier Lamp: open it from Lamp on your Mac to update it, and it joins the TV app's game again."])
         }
-        let asked = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-        // A page that chose the game's own host (`start({ host: 'game' })`) is told this isn't it, rather than given
-        // Lamp's relay in its place: the game decides where its phones go.
-        if asked["host"] as? String == "game" {
-            return (409, ["error": "The game's own host isn't here: Lamp answered. Start with host 'lamp', or play where the game hosts its phones."])
-        }
         // The page stopping its controllers: Lamp's sessions end with what they're for (the preview closing, the app no
         // longer set to open on a TV), not with this; a game on the Mac answers it itself.
+        let asked = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
         if asked["stop"] as? Bool == true { return (200, [:]) }
+        // A page that chose the game itself as its phones' host (`start({ host: 'game' })`) and reached Lamp has no host of
+        // its own here: it hears so, and Lamp never hosts its phones in the game's place.
+        if asked["host"] as? String == "game" {
+            return (409, ["error": "This copy of the game has no host of its own for phones here: start({ host: 'lamp' }) has Lamp host them."])
+        }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         // A game's copy on this Mac runs its own phones; one that asks here was built by an earlier Lamp.
         if !request.fromPreview, !request.fromNetwork, project.platform.target.takesPhones {
@@ -12692,7 +12728,8 @@ final class Store: ObservableObject {
     /// app it couldn't sign for an Apple team, since macOS lists such an app's intents and never runs them. Read
     /// off the installed copy, so a team that's chosen but couldn't sign (its key refused) is told as well.
     nonisolated static func intentsHint(for project: LampProject) async -> String {
-        guard project.platform == .mac, usesAppIntents(project), !hasIntentsMetadata(project.installedURL) else { return "" }
+        guard project.platform == .mac, usesAppIntents(project), !hasIntentsMetadata(project.installedURL),
+              buildCanGiveIntents(project) else { return "" }
         if await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status != 0 {
             return "\n\nSiri, Shortcuts and Spotlight can't see this app's App Intents: reading them out of the code takes Xcode, which " +
                 "isn't installed. Tell the user they come on once Xcode is installed."
@@ -12724,23 +12761,39 @@ final class Store: ObservableObject {
         FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Resources/Metadata.appintents").path)
     }
 
-    /// A Mac app installed without its App Intents, which a build could now give them: Xcode's tool is here to
-    /// read them, there's a team on this Mac to sign for, and signing for that team hasn't already failed (its
-    /// key refused), so an app whose intents can't come back opens as it is instead of being built every time.
+    /// Whether a build gives the app itself App Intents, read off its last build, which `deploy` copies and so never
+    /// takes them out of: it has them, or there's none yet, or it was made without Xcode's tool (build.sh empties
+    /// .build/appintents at the start of each build, and its `intents` leaves a folder there only when it ran). A build that ran the tool and wrote none writes none
+    /// again: the code that imports App Intents declares none in the app, as when they're all the widget's, which
+    /// keeps its own whatever the app is signed with.
+    nonisolated static func buildCanGiveIntents(_ project: LampProject) -> Bool {
+        let fm = FileManager.default
+        return !fm.fileExists(atPath: project.builtURL.path) || hasIntentsMetadata(project.builtURL)
+            || !fm.fileExists(atPath: project.dir.appendingPathComponent(".build/appintents/\(project.exe)").path)
+    }
+
+    /// A Mac app installed without its App Intents, which a build could now give them: its build has some to give
+    /// (`buildCanGiveIntents`), Xcode's tool is here to read them, there's a team on this Mac to sign for, and
+    /// signing for that team hasn't already failed (its key refused), so an app whose intents can't come back
+    /// opens as it is instead of being built every time.
     nonisolated static func intentsCanComeBack(_ project: LampProject) async -> Bool {
         guard project.platform == .mac, usesAppIntents(project),
               FileManager.default.fileExists(atPath: project.installedURL.path), !hasIntentsMetadata(project.installedURL),
+              buildCanGiveIntents(project),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         guard await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status == 0 else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
     }
 
     /// The same for a Mac app's share extension, which `deploy` leaves out of an app it can't sign for a team:
-    /// a team to sign for now, which hasn't already failed, brings it back with a build.
+    /// a team to sign for now, which hasn't already failed, brings it back with a build, when the build makes one
+    /// (its last build has it, or there's none yet).
     nonisolated static func shareCanComeBack(_ project: LampProject) async -> Bool {
         guard project.platform == .mac, Template.hasShare(project),
               FileManager.default.fileExists(atPath: project.installedURL.path),
               !FileManager.default.fileExists(atPath: Template.shareURL(in: project.installedURL, of: project).path),
+              !FileManager.default.fileExists(atPath: project.builtURL.path)
+                || FileManager.default.fileExists(atPath: Template.shareURL(in: project.builtURL, of: project).path),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
     }

@@ -97,6 +97,6 @@ final class ControllerHostChoiceTests: XCTestCase {
             """)
         XCTAssertNil(failure())
         XCTAssertEqual(page.evaluateScript("said.join('|')")?.toString(),
-                       "Lamp.controllers.start: host is 'game' or 'lamp'.|Lamp.controllers: started with another host; call stop() first.")
+                       "Lamp.controllers.start: host is 'game' or 'lamp', not \"cloud\".|Lamp.controllers.start: phones are already hosted by game; stop() first.")
     }
 }

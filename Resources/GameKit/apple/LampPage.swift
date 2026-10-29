@@ -99,14 +99,17 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
         // own says why: neither is handed the other host in its place.
         if path == "/app/controller" {
             let body = (call["body"] as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any] ?? [:]
-            if body["host"] as? String == "lamp", body["stop"] as? Bool != true {
-                return replyHandler(["status": 409, "body": #"{"error":"Lamp doesn't host this game's phones on this device: start with host 'game'."}"#], nil)
-            }
             let reply: @Sendable (Int, [String: Any]) -> Void = { status, answer in
                 let text = (try? JSONSerialization.data(withJSONObject: answer)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 DispatchQueue.main.async { replyHandler(["status": status, "body": text], nil) }
             }
-            return LampControllers.answer(stop: body["stop"] as? Bool == true, reply)
+            let stop = body["stop"] as? Bool == true
+            // A page that chose Lamp as its phones' host hears that this copy is the game itself, never served as if it
+            // were Lamp: the page chose, and only it may choose again.
+            if !stop, body["host"] as? String == "lamp" {
+                return reply(409, ["error": "Lamp doesn't host this game's phones here: the game hosts them itself (start() or start({ host: 'game' }))."])
+            }
+            return LampControllers.answer(stop: stop, reply)
         }
         Self.ask(url, body: call["body"] as? String) { status, body in replyHandler(["status": status, "body": body], nil) }
     }

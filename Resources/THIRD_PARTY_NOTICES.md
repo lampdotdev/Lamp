@@ -124,3 +124,10 @@ Lamp writes these into the pages of the games it makes, each with its license be
 game that draws with it, and Rapier (https://github.com/dimforge/rapier, the npm package
 @dimforge/rapier3d-compat, Apache License 2.0, Copyright 2020 Dimforge EURL), for physics, only into a game that
 imports it.
+
+## The phone service for LG games
+
+Lamp puts ws (https://github.com/websockets/ws, MIT, Copyright (c) 2011 Einar Otto Stangvik, Copyright (c) 2013 Arnout
+Kazemier and contributors, Copyright (c) 2016 Luigi Pinca and contributors) in the service it packages with a game for
+an LG TV, with its license beside it (Resources/LGPhones/node_modules/ws/LICENSE; scripts/update-lg-ws.sh says which
+release and how it was checked).

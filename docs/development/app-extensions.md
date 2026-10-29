@@ -221,14 +221,17 @@ the service that runs them is refused, and running one reports success and does 
 chosen in Settings → Building and this Mac has its Apple Development certificate (`Devices.signingIdentity`),
 `Store.deploy` signs a Mac app with that, from the login keychain where Xcode keeps it
 (`AppSigning.command(ownKeychain: false)`), widget first as before; otherwise it takes `Metadata.appintents` out
-of the app and its widget and signs with Lamp's certificate. Moving between the two changes the app's signature,
+of the app (not its widget's, whose buttons run them inside the widget, which needs no team) and signs with Lamp's
+certificate. Moving between the two changes the app's signature,
 which macOS treats as a new app: its permissions are cleared once and the chat says so (the same path as any
 change of certificate). The team's certificate keeps its name through Apple's yearly renewal, which is what the
 signature's requirement names, so permissions last as long as with Lamp's own. The agent is told the rule
 (`Agent.Rules.macIntents`), and `look_at_app` says why when a Mac app with intents was installed without them
 (`Store.intentsHint`, read off the installed copy: no Xcode, no team, or a team whose key wasn't allowed). A team
 chosen later brings them back: it's part of such an app's fingerprint, and opening one installed without them
-builds it again once a team can sign it (`Store.intentsCanComeBack`). Settings → Building shows the team (`PhoneSigningSection`, "Signing") with an iPhone or
+builds it again once a team can sign it (`Store.intentsCanComeBack`), when its build has intents for the app
+itself to give (`Store.buildCanGiveIntents`): an app whose intents are all its widget's has none of its own to put
+back, and building it on every open would never change that. Settings → Building shows the team (`PhoneSigningSection`, "Signing") with an iPhone or
 iPad app, which needs one, or when this Mac has a team's certificate; with only Mac apps, None is a choice and
 nothing is chosen for the person.
 

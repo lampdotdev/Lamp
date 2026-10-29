@@ -126,7 +126,10 @@ installer, license and password while Lamp waits for the Roku's restart, then wh
 comments, so a change to one of those is made to all of them. A declared kind asks for them by library in
 `app.declared.support` (`"web": "Web/lamp.js"`, `"brightscript": "components/Lamp"`); the TV kit always has the web one
 in its `Web/lamp.js`, the Xbox's integration asks for it too. The web library is plain ES5 with Promises
-(`DeviceSupport.webJS`, LampStore on localStorage); the BrightScript one runs each LampAI call in a Task node
+(`DeviceSupport.webJS`, LampStore on localStorage), and ends with `LampQR` (`DeviceSupport.qrJS`), which draws the QR
+code a page shows phones: Kazuhiko Arase's QR Code Generator (`Resources/WebLibraries/qrcode`, MIT, put there by
+`scripts/update-qrcode.sh` from one npm release, checked against its SHA-512), inside lamp.js with its license, since a
+join link with its credential is longer than the encoders the agent writes for itself tend to hold; the BrightScript one runs each LampAI call in a Task node
 (`LampAITask`), since a Roku refuses network calls on its render thread, and keeps LampStore in the registry. Lamp writes
 them before every turn and build (`DeviceSupport.write`, from `Template.writeOwnedFiles` and `writeSupport`), the agent
 can't delete them, and versions leave them out of their names and diffs. How an app reaches the gateway comes in two
@@ -511,13 +514,34 @@ background mode keeps it alive. `ControllerAddresses` gives a phone only an addr
 network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
 the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
 window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
-Which host runs a game's phones is the game's choice as it starts them: `Lamp.controllers.start({ host: 'game' })` for
-its own, `{ host: 'lamp' }` for Lamp's relay and the page Lamp serves (`PhoneSites`), and no host for what each device
-did before either was offered. The page script sends the choice with every ask (`TVTemplate.controllersJS`), and each
-answerer refuses the one it isn't: Lamp's gateway turns down `host: 'game'` (`Store.controllerSession`), and the app
-around a Mac, iPhone or iPad game turns down `host: 'lamp'` (LampPage.swift), so a host that's missing or fails is an
-error the game hears (`onError`), never the other host in its place. The skills give the agent both as options, with
-what each needs, not an order.
+
+**Which host.** The game chooses who hosts its phones as it starts them: `Lamp.controllers.start({ host: 'game' })`
+(the game itself: the Mac's and iPhone's `ControllerRuntime` above, and the LG service and the Xbox's host below) or `start({ host: 'lamp' })`
+(Lamp's relay and Lamp-served page). `start()` with no host keeps where each device ran before (the game itself on the
+Mac, iPhone and iPad, Lamp elsewhere). The host asked for goes with each `/app/controller` ask, and whoever answers
+refuses the one it isn't (LampPage.swift refuses `'lamp'`, Lamp's gateway `'game'`, `Store.controllerSession`; on an LG TV and the Xbox
+`'game'` is asked of the game's own service or host instead), so a
+host that isn't there, or fails, is said in `onError` and tried again, never replaced by the other; an answer to an
+earlier start (`run` in lamp.js) is never taken. `stop()` ends the chosen host's session. The skills give the agent
+both as options with what each needs, not an order.
+
+On an LG TV the game can run its own phones there, with the Mac asleep or gone: Lamp packages a JS service of LG's kind with it (`LGPhones`, from
+`Resources/LGPhones`: `service.js` on the TV's service bus, `relay.js` serving the phone page Lamp published at the
+build and running the relay, the same protocol, credentials and limits as LampRelayKit's, with ws, put there by
+`scripts/update-lg-ws.sh`, for WebSocket framing), and names it in that package's lamp.js only
+(`TVTemplate.lgServiceMarker`). `start({ host: 'game' })` then subscribes to the service's `start`: the
+subscription is the session, its answers are where the relay is and the page's host credential (again whenever the
+relay starts afresh or the TV's address moves), and the page cancelling it (`stop()`, or the game closing) ends the
+session, its sockets and its key, after which LG's service manager ends the service by its own idle rule. Only the game
+the service was packaged with may start it or be given a host credential (the caller's app id, `message.sender`). The
+key is made from Node's crypto for each session and kept only in the service's memory. Whether the service goes in is
+a fact of the package, decided as it's made: a game that takes phones, has a phone page and an app id LG takes as
+the start of a service's name (no minus sign, no period before a digit), on a TV whose webOS release is 5 or later
+(`LGPhones.runs`: webOS TV 5.0's Node, 8.12, is the oldest ws runs on). Any other LG TV, one whose version Lamp hasn't
+read among them, gets no service: its lamp.js names none, and `start({ host: 'game' })` there is refused by Lamp, which
+answers the page's asks.
+`Tests/LGPhones/relay-test.js` runs the service on real sockets under each Node an LG TV has, with LG's
+`webos-service` stood in for.
 On the Xbox a game that chose its own runs its phones in Lamp's WebView2 host (`lamp_web_host.cpp`, with the protocol in
 `Resources/WebHost/lamp_controllers.h`, plain C++ that keeps to LampRelayKit's wire message for message): the page is
 in the package as `Phone/`, beside `Web/` (`GamePhones.xboxPage`, `WebHost.payload`), and the page asks the host for its

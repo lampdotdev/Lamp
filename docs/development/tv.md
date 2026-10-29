@@ -73,7 +73,7 @@ and what the game's device can take). The page is one way for phones to steer a 
 phones are another. `Rules.tvPhone`, `make_app_for`'s description and the naming call set them side by side with what each
 suits, and map no request to either: the agent chooses, and when one way can't be built on this Mac (no Xcode, no Android
 tools) `make_app_for`'s answer leaves it free to take another rather than stop. Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's
-staged beside `Web/` the same way (links refused) and never packaged, into a folder nothing serves, and put in place of
+staged beside `Web/` the same way (links refused) and packaged only inside an LG game's own phone service (`LGPhones`), into a folder nothing serves, and put in place of
 the served one in one swap only once it has passed (`TVs.publishPhone`), so a request never reads a copy being made or
 one that failed. A game on Lamp's runtime has one too, served the same way while it's open on the Mac ("Games" in the
 devices guide). It's served by Lamp at a port of the app's own (`PhoneSites`, from `Edition.phonePagePorts`, sixteen
@@ -104,7 +104,9 @@ buttons, sticks, messages and files, and tilt asked for from a tap), asks the pa
 always wins over a credential the page kept from before. The TV page has `Lamp.controllers` in lamp.js
 (`TVTemplate.controllersJS`), the same in the preview and on a TV: it asks Lamp where its relay is (`/app/controller`,
 through the preview's bridge or the gateway, as it opens and every 15 seconds) and opens its own socket there, with a
-host credential. A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
+host credential. A game chooses its host with `start({ host })`: on an LG TV from webOS 5 on, `'game'` asks a service
+packaged with it instead and runs its phones with no Mac ("Phones as players" and "Which host" in the devices guide,
+`LGPhones`). A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
 the wish's apps reach each other (under "Wishes of more than one app"), with nothing from Lamp. The preview's page
 reaches them from WebKit itself, never through an `evaluateJavaScript` or a script message per message. lamp.js numbers
 the players, whichever way they came, and tells each its number (`player`). The credentials are the controllers' own
