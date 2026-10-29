@@ -1222,20 +1222,21 @@ extension Store {
     /// Start Again from the Original: the wish's files go back to the version it arrived as, as a new version (so this
     /// too is undone with Undo), and it opens with its chat, which says so (`opening`; from the chat it's open already).
     func startAgain(_ project: LampProject, opening: Bool = true) async {
-        guard !busy.contains(project.id), let arrival = await original(toStartAgain: project) else { return }
+        // The wish's work is held from the first look to the restore, so no request or other restore comes between.
+        guard begin(project) != nil else { return }
+        defer { finish(project) }
+        guard let arrival = await original(toStartAgain: project) else { return }
         // What a stopped or failed turn left unsaved is kept as a version first, so Undo brings that back too; a restore
         // would otherwise overwrite it for good.
-        if await Versions.hasUnsavedChanges(project) {
-            guard !busy.contains(project.id),
-                  await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": "Unfinished change"]) == .saved else {
-                log(project, .error, "Lamp couldn't save the unfinished change, so it didn't start again.")
-                return
-            }
+        if await Versions.hasUnsavedChanges(project),
+           await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": "Unfinished change"]) != .saved {
+            log(project, .error, "Lamp couldn't save the unfinished change, so it didn't start again.")
+            return
         }
         // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
         ContributeCards.shared.close(project)
         if opening { open(fromDesk: project) }
-        await restore(project, to: arrival)
+        await restoreBegun(project, to: arrival)
     }
 
     /// Send Changes Back… from the desk: the wish's chat, with the card that sends them (`ContributeCards`), as the
