@@ -114,13 +114,13 @@ final class ControllerServiceTests: XCTestCase {
         XCTAssertEqual(stale.closeCode.rawValue, 4003)
     }
 
-    func testAGameThatStopsAskingLetsItsSessionLapse() throws {
+    func testAGameThatStopsAskingLetsItsSessionLapseButNotOneThatAsksLate() throws {
         let snapshot = page("Pad")
         provision(snapshot)
         _ = host.open(installation: game, version: snapshot.version, key: key, connection: 1)
-        host.expire(now: Date().addingTimeInterval(ControllerService.lease - 5))
-        XCTAssertEqual(host.openSessions, [game], "a game that renews within its lease keeps its session")
-        host.expire(now: Date().addingTimeInterval(ControllerService.lease + 1))
+        host.expire(now: Date().addingTimeInterval(ControllerService.lease + 5))
+        XCTAssertEqual(host.openSessions, [game], "a running game whose hidden window asks late keeps its session")
+        host.expire(now: Date().addingTimeInterval(10 * ControllerService.lease + 1))
         XCTAssertEqual(host.openSessions, [])
         XCTAssertNil(host.pagePort(game))
     }
@@ -171,6 +171,50 @@ final class ControllerServiceTests: XCTestCase {
         try Data("<p>".utf8).write(to: linked.appendingPathComponent("index.html"))
         try FileManager.default.createSymbolicLink(at: linked.appendingPathComponent("secret.txt"), withDestinationURL: folder.appendingPathComponent("registry.json"))
         XCTAssertThrowsError(try ControllerSnapshot.read(linked))
+    }
+
+    /// A host on the network that opens connections to a game's page and sends nothing can't hold them: past a few from
+    /// one address it's turned away at once, and each is let go once it hasn't sent its request in time, so the service
+    /// keeps what it needs for phones.
+    func testIdleConnectionsToAPageAreLetGo() async throws {
+        let root = folder.appendingPathComponent("idle")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("<p>".utf8).write(to: root.appendingPathComponent("index.html"))
+        var server: PhonePageServer?
+        for port in UInt16(47990)...UInt16(47999) {
+            let candidate = PhonePageServer(port: port, root: root, app: game, hosts: { ["127.0.0.1"] }, relayPort: { 9 })
+            let listening = await withCheckedContinuation { done in candidate.start(ready: { done.resume(returning: $0) }) }
+            if listening { server = candidate; break }
+        }
+        let page = try XCTUnwrap(server)
+        defer { page.stop() }
+        func connect() -> Int32 {
+            let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = page.port.bigEndian
+            address.sin_addr.s_addr = inet_addr("127.0.0.1")
+            _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+            var wait = timeval(tv_sec: 2, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+            return fd
+        }
+        /// Whether the server has closed the connection: a read that ends rather than times out.
+        func closed(_ fd: Int32) -> Bool {
+            var byte: UInt8 = 0
+            return read(fd, &byte, 1) == 0
+        }
+        let idle = (0..<PhonePageServer.connectionLimit.each).map { _ in connect() }
+        defer { idle.forEach { close($0) } }
+        try await Task.sleep(for: .milliseconds(300))
+        let extra = connect()
+        defer { close(extra) }
+        XCTAssertTrue(closed(extra), "one more from the same address is turned away")
+        try await Task.sleep(for: .seconds(PhonePageServer.headDeadline + 1))
+        XCTAssertTrue(idle.allSatisfy(closed), "connections that never sent a request are let go")
+        let (status, _) = try await get(page.port, "/")
+        XCTAssertEqual(status, 200)
     }
 
     func testEachLampsServiceHasPortsOfItsOwn() {

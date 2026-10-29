@@ -231,8 +231,11 @@ public final class ControllerHost: @unchecked Sendable {
         if live.isEmpty { stopRelay() }
     }
 
+    /// A session lapses once it hasn't been asked for within its lease. While the game's connection is there the lease
+    /// is ten times as long: macOS slows the timers of a hidden window, so a game that's still running may ask late, and
+    /// it's the connection going that says the game quit.
     private func expireLeases(_ now: Date) {
-        for (app, game) in live where game.lease < now { end(app) }
+        for (app, game) in live where game.lease.addingTimeInterval(game.owners.isEmpty ? 0 : 9 * ControllerService.lease) < now { end(app) }
     }
 
     /// The relay, started when a game first needs it at the port it had before (the first of the service's, while it's

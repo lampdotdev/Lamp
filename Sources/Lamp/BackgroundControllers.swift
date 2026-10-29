@@ -28,13 +28,16 @@ enum BackgroundControllers {
         case missing
     }
 
-    /// What macOS says of the service, never what was last chosen here.
+    /// What macOS says of the service, never what was last chosen here. macOS says "not found" of a service it was
+    /// never asked to register too, so whether this build has one is read off the bundle.
     static var state: State {
+        guard FileManager.default.fileExists(atPath: Bundle.main.bundleURL.appendingPathComponent("Contents/Library/LaunchAgents/\(names.plistName)").path) else {
+            return .missing
+        }
         switch agent.status {
-        case .enabled: .on
-        case .requiresApproval: .needsApproval
-        case .notFound: .missing
-        default: .off
+        case .enabled: return .on
+        case .requiresApproval: return .needsApproval
+        default: return .off
         }
     }
 

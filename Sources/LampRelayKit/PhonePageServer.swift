@@ -11,6 +11,11 @@ public final class PhonePageServer: @unchecked Sendable {
     private let app: String
     private let queue = DispatchQueue(label: "dev.lamp.controllers.page")
     private var listener: NWListener?
+    /// Connections open now, by the address they came from: a page is a few small requests, so a host that holds many
+    /// open, or one that never finishes its request, is let go before it can use up what the service needs for phones.
+    private var open: [ObjectIdentifier: String] = [:]
+    public static let connectionLimit = (all: 64, each: 16)
+    public static let headDeadline: TimeInterval = 10
     /// The names and addresses this Mac answers as, lowercased, read when asked: they change with the network.
     private let hosts: @Sendable () -> Set<String>
     private let relayPort: @Sendable () -> UInt16?
@@ -31,7 +36,24 @@ public final class PhonePageServer: @unchecked Sendable {
         guard let port = NWEndpoint.Port(rawValue: port), let listener = try? NWListener(using: params, on: port) else { return ready(false) }
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return connection.cancel() }
+            var from = "?"
+            if case .hostPort(let host, _) = connection.endpoint { from = "\(host)" }
+            let id = ObjectIdentifier(connection)
+            guard self.open.count < Self.connectionLimit.all, self.open.values.filter({ $0 == from }).count < Self.connectionLimit.each else {
+                return connection.cancel()
+            }
+            self.open[id] = from
+            connection.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .failed, .cancelled: self?.open[id] = nil
+                default: break
+                }
+            }
             connection.start(queue: self.queue)
+            self.queue.asyncAfter(deadline: .now() + Self.headDeadline) { [weak self, weak connection] in
+                guard let connection, let from = self?.open[id], from != "answered" else { return }
+                connection.cancel()
+            }
             self.receive(connection, buffer: Data())
         }
         var answered = false
@@ -67,6 +89,8 @@ public final class PhonePageServer: @unchecked Sendable {
             if let end = buffer.range(of: Data("\r\n\r\n".utf8)) {
                 let head = String(decoding: buffer[..<end.lowerBound], as: UTF8.self)
                 let page = self.answer(head)
+                // Answered: the deadline is for the request, not for a phone on a slow network taking the page.
+                self.open[ObjectIdentifier(connection)] = "answered"
                 Self.respond(connection, page)
             } else if done || error != nil || buffer.count > 16 << 10 {
                 connection.cancel()
