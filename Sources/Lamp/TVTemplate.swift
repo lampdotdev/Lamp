@@ -1329,11 +1329,16 @@ extension TVTemplate {
           // copy's own, full address.
           function cssOf(change, path, css) {
             var from = base + path;
-            return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, function (whole, quote, address) {
-              if (/^(data:|blob:|#)/.test(address)) return whole;
+            function to(address) {
               var p = pathOf(address, from);
-              var to = p !== null && change.files[p] ? urlOf(change, p) : (function () { try { return new URL(address, from).href; } catch (e) { return address; } })();
-              return 'url("' + to + '")';
+              if (p !== null && change.files[p]) return urlOf(change, p);
+              try { return new URL(address, from).href; } catch (e) { return address; }
+            }
+            // @import "theme.css" as well as url(...), since from a blob neither finds its file by itself.
+            return css.replace(/@import\s+(['"])([^'"]+)\1/g, function (whole, quote, address) {
+              return /^(data:|blob:)/.test(address) ? whole : '@import url("' + to(address) + '")';
+            }).replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, function (whole, quote, address) {
+              return /^(data:|blob:|#)/.test(address) ? whole : 'url("' + to(address) + '")';
             });
           }
           function urlOf(change, path) {

@@ -58,13 +58,16 @@ enum PageCopies {
             .flatMap { try? JSONDecoder().decode(Files.self, from: $0) }
     }
 
-    /// Every build a copy at `place` may have: the place's latest, and each one Lamp put on a device of the person's there
-    /// (`Runtime.placed`), since a copy on one TV or iPad can be older than the place's last build. Nil for a build that
-    /// recorded nothing (an earlier Lamp's).
+    /// Every build a copy at `place` may have, newest first: the place's latest, and each one Lamp put on a device of the
+    /// person's there (`Runtime.placed`), since a copy on one TV or iPad can be older than the place's last build. Nil for
+    /// a build that recorded nothing (an earlier Lamp's).
     static func builds(_ project: LampProject, at place: Destination) -> [Files?] {
-        let fingerprints = [Runtime.builtFingerprint(project.at(place))].compactMap { $0 }
-            + Runtime.placed(project).filter { $0.place == place }.map(\.fingerprint)
-        return Array(Set(fingerprints)).sorted().map { record(project, $0) }
+        var dated: [(String, Date)] = []
+        let latest = project.at(place)
+        if let fingerprint = Runtime.builtFingerprint(latest) { dated.append((fingerprint, Runtime.builtDate(latest) ?? .distantPast)) }
+        for placed in Runtime.placed(project) where placed.place == place { dated.append((placed.fingerprint, placed.at)) }
+        var seen: Set<String> = []
+        return dated.sorted { $0.1 > $1.1 }.filter { seen.insert($0.0).inserted }.map { record(project, $0.0) }
     }
 
     /// The page's files as they are in the app's folder.
@@ -103,9 +106,13 @@ enum PageCopies {
     /// Whether what's changed since the copies at `place` were built is their page alone, which each open copy takes as
     /// it is.
     static func pageOnly(_ project: LampProject, at place: Destination) -> Bool {
-        let all = builds(project, at: place), around = native(of: project)
-        return !all.isEmpty && all.allSatisfy { $0?.native == around }
+        guard let newest = builds(project, at: place).first else { return false }
+        return !hasShell(place) || newest?.native == native(of: project)
     }
+
+    /// Whether a page's copy at `place` runs in an app of Lamp's built from the rest of the folder (this Mac, an iPhone or
+    /// iPad, Android), whose change needs the app put there again. A TV's browser and the Xbox's host have none of it.
+    static func hasShell(_ place: Destination) -> Bool { place != .tv && place != .device }
 
     static func name(of data: Data) -> String { SHA256.hash(data: data).prefix(16).map { String(format: "%02x", $0) }.joined() }
 
@@ -134,8 +141,11 @@ enum PageCopies {
         } else {
             for built in known { changed.formUnion(Set(now.keys).union(built.files.keys).filter { now[$0] != built.files[$0] }) }
         }
-        let earlier = all.isEmpty || known.count < all.count
-        let aroundChanged = known.contains { $0.native != around }
+        // Which build the copy has isn't known, so whether it takes these words and has the app around the page as it is
+        // now is judged by the newest build there: a device left on an older one, often off, doesn't hold back the rest.
+        let newest = all.first ?? nil
+        let earlier = newest == nil
+        let aroundChanged = hasShell(place) && newest.map { $0.native != around } == true
         guard !changed.isEmpty || earlier || aroundChanged else { return nil }
         let web = project.dir.appendingPathComponent(TVTemplate.webFolder)
         var files: [String: Data] = [:]

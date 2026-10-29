@@ -102,6 +102,11 @@ enum Runtime {
         AppFile.read(onTVURL(project), in: project).flatMap { try? JSONDecoder().decode([String: OnTV].self, from: $0) } ?? [:]
     }
     /// What the last build was made from (`markBuilt`), the fingerprint taken before its copy was staged.
+    /// When the build `builtFingerprint` names was recorded.
+    static func builtDate(_ project: LampProject) -> Date? {
+        (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    }
+
     static func builtFingerprint(_ project: LampProject) -> String? {
         AppFile.text(builtURL(project), in: project).flatMap { $0.isEmpty ? nil : $0 }
     }
