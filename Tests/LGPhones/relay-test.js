@@ -18,12 +18,15 @@ var net = require('net');
 var WebSocket = require(path.join(service, 'node_modules/ws'));
 var relay = require(path.join(service, 'relay.js'));
 
+var execFileSync = require('child_process').execFileSync;
 var root = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-phones-'));
+var outside = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-phones-outside-'));
+var scratch = [root, outside];
 fs.writeFileSync(path.join(root, 'index.html'), '<p>pad</p>');
 fs.writeFileSync(path.join(root, 'lamp-controller.js'), '// pad');
 fs.writeFileSync(path.join(root, '.hidden'), 'no');
-fs.writeFileSync(path.join(os.tmpdir(), 'lg-phones-outside.txt'), 'outside');
-fs.symlinkSync(path.join(os.tmpdir(), 'lg-phones-outside.txt'), path.join(root, 'link.txt'));
+fs.writeFileSync(path.join(outside, 'outside.txt'), 'outside');
+fs.symlinkSync(path.join(outside, 'outside.txt'), path.join(root, 'link.txt'));
 
 function get(port, p, host) {
   return new Promise(function (resolve, reject) {
@@ -77,7 +80,7 @@ function run() {
     assert.strictEqual(answer.page, 'http://192.168.1.40:' + pagePort + '/', 'the link phones open is the TV\'s address, never loopback');
     assert.strictEqual(answer.links[0].socket, 'ws://127.0.0.1:' + relayPort + '/');
     return Promise.all([get(pagePort, '/'), get(pagePort, '/lamp-relay.json', '192.168.1.40:' + pagePort), get(pagePort, '/', 'attacker.example:' + pagePort),
-                        get(pagePort, '/.hidden'), get(pagePort, '/link.txt'), get(pagePort, '/%2e%2e/lg-phones-outside.txt')]);
+                        get(pagePort, '/.hidden'), get(pagePort, '/link.txt'), get(pagePort, '/%2e%2e/' + path.basename(outside) + '/outside.txt')]);
   }).then(function (pages) {
     assert.strictEqual(pages[0].body, '<p>pad</p>');
     assert.deepStrictEqual(JSON.parse(pages[1].body), { port: relayPort, app: 'dev.lamp.app.pong' });
@@ -214,6 +217,7 @@ function runRaw() {
 // The service's door on the TV's bus, with webos-service stood in for.
 function runService() {
   var folder = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-service-'));
+  scratch.push(folder);
   ['service.js', 'relay.js'].forEach(function (f) { fs.copyFileSync(path.join(service, f), path.join(folder, f)); });
   fs.symlinkSync(path.join(service, 'node_modules'), path.join(folder, 'node_modules'));
   fs.mkdirSync(path.join(folder, 'phone'));
@@ -263,10 +267,15 @@ function runService() {
 // A check that waits for something that never comes fails rather than hangs.
 setTimeout(function () { console.error('A check timed out.'); process.exit(1); }, 20000);
 
+function cleanUp() {
+  scratch.forEach(function (folder) { try { execFileSync('rm', ['-rf', folder]); } catch (e) {} });
+}
 run().then(runRaw).then(runService).then(function () {
+  cleanUp();
   console.log('LG phone service: all checks passed on Node ' + process.version);
   process.exit(0);
 }, function (error) {
+  cleanUp();
   console.error(error && error.stack || error);
   process.exit(1);
 });
