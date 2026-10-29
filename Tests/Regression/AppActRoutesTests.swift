@@ -66,6 +66,13 @@ final class AppActRoutesTests: XCTestCase {
         XCTAssertTrue(problem.reason.contains("qty"))
     }
 
+    /// Arguments that aren't an object are refused, as OpenRouter's are, even for a tool that needs none.
+    func testAPlanCallWhoseArgumentsArentAnObjectIsAskedAgain() throws {
+        let odd = #"{"calls": [{"name": "groceries", "args": "all"}], "reply": null}"#
+        guard case .failure(let problem) = AppAct.parse(plan: odd, for: try request()) else { return XCTFail("taken") }
+        XCTAssertTrue(problem.reason.contains("JSON object"))
+    }
+
     /// Ask was refused on every route but OpenRouter's; each one that can answer now takes a step.
     @MainActor func testEveryRouteThatCanAnswerTakesAStep() {
         func route(_ kind: AppAI.TextRoute.Kind, _ available: Bool = true) -> AppAI.TextRoute {

@@ -492,7 +492,8 @@ enum AppAct {
             var toolCalls: [[String: Any]] = []
             for item in calls {
                 guard let call = item as? [String: Any], let name = call["name"] as? String else { return .failure(.init("A call had no name.")) }
-                let args = (call["args"] as? [String: Any] ?? [:]).filter { !($0.value is NSNull) }
+                guard let given = call["args"] as? [String: Any] else { return .failure(.init("\(name)'s arguments weren't a JSON object.")) }
+                let args = given.filter { !($0.value is NSNull) }
                 toolCalls.append(["function": ["name": name, "arguments": json(args)]])
             }
             return parse(openRouterMessage: ["tool_calls": toolCalls], for: r)
@@ -523,6 +524,9 @@ enum AppAct {
         do { r = try parse(data) } catch let failure as Failure { return (failure.status, ["error": failure.message], 0) } catch { return (400, ["error": "\(error)"], 0) }
         let route: AppAI.TextRoute
         if let pinned = r.route {
+            // Read the way a saved choice is: Codex's route is named for its first model once Codex has listed them,
+            // which its own first run does, so the id a turn started with may have moved on to that name.
+            let pinned = AppAI.canonicalRoute(pinned)
             guard let same = AppAI.allTextRoutes.first(where: { $0.id == pinned }), same.available else {
                 return (409, ["error": "The AI this turn started with can't answer now. Try again."], 0)
             }
@@ -539,8 +543,9 @@ enum AppAct {
         let tag = "outside-text-" + String(UUID().uuidString.prefix(8)).lowercased()
         var cost = 0.0
         var retry: String?
-        // The only retry in a step: one more attempt with the reason the first couldn't be used. Nothing under it
-        // tries again by itself, so a step is at most two model calls on every route.
+        // The only retry for an answer that can't be used: one more attempt with the reason. The adapters don't try
+        // again by themselves, except OpenRouter's wait-and-retry when a provider's content filter cuts a reply off,
+        // which stays inside the same deadline.
         for attempt in 0..<2 {
             do {
                 let (answer, more) = try await ask(route, r, tag: tag, retry: retry, until: deadline)

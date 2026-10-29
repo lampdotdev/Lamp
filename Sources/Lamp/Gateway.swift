@@ -625,7 +625,7 @@ enum AppAI {
             }
             // Every key here is one of Codex's documented settings; --ignore-user-config already leaves out the
             // person's MCP servers.
-            let seal = sealed ? #"-c approval_policy="never" -c features.shell_tool=false -c features.unified_exec=false -c web_search="disabled" -c features.apps=false -c features.multi_agent=false "# : ""
+            let seal = sealed ? #"-c approval_policy="never" -c features.shell_tool=false -c features.unified_exec=false -c web_search="disabled" -c features.apps=false -c features.multi_agent=false -c tools.view_image=false "# : ""
             command = """
             "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
               -s read-only -c hooks={} -c model_reasoning_effort="low" \(seal)\(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
