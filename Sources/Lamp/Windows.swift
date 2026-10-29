@@ -10,11 +10,29 @@ enum LampWindows {
     /// scenes, so the one kept serves after its window has closed.
     static var open: OpenWindowAction?
 
+    /// The desk's window while it exists (`DeskWindowMarker`): gone once it's closed.
+    static weak var desk: NSWindow?
+
+    /// Whether the desk is on screen now: not closed, minimized or put away for an app's sidebar.
+    static var deskShown: Bool { (desk ?? MagicPanel.mainWindow)?.isVisible == true }
+
     /// The desk's window, opened again if it was closed or put away for an app's sidebar.
     static func showDesk() {
-        if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
+        if let main = desk ?? MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
         open?(id: "main")
     }
+}
+
+/// Notes the window the desk is drawn in (`LampWindows.desk`), so what's asked of the desk asks the real window.
+struct DeskWindowMarker: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { LampWindows.desk = window }
+        }
+    }
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) {}
 }
 
 /// Runs `became` whenever the window this view is in becomes the key window.

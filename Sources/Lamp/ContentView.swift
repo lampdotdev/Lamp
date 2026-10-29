@@ -31,6 +31,7 @@ struct ContentView: View {
         }
         .modifier(StoreDialogs(active: store.selection == nil))
         .background(WindowKeyWatcher { store.selection = nil })
+        .background(DeskWindowMarker())
         .onAppear { LampWindows.open = openWindow }
     }
 

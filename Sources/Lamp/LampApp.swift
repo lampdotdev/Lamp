@@ -124,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// whatever else of Lamp's is open (Settings, a chat panel, a preview), since the desk is where everything starts.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         MainActor.assumeIsolated {
-            if MagicPanel.mainWindow?.isVisible != true { Store.shared.showDesk() }
+            if !LampWindows.deskShown { Store.shared.showDesk() }
         }
         return true
     }
