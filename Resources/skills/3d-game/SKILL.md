@@ -11,8 +11,7 @@ more than a phone, and a TV's chip is often slower than a phone's. Nothing here 
 costs the most, so you can choose what the game is worth on the devices it's played on.
 
 Lamp ships three.js in two kinds of page: a game's page on its runtime (`make_app_for` with `kind` "game"), and a page
-with no runtime: a Samsung or LG TV app's page, which is what a game played with phones is for now (the
-phone-controllers skill), or a device integration's web app whose rules name the 3D library's folder. A page with no
+with no runtime: a Samsung or LG TV app's page, or a device integration's web app whose rules name the 3D library's folder. A page with no
 runtime has no game runtime, no Phaser bridge and no Rapier: it loads three.js from the folder its rules give and makes
 its own renderer and frame loop (below).
 

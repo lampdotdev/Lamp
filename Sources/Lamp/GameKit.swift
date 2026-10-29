@@ -359,14 +359,15 @@ enum GameKit {
         }
     }
 
-    /// lamp.js as a game is given it: Lamp's web building blocks, and `Lamp.wish`, the TV app's block for the wish's
-    /// other apps and its own other copies, for a game that carries it (`Template.carriesWish`).
+    /// lamp.js as a game is given it: Lamp's web building blocks, `Lamp.controllers` (phones on the Wi-Fi as players,
+    /// joining from the game's Phone/ page), and `Lamp.wish`, the TV app's block for the wish's other apps and its own
+    /// other copies, for a game that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.carriesWish(project) ? DeviceSupport.webJS + wishJS : DeviceSupport.webJS
+        DeviceSupport.webJS + controllersJS + (Template.carriesWish(project) ? TVTemplate.wishJS : "")
     }
 
-    /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the block makes one to hang from.
-    static let wishJS = "\nwindow.Lamp = window.Lamp || {};\n" + TVTemplate.wishJS
+    /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the blocks make one to hang from.
+    static let controllersJS = "\nwindow.Lamp = window.Lamp || {};\n" + TVTemplate.controllersJS
 
     /// The page's bridge as an app is given it: with the page's way to `LampWish` for an app that carries it
     /// (`Template.carriesWish`), since only such an app's LampSupport.swift has `LampWish`.
@@ -472,19 +473,13 @@ enum GameKit {
             } else {
                 AppFolder.remove(project.dir.appendingPathComponent(phaserFolder), in: project.dir)
             }
-            // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host); elsewhere
-            // the page loads nothing from it.
-            // Elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page.
-            if project.integration == nil {
-                try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
-            } else {
-                try DeviceSupport.writeDeclared(for: project)
-                // The game's code is the same everywhere, so it finds `Lamp.wish` on the Xbox too, where the page is the
-                // wish's peer itself and the host opens its links.
-                if Template.carriesWish(project) {
-                    try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
-                }
-            }
+            // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host);
+            // elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page. Either way
+            // lamp.js is the game's own on top: the game's code is the same everywhere, so it finds `Lamp.controllers`
+            // (which says it can't start where phones aren't hosted) and `Lamp.wish` on the Xbox too, where the page is
+            // the wish's peer itself and the host opens its links.
+            if project.integration != nil { try DeviceSupport.writeDeclared(for: project) }
+            try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
             // On Android too: Lamp's Android app around the page.
             if project.hasAndroid { try GameAndroid.write(for: project) }
             let played = playerPlist(game: true, scheme: gameScheme, canvas: nil)
@@ -973,8 +968,9 @@ extension Agent.Rules {
     - The game reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
     messages, shared values and files, so another app of the wish can send it moves or things to play with, or show \
     its score. That works wherever it's played: the Mac, an iPhone or an iPad, Android and the Xbox. In Lamp's preview \
-    of it `Lamp.wish` is 'away' with a reason saying it can't reach them there, so the game stays whole without them. Its players still play with a controller, the keyboard or the touch controls Lamp draws: it \
-    has no `Lamp.controllers`, so the wish's other apps send it messages rather than joining as players.
+    of it `Lamp.wish` is 'away' with a reason saying it can't reach them there, so the game stays whole without them. Its players play with a controller, the keyboard or the touch controls Lamp draws, and \
+    phones join as players from its Phone/ page (`Lamp.controllers`); the wish's other apps send it messages rather than \
+    joining as players.
     """
 
     /// For a wish with a screen beside other apps: how its places are given, and how it reaches the others.

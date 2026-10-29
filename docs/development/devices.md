@@ -472,6 +472,18 @@ runtime keeps the latest snapshot every five seconds and as the page hides; a ne
 hour restores it once. That's how a change reaches the game on a phone, Android, a TV and the Xbox: when Lamp installs it
 there and opens it, the player is back where they were.
 
+**Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
+has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,
+shared with the game (`GameFiles`) and copied with a starter. Lamp serves it while the game is open on this Mac (the
+copy asks `/app/controller` through `LampPageGateway`, whose page Lamp's relay lets in by its `lamp-game://app`
+origin; `Store.servesPhonePage` goes by `openOnMac`, and the phone page is staged at each build, `TVs.stagePhone`), in
+the TV preview and on a Samsung or LG TV (staged with the rest, `TVs.stage`), and ends the session as the game closes.
+On the Xbox, an iPhone or iPad and Android the game has no host's side of phones yet: its lamp.js still has
+`Lamp.controllers` (on the Xbox written over the integration's declared one), Lamp turns down `/app/controller` from
+anywhere on the network but a TV the game is set to open on, and so `Lamp.controllers` reports an error and the game
+plays with controllers and touch. A game's second screen is a phone joined from `onLink`'s address: `Lamp.phonePage`
+is a TV app's page's only.
+
 ### Lamp's player
 
 Every game and screen on the Mac is its own Mac app (its own name, bundle id, icon, Dock and ⌘-Tab entry, opening

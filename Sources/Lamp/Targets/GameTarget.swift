@@ -31,8 +31,9 @@ extension Target {
                            elsewhere: { _ in nil }),
         recipe: Recipe(language: .game, fill: GameKit.fill, ownedFiles: GameKit.write(for:), support: GameKit.write(for:),
                        isMade: GameKit.isMade, scaffolded: { dir, _ in GameKit.isMade(dir) },
-                       // Sources/ too: the Swift that answers the page's calls of the device is the agent's (Native.swift).
-                       sources: { _ in ["Game", "Assets", GameKit.webFolder, "Sources", "icon.json", "capabilities.json"] },
+                       // Sources/ too: the Swift that answers the page's calls of the device is the agent's (Native.swift); and
+                       // Phone/, the page phones join the game from.
+                       sources: { _ in ["Game", "Assets", GameKit.webFolder, TVTemplate.phoneFolder, "Sources", "icon.json", "capabilities.json"] },
                        // The kit is part of what's built: a new Lamp with a new kit builds the game again. So is what the
                        // page is told of the device it's built for: a change to that row builds it again too.
                        inputs: { GameKit.stamp + GameAndroid.stamp + GamePage.buildInput(for: $0) + GameKit.playerInput(for: $0) },
@@ -54,7 +55,7 @@ extension Target {
         // Nothing up front: the Mac builds it with Xcode's tools and one small download, fetched as it's first built;
         // what each further place needs is asked for when it's given (`GameKit.notReady`).
         setup: .none,
-        startsAt: [.mac], hostedByLamp: true, showsPage: { GameKit.engine($0) == .web }, installFolder: "Games")
+        startsAt: [.mac], hostedByLamp: true, showsPage: { GameKit.engine($0) == .web }, installFolder: "Games", takesPhones: true)
 }
 
 extension Language {
