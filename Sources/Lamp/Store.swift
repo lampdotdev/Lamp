@@ -1883,9 +1883,10 @@ final class Store: ObservableObject {
 
     /// A wish's chat in Lamp's panel, in front, asked by the chat beside its Mac app when it couldn't come up there.
     /// Not `showChat`, which hands the chat back to the app while its sidebar is connected: a sidebar that's
-    /// connected but can't show the chat is the one asking.
+    /// connected but can't show the chat is the one asking. Any web page can open the link, so it only finds a wish
+    /// already listed and does nothing for any other id: no read of the apps folder, which moves installed copies and
+    /// refreshes what listens on the network. An app with a chat beside it is listed already.
     func showChatInLamp(_ id: String) {
-        reload()
         guard let project = projects.first(where: { $0.id == id }) else { return }
         let wish = wish(of: project)
         selection = wish.id
