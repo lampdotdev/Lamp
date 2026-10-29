@@ -8565,6 +8565,16 @@ final class Store: ObservableObject {
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
     /// `early` returns as soon as the app has shown itself rather than once its first seconds have passed: for a look,
     /// which tells of a death after that with its next answer (`lateCrash`).
+    /// What the chat says once an app opens in front. One that lives in the menu bar says so: its panel drops down
+    /// as it opens (`LampMenuBar`), but closes at the first click elsewhere, and nothing else on screen says where
+    /// the app went.
+    private func readyWords(_ project: LampProject) async -> String {
+        guard project.platform == .mac, await Task.detached(operation: { WishPlace.of(project) }).value == .menuBar else {
+            return "\(project.name) is ready"
+        }
+        return "\(project.name) is ready, in your menu bar at the top right of the screen"
+    }
+
     /// `saysReady` false keeps "… is ready" out of the chat, for a reopen in the middle of a request (`reloadInTurn`),
     /// whose end says what the request came to.
     /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
@@ -8765,7 +8775,7 @@ final class Store: ObservableObject {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
                 owner?.shown.append(Date())
-                if inFront, saysReady { log(project, .status, "\(project.name) is ready") }
+                if inFront, saysReady { log(project, .status, await readyWords(project)) }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
