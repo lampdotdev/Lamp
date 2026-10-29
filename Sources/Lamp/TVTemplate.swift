@@ -1355,7 +1355,12 @@ extension TVTemplate {
               var names = ['src', 'href', 'poster'];
               for (var j = 0; j < names.length && el.getAttribute; j++) {
                 var v = el.getAttribute(names[j]);
-                if (v && !/^(#|data:|blob:|javascript:|mailto:)/.test(v)) el.setAttribute(names[j], addressFor(change, v));
+                if (!v || /^(#|data:|blob:|javascript:|mailto:)/.test(v)) continue;
+                var to = addressFor(change, v);
+                if (to === v) continue;
+                el.setAttribute(names[j], to);
+                // What it was, so a later change of the same file finds it (`swapStyles`).
+                el.setAttribute('data-lamp-path', pathOf(v));
               }
             }
           }

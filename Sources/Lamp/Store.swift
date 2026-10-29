@@ -7430,9 +7430,10 @@ final class Store: ObservableObject {
         if !retrying { placesRetries[wish.id] = nil }
         // Each change waits out the one before: only the last of a run of requests builds every place.
         placesDelay[wish.id]?.cancel()
-        // A page's change is new web files, which each open copy takes as it is (`PageCopies`, `PageLive`): there's no
-        // build of its own to put off.
-        let settle = apps(of: wish).contains { $0.platform.target.changesAreWeb($0) } ? Self.pageSettle : Self.placesSettle
+        // A change of pages alone is new web files, which each open copy takes as it is (`PageCopies`, `PageLive`): there's
+        // no build of the app around them to put off.
+        let settle = apps(of: wish).allSatisfy { app in placesToUpdate(of: app).allSatisfy { PageCopies.pageOnly(app, at: $0) } }
+            ? Self.pageSettle : Self.placesSettle
         placesDelay[wish.id] = Task {
             try? await Task.sleep(for: settle)
             guard !Task.isCancelled else { return }
@@ -7441,6 +7442,10 @@ final class Store: ObservableObject {
             // The copies open on the person's other devices (a TV, the Xbox, an iPad, an Android frame) are given a page's
             // change through the wish's room, at once; the rest are built below.
             let live = await pageToCopies(wish)
+            // Where each page's change went, said in one line once it's everywhere it could go.
+            var put: [String: [String]] = live.mapValues { places in
+                places.sorted { $0.rawValue < $1.rawValue }.map { GameKit.spoken([$0]) }
+            }
             var unreached: [String: Set<Destination>] = [:]
             var stopped = false
             for app in apps(of: wish) {
@@ -7448,7 +7453,10 @@ final class Store: ObservableObject {
                     if live[app.id]?.contains(place) == true { continue }
                     guard placesIdle(wish), let now = current(app) else { stopped = true; break }
                     // An install that didn't get there (the simulator shut down meanwhile, adb refused it) counts as out of reach.
-                    if await reaches(now, place), await update(now, at: place) { continue }
+                    if await reaches(now, place), await update(now, at: place) {
+                        if now.platform.target.changesAreWeb(now) { put[app.id, default: []].append(place == .mac ? "this Mac" : place == .ios ? "the simulator" : "the Android emulator") }
+                        continue
+                    }
                     unreached[app.id, default: []].insert(place)
                 }
                 if stopped { break }
@@ -7456,7 +7464,10 @@ final class Store: ObservableObject {
             updatingPlaces.remove(wish.id)
             refreshPlacesBehind(wish)
             guard !stopped else { return }
-            for app in apps(of: wish) { tellUnreached(app, unreached[app.id] ?? []) }
+            for app in apps(of: wish) {
+                if let places = put[app.id], !places.isEmpty { log(app, .status, "Put the change on \(Self.listed(places))") }
+                tellUnreached(app, unreached[app.id] ?? [])
+            }
             // A TV or an Xbox gets it when Play puts the app there: putting it there now would take its screen over.
             if unreached.values.contains(where: { $0.contains { $0 != .tv && $0 != .device } }), placesRetries[wish.id, default: 0] < 5 {
                 placesWaiting.insert(wish.id); retryPlaces()
@@ -7580,7 +7591,6 @@ final class Store: ObservableObject {
         for app in apps(of: wish) where app.platform.target.changesAreWeb(app) {
             let (went, waiting) = await PageCopies.put(app, wish: wish)
             reached[app.id] = went
-            if !went.isEmpty { log(app, .status, "Put the change on \(GameKit.spoken(app.openPlaces.filter(went.contains)))") }
             let before = placesAwaitReload[app.id] ?? [:]
             var now = before
             for place in went { now[place] = nil }
@@ -7645,10 +7655,12 @@ final class Store: ObservableObject {
                     problem = nil
                 }
                 // Lamp's own places (this Mac, the simulator, the emulator) are given it without opening a copy that isn't
-                // open; a device of the person's has the app put on it, opening there, as Play does.
+                // open, and a copy open there opens again with it; a device of the person's has the app put on it, opening
+                // there, as Play does.
                 let mine = there.device == nil
+                let open = mine ? await isOpen(there, at: there.destination) : true
                 let installed = problem == nil
-                    ? await install(there, inFront: !mine, fresh: true, reload: true, saysReady: false, quiet: mine) : problem
+                    ? await install(there, inFront: !mine, fresh: true, reload: true, saysReady: false, quiet: mine && !open) : problem
                 if installed == nil {
                     reached.append(name)
                     placesAwaitReload[app.id]?[there.destination] = nil
@@ -7660,13 +7672,27 @@ final class Store: ObservableObject {
             if held { finish(app) }
         }
         guard reached.count > 1 || !unreached.isEmpty else { return }
-        func list(_ names: [String]) -> String {
-            let names = names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-            return names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
-        }
-        var line = reached.isEmpty ? "" : "Reloaded on \(list(reached))."
-        if !unreached.isEmpty { line += (line.isEmpty ? "" : " ") + "Couldn't reach \(list(unreached))." }
+        var line = reached.isEmpty ? "" : "Reloaded on \(Self.listed(reached))."
+        if !unreached.isEmpty { line += (line.isEmpty ? "" : " ") + "Couldn't reach \(Self.listed(unreached))." }
         log(wish, .status, line)
+    }
+
+    /// Places said in a line, each once: "this Mac, the simulator and Living Room TV".
+    private static func listed(_ names: [String]) -> String {
+        let names = names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        return names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
+
+    /// Whether a copy of the app is open on one of Lamp's own places: this Mac, the simulator, Lamp's emulator.
+    private func isOpen(_ app: LampProject, at place: Destination) async -> Bool {
+        switch place {
+        case .mac: return isRunning(app.at(.mac))
+        case .ios:
+            if let running = simulatorApps[app.id], Simulator.isRunning(pid: running.pid) { return true }
+            return PageLive.shared.isOpen(app, at: .simulator)
+        case .android, .androidTV: return await openAndroidCopy(app, on: place) != nil
+        case .tv, .device: return false
+        }
     }
 
     /// What the person calls one of their devices the app was put on.

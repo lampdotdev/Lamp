@@ -18,6 +18,9 @@ enum PageCopies {
     /// differ from place to place and the page never takes them in place.
     struct Files: Codable, Equatable {
         var files: [String: String]
+        /// Everything else the app is built from (`native`): a change of it is a new app around the page, put there by
+        /// Reload or Play.
+        var native: String?
     }
 
     /// The most bytes of files one change carries: what's left the page to keep it with (sessionStorage) as it opens again.
@@ -30,7 +33,7 @@ enum PageCopies {
     /// A build of the page for a place, made from these sources: what that place has once it's installed there.
     static func record(_ project: LampProject, as fingerprint: String) {
         guard project.platform.target.changesAreWeb(project), fingerprint.allSatisfy({ $0.isHexDigit }),
-              let data = try? JSONEncoder().encode(Files(files: hashes(of: project))) else { return }
+              let data = try? JSONEncoder().encode(Files(files: hashes(of: project), native: native(of: project))) else { return }
         let dir = folder(project)
         try? AppFolder.write(data, to: dir.appendingPathComponent(fingerprint + ".json"), in: project.dir)
         // A few builds are kept: a place's record may be one a later build replaced and an install that didn't reach it
@@ -66,6 +69,30 @@ enum PageCopies {
         return found
     }
 
+    /// Everything the app is built from but its page: its Swift, its package, what it declares, its Android app.
+    static func native(of project: LampProject) -> String {
+        var hasher = SHA256()
+        for folder in ["Sources", GameAndroid.folder] {
+            let dir = project.dir.appendingPathComponent(folder)
+            for name in ((try? FileManager.default.subpathsOfDirectory(atPath: dir.path)) ?? []).sorted() {
+                guard let data = AppFile.read(dir.appendingPathComponent(name), in: project) else { continue }
+                hasher.update(data: Data((folder + "/" + name).utf8))
+                hasher.update(data: data)
+            }
+        }
+        for name in ["Package.swift", Template.Capabilities.file] {
+            hasher.update(data: Data(name.utf8))
+            hasher.update(data: AppFile.read(project.dir.appendingPathComponent(name), in: project) ?? Data())
+        }
+        return name(of: Data(hasher.finalize()))
+    }
+
+    /// Whether what's changed since the copy at `place` was built is its page alone, which each open copy takes as it is.
+    static func pageOnly(_ project: LampProject, at place: Destination) -> Bool {
+        guard let built = built(project, at: place), let around = built.native else { return false }
+        return around == native(of: project)
+    }
+
     static func name(of data: Data) -> String { SHA256.hash(data: data).prefix(16).map { String(format: "%02x", $0) }.joined() }
 
     /// A change for one place: what differs from its build, as the page takes it.
@@ -96,7 +123,7 @@ enum PageCopies {
         }
         let gone = built.files.keys.filter { now[$0] == nil }.sorted()
         var change = Change(files: files, gone: gone, changed: changed)
-        change.cannot = cannot(project, change)
+        change.cannot = built.native.map { $0 != native(of: project) } ?? true ? "the app around the page changed" : cannot(project, change)
         return change
     }
 
