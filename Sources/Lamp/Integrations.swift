@@ -588,12 +588,14 @@ struct IntegrationRunner {
                         changed.restores.append(Restore(request: request, was: was, values: values))
                     }
                 }
+                var asked = Date()
                 var answer = try await transfer(request, values: values, files: files)
                 // A device still working on what it was sent says so with 204 until it's done.
                 if let poll = request.poll {
                     let until = Date().addingTimeInterval(TimeInterval(min(max(poll, 2), 600)))
                     while answer.status == 204, Date() < until {
                         try await Task.sleep(for: .seconds(2))
+                        asked = Date()
                         answer = try await transfer(request, values: values, files: files)
                     }
                     // Still working when the time is up is no answer: the step didn't finish.
@@ -607,11 +609,11 @@ struct IntegrationRunner {
                     throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path)" + (said.isEmpty ? "." : ": " + said))
                 }
                 if let expect = request.expect {
-                    // Asked again while the answer doesn't say it yet, for up to `until` seconds.
-                    var tries = max(1, (request.until ?? 0) / 2)
+                    // Asked again while the answer doesn't say it yet, for up to `until` seconds, counting the time each
+                    // request took as well as each pause.
+                    var spent = Date().timeIntervalSince(asked)
                     while try !Self.meets(expect, answer, values) {
-                        tries -= 1
-                        guard tries > 0 else {
+                        guard let until = request.until, spent < Double(until) else {
                             if request.until != nil {
                                 throw Failure(message: "\(device.name) still wasn't ready at \(request.path) after \(request.until ?? 0) seconds.", stillWorking: true)
                             }
@@ -619,7 +621,11 @@ struct IntegrationRunner {
                         }
                         onWaiting?()
                         try await pause(2)
+                        asked = Date()
                         answer = try await transfer(request, values: values, files: files)
+                        spent += 2 + Date().timeIntervalSince(asked)
+                        // The answer that says it may set or change a cookie the next request sends back.
+                        cookies.merge(answer.cookies) { $1 }
                         guard answer.ok else { throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path).") }
                     }
                 }

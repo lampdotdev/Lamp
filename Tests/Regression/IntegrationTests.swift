@@ -322,7 +322,7 @@ final class IntegrationTests: XCTestCase {
 
         // Taken, but not running through the whole check, so launched again; then running.
         let notReady = Console()
-        notReady.script["/api/resourcemanager/processes"] = Array(repeating: listing("Processes", has: false), count: 4) + [listing("Processes", has: true)]
+        notReady.script["/api/resourcemanager/processes"] = Array(repeating: listing("Processes", has: false), count: 5) + [listing("Processes", has: true)]
         try await runner(notReady).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra)
         XCTAssertEqual(notReady.asked["/api/taskmanager/app"], 2)
 
