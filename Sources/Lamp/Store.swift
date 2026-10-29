@@ -8565,6 +8565,20 @@ final class Store: ObservableObject {
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
     /// `early` returns as soon as the app has shown itself rather than once its first seconds have passed: for a look,
     /// which tells of a death after that with its next answer (`lateCrash`).
+    /// "… is ready" in the chat, in place of those before it when nothing has been said since: opened again and
+    /// again from the desk, an app would otherwise stack a line for each time. Lines in passing ("Building…") and
+    /// details don't count as something said.
+    private func sayReady(_ project: LampProject, _ words: String) {
+        let ready = "\(project.name) is ready"
+        var lines = logs[project.id] ?? []
+        while let last = lines.lastIndex(where: { !($0.kind == .detail || $0.kind == .status && $0.text.hasSuffix("…")) }),
+              lines[last].kind == .status, lines[last].text.hasPrefix(ready) {
+            lines.remove(at: last)
+        }
+        if lines.count != logs[project.id]?.count { logs[project.id] = lines }
+        log(project, .status, words)
+    }
+
     /// What the chat says once an app opens in front. One that lives in the menu bar says so: its panel drops down
     /// as it opens (`LampMenuBar`), but closes at the first click elsewhere, and nothing else on screen says where
     /// the app went.
@@ -8748,7 +8762,7 @@ final class Store: ObservableObject {
             await watchWidget(of: project)
             // In place is all there is to it: a card that said it didn't get there says so no longer.
             noteOpened(true, for: project)
-            if inFront { log(project, .status, "\(project.name) is ready") }
+            if inFront { sayReady(project, "\(project.name) is ready") }
             upgradeIconArt(project)
             refreshOpenApps()
             stamps[project.id] = BuildStamp.read(project.installedURL)
@@ -8775,7 +8789,7 @@ final class Store: ObservableObject {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
                 owner?.shown.append(Date())
-                if inFront, saysReady { log(project, .status, await readyWords(project)) }
+                if inFront, saysReady { sayReady(project, await readyWords(project)) }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
