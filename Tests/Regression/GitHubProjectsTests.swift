@@ -159,6 +159,27 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertNil(Credits.read(wish.dir.appendingPathComponent(Credits.file)))
     }
 
+    /// A wish given its app with make_app_for keeps it in a folder of its own, its about.json there: the manifest and the
+    /// README of a Lampified repository carry that app's line.
+    func testTheRepositoryIsDescribedByTheAppInItsFolder() async throws {
+        let (store, draft) = try makeWish()
+        let body = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": ["name": "make_app_for", "arguments": ["kind": "app", "made": "native", "devices": ["mac"]]]])
+        _ = await store.mcp(body, for: draft, fileTools: false)
+        let wish = try XCTUnwrap(store.projects.first { $0.id == draft.id })
+        let app = try XCTUnwrap(store.parts(of: wish).first)
+        XCTAssertNotEqual(app.dir, wish.dir, "the app is in a folder of its own")
+        XCTAssertNil(AppDescription.description(of: wish))
+        try #"{"description": "The classic 2048 sliding-tile puzzle."}"#.write(to: app.dir.appendingPathComponent(AppDescription.file), atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(Sharing.description(of: wish), "The classic 2048 sliding-tile puzzle.")
+        let staged = try GitHubRepo.stage(wish, repo: nil, link: nil)
+        defer { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: staged.folder.appendingPathComponent("lamp-app.json"))) as? [String: Any])
+        XCTAssertEqual(manifest["description"] as? String, "The classic 2048 sliding-tile puzzle.")
+        XCTAssertTrue(try String(contentsOf: staged.folder.appendingPathComponent("README.md"), encoding: .utf8).contains("The classic 2048 sliding-tile puzzle."))
+    }
+
     func testARequestNamingAProjectIsPointedAtTheSkillWhateverItAsks() {
         for request in ["make this into a game https://github.com/gabrielecirulli/2048",
                         "explain this repo https://github.com/ofrohn/d3-celestial",

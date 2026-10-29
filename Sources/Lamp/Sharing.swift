@@ -173,6 +173,15 @@ enum Sharing {
     /// the app at its root as any app does, and each other app in its folder (`Parts`), as an app of its kind.
     /// How a wish's apps go in a shared file: one at the root and the others in their folders (see `export`, which
     /// says why it's the one it is). What Put on GitHub lays its repository out by too, so the two never differ.
+    /// What the wish says it is: its own line, else the line of the app it travels with at its root, else any of its
+    /// apps'. A wish whose apps are all in folders of their own keeps the line in that app's folder, where the agent
+    /// writes it, and a manifest or README without it would leave the wish undescribed wherever it goes.
+    static func description(of project: LampProject) -> String? {
+        if let own = AppDescription.description(of: project) { return own }
+        let (root, parts) = layout(of: project)
+        return ([root] + parts).lazy.compactMap { AppDescription.description(of: $0) }.first
+    }
+
     static func layout(of project: LampProject) -> (root: LampProject, parts: [LampProject]) {
         var wish = project
         wish.partFolders = Parts.folders(in: project.dir)
@@ -277,7 +286,7 @@ enum Sharing {
                          parts.map { format(withWidget: false, platform: $0.platform) }.max() ?? 0)
         try encoder.encode(Manifest(format: number,
                                     name: project.name, exportedAt: Date(),
-                                    app: identity(of: project), description: AppDescription.description(of: project),
+                                    app: identity(of: project), description: description(of: project),
                                     platform: root.platform, family: root.hasIOS ? root.family : nil,
                                     parts: parts.isEmpty ? nil : parts.map {
                                         Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.hasIOS ? $0.family : nil)

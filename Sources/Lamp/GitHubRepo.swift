@@ -205,7 +205,7 @@ enum GitHubRepo {
         var text = ""
         if let icon = showcase.icon { text += "<p align=\"center\"><img src=\"\(icon)\" width=\"128\" height=\"128\" alt=\"\"></p>\n\n" }
         text += "<h1 align=\"center\">\(name)</h1>\n\n"
-        if let line = AppDescription.description(of: project) { text += "<p align=\"center\">\(Publish.escaped(line))</p>\n\n" }
+        if let line = Sharing.description(of: project) { text += "<p align=\"center\">\(Publish.escaped(line))</p>\n\n" }
         var links: [String] = []
         if let play = showcase.play { links.append("<a href=\"\(play)\"><b>Play it in your browser</b></a>") }
         links.append("<a href=\"#remix-it-with-lamp\">Remix it with Lamp</a>")
@@ -315,7 +315,7 @@ enum GitHubRepo {
         if isNew {
             step("Making \(repo)…")
             let made = await Subprocess.run(gh, ["repo", "create", repo, isPrivate ? "--private" : "--public",
-                                                 "--description", AppDescription.description(of: project) ?? "\(project.name), made with Lamp"],
+                                                 "--description", Sharing.description(of: project) ?? "\(project.name), made with Lamp"],
                                             timeout: 60)
             guard made.ok else { throw Failure(message: "GitHub didn't make \(repo): \(made.output.trimmed.suffix(200))") }
             // Kept as soon as it's made, so a try that fails after this goes on with the same repository rather than
