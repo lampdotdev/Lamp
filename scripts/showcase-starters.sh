@@ -72,7 +72,8 @@ for folder in "${folders[@]}"; do
   if ! await_event "$take/events.tsv" ready 60; then
     echo "$folder: its window never came up" >&2; kill "$pid" 2>/dev/null; failed=1; continue
   fi
-  "$RECORD" "$pid" "$take/raw.mp4" "$take/stop" > "$take/record.log" 2>&1 &
+  # The app begins its steps once the recorder has its first frame and leaves `recording`.
+  "$RECORD" "$pid" "$take/raw.mp4" "$take/stop" "$take/recording" > "$take/record.log" 2>&1 &
   recorder=$!
   await_event "$take/events.tsv" end 600 || echo "$folder: the script didn't reach its end" >&2
   sleep 0.5

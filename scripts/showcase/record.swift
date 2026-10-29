@@ -1,7 +1,8 @@
 // Records one app's largest window to an mp4, covered or not, until a stop file appears. Prints the window's frame
 // ("window x y width height scale", in points) and the wall-clock time of the first frame ("start <seconds>"), which
-// the edit lines the app's events.tsv up against. Needs Screen & System Audio Recording for whatever runs it.
-//   record <pid> <out.mp4> <stop file>
+// the edit lines the app's events.tsv up against, and creates the started file then, which tells the app in showcase
+// mode to begin its steps. Needs Screen & System Audio Recording for whatever runs it.
+//   record <pid> <out.mp4> <stop file> [<started file>]
 import AppKit
 import AVFoundation
 import CoreMedia
@@ -12,11 +13,12 @@ import ScreenCaptureKit
 _ = NSApplication.shared
 
 let arguments = CommandLine.arguments
-guard arguments.count == 4, let pid = pid_t(arguments[1]) else {
-    print("record <pid> <out.mp4> <stop file>"); exit(2)
+guard arguments.count >= 4, let pid = pid_t(arguments[1]) else {
+    print("record <pid> <out.mp4> <stop file> [<started file>]"); exit(2)
 }
 let out = URL(fileURLWithPath: arguments[2])
 let stop = arguments[3]
+let startedFile = arguments.count > 4 ? arguments[4] : nil
 
 final class Recorder: NSObject, SCStreamOutput, @unchecked Sendable {
     let writer: AVAssetWriter
@@ -47,6 +49,7 @@ final class Recorder: NSObject, SCStreamOutput, @unchecked Sendable {
             // A frame's time is the host clock's; the app logs the wall clock's.
             let now = CMClockGetTime(CMClockGetHostTimeClock())
             print(String(format: "start %.3f", Date().timeIntervalSince1970 - (now - time).seconds)); fflush(stdout)
+            if let startedFile { FileManager.default.createFile(atPath: startedFile, contents: nil) }
         }
         if input.isReadyForMoreMediaData { input.append(buffer) }
     }

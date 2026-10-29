@@ -8585,8 +8585,13 @@ enum Template {
             }
             try? await Task.sleep(for: .seconds(1))
             LampShowcase.note("ready", "\(Int(window.frame.width))x\(Int(window.frame.height))")
-            // The recording starts on "ready", a moment before the first step.
-            try? await Task.sleep(for: .seconds(LampShowcase.script["lead"] as? Double ?? 1.5))
+            // The steps start once the recording has its first frame (the recorder leaves a `recording` file then),
+            // so nothing happens before the reel can see it; with no recorder, after a minute.
+            let recording = LampShowcase.folder?.appendingPathComponent("recording").path ?? ""
+            for _ in 0..<600 where !FileManager.default.fileExists(atPath: recording) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            try? await Task.sleep(for: .seconds(LampShowcase.script["lead"] as? Double ?? 0.8))
             for step in LampShowcase.script["steps"] as? [[String: Any]] ?? [] { await playShowcase(step) }
             LampShowcase.note("end")
         }
@@ -8620,7 +8625,11 @@ enum Template {
                 // The reel's cursor gets there before anything happens.
                 try? await Task.sleep(for: .seconds(0.3))
             }
-            LampShowcase.note("did", run(action))
+            // Taken on the main queue, as `perform` takes a step after scheduling the next: an action that opens a
+            // dialog doesn't return until it closes, and the steps after it are how it gets answered. The main queue
+            // still runs while one is open, so they do.
+            DispatchQueue.main.async { MainActor.assumeIsolated { LampShowcase.note("did", run(action)) } }
+            try? await Task.sleep(for: .milliseconds(150))
         }
 
         /// Where `target` is in the front window, as fractions of it, once it's there (and not dimmed, unless that
@@ -10611,7 +10620,8 @@ enum Template {
         /// Asks once (while in use, or always for watching in the background); true when allowed. A question
         /// the system won't ask again (refused, restricted, Always asked before) answers straight away.
         static func authorize(always: Bool = false) async -> Bool {
-            if LampShowcase.isOn { return true }
+            // A reel's take is where its script says, or nowhere; the Mac's own location is never asked for.
+            if LampShowcase.isOn { return LampShowcase.place != nil }
             let me = shared
             let status = me.manager.authorizationStatus
             if status == .denied || status == .restricted { return false }
@@ -10664,7 +10674,11 @@ enum Template {
 
         /// Where the person is now, named when the map knows the place.
         static func current() async throws -> Place {
-            if let place = LampShowcase.place { shared.current = place; return place }
+            if LampShowcase.isOn {
+                guard let place = LampShowcase.place else { throw Failure(message: "The showcase script names no location.") }
+                shared.current = place
+                return place
+            }
             guard await authorize() else { throw Failure(message: "The app isn't allowed to know where the person is. They can allow it in Settings.") }
             let location: CLLocation = try await withCheckedThrowingContinuation { continuation in
                 shared.once.append(continuation)
@@ -10699,6 +10713,8 @@ enum Template {
 
         /// Keeps `current` up as the person moves a few hundred meters or more, sparing the battery.
         func watch() {
+            // A reel's take stays where its script put it: nothing live may move it.
+            if LampShowcase.isOn { current = LampShowcase.place ?? current; return }
             wantsMoves = true
             Task {
                 guard await Self.authorize(), wantsMoves else { return }
@@ -10713,6 +10729,7 @@ enum Template {
         /// Keeps `visits`: where the person stops and for how long, even with the app closed. iPhone only;
         /// needs `always` and the location background mode.
         func watchVisits() {
+            if LampShowcase.isOn { return }
             #if os(iOS)
             wantsVisits = true
             Task {

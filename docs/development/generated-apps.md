@@ -52,7 +52,8 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 a reel (`LampShowcase`; "A starter's reel" in the desk guide): it keeps its data in that folder, starting empty
 (LampStore imports any `data/<name>.json` there), LampAI's calls are answered from the script (every route, through
 `LampAI.post`), LampLocation is where the script says, notifications are logged and not sent, and no `LampSchedule`
-runs. Once its window is up it plays the script's steps on it with `LampDriver`'s own actions
+runs. Once its window is up, and the recorder has its first frame (it leaves a `recording` file in the folder), it
+plays the script's steps on it with `LampDriver`'s own actions
 (`LampDriver.playShowcase`), so it needs no Accessibility permission, and logs everything to events.tsv with the
 time and the frame of what it acted on, which the reel's edit lines up with the recording. The app's own code for its
 microphone, camera or speech asks the script while it's on (`LampShowcase.hear`, `speak`, `file`, `line`); nothing of
