@@ -126,7 +126,7 @@ if [ "$FLAVOR" = release ]; then
   UPDATE_KEYS="<key>SUFeedURL</key><string>https://updates.lamp.dev/appcast.xml</string>
   $SPARKLE_KEYS"
 else
-  # The same icon with a band across it (orange DEV, or a dark NIGHTLY), so the Lamps tell apart in the Dock. Made
+  # The same icon with DEV (or NIGHTLY) written on its paper, so the Lamps tell apart in the Dock. Made
   # once per change of the source icon (no Liquid Glass variant: the classic icon is enough to tell them apart).
   BAND=DEV; [ "$FLAVOR" = nightly ] && BAND=NIGHTLY
   DEV_ICON="${BUILD_DIR:-build}/AppIcon-$BAND.icns"
