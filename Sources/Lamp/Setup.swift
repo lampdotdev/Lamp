@@ -1722,7 +1722,8 @@ struct ProviderLogo: View {
         ZStack {
             shape.fill(.white)
             if id == "lamp" {
-                ChatLook.LampFlame().fill(.black).padding(size * 0.2)
+                Image(systemName: "shuffle")
+                    .font(.system(size: size * 0.45, weight: .semibold)).foregroundStyle(.black)
             } else if id == Builder.localProvider {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: size * 0.5)).foregroundStyle(.black.opacity(0.75))
