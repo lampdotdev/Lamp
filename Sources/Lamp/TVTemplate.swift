@@ -198,7 +198,7 @@ enum TVTemplate {
          * Lamp.platform   "tizen", "webos" or "browser" (the preview on the Mac)
          * Lamp.phonePage(hash)   the address of the app's Phone/ page for a phone on the Mac's Wi-Fi (for a QR code),
          *   with "#" + hash after it when given; null when the app has no Phone/index.html
-         * Lamp.onPhonePage(fn)   fn() now when there is an address, and again whenever it changes: draw the QR code there
+         * Lamp.onPhonePage(fn)   fn() now when there is an address, and again whenever it changes: draw the QR code there (LampQR)
          * Lamp.controllers   phones on the same Wi-Fi as controllers: see its comment below
          * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below
          *
@@ -600,8 +600,8 @@ extension TVTemplate {
          * Lamp.controllers.start()                    opens a game for phones on this Wi-Fi; Promise. The phones' page is
          *                                              Phone/index.html, loading lamp-controller.js (its own comment says how);
          *                                              the wish's iPhone or Mac app joins with LampController.
-         * Lamp.controllers.onLink(fn(url))             the address phones open (show it as a QR code); it changes every
-         *                                              few minutes, and fn is called each time
+         * Lamp.controllers.onLink(fn(url))             the address phones open: draw it with LampQR.draw (its comment
+         *                                              says how); it changes every few minutes, and fn is called each time
          * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
          * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go
          * Lamp.controllers.onAxis(fn(player, name, x, y))               a stick, or the phone's tilt ('tilt'), -1 to 1
