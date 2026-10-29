@@ -1365,6 +1365,41 @@ extension TVTemplate {
               }
             }
           }
+          // What the page asks for as it runs (fetch, XMLHttpRequest, a src or href a script sets) is a file of the change
+          // where the change has one, so a level's JSON or a picture loaded by code is the new one too.
+          function overlay(change) {
+            var to = function (address) {
+              if (typeof address !== 'string' || /^(data:|blob:)/.test(address)) return address;
+              var p = pathOf(address);
+              return p !== null && change.files[p] ? urlOf(change, p) : address;
+            };
+            if (window.fetch) {
+              var fetch0 = window.fetch;
+              window.fetch = function (input, init) {
+                if (typeof input === 'string') input = to(input);
+                else if (input && typeof input.url === 'string' && to(input.url) !== input.url) input = to(input.url);
+                return fetch0.call(window, input, init);
+              };
+            }
+            if (window.XMLHttpRequest) {
+              var open0 = XMLHttpRequest.prototype.open;
+              XMLHttpRequest.prototype.open = function (method, url) {
+                var args = Array.prototype.slice.call(arguments);
+                args[1] = to(url);
+                return open0.apply(this, args);
+              };
+            }
+            var kinds = [['HTMLImageElement', 'src'], ['HTMLMediaElement', 'src'], ['HTMLSourceElement', 'src'], ['HTMLLinkElement', 'href']];
+            for (var k = 0; k < kinds.length; k++) {
+              var proto = window[kinds[k][0]] && window[kinds[k][0]].prototype;
+              var d = proto && Object.getOwnPropertyDescriptor(proto, kinds[k][1]);
+              if (!d || !d.set) continue;
+              (function (d, name, proto) {
+                Object.defineProperty(proto, name, { configurable: true, enumerable: d.enumerable, get: d.get,
+                                                     set: function (v) { d.set.call(this, to(v)); } });
+              })(d, kinds[k][1], proto);
+            }
+          }
           function sync(url) {
             try { var r = new XMLHttpRequest(); r.open('GET', url, false); r.send(); return r.status === 0 || r.status === 200 ? r.responseText : null; } catch (e) { return null; }
           }
@@ -1410,9 +1445,16 @@ extension TVTemplate {
             window.addEventListener('DOMContentLoaded', quiet, true);
             window.addEventListener('load', quiet, true);
             ours = true;
+            overlay(change);
             for (var s = 0; s < scripts.length; s++) {
               var given = scripts[s], src = given.getAttribute('src');
               if (src && /(^|\/)lamp\.js([?#]|$)/.test(src)) continue;
+              // A script that isn't code (JSON, a template) is data the page reads: kept as it is, where the page finds it.
+              var type = (given.getAttribute('type') || '').toLowerCase();
+              if (!src && type && !/^(text|application)\/(javascript|ecmascript)$|^module$/.test(type)) {
+                body.appendChild(document.importNode(given, true));
+                continue;
+              }
               var el = document.createElement('script');
               for (var t = 0; t < given.attributes.length; t++) if (given.attributes[t].name !== 'src') el.setAttribute(given.attributes[t].name, given.attributes[t].value);
               el.async = false;

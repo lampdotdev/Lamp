@@ -7424,8 +7424,11 @@ final class Store: ObservableObject {
         guard AppUpdates.mayOpen(wish(of: project)) else { return }
         let wish = self.wish(of: project)
         refreshPlacesBehind(wish)
+        // A page's copies open on the person's devices take its change whether or not any of Lamp's own places is behind:
+        // a TV app on its own has no other place at all.
+        let copiesOpen = apps(of: wish).contains { $0.platform.target.changesAreWeb($0) } && !WishRooms.presence(of: wish).isEmpty
         guard setup.hasBuildTools || !needsAppleTools(wish), !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
-              apps(of: wish).contains(where: { !placesToUpdate(of: $0).isEmpty }) else { return }
+              copiesOpen || apps(of: wish).contains(where: { !placesToUpdate(of: $0).isEmpty }) else { return }
         // Started by a change, not a retry: the places out of reach get their tries afresh.
         if !retrying { placesRetries[wish.id] = nil }
         // Each change waits out the one before: only the last of a run of requests builds every place.

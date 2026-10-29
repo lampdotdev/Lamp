@@ -45,16 +45,20 @@ it. Try On says beside a place that's behind that it's updated when opened (`pla
 
 **A page's change in every open copy.** A kind whose change is new web files (`Target.changesAreWeb`: a screen, a web
 app, a web game, a TV app) has each build of its page record its files by hash, and the hash of everything else
-(`PageCopies.record`, from `Runtime.markBuilt`). A copy of it open on another device (an iPad, a TV, the Xbox, an Android
-device) is in the wish's room as it uses the wish, and Lamp sends it every file that differs from its place's build, as
-Lamp's own word through the relay (`Relay.say`, from the relay's name, which no app may take), in pieces under a
-message's size; lamp.js puts them together and takes them in place ("A change while it's open" in lamp.js,
+(`PageCopies.record`, from `Runtime.markBuilt`), and `updatePlaces` runs for it whenever a copy is in the wish's room,
+whether or not any of Lamp's own places is behind (a TV app on its own has no other). A copy of it open on another device (an iPad, a TV, the Xbox, an Android
+device) is in the wish's room as it uses the wish, and Lamp sends it the whole page as it is (so it doesn't matter
+which build that copy has), as Lamp's own word through the relay (`Relay.say`, from the relay's name, which no app may
+take), in pieces under a message's size; lamp.js puts them together and takes them in place ("A change while it's open" in lamp.js,
 `TVTemplate.pageChangeJS`): stylesheets alone are swapped as the page runs; anything else opens the page again from the
 new files, kept for the session, which lamp.js, the page's first script, puts in place of the copy's own before any of
-its scripts run, so what the page saved stays. Where each copy is comes from the device it says (`PageCopies.place`);
-this Mac's and the simulator's copies take changes from Lamp itself (`PageLive`), and the preview is Lamp's own. A copy
-whose place has no record (built by an earlier Lamp), a change of anything but the page, a script before lamp.js, a
-module script or more than 3 MB of files waits for Reload (`PageCopies.cannot`), and the chat shows its Reload line
+its scripts run, so what the page saved stays; what the page then asks for as it runs (`fetch`, XMLHttpRequest, a `src`
+a script sets) is the change's file where it has one, and a script that isn't code (JSON, a template) is kept as data. Where each copy is comes from the device it says (`PageCopies.place`);
+this Mac's and the simulator's copies take changes from Lamp itself (`PageLive`), and the preview is Lamp's own. What changed
+is measured against what the copy was last given, or every build it may have (its place's latest, and each one Lamp put
+on a device of the person's there, `Runtime.placed`). A copy any of whose builds recorded nothing (built by an earlier
+Lamp), a change of anything but the page, a script before lamp.js, a module script or more than 3 MB of page waits for
+Reload (`PageCopies.cannot`), and the chat shows its Reload line
 (`Store.placesAwaitReload`).
 
 **Reload is every place.** Reload, in the app's title bar or the chat's line, puts the change on every place of the wish

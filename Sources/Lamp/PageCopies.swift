@@ -9,10 +9,11 @@ import LampRelayKit
 /// takes them in place, keeping what it saved (lamp.js, "A change while it's open"). The copies on this Mac and in the
 /// simulator take a change from Lamp itself (`PageLive`), so they're left out here, and so is Lamp's own preview.
 ///
-/// What each copy has is what Lamp last built for its place: each build of a page records its files by their hashes
-/// (`record`, from `Runtime.markBuilt`), and a change is every file that differs from that, so a copy that missed one
-/// gets it with the next. A place built before that record has a lamp.js that knows nothing of these words: it gets the
-/// change when Reload or Play puts the app there, as before.
+/// A copy is given the whole page as it is, so it doesn't matter which build it has; what changed (which decides whether
+/// a stylesheet is swapped as the page runs) is measured against what it was last given, or every build it may have:
+/// each build of a page records its files and the rest of the app by their hashes (`record`, from `Runtime.markBuilt`).
+/// A copy whose build recorded nothing has a lamp.js that knows nothing of these words, and one whose app around the
+/// page changed needs it put there again: each waits for Reload, which puts the app on every place.
 enum PageCopies {
     /// The page's files by their path in Web/, each by the hash of its contents: Lamp's own files left out, since they
     /// differ from place to place and the page never takes them in place.
@@ -23,7 +24,7 @@ enum PageCopies {
         var native: String?
     }
 
-    /// The most bytes of files one change carries: what's left the page to keep it with (sessionStorage) as it opens again.
+    /// The most bytes of page one change carries: what the page can keep (sessionStorage) as it opens again.
     static let most = 3_000_000
     /// The text of one piece, well under the room's 16 KB for a message with its envelope.
     static let piece = 9_000
@@ -49,9 +50,21 @@ enum PageCopies {
 
     /// What the copy at `place` was built with, when that build recorded it.
     static func built(_ project: LampProject, at place: Destination) -> Files? {
-        guard let fingerprint = Runtime.builtFingerprint(project.at(place)),
-              let data = AppFile.read(folder(project).appendingPathComponent(fingerprint + ".json"), in: project) else { return nil }
-        return try? JSONDecoder().decode(Files.self, from: data)
+        Runtime.builtFingerprint(project.at(place)).flatMap { record(project, $0) }
+    }
+
+    private static func record(_ project: LampProject, _ fingerprint: String) -> Files? {
+        AppFile.read(folder(project).appendingPathComponent(fingerprint + ".json"), in: project)
+            .flatMap { try? JSONDecoder().decode(Files.self, from: $0) }
+    }
+
+    /// Every build a copy at `place` may have: the place's latest, and each one Lamp put on a device of the person's there
+    /// (`Runtime.placed`), since a copy on one TV or iPad can be older than the place's last build. Nil for a build that
+    /// recorded nothing (an earlier Lamp's).
+    static func builds(_ project: LampProject, at place: Destination) -> [Files?] {
+        let fingerprints = [Runtime.builtFingerprint(project.at(place))].compactMap { $0 }
+            + Runtime.placed(project).filter { $0.place == place }.map(\.fingerprint)
+        return Array(Set(fingerprints)).sorted().map { record(project, $0) }
     }
 
     /// The page's files as they are in the app's folder.
@@ -87,43 +100,53 @@ enum PageCopies {
         return name(of: Data(hasher.finalize()))
     }
 
-    /// Whether what's changed since the copy at `place` was built is its page alone, which each open copy takes as it is.
+    /// Whether what's changed since the copies at `place` were built is their page alone, which each open copy takes as
+    /// it is.
     static func pageOnly(_ project: LampProject, at place: Destination) -> Bool {
-        guard let built = built(project, at: place), let around = built.native else { return false }
-        return around == native(of: project)
+        let all = builds(project, at: place), around = native(of: project)
+        return !all.isEmpty && all.allSatisfy { $0?.native == around }
     }
 
     static func name(of data: Data) -> String { SHA256.hash(data: data).prefix(16).map { String(format: "%02x", $0) }.joined() }
 
-    /// A change for one place: what differs from its build, as the page takes it.
+    /// A change for one copy: the whole page as it is now, which the copy serves in place of its own whatever build it
+    /// has, and what changed since it was last given one (or since any build it may have).
     struct Change {
         /// The files the copy serves in place of its own, each as text or bytes.
         var files: [String: Data]
         var gone: [String]
-        /// What differs from what the copy was last given: the page swaps a stylesheet in place when that's all.
+        /// What differs from what the copy has: the page swaps a stylesheet in place when that's all.
         var changed: [String]
         /// Why the page can't take it in place, when it can't: it waits for Reload, which puts it on every place.
         var cannot: String?
     }
 
-    /// The change for the copy at `place`, measured against its build; nil when it has the page as it is, or its build
-    /// recorded nothing (an earlier Lamp's lamp.js, which doesn't take these words).
+    /// The change for a copy at `place`; nil when it has the page and the app around it as they are. A copy whose build
+    /// recorded nothing (an earlier Lamp's lamp.js, which doesn't take these words) or whose app around the page changed
+    /// gets one it can't take, so it waits for Reload.
     static func change(for project: LampProject, at place: Destination, given: [String: String]?) -> Change? {
-        guard let built = built(project, at: place) else { return nil }
-        let now = hashes(of: project)
-        let had = given ?? built.files
-        let changed = Set(now.keys).union(had.keys).filter { now[$0] != had[$0] }.sorted()
-        guard !changed.isEmpty else { return nil }
+        let all = builds(project, at: place)
+        let now = hashes(of: project), around = native(of: project)
+        let known = all.compactMap { $0 }
+        var changed: Set<String> = []
+        if let given {
+            changed = Set(now.keys).union(given.keys).filter { now[$0] != given[$0] }
+        } else {
+            for built in known { changed.formUnion(Set(now.keys).union(built.files.keys).filter { now[$0] != built.files[$0] }) }
+        }
+        let earlier = all.isEmpty || known.count < all.count
+        let aroundChanged = known.contains { $0.native != around }
+        guard !changed.isEmpty || earlier || aroundChanged else { return nil }
         let web = project.dir.appendingPathComponent(TVTemplate.webFolder)
         var files: [String: Data] = [:]
-        // index.html always goes, so the page opens again from it without reading its own (which a TV's may not let it).
-        for (path, hash) in now where built.files[path] != hash || path == "index.html" {
+        for path in now.keys {
             guard let data = AppFile.read(web.appendingPathComponent(path), in: project) else { continue }
             files[path] = data
         }
-        let gone = built.files.keys.filter { now[$0] == nil }.sorted()
-        var change = Change(files: files, gone: gone, changed: changed)
-        change.cannot = built.native.map { $0 != native(of: project) } ?? true ? "the app around the page changed" : cannot(project, change)
+        let gone = Set(known.flatMap(\.files.keys)).subtracting(now.keys).sorted()
+        var change = Change(files: files, gone: gone, changed: changed.sorted())
+        change.cannot = earlier ? "it was put there by an earlier Lamp"
+            : aroundChanged ? "the app around the page changed" : cannot(project, change)
         return change
     }
 
@@ -131,7 +154,7 @@ enum PageCopies {
     /// given, with lamp.js running first, so a script that runs before lamp.js, a module script (whose imports a file put
     /// in place can't follow), or more than the page can keep across opening again needs the app put there again.
     static func cannot(_ project: LampProject, _ change: Change) -> String? {
-        if change.files.values.reduce(0, { $0 + $1.count }) > most { return "the change is too big to send" }
+        if change.files.values.reduce(0, { $0 + $1.count }) > most { return "its page is too big to send" }
         let web = project.dir.appendingPathComponent(TVTemplate.webFolder)
         let index = change.files["index.html"].map { String(decoding: $0, as: UTF8.self) }
             ?? AppFile.text(web.appendingPathComponent("index.html"), in: project) ?? ""
