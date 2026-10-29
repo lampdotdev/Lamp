@@ -31,8 +31,9 @@ export type Tape = {
   treat?: "snow" | "frame";
 };
 
-/** The hero's sleeve: its screenshot and where it plays on the front, the changes it suggests on the back, and where
- * its printed "Remix me" button goes. Each place's icon is the `d` of a 256-unit SVG path. */
+/** The hero's sleeve: its screenshot and where it plays on the front, the changes it suggests on the back, and the
+ * query its printed "Remix me" button opens the remix dialog with (`lamp:remix`, RemixDialog.astro). Each place's icon
+ * is the `d` of a 256-unit SVG path. */
 export type Sleeve = {
   title: string; by: string; kind: string; line: string; shot: string; tweaks: string[];
   places: { label: string; icon: string }[]; remix: string;
@@ -160,10 +161,11 @@ function sleeveSheet(width: number) {
   return page;
 }
 
-/** The front's "Remix me" button, in the front's units: also where a click on the sleeve follows its link. */
+/** The front's "Remix me" button, in the front's units: also where a click on the sleeve opens the remix dialog. */
 const REMIX_BUTTON = { x: 56, y: 1280, w: 688, h: 112 };
 
-function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined) {
+/** `pointed` draws the "Remix me" button outlined, as it is while the pointer is over it. */
+function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined, pointed = false) {
   const { canvas, ctx } = sleeveSheet(800);
   ctx.fillStyle = LABEL;
   ctx.fillRect(0, 0, 800, 1448);
@@ -206,8 +208,15 @@ function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined) {
     font(ctx, "700", 28, SANS);
     ctx.fillText(place.label, x + 2, 1206);
   });
-  // The call to remix it, printed as a button.
+  // The call to remix it, printed as a button, with an ink outline around it while it's pointed at.
   const b = REMIX_BUTTON;
+  if (pointed) {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.roundRect(b.x - 9, b.y - 9, b.w + 18, b.h + 18, 24);
+    ctx.stroke();
+  }
   ctx.fillStyle = "#c23a20";
   ctx.beginPath();
   ctx.roundRect(b.x, b.y, b.w, b.h, 18);
@@ -447,9 +456,12 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
     return mesh;
   };
 
-  // Where the pointer is, from -1 to 1 across the host's own box.
+  // Where the pointer is, from -1 to 1 across the host's own box. While a dialog is open over the page (the remix
+  // dialog), the tapes behind it hold still and take no clicks.
+  const covered = () => !!document.querySelector("dialog[open]");
   const pointer = { x: 0, y: 0 };
   addEventListener("pointermove", (event) => {
+    if (covered()) return;
     const box = host.getBoundingClientRect();
     pointer.x = Math.max(-1, Math.min(1, ((event.clientX - box.left) / box.width) * 2 - 1));
     pointer.y = Math.max(-1, Math.min(1, ((event.clientY - box.top) / box.height) * 2 - 1));
@@ -468,7 +480,7 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
     document.addEventListener(type, (event) => {
       const box = canvas.getBoundingClientRect();
       const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
-      if (inside && !(event.target as Element | null)?.closest?.("a, button, input")) act(event);
+      if (inside && !covered() && !(event.target as Element | null)?.closest?.("a, button, input")) act(event);
       else if (type === "pointermove") act(new MouseEvent("pointermove", { clientX: -1e6, clientY: -1e6 }));
     });
   };
@@ -531,9 +543,10 @@ export async function mountSleeve(host: HTMLElement) {
   const s = stage(THREE, host, { wall: -0.75, reach: 3, bleed: { x: 0.15, y: 0.2 } });
   if (!s) return;
   const spine = s.texture(sleeveSpine(sleeve));
-  const box = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(1.05, 1.9, 0.3, 3, 0.025), [
-    spine, spine, s.flat(INK), s.flat(INK), s.texture(sleeveFront(sleeve, img)), s.texture(sleeveBack(sleeve)),
-  ]));
+  // The front twice: as it is, and with its "Remix me" outlined, for while the pointer is over the button.
+  const [front, frontPointed] = [s.texture(sleeveFront(sleeve, img)), s.texture(sleeveFront(sleeve, img, true))];
+  const faces = [spine, spine, s.flat(INK), s.flat(INK), front, s.texture(sleeveBack(sleeve))];
+  const box = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(1.05, 1.9, 0.3, 3, 0.025), faces));
   // On its own, it only casts its shadow: catching its own would shade its front with the slightest error.
   box.receiveShadow = false;
   const sleeveGroup = new THREE.Group();
@@ -541,7 +554,7 @@ export async function mountSleeve(host: HTMLElement) {
   s.scene.add(sleeveGroup);
 
   // Clicked, it turns over: a turn and a half, landing on whichever side it wasn't on, with a hop. A click on the
-  // front's printed "Remix me" button follows its link instead. The button that turns it (for a keyboard) says which
+  // front's printed "Remix me" button opens the remix dialog instead. The button that turns it (for a keyboard) says which
   // way up it is.
   const button = host.querySelector<HTMLButtonElement>("[data-turn]");
   let spin = 0;
@@ -561,10 +574,15 @@ export async function mountSleeve(host: HTMLElement) {
   };
   s.on("click", (event) => {
     const found = s.hit(event, [box]);
-    if (onRemix(found)) open(sleeve.remix, "_blank", "noopener");
+    if (onRemix(found)) document.dispatchEvent(new CustomEvent("lamp:remix", { detail: sleeve.remix }));
     else if (found) turn();
   });
-  s.on("pointermove", (event) => s.hand(!!s.hit(event, [box])));
+  s.on("pointermove", (event) => {
+    const found = s.hit(event, [box]);
+    s.hand(!!found);
+    faces[4] = onRemix(found) ? frontPointed : front;
+    box.material = faces;
+  });
   button?.addEventListener("click", turn);
 
   let rotation = { x: 0, y: -0.35 };
@@ -575,7 +593,8 @@ export async function mountSleeve(host: HTMLElement) {
     },
     (dt, time) => {
       const tilt = reduced ? { x: 0, y: 0 } : s.pointer;
-      rotation = { x: ease(rotation.x, 0.06 + tilt.y * 0.3, dt, 5), y: ease(rotation.y, -0.35 + tilt.x * 0.6, dt, 5) };
+      // It turns toward the pointer across, and leans back from it up and down: below it, the front tips up.
+      rotation = { x: ease(rotation.x, 0.06 - tilt.y * 0.3, dt, 5), y: ease(rotation.y, -0.35 + tilt.x * 0.6, dt, 5) };
       spun = ease(spun, spin, dt, reduced ? 12 : 3.2);
       hop = ease(hop, 0, dt, 2.5);
       sleeveGroup.rotation.set(rotation.x, rotation.y + spun, Math.sin(spun) * 0.12);
