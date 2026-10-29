@@ -716,8 +716,13 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     /// The keys an action names, as the page reads them (`e.key`, and the code lamp.js and older pages read).
     private static let keys: [String: (key: String, code: Int)] = [
         "left": ("ArrowLeft", 37), "up": ("ArrowUp", 38), "right": ("ArrowRight", 39), "down": ("ArrowDown", 40),
-        "return": ("Enter", 13), "enter": ("Enter", 13), "escape": ("Escape", 27), "space": (" ", 32), "tab": ("Tab", 9),
-        "delete": ("Backspace", 8),
+        "return": ("Enter", 13), "enter": ("Enter", 13), "ok": ("Enter", 13), "escape": ("Escape", 27), "back": ("Escape", 27),
+        "space": (" ", 32), "tab": ("Tab", 9), "delete": ("Backspace", 8),
+        // A remote's media and color keys, by the codes a TV sends and lamp.js names (as the preview presses them).
+        "play": ("MediaPlay", 415), "pause": ("MediaPause", 19), "playpause": ("MediaPlayPause", 10252), "stop": ("MediaStop", 413),
+        "fastforward": ("MediaFastForward", 417), "rewind": ("MediaRewind", 412), "red": ("ColorF0Red", 403),
+        "green": ("ColorF1Green", 404), "yellow": ("ColorF2Yellow", 405), "blue": ("ColorF3Blue", 406),
+        "channelup": ("ChannelUp", 427), "channeldown": ("ChannelDown", 428), "info": ("Info", 457),
     ]
 
     /// A click, a key or typing on a page, carried out in the page: the point (in the window's frame view) turned into
@@ -783,7 +788,11 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
                 if (allowed && \(key.code) === 13 && /^(BUTTON|A)$/.test(el.tagName)) el.click();
                 if (\(hold > 0 ? "false" : "true")) fire('keyup');
                 """)
-            if hold > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + hold) { MainActor.assumeIsolated { run(fire + "fire('keyup');") } } }
+            // Let go after the hold, or as soon as the person takes the app back or a newer batch begins (`Handover`).
+            if hold > 0 {
+                if let batch = LampDriver.Handover.current { batch.hold(for: hold) { run(fire + "fire('keyup');") } }
+                else { run(fire + "fire('keyup');") }
+            }
             return hold > 0 ? "held \(name) for \(LampScreen.number(hold)) s in the page" : "pressed \(name) in the page"
         default:
             return nil

@@ -8515,6 +8515,20 @@ enum Template {
                 held.append((up, timer))
             }
 
+            /// A key held down on a page (LampPage.swift), pressed in the page's own script: `release` lets it go after
+            /// `seconds`, or at once if the batch stops or a newer one takes its place, as `hold`'s keys are.
+            func hold(for seconds: Double, release: @escaping @MainActor () -> Void) {
+                let timer = Timer(timeInterval: seconds, repeats: false) { timer in
+                    MainActor.assumeIsolated {
+                        guard let index = self.pageHeld.firstIndex(where: { $0.timer === timer }) else { return }
+                        self.pageHeld.remove(at: index).release()
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                pageHeld.append((release, timer))
+            }
+            private var pageHeld: [(release: @MainActor () -> Void, timer: Timer)] = []
+
             /// Ends the batch where it is: nothing more is done, keys held down are let go, and Lamp is told.
             func stop() {
                 guard carriesOn else { return }
@@ -8529,6 +8543,11 @@ enum Template {
                     NSApp.postEvent(key.up, atStart: true)
                 }
                 held = []
+                for key in pageHeld {
+                    key.timer.invalidate()
+                    key.release()
+                }
+                pageHeld = []
             }
 
             /// Lamp's Stop for batch `id`, signed with the app's token like the request, so no other process can stop it.

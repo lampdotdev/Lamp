@@ -8865,7 +8865,7 @@ final class Store: ObservableObject {
             }
         }
         note("Opening \(project.name) in the TV preview…", for: project)
-        let problem = await TVPreview.show(project, staged: staged, inFront: inFront)
+        let problem = await TVPreview.show(project, staged: staged, inFront: inFront, seed: await previewSeed(project))
         refreshOpenApps()
         syncLocalNetwork()   // its phone page reaches phones over the Wi‑Fi
         return problem
@@ -9028,9 +9028,7 @@ final class Store: ObservableObject {
             let built = Runtime.builtFingerprint(project)
             let staged = try await TVs.stage(project, folder: folder)
             previewBuilt[project.id] = built
-            // A page with a Mac copy starts from what that copy saved, the person's own data, copied one way.
-            let seed = await PageLive.shared.saved(of: project)
-            if PageLive.takes(project), project.hasMac { asidePreviews.insert(project.id) }
+            let seed = await previewSeed(project)
             note("Opening \(project.name) in \(Self.previewName(device))…", for: project)
             let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device, seed: seed)
             refreshOpenApps()
@@ -9043,6 +9041,14 @@ final class Store: ObservableObject {
 
     /// Which build each device app's preview on this Mac was opened from, as `deviceRunBuilt` is for the device.
     private var previewBuilt: [String: String] = [:]
+
+    /// What a page's preview starts from, wherever it's opened (in place of a TV, or for another shape): the person's own
+    /// data, copied one way from its Mac copy, when it has one. Such a preview is beside the Mac copy (`asidePreviews`).
+    private func previewSeed(_ project: LampProject) async -> [String: String]? {
+        guard PageLive.takes(project), project.hasMac else { return nil }
+        asidePreviews.insert(project.id)
+        return await PageLive.shared.saved(of: project)
+    }
 
     /// Pages whose preview was opened beside their Mac copy (for another shape, or while it wasn't open): `use_app` goes
     /// where the last look was, and the preview closes at the next look in the Mac copy or when the turn ends.
