@@ -1,10 +1,11 @@
 import SwiftUI
+import LampSidebarKit
 
-/// The person's devices on the desk, between the wishes and the bar, since a wish for the TV or the phone is one Lamp
-/// is made for and Settings is no place to find that out. Until Lamp has looked on the network it's an invitation to,
-/// whose button is the look that has macOS ask about the local network; from then on the desk looks each time it's
-/// shown, and the shelf is the devices Lamp makes apps for, the likeliest first, as many as two lines hold. A ready one puts
-/// itself in the bar; one that isn't takes its next step; the rest of the network is in Settings → Your Devices.
+/// The person's devices down the desk's side, under the wishes' filters, since a wish for the TV or the phone is one
+/// Lamp is made for and Settings is no place to find that out. Until Lamp has looked on the network it's an invitation
+/// to, whose button is the look that has macOS ask about the local network; from then on the desk looks each time it's
+/// shown, and the list is the devices Lamp makes apps for, the likeliest first. A ready one puts itself in the bar; one
+/// that isn't takes its next step; the rest of the network is in Settings → Your Devices.
 struct DeskDevices: View {
     @EnvironmentObject private var store: Store
     @AppStorage(Store.localNetworkAskedKey) private var asked = false
@@ -12,116 +13,71 @@ struct DeskDevices: View {
     @AppStorage("settingsTab") private var settingsTab = "building"
     @Environment(\.openSettings) private var openSettings
     @State private var adding = false
-    /// Each chip's width as it's drawn, by `measured`'s keys, and the shelf's: what decides how many devices fit.
-    @State private var widths: [String: CGFloat] = [:]
-    @State private var room: CGFloat = 0
     /// Puts "for my <device>" in the wish bar.
     let wishFor: (String) -> Void
 
-    /// The lines the shelf may take on the desk.
-    static let lines = 2
-    static let spacing: CGFloat = 8
-
     var body: some View {
-        Group {
-            if asked { shelf } else { invitation }
+        VStack(alignment: .leading, spacing: 2) {
+            Text("YOUR DEVICES")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1)
+                .foregroundStyle(Paper.label)
+                .padding(.horizontal, 10).padding(.bottom, 6)
+                .accessibilityAddTraits(.isHeader)
+            if asked { list } else { invitation }
         }
         .sheet(isPresented: $adding) { AddDeviceSheet() }
     }
 
     private var invitation: some View {
-        HStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                ForEach(["iphone", "ipad", "tv", "gamecontroller", "hifispeaker", "applewatch"], id: \.self) {
+                ForEach(["iphone", "ipad", "tv", "gamecontroller", "hifispeaker", "photo"], id: \.self) {
                     Image(systemName: $0)
                 }
             }
-            .font(.title3)
-            .foregroundStyle(.secondary)
+            .font(.system(size: 15))
+            .foregroundStyle(Paper.muted)
             .accessibilityHidden(true)
-            Text("Make apps for your phone, TV and more")
-                .font(.title3.weight(.medium))
-                .foregroundStyle(.primary.opacity(0.8))
+            Text("Run it on your TV, phone, Xbox and more")
+                .font(.callout)
+                .foregroundStyle(Paper.muted)
+                .fixedSize(horizontal: false, vertical: true)
             if store.lookingForDevices {
                 LookingForDevices()
             } else {
-                Button("Find My Devices") { store.refreshDevices() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                Button { store.refreshDevices() } label: { Label("Find My Devices", systemImage: "dot.radiowaves.left.and.right") }
+                    .buttonStyle(PaperButtonStyle(.ink))
             }
         }
-        .padding(.leading, 22).padding(.trailing, 12).padding(.vertical, 10)
-        .background(Color.white.opacity(0.72), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 1))
+        .padding(.horizontal, 10)
     }
 
-    private var shelf: some View {
-        let list = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
-        let ranked = Self.ranked(list, team: team)
-        let shown = Self.fitting(ranked.map { widths[Self.key($0)] ?? 0 }, more: widths["more"] ?? 0, add: widths["add"] ?? 0,
-                                 learnable: list.couldLearn.count, room: room)
-        let more = ranked.count - shown + list.couldLearn.count
-        return VStack(spacing: 10) {
-            DeskFlow(spacing: Self.spacing, lineSpacing: Self.spacing) {
-                ForEach(ranked.prefix(shown)) { device in
-                    chip(device)
+    private var list: some View {
+        let found = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
+        let ranked = Self.ranked(found, team: team)
+        return VStack(alignment: .leading, spacing: 2) {
+            ForEach(ranked) { device in row(device) }
+            // What Lamp could only learn (a server, an appliance) is counted, never listed: it's in Settings.
+            if !found.couldLearn.isEmpty {
+                DeskChip(help: "All your devices, in Settings", action: showAll) {
+                    Image(systemName: "ellipsis").frame(width: 18)
+                    Text("\(found.couldLearn.count) More").foregroundStyle(Paper.muted)
                 }
-                if more > 0 { moreChip(more) }
-                addChip
             }
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { room = $0 }
-            if store.localNetworkRefused, !store.lookingForDevices { LocalNetworkRefused() }
-        }
-        // Every chip drawn out of sight at its own width, so the shelf knows how many fit before it shows them.
-        .background {
-            ZStack {
-                ForEach(ranked) { device in measured(Self.key(device)) { chip(device) } }
-                measured("more") { moreChip(ranked.count + list.couldLearn.count) }
-                measured("add") { addChip }
+            DeskChip(help: "Plug in a phone or tablet, or set up another device", action: { adding = true }) {
+                // While Lamp looks, the plus turns, so the list doesn't move for it.
+                if store.lookingForDevices {
+                    ProgressView().controlSize(.small).frame(width: 18, height: 16).help("Looking for devices…")
+                } else {
+                    Image(systemName: "plus").frame(width: 18)
+                }
+                Text("Add a Device")
             }
-            .frame(width: 0, height: 0)
-            .hidden()
-            .accessibilityHidden(true)
+            .foregroundStyle(Paper.muted)
+            if store.localNetworkRefused, !store.lookingForDevices { LocalNetworkRefused().padding(.top, 6) }
         }
-        .animation(.easeOut(duration: 0.25), value: ranked.prefix(shown).map(\.id))
-    }
-
-    private static func key(_ device: Device) -> String { "device:" + device.id }
-
-    private func measured(_ key: String, @ViewBuilder _ chip: () -> some View) -> some View {
-        chip().fixedSize().onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { widths[key] = $0 }
-    }
-
-    private func moreChip(_ count: Int) -> some View {
-        DeskChip(help: "All your devices, in Settings", action: showAll) {
-            Text("\(count) More").foregroundStyle(.secondary)
-        }
-    }
-
-    private var addChip: some View {
-        DeskChip(help: "Plug in a phone or tablet, or set up another device", action: { adding = true }) {
-            // While Lamp looks, the plus turns, so the shelf doesn't move for it.
-            if store.lookingForDevices {
-                ProgressView().controlSize(.small).frame(width: 16, height: 16).help("Looking for devices…")
-            } else {
-                Image(systemName: "plus").foregroundStyle(.secondary).frame(width: 16, height: 16)
-            }
-            Text("Add a Device")
-        }
-    }
-
-    /// How many of the ranked devices the shelf shows: as many as fit in its lines with More after them (when any is
-    /// left out, or there's something Lamp could only learn) and Add a Device last, which are always there. Before the
-    /// shelf knows its width, all of them.
-    static func fitting(_ devices: [CGFloat], more: CGFloat, add: CGFloat, learnable: Int, room: CGFloat) -> Int {
-        guard room > 0 else { return devices.count }
-        for left in 0...devices.count {
-            var chips = Array(devices.prefix(devices.count - left))
-            if left + learnable > 0 { chips.append(more) }
-            chips.append(add)
-            if DeskFlow.lines(chips, width: room, spacing: spacing).count <= lines { return devices.count - left }
-        }
-        return 0
+        .animation(.easeOut(duration: 0.25), value: ranked.map(\.id))
     }
 
     enum Standing: Equatable { case here, ready, setUp, away }
@@ -210,17 +166,18 @@ struct DeskDevices: View {
         return part.count >= 12 && !part.contains(" ") && part.rangeOfCharacter(from: .lowercaseLetters) == nil
     }
 
-    private func chip(_ device: Device) -> some View {
+    private func row(_ device: Device) -> some View {
         let state = Self.state(of: device, team: team)
         let name = state == .here ? "This Mac" : Self.label(device)
         return DeskChip(help: name, tip: tip(device, name: name, state: state), action: state == .here ? nil : { act(device, state: state) }) {
-            Image(systemName: device.symbol).foregroundStyle(.secondary)
-            Text(name).lineLimit(1).truncationMode(.tail).frame(maxWidth: 200)
+            Image(systemName: device.symbol).frame(width: 18)
+            Text(name).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 4)
             switch state {
             case .here, .ready:
                 DeviceDot(color: .green)
             case .setUp:
-                Image(systemName: "gearshape").foregroundStyle(.secondary)
+                Text("Set up").font(.caption.weight(.bold)).foregroundStyle(Paper.label)
                 DeviceDot(color: DeviceDot.amber)
             case .away:
                 EmptyView()
@@ -293,7 +250,7 @@ struct DeviceDot: View {
     }
 }
 
-/// One of the shelf's capsules, lit under the pointer as the desk's ideas button is. One with no action is only shown.
+/// One line of the desk's device list, lit under the pointer. One with no action is only shown.
 struct DeskChip<Content: View>: View {
     let help: String
     /// Shown a moment after the pointer comes onto it, in place of the plain help.
@@ -305,14 +262,13 @@ struct DeskChip<Content: View>: View {
 
     var body: some View {
         let lit = hovered && action != nil
-        let label = HStack(spacing: 7) { content }
-            .font(.callout.weight(.medium))
-            .foregroundStyle(.primary.opacity(0.8))
-            .padding(.horizontal, 14)
-            .frame(height: 34)
-            .background(Color.white.opacity(lit ? 0.95 : 0.72), in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(lit ? 0.2 : 0.1), lineWidth: 1))
-            .contentShape(Capsule())
+        let label = HStack(spacing: 9) { content }
+            .font(.system(size: 13.5))
+            .foregroundStyle(Paper.ink)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .background(Paper.ink.opacity(lit ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
             .onHover { hovered = $0 }
             .help(tip == nil ? help : "")
             .task(id: hovered) {
@@ -320,61 +276,13 @@ struct DeskChip<Content: View>: View {
                 try? await Task.sleep(for: .milliseconds(450))
                 if !Task.isCancelled { tipShown = true }
             }
-            .popover(isPresented: $tipShown, arrowEdge: .bottom) {
+            .popover(isPresented: $tipShown, arrowEdge: .trailing) {
                 if let tip { tip.interactiveDismissDisabled() }
             }
         if let action {
             Button(action: action) { label }.buttonStyle(.plain)
         } else {
             label.accessibilityElement(children: .combine)
-        }
-    }
-}
-
-/// Views of their own widths in rows, each row centered, wrapping where the next one doesn't fit.
-struct DeskFlow: Layout {
-    var spacing: CGFloat
-    var lineSpacing: CGFloat
-
-    /// Where widths break into lines in `width`, by index: each goes on the line it started until the next doesn't fit.
-    static func lines(_ widths: [CGFloat], width: CGFloat, spacing: CGFloat) -> [[Int]] {
-        var lines: [[Int]] = [[]]
-        var used: CGFloat = 0
-        for (index, each) in widths.enumerated() {
-            if !lines[lines.count - 1].isEmpty, used + spacing + each > width {
-                lines.append([])
-                used = 0
-            }
-            used += (lines[lines.count - 1].isEmpty ? 0 : spacing) + each
-            lines[lines.count - 1].append(index)
-        }
-        return lines
-    }
-
-    private func rows(_ subviews: Subviews, width: CGFloat) -> [[(view: LayoutSubviews.Element, size: CGSize)]] {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        return Self.lines(sizes.map(\.width), width: width, spacing: spacing).map { $0.map { (subviews[$0], sizes[$0]) } }
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        let lines = rows(subviews, width: width)
-        let widest = lines.map { $0.reduce(0) { $0 + $1.size.width } + spacing * CGFloat(max(0, $0.count - 1)) }.max() ?? 0
-        let heights = lines.map { $0.map(\.size.height).max() ?? 0 }
-        return CGSize(width: proposal.width ?? widest, height: heights.reduce(0, +) + lineSpacing * CGFloat(max(0, lines.count - 1)))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for line in rows(subviews, width: bounds.width) {
-            let used = line.reduce(0) { $0 + $1.size.width } + spacing * CGFloat(max(0, line.count - 1))
-            let tallest = line.map(\.size.height).max() ?? 0
-            var x = bounds.midX - used / 2
-            for item in line {
-                item.view.place(at: CGPoint(x: x, y: y + (tallest - item.size.height) / 2), proposal: ProposedViewSize(item.size))
-                x += item.size.width + spacing
-            }
-            y += tallest + lineSpacing
         }
     }
 }

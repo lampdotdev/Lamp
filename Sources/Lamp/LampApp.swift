@@ -41,7 +41,7 @@ struct LampApp: App {
     }
 }
 
-/// The menu bar's commands. They observe the store themselves, so whether Duplicate or Copy Wish File can be chosen
+/// The menu bar's commands. They observe the store themselves, so whether Remix or Copy Wish File can be chosen
 /// follows the selection without the scene around them being built again for every change (see `LampApp.store`).
 struct LampCommands: Commands {
     @ObservedObject var store: Store
@@ -59,7 +59,7 @@ struct LampCommands: Commands {
                 .keyboardShortcut("o")
             Button("Open from GitHub…") { store.chooseRepository() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
-            Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
+            Button("Remix") { if let project = store.selected { Task { await store.remix(project) } } }
                 .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
         }
         CommandGroup(after: .pasteboard) {

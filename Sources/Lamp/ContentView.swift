@@ -258,8 +258,8 @@ struct AppMenu: View {
         Button("Rename…") { store.renaming = project }
             // Still being found: the wish it becomes names it. A device's setup is never named.
             .disabled(busy || project.makesNoApp)
-        Button("Duplicate") { Task { await store.duplicate(project) } }
-            .disabled(busy || !project.scaffolded || project.untitled || !AppUpdates.mayDuplicate(project))
+        Button("Remix") { Task { await store.remix(project) } }
+            .disabled(busy || !project.scaffolded || project.untitled || !AppUpdates.mayRemix(project))
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
         // Only once there's an app to show: a wish not yet made has nothing in Finder.

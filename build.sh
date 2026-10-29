@@ -126,7 +126,7 @@ if [ "$FLAVOR" = release ]; then
   UPDATE_KEYS="<key>SUFeedURL</key><string>https://updates.lamp.dev/appcast.xml</string>
   $SPARKLE_KEYS"
 else
-  # The same icon with a band across it (orange DEV, or a dark NIGHTLY), so the Lamps tell apart in the Dock. Made
+  # The same icon with DEV (or NIGHTLY) written on its paper, so the Lamps tell apart in the Dock. Made
   # once per change of the source icon (no Liquid Glass variant: the classic icon is enough to tell them apart).
   BAND=DEV; [ "$FLAVOR" = nightly ] && BAND=NIGHTLY
   DEV_ICON="${BUILD_DIR:-build}/AppIcon-$BAND.icns"
@@ -192,7 +192,6 @@ cp Resources/vendors.xz "$APP/Contents/Resources/"   # network hardware makers b
 rm -rf "$APP/Contents/Resources/Devices" && if [[ -d Resources/Devices ]]; then cp -R Resources/Devices "$APP/Contents/Resources/Devices"; fi   # the device integrations Lamp ships (Integrations)
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
-cp -R Resources/Onboarding "$APP/Contents/Resources/"
 # The wishes Lamp comes with (Starters.swift): each one's tree is its repository at the commit starter.md pins, fetched
 # here (never committed), and copied without the fetch's own git history.
 scripts/fetch-starters.sh
