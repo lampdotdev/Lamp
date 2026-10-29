@@ -1997,7 +1997,7 @@ final class Store: ObservableObject {
     static func deviceSetupRefusal(route: String, request: Gateway.Request) -> (Int, [String: Any])? {
         let refusal = (400, ["error": "This conversation sets up a device; no app is made here. Write or fix the device's integration with device_integration, and tell the person to make a wish on Lamp's desk for anything to put on it."] as [String: Any])
         switch route {
-        case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/art", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
+        case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/art", "/agent/assets", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
              "/agent/setup", "/agent/connectors", "/agent/lampify":
             return refusal
         case "/agent/talk":
@@ -6160,6 +6160,7 @@ final class Store: ObservableObject {
             case "read_notes", "save_notes": (status, answer) = notes(name, arguments, for: project)
             case "read_skill": (status, answer) = Skills.read(arguments, from: Skills.readable(parts: parts(of: project)))
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
+            case "assets": (status, answer) = await assetsCall(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "remove_app": (status, answer) = await agentRemove(arguments, for: project)
@@ -6883,6 +6884,96 @@ final class Store: ObservableObject {
             }
             return (502, ["error": "Couldn't make the picture: \(error.localizedDescription)"])
         }
+    }
+
+    /// `assets`: ready-made models, sprites, tiles, icons and textures from Lamp's index of free work (`AssetCatalogue`).
+    /// With `find` (and `kind`) it lists what fits, within what the slowest place the app is shown can draw, and with
+    /// `show` their pictures in one sheet; with `fetch` it brings the chosen ones into the app's page folder
+    /// (Web/assets/, for a game or another page) or Assets/, checked against the index, and credits each in credits.json.
+    private func assetsCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        // Fetching waits on the network: the turn that asked is taken now, and nothing is written unless that turn
+        // is still going when the files arrive (as `make_art`'s pictures).
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        func stillAsked() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
+        let (app, refusal) = target(arguments, in: project)
+        guard let app else { return (400, ["error": refusal ?? "No such app."]) }
+        let budget = AssetCatalogue.budget(for: app)
+        let ids = (arguments["fetch"] as? [String] ?? []).map(\.trimmed).filter { !$0.isEmpty }
+        guard !ids.isEmpty else {
+            let words = (arguments["find"] as? String)?.trimmed ?? ""
+            let kind = (arguments["kind"] as? String)?.trimmed
+            guard !words.isEmpty || kind?.isEmpty == false else {
+                return (400, ["error": "Say what to look for in `find` (and `kind`), or the ids to bring in with `fetch`."])
+            }
+            let found = AssetCatalogue.search(words, kind: kind)
+            let fitting = found.filter { ($0.triangles ?? 0) <= budget.triangles }
+            let shown = Array(fitting.prefix(min(max(arguments["limit"] as? Int ?? 12, 1), 30)))
+            guard !shown.isEmpty else {
+                let heavy = found.isEmpty ? "" : " (\(found.count) were too heavy for \(budget.place))"
+                return (200, ["text": "Nothing in Lamp's free assets fits that\(heavy). Try other words or a broader kind, or make it in code or with make_art."])
+            }
+            var text = "Free assets that fit, best first, with their size in the file's own units (y up). Bring one in with `fetch` and its id:\n"
+                + shown.map { AssetCatalogue.line($0, budget: budget) }.joined(separator: "\n")
+            if found.count > fitting.count {
+                text += "\n\(found.count - fitting.count) more were left out as too heavy for \(budget.place), the slowest place it's shown."
+            }
+            if fitting.count > shown.count { text += "\n\(fitting.count - shown.count) more fit: narrow the words, or ask for more with `limit`." }
+            var pictures: [String] = []
+            if arguments["show"] as? Bool == true, let sheet = await AssetCatalogue.sheet(of: shown), stillAsked(),
+               let url = Previews.destination(for: "assets-found.jpg", under: ".lamp/runtime/previews", in: project),
+               (try? sheet.write(to: url, options: .atomic)) != nil {
+                pictures = [url.path]
+                text += "\nTheir pictures follow, numbered in this order (the first \(min(shown.count, 12)))."
+            }
+            return (200, ["text": text, "screenshots": pictures])
+        }
+        guard ids.count <= 40 else { return (400, ["error": "Bring in at most 40 at a time."]) }
+        let byID = Dictionary(AssetCatalogue.all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let unknown = ids.filter { byID[$0] == nil }
+        guard unknown.isEmpty else {
+            return (400, ["error": "Lamp's free assets have no \(unknown.joined(separator: ", ")): use the ids `find` lists."])
+        }
+        // A page's files are served from Web/, so a game or any other page gets them there; any other app in Assets/,
+        // which is bundled with it.
+        var isFolder: ObjCBool = false
+        let page = FileManager.default.fileExists(atPath: app.dir.appendingPathComponent("Web").path, isDirectory: &isFolder) && isFolder.boolValue
+        let base = page ? "Web/assets/" : "Assets/"
+        let wishPrefix = app.isPart ? app.dir.lastPathComponent + "/" : ""
+        var fetched: [(item: AssetCatalogue.Item, files: [String])] = []
+        var said: [String] = [], problems: [String] = []
+        for id in Array(NSOrderedSet(array: ids)) as? [String] ?? ids {
+            guard let item = byID[id] else { continue }
+            do {
+                let files = try await AssetCatalogue.files(of: item, budget: budget)
+                guard stillAsked() else { return (409, ["error": "The request was stopped, so nothing more was brought in."]) }
+                var paths: [String] = []
+                for file in files {
+                    try AppFolder.write(file.data, to: app.dir.appendingPathComponent(base + file.path), in: app.dir)
+                    paths.append(base + file.path)
+                }
+                fetched.append((item, paths.map { wishPrefix + $0 }))
+                let shown = paths.map { page ? String($0.dropFirst("Web/".count)) : String($0.dropFirst("Assets/".count)) }
+                var line = "- \(item.id) → " + shown.joined(separator: ", ")
+                if let box = item.box, box.count == 6 {
+                    line += String(format: " (box x %.2f…%.2f, y %.2f…%.2f, z %.2f…%.2f in its units)", box[0], box[3], box[1], box[4], box[2], box[5])
+                }
+                if !item.animations.isEmpty { line += "; animations: " + item.animations.prefix(12).joined(separator: ", ") }
+                if let notes = item.notes { line += "; \(notes)" }
+                if let note = files.compactMap(\.note).first { line += "; \(note)" }
+                if AssetCatalogue.needsCredit(item.licence) { line += "; \(item.licence): credit \"\(item.name) by \(item.author)\" where the app shows its credits" }
+                said.append(line)
+            } catch {
+                problems.append("- \(item.id) wasn't brought in: \(error.localizedDescription).")
+            }
+        }
+        if !fetched.isEmpty { try? Credits.add(AssetCatalogue.credits(for: fetched), to: project) }
+        var text = ""
+        if !said.isEmpty {
+            text = "Brought in, under \(base) (paths below are \(page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`" : "inside Assets/, as `LampAssets.url(\"…\")` takes them")), and credited in credits.json:\n"
+                + said.joined(separator: "\n")
+        }
+        if !problems.isEmpty { text += (text.isEmpty ? "" : "\n") + problems.joined(separator: "\n") }
+        return (fetched.isEmpty ? 502 : 200, fetched.isEmpty ? ["error": text] : ["text": text])
     }
 
     /// Where `make_art` may write a picture: Assets/ in the app's own folder, made if needed. This runs in Lamp,
@@ -11244,7 +11335,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -11524,6 +11615,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/art" {
             return Self.withPictureData(await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
+        }
+        if route == "/agent/assets" {
+            return Self.withPictureData(await assetsCall((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
         }
         if route == "/agent/talk" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]

@@ -1100,9 +1100,10 @@ extension Agent.Rules {
 
     static let gameWebAssets = """
     - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac. A model, picture \
-    or sound the game uses is copied into Web/, which goes into the app, and loaded by its path there through lamp-game.js. Prefer shapes \
-    and colors made in code to files: a game of simple shapes, well lit and well colored, looks better than one of \
-    mismatched models.
+    or sound the game uses is copied into Web/, which goes into the app, and loaded by its path there through lamp-game.js. \
+    Ready-made models, sprite sheets, tilesets and textures come from the `assets` tool, in one style (the assets \
+    skill); otherwise shapes and colors made in code: a game of simple shapes, well lit and well colored, looks better \
+    than one of mismatched models.
     """
 
     static let gameEdit = """
