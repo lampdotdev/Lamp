@@ -126,6 +126,23 @@ final class ControllerRuntimeTests: XCTestCase {
         XCTAssertEqual(welcome["role"] as? String, "host")
     }
 
+    /// A device on no network a phone could share (an iPhone with Wi‑Fi off, a Mac unplugged) says so, rather than hand
+    /// out a loopback link that would point a phone at itself, and leaves nothing listening.
+    func testOnNoNetworkThereIsNoLinkAndNothingListens() throws {
+        let runtime = try runtime()
+        defer { runtime.stop() }
+        runtime.linkHost = { nil }
+        let (status, answer) = runtime.startNow()
+        XCTAssertEqual(status, 503)
+        XCTAssertNil(answer["links"])
+        XCTAssertFalse(runtime.isRunning)
+    }
+
+    func testTheDevicesAddressesForPhonesAreNeverLoopback() {
+        XCTAssertFalse(ControllerAddresses.lan().contains { $0.hasPrefix("127.") })
+        XCTAssertNotEqual(ControllerAddresses.linkHost(), "127.0.0.1")
+    }
+
     func testAGameWithoutAPhonePageOpensNothing() throws {
         let runtime = ControllerRuntime(app: game, page: folder.appendingPathComponent("Phone"))
         XCTAssertEqual(runtime.startNow().status, 409)

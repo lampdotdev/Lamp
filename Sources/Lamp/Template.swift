@@ -1994,6 +1994,7 @@ enum Template {
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
         if showsPage(project) { pbxproj = withWebFolder(pbxproj) }
+        if GamePhones.bundlesOnIOS(project) { pbxproj = withPhoneFolder(pbxproj) }
         if watch {
             let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
             let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
@@ -2057,7 +2058,8 @@ enum Template {
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
+            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason
+                ?? (GamePhones.takesOnIOS(project) ? GamePhones.iosNetworkReason : nil)))
                 .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: background)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
@@ -2090,6 +2092,24 @@ enum Template {
                     "A00000000000000000000002 /* Assets */, E00000000000000000000002 /* Web */, A00000000000000000000004 /* Assets.xcassets */,")
         text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
                     "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000001 /* Web in Resources */,")
+        return text
+    }
+
+    /// A game's phone page as a folder of the app's resources (Phone/ at the bundle's top), which the game serves itself
+    /// (`GamePhones`): copied beside the app's files by `Devices.stage`.
+    static func withPhoneFolder(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the device project changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        var text = pbxproj
+        let assetsFile = "A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };"
+        text = swap(text, assetsFile, assetsFile + "\n\t\tE00000000000000000000003 /* Phone in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000004 /* Phone */; };")
+        let assetsRef = "A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = \"<group>\"; };"
+        text = swap(text, assetsRef, assetsRef + "\n\t\tE00000000000000000000004 /* Phone */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Phone; path = ../../\(GamePhones.iosFolder); sourceTree = \"<group>\"; };")
+        text = swap(text, "A00000000000000000000002 /* Assets */, ", "A00000000000000000000002 /* Assets */, E00000000000000000000004 /* Phone */, ")
+        text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
+                    "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000003 /* Phone in Resources */,")
         return text
     }
 

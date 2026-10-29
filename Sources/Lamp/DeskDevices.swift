@@ -4,8 +4,9 @@ import LampSidebarKit
 /// The person's devices down the desk's side, under the wishes' filters, since a wish for the TV or the phone is one
 /// Lamp is made for and Settings is no place to find that out. Until Lamp has looked on the network it's an invitation
 /// to, whose button is the look that has macOS ask about the local network; from then on the desk looks each time it's
-/// shown, and the list is the devices Lamp makes apps for, the likeliest first. A ready one puts itself in the bar; one
-/// that isn't takes its next step; the rest of the network is in Settings → Your Devices.
+/// shown, and the list is the devices Lamp makes apps for, the likeliest first. A ready one, or one only found that
+/// Lamp has nothing to set up for, puts itself in the bar; one that isn't ready takes its next step; the rest of the
+/// network is in Settings → Your Devices.
 struct DeskDevices: View {
     @EnvironmentObject private var store: Store
     @AppStorage(Store.localNetworkAskedKey) private var asked = false
@@ -26,7 +27,7 @@ struct DeskDevices: View {
                 .accessibilityAddTraits(.isHeader)
             if asked { list } else { invitation }
         }
-        .sheet(isPresented: $adding) { AddDeviceSheet() }
+        .sheet(isPresented: $adding) { AddDeviceSheet(onPaper: true) }
     }
 
     private var invitation: some View {
@@ -80,11 +81,14 @@ struct DeskDevices: View {
         .animation(.easeOut(duration: 0.25), value: ranked.map(\.id))
     }
 
-    enum Standing: Equatable { case here, ready, setUp, away }
+    /// `found` is a device only seen on the network that Lamp has no setup for (a speaker, say): an app talks to it
+    /// there directly, so there's nothing to set up, only something to wish for.
+    enum Standing: Equatable { case here, ready, setUp, found, away }
 
     static func state(of device: Device, team: String) -> Standing {
         if device.id == Device.macID { return .here }
         if device.isAway { return .away }
+        if device.kind == .other, !device.isSetUp, device.integration == nil { return .found }
         if !device.isSetUp { return .setUp }
         if case .needs = device.setup(team: team) { return .setUp }
         return .ready
@@ -100,6 +104,7 @@ struct DeskDevices: View {
             case .here: return 0
             case .ready: return 1
             case .setUp: return device.isSetUp ? 2 : 4
+            case .found: return 4
             case .away: return 3
             }
         }
@@ -179,12 +184,12 @@ struct DeskDevices: View {
             case .setUp:
                 Text("Set up").font(.caption.weight(.bold)).foregroundStyle(Paper.label)
                 DeviceDot(color: DeviceDot.amber)
-            case .away:
+            case .found, .away:
                 EmptyView()
             }
         }
         .opacity(state == .away ? 0.5 : 1)
-        .accessibilityValue(state == .setUp ? "Not set up" : state == .away ? "Not on this network" : "Ready")
+        .accessibilityValue(state == .setUp ? "Not set up" : state == .away ? "Not on this network" : state == .found ? "Found on your network" : "Ready")
     }
 
     /// What's known of a device, for its tip: what it is, what it's called at home, where it is, where its setup
@@ -220,6 +225,8 @@ struct DeskDevices: View {
             var step = "Not set up yet"
             if device.isSetUp, case .needs(let next) = device.setup(team: team) { step = next }
             return DeviceTip(title: name, lines: lines, status: (step, DeviceDot.amber), hint: "Click to set it up.")
+        case .found:
+            return DeviceTip(title: name, lines: lines, status: nil, hint: "Click to wish for something for it.")
         case .away:
             return DeviceTip(title: name, lines: lines, status: ("Not on this network just now", .secondary), hint: "Click to see all your devices.")
         }
@@ -229,6 +236,7 @@ struct DeskDevices: View {
         switch state {
         case .here: break
         case .ready: wishFor(Self.words(for: device))
+        case .found: wishFor(Self.label(device))
         case .setUp: if !DeviceNextStep.takeFurther(device, store: store) { showAll() }
         case .away: showAll()
         }

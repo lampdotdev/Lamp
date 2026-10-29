@@ -63,7 +63,7 @@ struct DeskEntry: Equatable, Sendable {
 /// The desk's wishes as the list shows them: each with what's known of it, remixes made here under their original.
 struct DeskList {
     enum Column: String, CaseIterable {
-        case name = "Name", madeBy = "Made by", runsOn = "Runs on", changed = "Changed"
+        case name = "Name", madeBy = "Made by", runsOn = "On your", changed = "Changed"
     }
 
     struct Row: Identifiable {
@@ -346,7 +346,7 @@ struct DeskDetail: View {
                 }
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
                     fact("Made by", [row.madeBy, row.entry?.license].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                    fact("Runs on", (row.entry?.places ?? []).map(GameKit.placeName).joined(separator: ", "))
+                    fact("On your", (row.entry?.places ?? []).map(GameKit.placeName).joined(separator: ", "))
                     if !remixes.isEmpty { fact("Remixes", remixes.map(\.title).joined(separator: ", ")) }
                 }
                 .font(.system(size: 13))
