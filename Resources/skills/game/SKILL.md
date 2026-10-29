@@ -15,6 +15,14 @@ The tools Lamp has for games:
   3D, in a game `make_app_for` made with `kind` "game". It's a game's default make, 2D or 3D, wherever Lamp has a host
   for a page, and the same on every one of them. Read lamp-game.js first, all of it (and lamp-phaser.js for 2D): their
   comments are the whole interface. Below, "Web" means this runtime.
+- **TypeScript**: a game whose source is TypeScript (one brought in from a Vite project, or when the person asks for
+  it) keeps it in `src/` with `src/main.ts` as its entry, and Lamp bundles it into `Web/app/` before every build and
+  look (types stripped, not checked): `Web/index.html` loads `app/main.js` (and `app/main.css` when the source imports
+  CSS), and its import map names the bare imports, `three` and `lamp-game` (`./lamp-game.js`) among them. As in a
+  Vite build, `import.meta.env` reads as a published build's, and a worker is a `src/**/*.worker.ts` file, started with
+  `new Worker(new URL("./<name>.worker.js", import.meta.url), { type: "module" })` (`.js`: every file is bundled flat
+  into `Web/app/`; a module worker, since what it shares with the page comes as an import). Edit `src/`,
+  never `Web/app/`. A game in plain JavaScript stays as it is, its modules in `Web/`.
 - **Phones as players**: a game on the runtime takes phones on the Wi‑Fi with `Lamp.controllers` (Web/lamp.js) and
   its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview, on a
   Samsung or LG TV and on the Xbox; elsewhere `Lamp.controllers` says it can't start, so the game stays whole with a controller,

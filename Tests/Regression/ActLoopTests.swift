@@ -124,22 +124,33 @@ final class ActLoopTests: XCTestCase {
         c.evaluateScript("""
             var clock = Date.now(), realNow = Date.now; Date.now = function () { return clock; };
             tools.add.run = function (a) { log.push('run:' + a.name); clock += 30000; return { added: a.name }; };
-            answers = [{ calls: [call('s1c1', 'add', { name: 'a' }), call('s1c2', 'add', { name: 'b' })] }]; go('x');
+            answers = [{ seconds: 25, calls: [call('s1c1', 'add', { name: 'a' }), call('s1c2', 'add', { name: 'b' })] }]; go('x');
             """)
         settle(c)
         XCTAssertEqual(log(c).filter { $0.hasPrefix("run:") }, ["run:a"])
         XCTAssertEqual(value(c, "outcome.stopped") as? String, "time")
-        XCTAssertEqual(value(c, "timers.length") as? Int, 1, "the deadline's timer never ran")
+        XCTAssertEqual(value(c, "timers.length") as? Int, 2, "the deadline's timers (the turn's, then its route's) never ran")
     }
 
     func testAnAnswerTakenAfterTheClockPassedTheDeadlineRunsNothing() throws {
         let c = try page()
         c.evaluateScript("var clock = Date.now(); Date.now = function () { return clock; }; answers = ['hold']; go('Add milk');")
         settle(c)
-        c.evaluateScript("clock += 26000; held({ calls: [call('s1c1', 'add', { name: 'milk' })] });")
+        c.evaluateScript("clock += 26000; held({ seconds: 25, calls: [call('s1c1', 'add', { name: 'milk' })] });")
         settle(c)
         XCTAssertEqual(log(c), [])
         XCTAssertEqual(value(c, "outcome.stopped") as? String, "time")
+    }
+
+    /// Claude Code, Codex and models on the Mac get a minute a turn: the same answer 26 seconds in still runs there.
+    func testATurnKeepsItsRoutesOwnTime() throws {
+        let c = try page()
+        c.evaluateScript("var clock = Date.now(); Date.now = function () { return clock; }; answers = ['hold']; go('Add milk');")
+        settle(c)
+        c.evaluateScript("clock += 26000; held({ seconds: 60, route: 'engine:claude:sonnet', calls: [call('s1c1', 'add', { name: 'milk' })] });")
+        settle(c)
+        XCTAssertEqual(log(c), ["check:milk", "run:milk"])
+        XCTAssertEqual(value(c, "requests[1].body.route") as? String, "engine:claude:sonnet")
     }
 
     func testTheTurnKeepsTheRouteTheFirstStepWasAnsweredBy() throws {

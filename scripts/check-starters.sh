@@ -41,6 +41,7 @@ extract() {
 # LampScene.swift, which Lamp writes beside LampSupport.swift into an app whose code imports RealityKit
 # (`Template.usesScene`); such an app is built for macOS 15, where RealityView begins (`Template.withScene`).
 extract lampSceneSwift "$scene_template" > "$work/LampScene.swift"
+"$here/scripts/controller-kit.sh" "$work/LampControllerKit.swift"
 
 sdk="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}"
 check() {
@@ -60,8 +61,9 @@ for folder in $starters; do
   sources=("$starter"/Sources/**/*.swift(N)); sources=(${sources:#*/Lamp[A-Z]*.swift})
   # A game's starter may have no Swift of its own (Lamp writes the app around its page): nothing to check.
   if (( ! $#sources )); then print -- "○ $name: no Swift to check"; continue; fi
-  # A game's or a screen's Swift (Native.swift) answers its page through LampNative, in Lamp's LampPage.swift.
-  [ -f "$starter/Web/index.html" ] && library+=("$here/Resources/GameKit/apple/LampPage.swift")
+  # A game's or a screen's Swift (Native.swift) answers its page through LampNative, in Lamp's LampPage.swift, which
+  # runs the game's phones with Lamp's controller kit beside it, as a build writes both.
+  [ -f "$starter/Web/index.html" ] && library+=("$here/Resources/GameKit/apple/LampPage.swift" "$work/LampControllerKit.swift")
   if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' $sources; then
     library+=("$work/LampScene.swift") macos=15.0
   fi

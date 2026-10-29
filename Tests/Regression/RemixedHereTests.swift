@@ -52,4 +52,29 @@ final class RemixedHereTests: XCTestCase {
         XCTAssertFalse(DeskEntry.read(received, apps: []).remixedHere)
         XCTAssertTrue(DeskEntry.read(received, apps: []).arrived)
     }
+
+    /// A starter remixed with nothing asked of it: the remix's chat opens on the starter's changes to try, as the starter's
+    /// does, and the remix is still not a starter (its icon is painted, the desk counts it as the person's).
+    func testARemixOfAStarterOffersItsChanges() async throws {
+        let original = try Template.scaffold(name: "Water", platform: .mac, in: root)
+        try """
+        ---
+        name: Water
+        offer: "Make it yours"
+        tweaks:
+          - drop.fill: Add a water counter
+          - Remind me every hour
+        ---
+        """.write(to: Starters.file(of: original), atomically: true, encoding: .utf8)
+        let store = Store(testingAt: root)
+        let remix = try store.remixCopy(of: try XCTUnwrap(store.current(original)))
+        store.reload()
+        XCTAssertFalse(Starters.isStarter(try XCTUnwrap(store.current(remix))))
+
+        store.offerStarterChanges(remix.id, after: 0)
+        try await Task.sleep(for: .milliseconds(300))
+        let card = try XCTUnwrap(store.logs[remix.id]?.last?.ask, "the remix's chat opens on the starter's card")
+        XCTAssertEqual(card.questions.first?.question, "Make it yours")
+        XCTAssertEqual(card.questions.first?.options.map(\.title), ["Add a water counter", "Remind me every hour"])
+    }
 }

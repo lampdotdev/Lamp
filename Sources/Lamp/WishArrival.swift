@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import LampSidebarKit
 
 /// A wish made on the desk doesn't pop its chat up out of nowhere: the bar it was typed in lifts off the desk and
 /// grows into the chat's window, lit in the colors of the smoke an app being changed shows, with a few sparks rising
@@ -113,7 +114,7 @@ struct ArrivalView: View {
 
     private var card: some View {
         shape
-            .fill(Color(nsColor: .textBackgroundColor))
+            .fill(Paper.card)
             .overlay(alignment: .topLeading) {
                 // The wish's words, where they were in the bar, rising off the card as it opens.
                 Text(text)
@@ -143,7 +144,6 @@ struct ArrivalView: View {
             // The glow round the edge, in the smoke's colors all the way round.
             .background(shape.fill(Self.ring).blur(radius: lit ? 30 : 6).opacity(lit ? 0.55 : 0))
             .shadow(color: .black.opacity(0.1), radius: 18, y: 8)
-            .environment(\.colorScheme, .light)
     }
 }
 

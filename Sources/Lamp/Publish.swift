@@ -265,7 +265,7 @@ enum Publish {
         if let link = open.link { text += " [Make your own](\(link.absoluteString)) from the same wish, with Lamp or by downloading it." }
         if let file = open.file { text += " Or download [\(file)](\(file)) and open it with Lamp: it's this exact wish, yours to remix, with the credits above kept." }
         text += "\n\n"
-        text += "`lamp-game.js`, `lamp-phaser.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js`, `three/` and `phaser/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`), and so is Phaser (`phaser/LICENSE.md`)."
+        text += "`lamp-game.js`, `lamp-phaser.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js`, `three/` and `phaser/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`), and so are Phaser (`phaser/LICENSE.md`) and the QR code encoder inside `lamp.js` (its license is there)."
         text += GameKit.usesRapier(project) ? " `rapier/` is Rapier, its physics, under the Apache License 2.0 (`rapier/LICENSE`).\n" : "\n"
         return text
     }

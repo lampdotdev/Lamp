@@ -96,6 +96,23 @@
           "poll": 300,
           "port": 11443
         }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "expect": {
+            "equals": "{packageFullName}",
+            "json": "InstalledPackages.*.PackageFullName"
+          },
+          "https": true,
+          "path": "/api/app/packagemanager/packages",
+          "port": 11443,
+          "until": 120
+        }
       }
     ],
     "launch": [
@@ -125,6 +142,25 @@
           "method": "POST",
           "path": "/api/taskmanager/app?appid={base64:appUserModelID}&package={base64:packageFullName}",
           "port": 11443
+        }
+      }
+    ],
+    "running": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "expect": {
+            "equals": "{packageFullName}",
+            "json": "Processes.*.PackageFullName"
+          },
+          "https": true,
+          "path": "/api/resourcemanager/processes",
+          "port": 11443,
+          "until": 8
         }
       }
     ],

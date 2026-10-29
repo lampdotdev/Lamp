@@ -33,8 +33,9 @@ opening comment for the whole list. What it gives:
 ## Doing things for the person
 
 `LampAI.act(request, { about, context, tools, history, onStep })` runs a short loop: the AI picks calls among the
-app's tools, the page runs them, the AI sees the results, until it replies (at most 4 AI calls, 6 writes and 25
-seconds a turn). Its comment in lamp.js has the shapes. This is the one recipe for it:
+app's tools, the page runs them, the AI sees the results, until it replies (at most 4 AI calls and 6 writes a
+turn, and 25 seconds over OpenRouter or a minute through Claude Code, Codex or a model on the Mac). It works with
+whichever AI the person set up for apps' text, so don't tie it to voice: typing works wherever `act` does. Its comment in lamp.js has the shapes. This is the one recipe for it:
 
 - Show the feature only where `LampAI.isAvailable('act')` is true, and keep the app's own buttons for everything: it
   only adds a way in.

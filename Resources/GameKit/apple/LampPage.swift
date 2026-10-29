@@ -93,16 +93,72 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
               let url = URL(string: lampGateway + path) else {
             return replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
         }
+        // A game's phones are its own, on the Mac, the iPhone and the iPad: it serves their page and runs their relay
+        // itself (`LampControllers`), so they go on playing, and new ones join, whether Lamp is open or not. Never asked
+        // of Lamp: a game that can't open its own says why, rather than lean on Lamp after all.
+        if path == "/app/controller" {
+            let body = (call["body"] as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any] ?? [:]
+            let reply: @Sendable (Int, [String: Any]) -> Void = { status, answer in
+                let text = (try? JSONSerialization.data(withJSONObject: answer)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                DispatchQueue.main.async { replyHandler(["status": status, "body": text], nil) }
+            }
+            return LampControllers.answer(stop: body["stop"] as? Bool == true, reply)
+        }
+        Self.ask(url, body: call["body"] as? String) { status, body in replyHandler(["status": status, "body": body], nil) }
+    }
+
+    private static func ask(_ url: URL, body: String?, done: @escaping @MainActor @Sendable (Int, String) -> Void) {
         var request = URLRequest(url: url, timeoutInterval: 240)
         request.httpMethod = "POST"
         request.setValue("Bearer " + LampInstall.token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data((call["body"] as? String ?? "{}").utf8)
+        request.httpBody = Data((body ?? "{}").utf8)
         URLSession.shared.dataTask(with: request) { data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 502
             let body = data.map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Couldn't reach Lamp on your Mac. Open Lamp and try again."}"#
-            DispatchQueue.main.async { replyHandler(["status": status, "body": body], nil) }
+            DispatchQueue.main.async { done(status, body) }
         }.resume()
+    }
+}
+
+/// The game's phones as controllers (`ControllerRuntime`, in LampControllerKit.swift): its phone page from the copy Lamp
+/// put in the bundle (Phone/, in Resources on the Mac and at the bundle's top on an iPhone or iPad) and the relay its
+/// phones join, in this process, opened as the page's `Lamp.controllers` starts and closed as it stops or the game quits.
+///
+/// On an iPhone or iPad only while the game is in front: a game the person leaves is suspended by the system, which
+/// would leave phones holding buttons on a game that can't hear them, so leaving ends the session (every phone let go,
+/// both listeners closed) and coming back opens a new one at the page's next ask, which phones join by scanning its
+/// code again. A moment away that isn't leaving (a permission's alert, the app switcher pulled half up) ends nothing.
+enum LampControllers {
+    private static let runtime: ControllerRuntime = {
+        let runtime = ControllerRuntime(app: LampInstall.slug.isEmpty ? (Bundle.main.bundleIdentifier ?? "game") : LampInstall.slug,
+                                        page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"))
+        #if os(iOS)
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
+            runtime.stop {}
+        }
+        #endif
+        return runtime
+    }()
+
+    static func answer(stop: Bool, _ done: @escaping @Sendable (Int, [String: Any]) -> Void) {
+        // Both on the runtime's own queue, in the order the page asked: a stop then a start for the next round opens a
+        // fresh session, never one the stop then closes.
+        if stop { return runtime.stop { done(200, [:]) } }
+        guard inFront else { return done(409, ["error": "The game is in the background: phones join again when it's back in front."]) }
+        runtime.start(done)
+    }
+
+    /// Whether the game may host phones now: always on the Mac; on an iPhone or iPad unless it's in the background.
+    private static var inFront: Bool {
+        #if os(iOS)
+        // Asked from the page's bridge, on the main thread, where the app's state is read.
+        let state = Thread.isMainThread ? MainActor.assumeIsolated { UIApplication.shared.applicationState }
+            : DispatchQueue.main.sync { UIApplication.shared.applicationState }
+        return state != .background
+        #else
+        return true
+        #endif
     }
 }
 

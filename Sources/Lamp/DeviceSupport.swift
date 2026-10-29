@@ -330,8 +330,11 @@ enum DeviceSupport {
     // MARK: - JavaScript
 
     /// The web library, plain ES5 for the TVs' browsers (about Chrome 79's age, Samsung's older ones less). It reaches
-    /// Lamp through the TV preview's bridge on this Mac, else over the network with the routes Lamp filled in.
-    static let webJS = #"""
+    /// Lamp through the TV preview's bridge on this Mac, else over the network with the routes Lamp filled in. `LampQR`
+    /// comes after it, so every page lamp.js is in (a game's, a TV app's, a declared web kind's) can draw a QR code.
+    static let webJS = webBlocksJS + qrJS
+
+    private static let webBlocksJS = #"""
     /* Lamp's building blocks for a web app on a device: LampAI, LampStore and LampAssets. Written by Lamp before every
      * build; don't edit. Plain ES5: every call that waits gives back a Promise.
      */
@@ -763,7 +766,8 @@ enum DeviceSupport {
 
       // Doing things for the person: LampAI.act
 
-      var ACT_LIMITS = { steps: 4, writes: 6, seconds: 25 };
+      // 60 seconds is the longest any route allows; each answer says its route's own (`seconds`), and the turn keeps to it.
+      var ACT_LIMITS = { steps: 4, writes: 6, seconds: 60 };
       var actRan = {};      // turn id -> call key -> the result a write gave, while this copy of the page is open
       function actId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
       function isList(v) { return Object.prototype.toString.call(v) === '[object Array]'; }
@@ -800,7 +804,7 @@ enum DeviceSupport {
           actRan[id] = {};
         }
         var ran = actRan[id];
-        var deadline = Date.now() + limits.seconds * 1000;
+        var started = Date.now(), deadline = started + limits.seconds * 1000;
         var out = { turn: id, reply: '', ask: false, choices: [], done: [], failed: [], skipped: [], reads: [], stopped: null, error: '' };
         var steps = [], route = null, writes = 0, over = false, settle;
         var declared = Object.keys(tools).map(function (name) {
@@ -905,6 +909,16 @@ enum DeviceSupport {
           if (steps.length >= limits.steps - 1) body.final = true;
           if (o.model) body.model = o.model;
           post('/ai/act', body, left, deadline).then(function (answer) {
+            // The route's own time for a turn (25 seconds over OpenRouter, a minute through Claude Code, Codex or a model
+            // on the Mac) shortens the turn's deadline, counted from its start; it never lengthens it.
+            if (!over && typeof answer.seconds === 'number' && answer.seconds > 0) {
+              var end = started + Math.min(answer.seconds, limits.seconds) * 1000;
+              if (end < deadline) {
+                deadline = end;
+                clearTimeout(timer);
+                timer = setTimeout(function () { stop('time'); }, Math.max(0, deadline - Date.now()));
+              }
+            }
             // Cancelled, out of time or already over: an answer that comes late runs nothing.
             if (late()) return;
             route = answer.route || route;
@@ -1016,8 +1030,8 @@ enum DeviceSupport {
 
         /**
          * Does what the person asks, in their own words, with the app's own reads and writes: the model picks calls,
-         * the page runs them, the model sees what happened, until it replies (at most 4 model calls, 6 writes and 25
-         * seconds a turn). Check `LampAI.isAvailable('act')` first; keep the app's buttons for everything.
+         * the page runs them, the model sees what happened, until it replies (at most 4 model calls and 6 writes a turn,
+         * and 25 seconds over OpenRouter or a minute through Claude Code, Codex or a model on the Mac). Check `LampAI.isAvailable('act')` first; keep the app's buttons for everything.
          *
          *     var turn = LampAI.act('Add milk', {
          *       about: 'A family dashboard: the calendar, chores and the shopping list.',
@@ -1827,6 +1841,94 @@ enum DeviceSupport {
     };
 
     """##
+
+    /// `LampQR`, which draws a QR code: what a game or TV page shows phones to join (`Lamp.controllers.onLink`) or open
+    /// its phone page (`Lamp.phonePage`). A join link carries its signed credential, so it's long (about 170 bytes, more
+    /// with a longer app name or host), and a code the agent writes for itself tends to stop short of that; this one is
+    /// an established encoder Lamp ships (`WebLibraries/qrcode`, MIT, put there by scripts/update-qrcode.sh) that picks
+    /// the version the text needs, up to the largest QR code. Its license goes with it, inside lamp.js.
+    static let qrJS = qrJS(encoder: bundledText("WebLibraries/qrcode/qrcode.js"), license: bundledText("WebLibraries/qrcode/LICENSE"))
+
+    /// `LampQR` around an encoder's source; without one (a build without the folder) it says so each time it's asked.
+    static func qrJS(encoder: String?, license: String?) -> String {
+        guard let encoder else { return qrHead + "var qrcode = null;\n" + qrTail }
+        let notice: [String] = (license ?? "").components(separatedBy: "\n").map { " * " + $0 }
+        let header = "/* QR Code Generator for JavaScript, by Kazuhiko Arase, as published (WebLibraries/qrcode), under this license:\n *\n"
+        return qrHead + header + notice.joined(separator: "\n") + "\n */\n" + encoder + "\n" + qrTail
+    }
+
+    private static func bundledText(_ path: String) -> String? {
+        Bundle.main.resourceURL.flatMap { try? String(contentsOf: $0.appendingPathComponent(path), encoding: .utf8) }
+    }
+
+    private static let qrHead = #"""
+    /* LampQR: a QR code of any text, to scan with a phone. Written by Lamp before every build; don't edit. Plain ES5.
+     *
+     * LampQR.draw(canvas, text, { size: 240 })   draws text as a QR code into a <canvas> (or a new one when canvas is
+     *     null) and gives it back: dark on white with its quiet border, about `size` CSS pixels across, each module a
+     *     whole number of the screen's pixels. Draw it again into the same canvas when the text changes.
+     * LampQR.matrix(text)   { size, dark(x, y) }, the code's modules without its border, to draw some other way.
+     *
+     * Both throw an Error saying what went wrong (the text is longer than any QR code holds, there's no canvas): show
+     * that, never the same thing as having nothing to show.
+     */
+    (function () {
+      if (window.LampQR) return;
+      // The encoder's own module wrapper looks for these; as locals they keep it to this file.
+      var define, exports, module;
+
+    """#
+
+    private static let qrTail = #"""
+
+      // Every character as its UTF-8 bytes (the encoder's default keeps only each one's low byte). This copy of the
+      // encoder is this file's own, so a page's own copy is untouched.
+      if (qrcode) qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+      var level = 'M';   // recovers about 15% damage: a code on a screen across the room, behind glare
+
+      function Failure(message) {
+        this.name = 'LampQR.Failure';
+        this.message = message;
+        this.stack = (new Error(message)).stack;
+      }
+      Failure.prototype = Object.create(Error.prototype);
+      Failure.prototype.constructor = Failure;
+
+      function matrix(text) {
+        if (!qrcode) throw new Failure('This copy of Lamp is missing its QR code encoder.');
+        if (typeof text !== 'string' || !text) throw new Failure('LampQR needs the text to show, such as the link phones open.');
+        var code = qrcode(0, level);
+        try { code.addData(text, 'Byte'); code.make(); }
+        catch (e) { throw new Failure('This text is ' + qrcode.stringToBytes(text).length + ' bytes, more than a QR code holds.'); }
+        var size = code.getModuleCount();
+        return { size: size, dark: function (x, y) { return code.isDark(y, x); } };
+      }
+
+      function draw(canvas, text, options) {
+        var code = matrix(text), o = options || {}, border = 4;
+        canvas = canvas || (typeof document !== 'undefined' && document.createElement('canvas'));
+        var g = canvas && canvas.getContext && canvas.getContext('2d');
+        if (!g) throw new Failure('LampQR.draw needs a <canvas> to draw in.');
+        var ratio = (typeof window !== 'undefined' && window.devicePixelRatio) || 1, across = code.size + border * 2;
+        var scale = Math.max(1, Math.floor((o.size || 240) * ratio / across)), side = across * scale;
+        canvas.width = side; canvas.height = side;
+        if (canvas.style) {
+          canvas.style.width = side / ratio + 'px'; canvas.style.height = side / ratio + 'px';
+          canvas.style.imageRendering = 'pixelated';
+        }
+        g.fillStyle = '#ffffff';
+        g.fillRect(0, 0, side, side);
+        g.fillStyle = '#000000';
+        for (var y = 0; y < code.size; y++) {
+          for (var x = 0; x < code.size; x++) if (code.dark(x, y)) g.fillRect((x + border) * scale, (y + border) * scale, scale, scale);
+        }
+        return canvas;
+      }
+
+      window.LampQR = { draw: draw, matrix: matrix };
+    })();
+
+    """#
 
     // MARK: - BrightScript
 
