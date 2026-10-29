@@ -11366,6 +11366,12 @@ final class Store: ObservableObject {
         guard Self.servesPhonePage(project) else {
             return (409, ["error": project.hasTV ? "The app isn't open in the TV preview or set to open on a TV." : "The game isn't open on this Mac."])
         }
+        // A game's copy on this Mac asks from this Mac; from the network only a TV it's set to open on does. Anywhere
+        // else (the Xbox, a phone) has no host's side of phones, even while the Mac's copy takes players.
+        let onTV = project.hasTV && (project.device != nil || TVPreview.window(project) != nil)
+        if request.fromNetwork, !request.fromPreview, !onTV {
+            return (409, ["error": "Phones join this game where Lamp hosts them: on this Mac, or on a Samsung or LG TV."])
+        }
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
         let relay: [String: Any] = ["kind": "relay", "socket": "ws://\(host):\(port)/", "app": project.id,
                                     "credential": PhoneControllers.shared.hostCredential(for: project, preview: request.fromPreview)]

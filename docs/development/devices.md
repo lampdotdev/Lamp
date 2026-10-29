@@ -478,8 +478,11 @@ shared with the game (`GameFiles`) and copied with a starter. Lamp serves it whi
 copy asks `/app/controller` through `LampPageGateway`, whose page Lamp's relay lets in by its `lamp-game://app`
 origin; `Store.servesPhonePage` goes by `openOnMac`, and the phone page is staged at each build, `TVs.stagePhone`), in
 the TV preview and on a Samsung or LG TV (staged with the rest, `TVs.stage`), and ends the session as the game closes.
-On the Xbox, an iPhone or iPad and Android the game has no host's side of phones yet, so `Lamp.controllers` reports
-an error and the game plays with controllers and touch.
+On the Xbox, an iPhone or iPad and Android the game has no host's side of phones yet: its lamp.js still has
+`Lamp.controllers` (on the Xbox written over the integration's declared one), Lamp turns down `/app/controller` from
+anywhere on the network but a TV the game is set to open on, and so `Lamp.controllers` reports an error and the game
+plays with controllers and touch. A game's second screen is a phone joined from `onLink`'s address: `Lamp.phonePage`
+is a TV app's page's only.
 
 ### Lamp's player
 

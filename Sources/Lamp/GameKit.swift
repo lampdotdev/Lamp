@@ -473,19 +473,13 @@ enum GameKit {
             } else {
                 AppFolder.remove(project.dir.appendingPathComponent(phaserFolder), in: project.dir)
             }
-            // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host); elsewhere
-            // the page loads nothing from it.
-            // Elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page.
-            if project.integration == nil {
-                try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
-            } else {
-                try DeviceSupport.writeDeclared(for: project)
-                // The game's code is the same everywhere, so it finds `Lamp.wish` on the Xbox too, where the page is the
-                // wish's peer itself and the host opens its links.
-                if Template.carriesWish(project) {
-                    try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
-                }
-            }
+            // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host);
+            // elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page. Either way
+            // lamp.js is the game's own on top: the game's code is the same everywhere, so it finds `Lamp.controllers`
+            // (which says it can't start where phones aren't hosted) and `Lamp.wish` on the Xbox too, where the page is
+            // the wish's peer itself and the host opens its links.
+            if project.integration != nil { try DeviceSupport.writeDeclared(for: project) }
+            try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
             // On Android too: Lamp's Android app around the page.
             if project.hasAndroid { try GameAndroid.write(for: project) }
             let played = playerPlist(game: true, scheme: gameScheme, canvas: nil)
