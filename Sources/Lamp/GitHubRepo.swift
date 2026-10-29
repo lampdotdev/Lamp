@@ -75,6 +75,9 @@ enum GitHubRepo {
         let open: Publish.OpenInLamp
         /// The wish's own version this is of, kept with the repository once it's up (`Repo.version`).
         var version: String? = nil
+        /// Where the README's Open in Lamp goes, in a public repository (`remixLink`): what the card names as its remix
+        /// link, in place of the Share Link a private one's README uses.
+        var remix: String? = nil
     }
 
     /// Stages the repository for `repo`, its README's remix link going to `link` (the wish's Share Link, which works
@@ -146,7 +149,7 @@ enum GitHubRepo {
         guard bytes < 900_000_000 else { throw Failure(message: "\(project.name) is too big to put on GitHub.") }
         done = true
         return Staged(folder: tree, files: all.filter { !$0.hasDirectoryPath }.count, bytes: bytes, credits: chain, open: open,
-                      version: version)
+                      version: version, remix: showcase.remix ? repo.map { remixLink($0) } : nil)
     }
 
     /// The files in the wish's folder that are Lamp's (the ones the builder can't delete, `Store`'s list), by their
@@ -653,9 +656,16 @@ enum GitHubRepo {
         var notes = ShareCheck.notes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
         let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
+        // What the README offers: in a public repository the repository itself on lamp.dev, so no Share Link is asked
+        // for; in a private one the Share Link, when there is one.
         let link = card.staged?.open.link ?? WishLink.kept(for: project)?.url
+        let remix = card.staged?.remix.flatMap(URL.init(string:)).flatMap { url in
+            URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "repo" }?.value
+                .map { "lamp.dev, from " + $0.replacingOccurrences(of: "https://", with: "") }
+        }
         return SidebarRepo(name: project.name, icon: card.icon, stage: card.stage, repo: card.repo, url: card.kept?.url,
-                           credit: credits.basedOn, openInLamp: link.map { url in url.host.map { $0 + url.path } ?? url.absoluteString }, notes: notes, size: size, copied: card.copied,
+                           credit: credits.basedOn, openInLamp: remix ?? link.map { url in url.host.map { $0 + url.path } ?? url.absoluteString },
+                           notes: notes, size: size, copied: card.copied,
                            update: card.kept != nil, canPut: card.canPut, isPrivate: card.isPrivate, license: card.license,
                            canChooseLicense: card.staged.map { GitHubRepo.canOfferLicense($0.credits) } ?? true)
     }

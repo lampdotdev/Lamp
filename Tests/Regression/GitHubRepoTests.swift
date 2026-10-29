@@ -32,6 +32,7 @@ final class GitHubRepoTests: XCTestCase {
         let readme = try String(contentsOf: staged.folder.appendingPathComponent("README.md"), encoding: .utf8)
         XCTAssertTrue(readme.contains("<a href=\"https://lamp.dev/?repo=https://github.com/someone/tally&amp;from=readme\"><img src=\"\(GitHubRepo.openButton)\""), readme)
         XCTAssertFalse(readme.contains("https://lamp.dev/w/AyTkit4xCc"))
+        XCTAssertEqual(staged.remix, "https://lamp.dev/?repo=https://github.com/someone/tally&from=readme", "the card names what the README offers")
         XCTAssertTrue(readme.contains("./build.sh"))
         let closed = try GitHubRepo.stage(wish, repo: "someone/tally", link: URL(string: "https://lamp.dev/w/AyTkit4xCc"), isPublic: false)
         defer { try? FileManager.default.removeItem(at: closed.folder.deletingLastPathComponent()) }
@@ -39,6 +40,7 @@ final class GitHubRepoTests: XCTestCase {
         XCTAssertTrue(closedReadme.contains("https://lamp.dev/w/AyTkit4xCc"))
         XCTAssertTrue(closedReadme.contains("[tally.lampapp](tally.lampapp)"))
         XCTAssertFalse(closedReadme.contains("lamp.dev/?repo="))
+        XCTAssertNil(closed.remix)
         XCTAssertFalse(fm.fileExists(atPath: closed.folder.appendingPathComponent(GitHubRepo.openButton).path))
         // Each idea is a remix with its request, its words kept from ending the link.
         let ideas = GitHubRepo.readme(for: wish, credits: Credits(), open: Publish.OpenInLamp(), build: GitHubRepo.Build(alone: true, app: "Mac", others: false),
