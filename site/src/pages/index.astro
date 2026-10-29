@@ -232,14 +232,27 @@ const devices: { name: string; icon: string; brands?: string }[] = [
   .stripe-warm { background: linear-gradient(180deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
   .beam { background: linear-gradient(90deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
 
-  /* The hero's field: the stripes on the slant, magenta at the top left through to green at the bottom right. The
-     words sit on the top-left half, so it's widened there into deeper magentas and reds that hold white words at 3:1
-     or more (all of them large); the paler orange, yellow and lime come after the words, under the sleeve. */
-  .technicolor {
-    background: linear-gradient(150deg,
-      #b8235f 0 12%, var(--stripe-5) 0 26%, #dc3d52 0 40%, var(--stripe-4) 0 54%, #e5562a 0 66%, var(--stripe-3) 0 76%,
-      var(--stripe-2) 0 86%, var(--stripe-1) 0 93%, var(--stripe-0) 0);
+  /* The hero's field: the stripes on the slant, magenta through to green and round again, wide in the deep magentas
+     and reds that hold white words and narrow in the pale yellow and lime. They drift slowly up the slant, a whole
+     round every three minutes, on a layer larger than the hero that moves exactly one round and starts over, so the loop never
+     shows a seam. When a pale band passes under the words, a soft shadow behind them keeps them readable. */
+  .technicolor { position: relative; isolation: isolate; --round: 90rem; }
+  .technicolor::before {
+    content: ""; position: absolute; inset: calc(-1 * var(--round)); z-index: -1;
+    background: repeating-linear-gradient(150deg,
+      #b8235f 0 10.8rem, var(--stripe-5) 0 23.4rem, #dc3d52 0 36rem, var(--stripe-4) 0 48.6rem, #e5562a 0 59.4rem,
+      var(--stripe-3) 0 68.4rem, var(--stripe-2) 0 77.4rem, var(--stripe-1) 0 83.7rem, var(--stripe-0) 0 var(--round));
+    animation: hero-drift 180s linear infinite;
   }
+  /* One round back along the stripes' own direction (150deg points across by sin and down by -cos; this goes the
+     other way, up and to the left). */
+  @keyframes hero-drift {
+    to { translate: calc(var(--round) * -0.5) calc(var(--round) * -0.866); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .technicolor::before { animation: none; }
+  }
+  .technicolor :is(h1, p) { text-shadow: 0 1px 2px rgb(60 10 20 / 0.2), 0 2px 24px rgb(60 10 20 / 0.25); }
 
   /* Headings keep plain ink; the stripes sit above them, as a tab cut from the sleeve. */
   .chip-heading::before {
