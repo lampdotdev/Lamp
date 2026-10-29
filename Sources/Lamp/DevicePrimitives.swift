@@ -71,7 +71,8 @@ enum DeviceAddress {
 
 /// A request to a device, as an integration may make it.
 enum DeviceHTTP {
-    /// Answers are cut off here: a device's answers are small, and a picture is a few megabytes.
+    /// Answers are cut off here: a device's answers are small, and a picture is a few megabytes. What Lamp sends a
+    /// device, an app's package, has its own limit (`DeviceApps.packageLimit`).
     static let limit = 16 << 20
 
     struct Failure: LocalizedError {
