@@ -246,8 +246,8 @@ enum PageCopies {
         guard project.platform.target.changesAreWeb(project) else { return Outcome() }
         let room = WishRooms.key(for: wish), app = WishRooms.peer(project, in: wish)
         var outcome = Outcome()
-        // The page as it's sent, which each copy that takes it then has: the folder may change while a copy answers.
-        let sent = hashes(of: project)
+        // The pages as they were sent, by copy: what each that takes it then has, though the folder may change meanwhile.
+        var sentPages: [[String: String]] = []
         for member in WishRooms.presence(of: wish) {
             guard let copy = member["peer"] as? String, WishChannel.app(of: copy) == app,
                   var place = (member["device"] as? String).flatMap(place(of:)) else { continue }
@@ -261,6 +261,8 @@ enum PageCopies {
             guard let change = change(for: project, at: place, shell: here?["shell"] as? String, given: given[key]) else { continue }
             if let why = change.cannot { outcome.waiting[place] = why; continue }
             let id = UUID().uuidString.lowercased()
+            let sent = change.files.mapValues { name(of: $0) }
+            sentPages.append(sent)
             // Its answer comes once the page has opened again from the change, which can take a TV a while.
             let answer = Task { await Self.answer(from: copy, in: room, id: id, seconds: 45) }
             var went = true
@@ -280,7 +282,8 @@ enum PageCopies {
                 outcome.silent.insert(place)
             }
         }
-        outcome.stale = hashes(of: project) != sent
+        let now = hashes(of: project)
+        outcome.stale = sentPages.contains { $0 != now }
         return outcome
     }
 
