@@ -791,6 +791,9 @@ final class Store: ObservableObject {
         /// build wait for it, since a turn has one build at a time.
         var early: Task<Void, Never>?
         var pendingName: String?            // a name the agent gave the version this request makes
+        /// `rename_app` gave the wish a new name this turn. Its own version is already saved, so the folder can be
+        /// clean, but the installed app and its window titles only take the name from the turn's build.
+        var renamed = false
         /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
         /// that follow, until it says something else.
         var naming: String?
@@ -4585,9 +4588,7 @@ final class Store: ObservableObject {
         if project.makesNoApp {
             return TurnResult(end: .replied, watched: isWatching(project.id))
         }
-        // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
-        // There's nothing worth building or opening yet; the answers start the first build.
-        if !hasVersions(project), await !agentChangedFiles(project) {
+        if await onlyReplied(project, in: owner) {
             return TurnResult(end: .replied, watched: isWatching(project.id))
         }
         // Only build when something changed: not after a question, and not again when the agent's last
@@ -4801,6 +4802,14 @@ final class Store: ObservableObject {
     }
 
     /// Whether any request has made a version of this app yet (its messages are linked to the versions they made).
+    /// A new app the agent didn't touch: it only replied (say, with questions about a vague request). There's nothing
+    /// worth building or opening yet; the answers start the first build. A rename is a change, though it leaves nothing
+    /// unsaved.
+    func onlyReplied(_ project: LampProject, in owner: Turn) async -> Bool {
+        guard !owner.renamed, !hasVersions(project) else { return false }
+        return await !agentChangedFiles(project)
+    }
+
     private func hasVersions(_ project: LampProject) -> Bool {
         (logs[project.id] ?? []).contains { $0.kind == .user && $0.version != nil }
     }
@@ -6695,6 +6704,7 @@ final class Store: ObservableObject {
         guard renamed.name != wish.name else {
             return (400, ["error": "Lamp can't use that as a name. Ask the person for a few plain words."])
         }
+        turns[wish.id]?.renamed = true
         // Another wish may have the name, or it held what a name can't (a slash): the agent says the one it got.
         let taken = renamed.name == asked ? "" : ", the nearest Lamp could give to \(asked)"
         return (200, ["text": "Lamp renamed the wish \(renamed.name)\(taken): on the desk, in the chat and on its installed apps, "

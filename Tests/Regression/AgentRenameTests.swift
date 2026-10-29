@@ -73,4 +73,25 @@ final class AgentRenameTests: XCTestCase {
         XCTAssertTrue(refused.failed, refused.text)
         XCTAssertEqual(store.projects.first { $0.id == wish.id }?.name, wish.name)
     }
+
+    /// A request that only renames a wish nothing has been asked of yet still ends in a build: the rename's version
+    /// leaves the folder clean, and without the build the installed app and its window titles keep the old name.
+    func testARenameOnlyTurnIsBuilt() async throws {
+        let root = try newRoot()
+        let made = try Template.scaffold(name: "Water \(UUID().uuidString.prefix(6))", platform: .mac, in: root)
+        let store = Store(testingAt: root)
+        _ = await store.initRepo(made, message: "Scaffold")
+        let wish = try XCTUnwrap(store.current(made))
+        let turn = try XCTUnwrap(store.begin(wish))
+
+        let renamed = try await call(store, ["name": "Sprout \(UUID().uuidString.prefix(6))"], on: wish)
+        XCTAssertFalse(renamed.failed, renamed.text)
+        let now = try XCTUnwrap(store.current(wish))
+        let leftUnsaved = await Versions.hasUnsavedChanges(now)
+        XCTAssertFalse(leftUnsaved, "the rename's own version holds everything")
+        let replied = await store.onlyReplied(now, in: turn)
+        XCTAssertFalse(replied, "the turn goes on to build the new name")
+        store.finish(now)
+    }
 }
+
