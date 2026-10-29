@@ -37,7 +37,7 @@ front (⌘[).
 **Remix** (`Store.remix`, also Remix on the wish's menu and File → Remix) makes a new copy of the wish to change, "<name>
 Remix", with its code, history and icon on another background, and a link back to the original at the end of its chain,
 then builds it with its chat beside it; the original stays as it was. The row picked (clicked, or moved to with the arrows; the first until then) shows beside it what it is, in a panel
-the toolbar's sidebar button slides away and back (`DeskDetail`): its picture (`Runtime.previewURL`, else the one its
+the toolbar's sidebar button slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture (`Runtime.previewURL`, else the one its
 starter shipped), line, who made it and its license, where it runs and its remixes, Open, and a box to
 remix it with a change, which asks for that change as the copy's first request; a starter's own three changes are there
 to pick from.

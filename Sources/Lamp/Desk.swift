@@ -28,6 +28,12 @@ struct WishDesk: View {
     /// The list's width, which decides whether its rows have room for every column.
     @State private var listWidth: CGFloat = 1000
     private var compact: Bool { listWidth < DeskListRow.compactBelow }
+    /// The desk's whole width: the side panel shows only where it leaves the list room for its names.
+    @State private var deskWidth: CGFloat = 1200
+    private static let panelWidth: CGFloat = 320
+    /// The narrowest the list may be with the panel beside it.
+    private static let listWithPanel: CGFloat = 420
+    private var panelFits: Bool { deskWidth - 220 - 40 - Self.panelWidth >= Self.listWithPanel }
     @AppStorage("deskSort") private var column = DeskList.Column.name
     @AppStorage("deskAscending") private var ascending = true
     @AppStorage("deskOnlyRemixes") private var onlyRemixes = false
@@ -61,22 +67,25 @@ struct WishDesk: View {
             }
             .padding(.top, Self.top).padding(.horizontal, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            if panelShown, let row = rows.first(where: { $0.id == current }) {
+            if panelShown, panelFits, let row = rows.first(where: { $0.id == current }) {
                 DeskDetail(row: row, remixes: remixes(of: row))
-                    .frame(width: 320)
+                    .frame(width: Self.panelWidth)
                     .overlay(alignment: .leading) { Self.separator }
                     .transition(.move(edge: .trailing))
             }
         }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { deskWidth = $0 }
+        .animation(Self.slide, value: panelFits)
         .background(DeskBackground().ignoresSafeArea())
         .navigationTitle("Lamp")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            // Only where the panel has room to show: in a narrower window the list keeps the space.
+            if panelFits { ToolbarItem(placement: .primaryAction) {
                 Button { withAnimation(Self.slide) { panelShown.toggle() } } label: {
                     Label(panelShown ? "Hide Details" : "Show Details", systemImage: "sidebar.right")
                 }
                 .help(panelShown ? "Hide what the picked wish is" : "Show what the picked wish is")
-            }
+            } }
         }
         .modifier(ClearToolbar())
         // Drawn on Lamp's paper, as in the welcome, whatever the Mac's appearance.
