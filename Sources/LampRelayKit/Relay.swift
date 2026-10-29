@@ -319,6 +319,23 @@ public final class Relay: @unchecked Sendable {
         }
     }
 
+    /// Lamp's own word to some copies of a wish's apps (a page's change put into each open copy, `Store.pageToCopies`):
+    /// passed as a message from the relay's own name, which no app of a wish has (`prove`), so a page can tell it's
+    /// Lamp's. `done` is told the copies it went to.
+    public func say(in room: String, to copies: [String], data: Any, done: @escaping ([String]) -> Void) {
+        queue.async {
+            guard let known = self.rooms[room] else { return done([]) }
+            let out = Self.json(["t": "message", "from": WishChannel.relayName, "data": data, "at": Self.now])
+            var reached: [String] = []
+            for id in copies.sorted() {
+                guard let member = known.members[id] else { continue }
+                member.send(out)
+                reached.append(id)
+            }
+            done(reached)
+        }
+    }
+
     /// The wish is gone, or its room isn't wanted any more: its members are let go.
     public func endRoom(_ room: String) {
         queue.async { self.closeRoom(room) }
@@ -390,6 +407,8 @@ public final class Relay: @unchecked Sendable {
         guard let tag = (hello["tag"] as? String).flatMap({ Data(base64Encoded: $0) }), tag.count == WishChannel.tagSize,
               let roomKey = tags[tag], let room = rooms[roomKey],
               let id = hello["peer"] as? String, WishChannel.isName(id), room.apps[WishChannel.app(of: id)] != nil,
+              // The relay's own name is Lamp's (`say`): no app takes it.
+              WishChannel.app(of: id) != WishChannel.relayName,
               let clientNonce = (hello["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), clientNonce.count == WishChannel.nonceSize
         else { return peer.close(code: 4003) }
         let serverNonce = WishChannel.random(WishChannel.nonceSize)

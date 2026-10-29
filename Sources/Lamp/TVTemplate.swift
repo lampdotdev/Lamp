@@ -1282,7 +1282,195 @@ extension TVTemplate {
         """#
 
     static let wishJS = wishJSBody.replacingOccurrences(of: "/*LAMP_WISH_CRYPTO*/", with: wishCryptoJS.trimmingCharacters(in: .whitespacesAndNewlines))
-        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS)
+        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS) + pageChangeJS
+
+    /// A change of the page while it's open, for every copy of it that's in the wish's room (`PageCopies`): Lamp's own
+    /// word, from the relay's name, which `Lamp.wish` hands here rather than to the page. Last in lamp.js, so a page
+    /// opening again from a change finds the rest of lamp.js there before it puts the new files in place.
+    static let pageChangeJS = #"""
+
+        /* A change while it's open. Written by Lamp before every build; don't edit.
+         *
+         * Lamp puts a change of this page into each copy open on another device (a TV, the Xbox, an iPad, an Android
+         * frame) as soon as it's made, through the wish's room, and the page takes it in place, keeping everything it
+         * saved: a change of stylesheets alone is swapped in as the page runs; anything else opens the page again from the
+         * new files, which lamp.js, the page's first script, puts in place of the copy's own before any of the page's
+         * scripts run. The files are kept for this session only: the copy's own come back when it's opened afresh, and
+         * Lamp's Reload or Play puts the app there with them.
+         */
+        (function () {
+          'use strict';
+          if (window.__lampPageChange) return;
+          var KEY = 'lamp:page-change', pieces = {};
+          var TYPES = { css: 'text/css', js: 'text/javascript', html: 'text/html', htm: 'text/html', json: 'application/json',
+                        svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+                        woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf', mp3: 'audio/mpeg', m4a: 'audio/mp4',
+                        wav: 'audio/wav', ogg: 'audio/ogg', mp4: 'video/mp4', webm: 'video/webm', glb: 'model/gltf-binary' };
+          var here = String(location.href).split('#')[0].split('?')[0];
+          var base = here.slice(0, here.lastIndexOf('/') + 1);
+          var urls = {};
+          function say(text) { if (window.console) console.log('Lamp: ' + text); }
+          function typeOf(path) { return TYPES[path.split('.').pop().toLowerCase()] || 'application/octet-stream'; }
+          function text(b64) { try { return decodeURIComponent(escape(atob(b64))); } catch (e) { return null; } }
+          function bytes(b64) {
+            var s = atob(b64), b = new Uint8Array(s.length);
+            for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+            return b;
+          }
+          // The path in Web/ an address names, or null for one outside the page.
+          function pathOf(address, from) {
+            var a;
+            try { a = String(new URL(address, from || base).href).split('#')[0].split('?')[0]; } catch (e) { return null; }
+            if (a.indexOf(base) !== 0) return null;
+            try { return decodeURIComponent(a.slice(base.length)) || 'index.html'; } catch (e) { return null; }
+          }
+          // A stylesheet's url()s, made to work from anywhere: a file of the change by its own address, any other by the
+          // copy's own, full address.
+          function cssOf(change, path, css) {
+            var from = base + path;
+            return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, function (whole, quote, address) {
+              if (/^(data:|blob:|#)/.test(address)) return whole;
+              var p = pathOf(address, from);
+              var to = p !== null && change.files[p] ? urlOf(change, p) : (function () { try { return new URL(address, from).href; } catch (e) { return address; } })();
+              return 'url("' + to + '")';
+            });
+          }
+          function urlOf(change, path) {
+            if (urls[path]) return urls[path];
+            var f = change.files[path];
+            if (!f) return null;
+            var body = typeof f.t === 'string' ? (typeOf(path) === 'text/css' ? cssOf(change, path, f.t) : f.t) : bytes(f.b);
+            urls[path] = URL.createObjectURL(new Blob([body], { type: typeOf(path) }));
+            return urls[path];
+          }
+          function addressFor(change, address) {
+            var p = pathOf(address);
+            return p !== null && change.files[p] ? urlOf(change, p) : address;
+          }
+          function rewrite(change, root) {
+            var named = [root].concat(Array.prototype.slice.call(root.querySelectorAll('[src], [href], [poster]')));
+            for (var i = 0; i < named.length; i++) {
+              var el = named[i];
+              if (el.tagName === 'SCRIPT') continue;
+              var names = ['src', 'href', 'poster'];
+              for (var j = 0; j < names.length && el.getAttribute; j++) {
+                var v = el.getAttribute(names[j]);
+                if (v && !/^(#|data:|blob:|javascript:|mailto:)/.test(v)) el.setAttribute(names[j], addressFor(change, v));
+              }
+            }
+          }
+          function sync(url) {
+            try { var r = new XMLHttpRequest(); r.open('GET', url, false); r.send(); return r.status === 0 || r.status === 200 ? r.responseText : null; } catch (e) { return null; }
+          }
+
+          // The page opened again from the change kept for this session: what the copy loaded of its own is stopped and
+          // replaced, then its scripts run from the new files in order, lamp.js (already running) left out.
+          function rebuild(change) {
+            var source = change.files['index.html'] && typeof change.files['index.html'].t === 'string' ? change.files['index.html'].t : sync(here);
+            if (!source) return false;
+            var doc = new DOMParser().parseFromString(source, 'text/html');
+            try { window.stop(); } catch (e) {}
+            var head = document.head || document.documentElement.appendChild(document.createElement('head'));
+            var old = head.querySelectorAll('link, style, meta, title, base');
+            for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+            var scripts = [];
+            function take(from, into) {
+              var children = Array.prototype.slice.call(from.childNodes);
+              for (var k = 0; k < children.length; k++) {
+                var node = children[k];
+                if (node.nodeType === 1 && node.tagName === 'SCRIPT') { scripts.push(node); continue; }
+                if (node.nodeType === 1) {
+                  var inner = node.querySelectorAll('script');
+                  for (var m = 0; m < inner.length; m++) { scripts.push(inner[m]); inner[m].parentNode.removeChild(inner[m]); }
+                }
+                var copy = document.importNode(node, true);
+                if (copy.nodeType === 1) rewrite(change, copy);
+                into.appendChild(copy);
+              }
+            }
+            take(doc.head, head);
+            var body = document.body || document.documentElement.appendChild(document.createElement('body'));
+            while (body.attributes.length) body.removeAttribute(body.attributes[0].name);
+            for (var a = 0; a < doc.body.attributes.length; a++) body.setAttribute(doc.body.attributes[a].name, doc.body.attributes[a].value);
+            body.innerHTML = '';
+            take(doc.body, body);
+            if (doc.documentElement) for (var h = 0; h < doc.documentElement.attributes.length; h++) {
+              document.documentElement.setAttribute(doc.documentElement.attributes[h].name, doc.documentElement.attributes[h].value);
+            }
+            // The copy's own document stopped early, so the page's start is said again once its scripts have run; the
+            // browser's own, if it says one late, isn't heard twice.
+            var ours = false;
+            function quiet(e) { if (!e.__lamp && ours && (e.target === document || e.target === window)) e.stopImmediatePropagation(); }
+            window.addEventListener('DOMContentLoaded', quiet, true);
+            window.addEventListener('load', quiet, true);
+            ours = true;
+            for (var s = 0; s < scripts.length; s++) {
+              var given = scripts[s], src = given.getAttribute('src');
+              if (src && /(^|\/)lamp\.js([?#]|$)/.test(src)) continue;
+              var el = document.createElement('script');
+              for (var t = 0; t < given.attributes.length; t++) if (given.attributes[t].name !== 'src') el.setAttribute(given.attributes[t].name, given.attributes[t].value);
+              el.async = false;
+              el.src = src ? addressFor(change, src) : URL.createObjectURL(new Blob([given.textContent], { type: 'text/javascript' }));
+              body.appendChild(el);
+            }
+            var end = document.createElement('script');
+            end.async = false;
+            end.src = URL.createObjectURL(new Blob(['window.__lampPageStarted && window.__lampPageStarted();'], { type: 'text/javascript' }));
+            body.appendChild(end);
+            window.__lampPageStarted = function () {
+              window.__lampPageStarted = null;
+              var e = document.createEvent('Event'); e.initEvent('DOMContentLoaded', true, false); e.__lamp = true; document.dispatchEvent(e);
+              var l = document.createEvent('Event'); l.initEvent('load', false, false); l.__lamp = true; window.dispatchEvent(l);
+            };
+            return true;
+          }
+
+          // Only stylesheets changed: each is swapped where the page has it, as it runs.
+          function swapStyles(change) {
+            var links = document.querySelectorAll('link[rel~="stylesheet"]'), done = {};
+            for (var i = 0; i < links.length; i++) {
+              var p = links[i].getAttribute('data-lamp-path') || pathOf(links[i].getAttribute('href') || '');
+              if (p === null || change.changed.indexOf(p) < 0 || !change.files[p]) continue;
+              delete urls[p];
+              links[i].setAttribute('data-lamp-path', p);
+              links[i].href = urlOf(change, p);
+              done[p] = true;
+            }
+            for (var j = 0; j < change.changed.length; j++) if (!done[change.changed[j]]) return false;
+            return true;
+          }
+
+          function take(change) {
+            if (!change || typeof change.files !== 'object' || !(change.changed instanceof Array)) return;
+            var stylesOnly = change.changed.length > 0;
+            for (var i = 0; i < change.changed.length; i++) if (!/\.css$/i.test(change.changed[i]) || !change.files[change.changed[i]]) stylesOnly = false;
+            var kept = JSON.stringify(change);
+            try { sessionStorage.setItem(KEY, kept); } catch (e) { return say('this change is too big to take as the page is open; Reload puts it here.'); }
+            if (stylesOnly && swapStyles(change)) return say('the page took the change.');
+            say('the page opens again with the change.');
+            location.reload();
+          }
+
+          // One piece of a change, as Lamp sent it through the wish's room: the change is taken once every piece is here.
+          window.__lampPageChange = function (piece) {
+            if (!piece || typeof piece.id !== 'string' || typeof piece.s !== 'string' || !(piece.n > 0) || !(piece.i >= 0) || piece.i >= piece.n) return;
+            var got = pieces[piece.id] || (pieces[piece.id] = { n: piece.n, parts: [], have: 0 });
+            if (got.parts[piece.i] === undefined) { got.parts[piece.i] = piece.s; got.have++; }
+            if (got.have < got.n) return;
+            delete pieces[piece.id];
+            var whole = text(got.parts.join(''));
+            var change;
+            try { change = JSON.parse(whole); } catch (e) { return say('a change from Lamp did not arrive whole.'); }
+            take(change);
+          };
+
+          var opening;
+          try { opening = sessionStorage.getItem(KEY); } catch (e) {}
+          if (opening) {
+            try { rebuild(JSON.parse(opening)); } catch (e) { say('the change kept for this page could not be put in: ' + e); }
+          }
+        })();
+        """#
 
     private static let wishJSBody = #"""
         /* The wish's other apps. Written by Lamp before every build; don't edit.
@@ -1948,6 +2136,8 @@ extension TVTemplate {
               // The wish gained an app or lost one: the others keep what's known of them.
               setRoster(m.apps || []);
             } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
+              // Lamp's own word (the relay's name, which no app has): a change of this page, for lamp.js alone.
+              if (m.from === 'lamp') { if (m.data && m.data.lampPage && window.__lampPageChange) window.__lampPageChange(m.data.lampPage); return; }
               emit('message', [appOf(m.from), m.data, m.from]);
             } else if (m.t === 'values' && isName(m.from)) {
               heardValues(m, m.from);
@@ -3056,6 +3246,7 @@ extension TVTemplate {
                 }
                 for (var j = 0; j < said.length; j++) emit('change', [said[j][0], copyOf(said[j][1]), own(by, said[j][0]) ? by[said[j][0]] : mine]);
               } else if (m.t === 'message') {
+                if (m.from === 'lamp') { if (m.data && m.data.lampPage && window.__lampPageChange) window.__lampPageChange(m.data.lampPage); return; }
                 emit('message', [m.from, m.data, m.copy || m.from]);
               } else if (m.t === 'file') {
                 var data = fromBase64(m.data || ''), size = data.length;

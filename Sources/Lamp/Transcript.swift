@@ -605,7 +605,8 @@ enum Transcript {
             case .iphoneSetup: IPhoneSetupLine.shows(line.text, for: project)
             // Reload, while the change it's for still waits: the last such line only, under the latest change.
             // A wish's line is for its other parts' changes too.
-            case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload) } ?? false
+            case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload)
+                || Store.shared.awaitsReloadElsewhere($0) } ?? false
                 && line.id == lines.last(where: { $0.kind == .reload })?.id
             default: true
             }

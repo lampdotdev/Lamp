@@ -10,9 +10,10 @@ import LampRelayKit
 //   {"op":"end","app":"…"}
 //   {"op":"room","app":"wish:…","key":"<base64>","apps":[{"peer":"tv","kind":"tv","name":"the TV app"},…]}   a wish's room, with its key
 //   {"op":"end-room","app":"wish:…"}
+//   {"op":"say","app":"wish:…","to":["screen.k3j9x0ab",…],"data":{…},"ask":1}   Lamp's own word to those copies
 //
 // It says where it's listening on its output ({"op":"ready","port":…}), who is in each room as that changes
-// ({"op":"room","app":…,"peers":[…]}), and ends when its input does, so it never outlives the Lamp that started it.
+// ({"op":"room","app":…,"peers":[…]}), which copies each of Lamp's words went to ({"op":"said","ask":1,"to":[…]}), and ends when its input does, so it never outlives the Lamp that started it.
 
 setvbuf(stdout, nil, _IOLBF, 0)
 var relay: Relay?
@@ -53,6 +54,10 @@ while let line = readLine() {
             if each["waiting"] as? Bool == true { waiting.insert(peer) }
         }
         relay.configureRoom(app, key: key, apps: apps, waiting: waiting)
+    case "say":
+        guard let relay, let app = command["app"] as? String, let to = command["to"] as? [String], let data = command["data"] else { continue }
+        let ask = command["ask"] as? Int ?? 0
+        relay.say(in: app, to: to, data: data) { reached in say(["op": "said", "ask": ask, "to": reached]) }
     case "end-room":
         guard let relay, let app = command["app"] as? String else { continue }
         relay.endRoom(app)

@@ -72,6 +72,9 @@ struct Target {
     var hostedByLamp = false
     /// A page in a web view of its own, whose Web/ goes into the app wherever it's built (the phone's Xcode project too).
     var showsPage: (LampProject) -> Bool = { _ in false }
+    /// A change of its app is new web files (a screen's, a web app's, a web game's, a TV app's page): each copy open
+    /// takes it as it's made (`PageLive` on this Mac and in the simulator, `PageCopies` everywhere else), with no build.
+    var changesAreWeb: (LampProject) -> Bool = { _ in false }
     /// The folder of the apps folder its Mac copy is installed in, when it isn't the apps folder itself: a wish's apps
     /// are installed under its name, and a game or a screen beside its Mac app would take the Mac app's place there.
     var installFolder: String? = nil
