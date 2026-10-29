@@ -12,6 +12,10 @@ enum DeviceApps {
     /// and its device back with it (`Template.platform(fromPackageIn:)`).
     static let marker = ".lamp-device"
 
+    /// The most Lamp packages and sends to a device as one app: a game with its models, textures and sounds. It's its
+    /// own limit, not the cap on a device's answers (`DeviceHTTP.limit`), and is held in memory as it's wrapped and sent.
+    static let packageLimit = 1 << 30
+
     /// The integration a folder's code was written for, read off its marker.
     static func integrationID(in dir: URL) -> String? {
         (try? String(contentsOf: dir.appendingPathComponent(marker), encoding: .utf8))?.trimmed.nilIfEmpty
@@ -165,7 +169,7 @@ enum DeviceApps {
             AppFolder.remove(zip, in: project.dir)
             try await GameKit.build(project, for: .xbox, started: started)
             guard let data = AppFile.read(zip, in: project), !data.isEmpty else { throw Failure(message: "The game's build left nothing to package.") }
-            guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The game is bigger than Lamp sends to a device.") }
+            guard data.count <= packageLimit else { throw Failure(message: "The game is bigger than Lamp sends to a device (\(packageLimit >> 30) GB).") }
             try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
             try wrapMSIX(data, for: project, entry: .program("App.exe"))
             return
@@ -186,7 +190,7 @@ enum DeviceApps {
         guard let data = AppFile.read(output, inFolder: source), !data.isEmpty else {
             throw Failure(message: "The package step ran but left nothing at \(declared.output).")
         }
-        guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
+        guard data.count <= packageLimit else { throw Failure(message: "The package is bigger than Lamp sends to a device (\(packageLimit >> 30) GB).") }
         if let page, declared.output.lowercased().hasSuffix(".zip") { try GamePage.check(payload: try MSIX.files(inZip: data), for: page) }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
