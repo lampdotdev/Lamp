@@ -236,6 +236,8 @@ enum PageCopies {
         var took: Set<Destination> = []
         var waiting: [Destination: String] = [:]
         var silent: Set<Destination> = []
+        /// The page changed while it was being put into its copies: they're given it again (`Store.updatePlaces`).
+        var stale = false
     }
 
     /// Puts the page as it is now into every copy of `project` open in its wish's room on a device Lamp doesn't reach
@@ -244,6 +246,8 @@ enum PageCopies {
         guard project.platform.target.changesAreWeb(project) else { return Outcome() }
         let room = WishRooms.key(for: wish), app = WishRooms.peer(project, in: wish)
         var outcome = Outcome()
+        // The page as it's sent, which each copy that takes it then has: the folder may change while a copy answers.
+        let sent = hashes(of: project)
         for member in WishRooms.presence(of: wish) {
             guard let copy = member["peer"] as? String, WishChannel.app(of: copy) == app,
                   var place = (member["device"] as? String).flatMap(place(of:)) else { continue }
@@ -267,7 +271,7 @@ enum PageCopies {
             if !went { answer.cancel() }
             switch said?["state"] as? String {
             case "took":
-                given[key] = hashes(of: project)
+                given[key] = sent
                 outcome.took.insert(place)
             case "failed":
                 given[key] = nil
@@ -276,6 +280,7 @@ enum PageCopies {
                 outcome.silent.insert(place)
             }
         }
+        outcome.stale = hashes(of: project) != sent
         return outcome
     }
 

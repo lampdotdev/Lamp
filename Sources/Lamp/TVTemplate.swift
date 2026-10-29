@@ -1492,18 +1492,36 @@ extension TVTemplate {
           }
 
           // Only stylesheets changed: each is swapped where the page has it, as it runs.
+          // Only stylesheets changed: each is swapped where the page has it, as it runs. Null when one of them isn't
+          // linked from the page (it's put in by opening the page again), else the links swapped.
           function swapStyles(change) {
-            var links = document.querySelectorAll('link[rel~="stylesheet"]'), done = {};
+            var links = document.querySelectorAll('link[rel~="stylesheet"]'), found = [], done = {};
             for (var i = 0; i < links.length; i++) {
               var p = links[i].getAttribute('data-lamp-path') || pathOf(links[i].getAttribute('href') || '');
               if (p === null || change.changed.indexOf(p) < 0 || !change.files[p]) continue;
-              delete urls[p];
-              links[i].setAttribute('data-lamp-path', p);
-              links[i].href = urlOf(change, p);
+              found.push([links[i], p]);
               done[p] = true;
             }
-            for (var j = 0; j < change.changed.length; j++) if (!done[change.changed[j]]) return false;
-            return true;
+            for (var j = 0; j < change.changed.length; j++) if (!done[change.changed[j]]) return null;
+            for (var k = 0; k < found.length; k++) {
+              delete urls[found[k][1]];
+              found[k][0].setAttribute('data-lamp-path', found[k][1]);
+              found[k][0].href = urlOf(change, found[k][1]);
+            }
+            return found.map(function (f) { return f[0]; });
+          }
+
+          // Told once every swapped stylesheet has loaded, or failed with the first that didn't (a page whose rules turn
+          // away a stylesheet from Lamp's copy, say): within ten seconds either way.
+          function whenLoaded(links, id) {
+            var left = links.length, over = false;
+            var end = function (why) { if (over) return; over = true; report(why ? 'failed' : 'took', id, why); };
+            var timer = setTimeout(function () { end('a stylesheet did not load'); }, 10000);
+            links.forEach(function (link) {
+              link.addEventListener('load', function () { if (--left === 0) { clearTimeout(timer); end(); } });
+              link.addEventListener('error', function () { clearTimeout(timer); end('a stylesheet did not load'); });
+            });
+            if (!left) { clearTimeout(timer); end(); }
           }
 
           function take(change) {
@@ -1515,7 +1533,8 @@ extension TVTemplate {
               say('this change is too big to take as the page is open; Reload puts it here.');
               return report('failed', change.id, 'the page could not keep the change');
             }
-            if (stylesOnly && swapStyles(change)) { say('the page took the change.'); return report('took', change.id); }
+            var swapped = stylesOnly ? swapStyles(change) : null;
+            if (swapped) { say('the page took the change.'); return whenLoaded(swapped, change.id); }
             say('the page opens again with the change.');
             try { sessionStorage.setItem(KEY + ':told', ''); } catch (e) {}
             location.reload();
@@ -3515,7 +3534,8 @@ extension TVTemplate {
           // A word for Lamp itself (lamp.js's "A change while it's open"): through the app around the page when it's hosted,
           // else sealed into Lamp's room; nothing while Lamp's room isn't reached.
           api._toLamp = function (data) {
-            if (host) { try { host.postMessage({ op: 'toLamp', data: data }); } catch (e) {} return; }
+            // As text, as `send` hands it over: the app around the page reads it as JSON.
+            if (host) { try { host.postMessage({ op: 'toLamp', data: JSON.stringify(data) }); } catch (e) {} return; }
             if (socket && socket.readyState === 1 && sendKey) seal(JSON.stringify({ t: 'send', to: 'lamp', data: data }));
           };
           if (host) hosted();

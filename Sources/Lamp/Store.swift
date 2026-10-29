@@ -7467,6 +7467,7 @@ final class Store: ObservableObject {
             }
             updatingPlaces.remove(wish.id)
             refreshPlacesBehind(wish)
+            if pagesAgain.remove(wish.id) != nil { updatePlaces(of: wish) }
             guard !stopped else { return }
             for app in apps(of: wish) {
                 if let places = put[app.id], !places.isEmpty { log(app, .status, "Put the change on \(Self.listed(places))") }
@@ -7578,6 +7579,9 @@ final class Store: ObservableObject {
 
     // MARK: A page's change in every open copy, and Reload on every place
 
+    /// Wishes whose page changed while its copies were being given it: given it again once that's over.
+    private var pagesAgain: Set<String> = []
+
     /// The places each app's open copy waits at for Reload, with why: a page's change that copy couldn't take in place
     /// (`PageCopies.cannot`). Reload puts it there, with every other place (`reloadEverywhere`).
     @Published private(set) var placesAwaitReload: [String: [Destination: String]] = [:]
@@ -7595,6 +7599,9 @@ final class Store: ObservableObject {
         var took: [String: Set<Destination>] = [:], silent: [String: Set<Destination>] = [:]
         for app in apps(of: wish) where app.platform.target.changesAreWeb(app) {
             let outcome = await PageCopies.put(app, wish: wish)
+            // Changed again while its copies took it (their answers can take a while): they're given the newer page once
+            // this pass is over.
+            if outcome.stale { pagesAgain.insert(wish.id) }
             took[app.id] = outcome.took
             silent[app.id] = outcome.silent
             let before = placesAwaitReload[app.id] ?? [:]
@@ -7698,11 +7705,14 @@ final class Store: ObservableObject {
 
     /// Whether a copy of the app is open on a device of the person's at `place`, as far as the wish's room says: a copy
     /// there is in it while it's open. An app that doesn't use the wish isn't seen there, so it counts as not open.
+    /// A copy in the room says only the kind of device it's on, not which one, so it counts only where Lamp has put the
+    /// app on just one device at that place; with several, which is open can't be told, and none is opened over.
     private func openOnDevice(_ app: LampProject, at place: Destination, in wish: LampProject) -> Bool {
+        guard Set(Runtime.placed(app).filter { $0.place == place }.map(\.device)).count == 1 else { return false }
         let peer = WishRooms.peer(app, in: wish)
         return WishRooms.presence(of: wish).contains { member in
-            guard let copy = member["peer"] as? String, WishChannel.app(of: copy) == peer,
-                  let there = (member["device"] as? String).flatMap(PageCopies.place(of:)) else { return false }
+            guard let copy = member["peer"] as? String, WishChannel.app(of: copy) == peer, let device = member["device"] as? String,
+                  device != "Android emulator", let there = PageCopies.place(of: device) else { return false }
             return there == place || (there == .android && place == .androidTV)
         }
     }
