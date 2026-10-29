@@ -21,7 +21,7 @@ final class GitHubRepoTests: XCTestCase {
         let fm = FileManager.default
         func has(_ path: String) -> Bool { fm.fileExists(atPath: staged.folder.appendingPathComponent(path).path) }
 
-        // The code and what builds it, so `./build.sh` works with no Lamp.
+        // The code and what builds it, so `zsh build.sh` works with no Lamp.
         for path in ["Sources/App.swift", "Sources/LampSupport.swift", "Package.swift", "build.sh", "APP.md", "lamp-app.json", Credits.file, ".gitignore"] {
             XCTAssertTrue(has(path), path)
         }
@@ -33,7 +33,7 @@ final class GitHubRepoTests: XCTestCase {
         XCTAssertTrue(readme.contains("<a href=\"https://lamp.dev/?repo=https://github.com/someone/tally&amp;from=readme\"><img src=\"\(GitHubRepo.openButton)\""), readme)
         XCTAssertFalse(readme.contains("https://lamp.dev/w/AyTkit4xCc"))
         XCTAssertEqual(staged.remix, "https://lamp.dev/?repo=https://github.com/someone/tally&from=readme", "the card names what the README offers")
-        XCTAssertTrue(readme.contains("./build.sh"))
+        XCTAssertTrue(readme.contains("zsh build.sh"))
         let closed = try GitHubRepo.stage(wish, repo: "someone/tally", link: URL(string: "https://lamp.dev/w/AyTkit4xCc"), isPublic: false)
         defer { try? FileManager.default.removeItem(at: closed.folder.deletingLastPathComponent()) }
         let closedReadme = try String(contentsOf: closed.folder.appendingPathComponent("README.md"), encoding: .utf8)

@@ -6,7 +6,7 @@ import LampSidebarKit
 /// one goes to its repository (from Lamp, Send Changes Back…; or a push by whoever has access), and Lamp pins the
 /// commit it ships (`scripts/pull-starters.sh` moves the pin, `scripts/fetch-starters.sh` fetches the tree). Each is
 /// laid out as Put on GitHub lays a wish out (`GitHubRepo.stage`: the shared file's contents with its checks, Lamp's
-/// own files so `./build.sh` builds it, a README, an MIT license), so it opens with File → Open from GitHub…, and a
+/// own files so `zsh build.sh` builds it, a README, an MIT license), so it opens with File → Open from GitHub…, and a
 /// copy on someone's desk takes the latest of it (Update from GitHub…) and sends changes back to it.
 /// `scripts/publish-starters.sh` runs `stage` on each repository's main to refresh what's Lamp's there (Lamp's own
 /// files, the README, the pictures, a game's page), never the app itself, and makes a new starter's repository from a
