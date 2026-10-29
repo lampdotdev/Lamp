@@ -5826,7 +5826,10 @@ final class Store: ObservableObject {
             // replaced New Window can't open one), something has to be on screen: if there's nothing, relaunch it.
             let shown = await acknowledged.wait(seconds: 1.5)
             guard !running.isTerminated else { return }   // it's relaunching itself (LampWindows.relaunch)
-            guard !shown, !Self.hasWindow(running.processIdentifier) else { return noteOpened(true, for: project) }
+            guard !shown, !Self.hasWindow(running.processIdentifier) else {
+                await sayWhereItIs(project)
+                return noteOpened(true, for: project)
+            }
             // Only if it goes when asked: one that doesn't may hold something, and is left as it is.
             let asked = Date()
             guard await AppQuit.close(running, id: project.id, runtime: Runtime.macFolder(project),
@@ -5848,6 +5851,7 @@ final class Store: ObservableObject {
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
             noteOpened(true, for: project)
+            await sayWhereItIs(project)
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
             noteOpened(false, for: project)
@@ -8577,6 +8581,13 @@ final class Store: ObservableObject {
         }
         if lines.count != logs[project.id]?.count { logs[project.id] = lines }
         log(project, .status, words)
+    }
+
+    /// An app opened as it was, with no build to say "… is ready": one out of sight in the menu bar still says where
+    /// it is, as `readyWords` does after a build. One with a window shows itself and says nothing.
+    private func sayWhereItIs(_ project: LampProject) async {
+        let words = await readyWords(project)
+        if words != "\(project.name) is ready" { sayReady(project, words) }
     }
 
     /// What the chat says once an app opens in front. One that lives in the menu bar says so: its panel drops down
