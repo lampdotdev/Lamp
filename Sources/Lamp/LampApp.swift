@@ -120,10 +120,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The Dock icon shows Lamp's window, also when it was put away for an app's sidebar.
+    /// The Dock icon shows the desk whenever it isn't on screen: put away for an app's sidebar, minimized, or closed,
+    /// whatever else of Lamp's is open (Settings, a chat panel, a preview), since the desk is where everything starts.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         MainActor.assumeIsolated {
-            if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
+            if MagicPanel.mainWindow?.isVisible != true { Store.shared.showDesk() }
         }
         return true
     }
