@@ -3827,6 +3827,9 @@ enum Template {
         }
 
         var body: some Commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About \(LampAbout.name)") { LampAbout.show() }
+            }
             CommandGroup(after: .appInfo) {
                 Button("Customize with Lamp…") {
                     LampSidebar.openFromMenu()
@@ -3836,6 +3839,41 @@ enum Template {
             CommandGroup(after: .saveItem) {
                 Button("Share…") { LampShareApp.share() }
             }
+        }
+    }
+
+    /// The About window, with the app's credits as Lamp has them now. The Credits.html written into the bundle is only
+    /// as new as the app's install, and a credit added while the app is open (work brought in with a change that went
+    /// into the running app, with no install) would wait for the next one; Lamp answers from the wish's credits.json.
+    /// With no answer from Lamp (it isn't open, or this app isn't its), it's the bundle's page, as macOS shows it.
+    @MainActor enum LampAbout {
+        static var name: String {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+        }
+
+        static func show() {
+            Task {
+                let credits = await ask()
+                NSApp.activate()
+                NSApp.orderFrontStandardAboutPanel(options: credits.map { [.credits: $0] } ?? [:])
+            }
+        }
+
+        /// The credits page Lamp has for this app now; empty when it has none, nil when Lamp didn't answer.
+        private static func ask() async -> NSAttributedString? {
+            guard let url = URL(string: lampGateway + "/app/credits") else { return nil }
+            // Short: the window is opened by a click, and the bundle's page is there to fall back on.
+            var request = URLRequest(url: url, timeoutInterval: 1.5)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+            guard let page = answer["page"] as? String else { return NSAttributedString() }
+            return NSAttributedString(html: Data(page.utf8), documentAttributes: nil)
         }
     }
 
