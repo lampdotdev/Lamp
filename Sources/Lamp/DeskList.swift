@@ -13,6 +13,8 @@ struct DeskEntry: Equatable, Sendable {
     var isStarter = false
     /// It came from someone else: a shared file or a repository, with no original of it on this desk.
     var arrived = false
+    /// It's a remix made here (`Store.remixedHereMark`): the person's, whether or not its original is still on the desk.
+    var remixedHere = false
     var license: String?
     var places: [Destination] = []
     var changed: Date?
@@ -43,6 +45,7 @@ struct DeskEntry: Equatable, Sendable {
         for app in apps.isEmpty ? [project] : apps { for place in app.openPlaces where !places.contains(place) { places.append(place) } }
         return DeskEntry(id: project.id, about: AppDescription.description(of: project), author: adapted?.author,
                          isStarter: Starters.isStarter(project), arrived: !credits.remixOf.isEmpty,
+                         remixedHere: fm.fileExists(atPath: project.dir.appendingPathComponent(Store.remixedHereMark).path),
                          license: adapted?.license, places: places, changed: changed,
                          identity: Sharing.identity(of: project, create: false), original: credits.remixOf.last?.wish,
                          picture: picture,
@@ -67,10 +70,11 @@ struct DeskList {
     }
 
     /// Who made it, as the list says: "You" for what was made or remixed here, its author for a wish that came with
-    /// Lamp (Lamp's own when it names none), "Shared" for one that came from someone else.
+    /// Lamp (Lamp's own when it names none), "Shared" for one that came from someone else. A remix made before Lamp
+    /// marked them has only its original on the desk to say so.
     static func madeBy(_ entry: DeskEntry?, hasOriginalHere: Bool) -> String {
         guard let entry else { return "" }
-        if hasOriginalHere { return "You" }
+        if entry.remixedHere || hasOriginalHere { return "You" }
         if entry.isStarter { return entry.author ?? "Lamp" }
         return entry.arrived ? "Shared" : "You"
     }
