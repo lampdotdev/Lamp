@@ -752,7 +752,8 @@ enum DeviceSupport {
 
       // Doing things for the person: LampAI.act
 
-      var ACT_LIMITS = { steps: 4, writes: 6, seconds: 25 };
+      // 60 seconds is the longest any route allows; each answer says its route's own (`seconds`), and the turn keeps to it.
+      var ACT_LIMITS = { steps: 4, writes: 6, seconds: 60 };
       var actRan = {};      // turn id -> call key -> the result a write gave, while this copy of the page is open
       function actId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
       function isList(v) { return Object.prototype.toString.call(v) === '[object Array]'; }
@@ -789,7 +790,7 @@ enum DeviceSupport {
           actRan[id] = {};
         }
         var ran = actRan[id];
-        var deadline = Date.now() + limits.seconds * 1000;
+        var started = Date.now(), deadline = started + limits.seconds * 1000;
         var out = { turn: id, reply: '', ask: false, choices: [], done: [], failed: [], skipped: [], reads: [], stopped: null, error: '' };
         var steps = [], route = null, writes = 0, over = false, settle;
         var declared = Object.keys(tools).map(function (name) {
@@ -894,6 +895,16 @@ enum DeviceSupport {
           if (steps.length >= limits.steps - 1) body.final = true;
           if (o.model) body.model = o.model;
           post('/ai/act', body, left, deadline).then(function (answer) {
+            // The route's own time for a turn (25 seconds over OpenRouter, a minute through Claude Code, Codex or a model
+            // on the Mac) shortens the turn's deadline, counted from its start; it never lengthens it.
+            if (!over && typeof answer.seconds === 'number' && answer.seconds > 0) {
+              var end = started + Math.min(answer.seconds, limits.seconds) * 1000;
+              if (end < deadline) {
+                deadline = end;
+                clearTimeout(timer);
+                timer = setTimeout(function () { stop('time'); }, Math.max(0, deadline - Date.now()));
+              }
+            }
             // Cancelled, out of time or already over: an answer that comes late runs nothing.
             if (late()) return;
             route = answer.route || route;
@@ -1005,8 +1016,8 @@ enum DeviceSupport {
 
         /**
          * Does what the person asks, in their own words, with the app's own reads and writes: the model picks calls,
-         * the page runs them, the model sees what happened, until it replies (at most 4 model calls, 6 writes and 25
-         * seconds a turn). Check `LampAI.isAvailable('act')` first; keep the app's buttons for everything.
+         * the page runs them, the model sees what happened, until it replies (at most 4 model calls and 6 writes a turn,
+         * and 25 seconds over OpenRouter or a minute through Claude Code, Codex or a model on the Mac). Check `LampAI.isAvailable('act')` first; keep the app's buttons for everything.
          *
          *     var turn = LampAI.act('Add milk', {
          *       about: 'A family dashboard: the calendar, chores and the shopping list.',
