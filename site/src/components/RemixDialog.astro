@@ -212,6 +212,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     }, { signal });
 
     download.addEventListener("click", () => {
+      clearTimeout(trying);
+      trying = undefined;
       late = 0;
       track("idea_download", { idea, place: "remix" });
       // The download leaves this page where it is, so the copy finishes and the dialog can say what happens next.
