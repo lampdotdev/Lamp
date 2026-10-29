@@ -39,7 +39,7 @@ struct DeskDevices: View {
             .font(.title3)
             .foregroundStyle(.secondary)
             .accessibilityHidden(true)
-            Text("Make apps for your phone, TV and more")
+            Text("Run it on your TV, phone, Xbox and more")
                 .font(.title3.weight(.medium))
                 .foregroundStyle(.primary.opacity(0.8))
             if store.lookingForDevices {

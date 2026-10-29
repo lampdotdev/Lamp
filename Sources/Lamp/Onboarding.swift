@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LampSidebarKit
 
 /// The first-launch welcome: what Lamp is and getting set up, then the desk, where the wishes Lamp comes
 /// with (`Starters`) are waiting to be used and changed. A wish brought from the site skips the hello and is
@@ -35,8 +36,7 @@ enum Onboarding {
 }
 
 private enum Step: Int, CaseIterable {
-    // The numbers are the backdrop's pictures (`LampBackdrop`): setup keeps the one it had when a step for
-    // the first idea came between.
+    // Saved by number (`Onboarding.stepKey`), so a welcome left at setup by an earlier Lamp opens there again.
     case hello = 0, setup = 2
 
     /// Where the welcome opens: at setup if that's where it was left, otherwise from the start.
@@ -48,13 +48,12 @@ private enum Step: Int, CaseIterable {
     }
 }
 
-/// Lamp's colors: near-black ink on a warm white page, where the porcelain lamp behind the welcome sits.
+/// Lamp's colors (`Paper`): dark ink on warm paper, as on lamp.dev.
 private enum Palette {
-    static let ground = Color(nsColor: LampBackdrop.page)
-    static let accent = Color(red: 0.2, green: 0.19, blue: 0.18)
-    static let accentDeep = Color(red: 0.08, green: 0.075, blue: 0.07)
-    static let ink = Color(red: 0.11, green: 0.10, blue: 0.10)
-    static let card = Color.white.opacity(0.72)
+    static let ground = Paper.page
+    static let accent = Paper.ink
+    static let ink = Paper.ink
+    static let card = Paper.card
 }
 
 struct OnboardingView: View {
@@ -85,8 +84,8 @@ struct OnboardingView: View {
         .background {
             ZStack {
                 Palette.ground
-                LampBackdrop(step: step.rawValue)
-                // Behind the later steps' content the lamp fades into the page, so it never competes with it.
+                WelcomeBand()
+                // Behind the later steps' content the band fades into the page, so it never competes with it.
                 LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Palette.ground.opacity(0.425), location: 0.24),
                                        .init(color: Palette.ground.opacity(0.425), location: 0.76), .init(color: .clear, location: 1)],
                                startPoint: .leading, endPoint: .trailing)
@@ -237,32 +236,39 @@ struct OnboardingView: View {
 
 // MARK: - Steps
 
-/// 1. What Lamp is, over the lamp itself: software that keeps changing for the person.
+/// 1. What Lamp is, as lamp.dev says it: remixable software, beside a few of the things it comes with.
 private struct HelloStep: View {
     let next: () -> Void
     @State private var shown = false
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
-                Text("Software that changes\nwhenever you do.")
-                    .font(.system(size: 54, weight: .bold))
-                    .tracking(-1.2)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(Palette.ink)
-                    .reveal(shown, delay: 0.1)
-                Text("Start with one of ours or your own idea. Change anything, any time, even while you're using it.")
-                    .font(.system(size: 19))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 620)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 12)
-                    .reveal(shown, delay: 0.2)
-                BigButton(title: "Get Started", action: next)
-                    .keyboardShortcut(.defaultAction)
-                    .padding(.top, 30)
-                    .reveal(shown, delay: 0.35, rise: 8)
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Remixable software.")
+                        .font(.system(size: 64, weight: .heavy))
+                        .tracking(-2.4)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .reveal(shown, delay: 0.1)
+                    Text("Start from scratch or from something someone made. Change it live. Run it on the things you already own.")
+                        .font(.system(size: 19))
+                        .foregroundStyle(Paper.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 18)
+                        .reveal(shown, delay: 0.2)
+                    BigButton(title: "Get Started", action: next)
+                        .keyboardShortcut(.defaultAction)
+                        .padding(.top, 30)
+                        .reveal(shown, delay: 0.35, rise: 8)
+                }
+                .frame(maxWidth: 470, alignment: .leading)
+                .padding(.leading, 84)
+                Spacer(minLength: 0)
+                WelcomeSleeves()
+                    .frame(width: 440)
+                    .padding(.trailing, 40)
+                    .reveal(shown, delay: 0.3, rise: 12)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
@@ -271,6 +277,83 @@ private struct HelloStep: View {
             try? await Task.sleep(for: .seconds(0.15))
             shown = true
         }
+    }
+}
+
+/// The site's stripes as one band slanting up across the welcome's right side, behind everything on it. Still, for
+/// now: it may come to join one step to the next.
+private struct WelcomeBand: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Stripes(.horizontal)
+                .frame(width: proxy.size.width * 1.1, height: 230)
+                .rotationEffect(.degrees(-24), anchor: .leading)
+                .offset(x: proxy.size.width * 0.5, y: proxy.size.height * 0.62)
+        }
+        .clipped()
+    }
+}
+
+/// Three of the things Lamp comes with, fanned out: what someone made, ready to remix. Each is its name, who made it,
+/// its picture and its line, read from the starters this Lamp ships.
+private struct WelcomeSleeves: View {
+    private struct Sleeve: Identifiable {
+        let id: String
+        let name: String
+        let by: String
+        let about: String
+        let picture: NSImage?
+    }
+
+    /// The ones picked for the welcome, in the fan's order.
+    private static let picked = ["homehq", "newyork", "fireside"]
+
+    private let sleeves: [Sleeve] = Self.picked.compactMap { folder in
+        guard let starter = Starters.bundled.first(where: { $0.folder.lastPathComponent == folder }) else { return nil }
+        let credits = Credits.read(starter.tree.appendingPathComponent(Credits.file))
+        let by = credits?.upstream.first(where: { $0.adapted == true })?.author ?? "Lamp"
+        return Sleeve(id: folder, name: starter.name, by: by, about: Starters.about(starter) ?? "",
+                      picture: NSImage(contentsOf: Starters.preview(of: starter)))
+    }
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(sleeves.enumerated()), id: \.element.id) { index, sleeve in
+                card(sleeve)
+                    .rotationEffect(.degrees([-8, -1, 7][index % 3]))
+                    .offset(x: CGFloat(index - 1) * 140, y: [40, 0, 50][index % 3])
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func card(_ sleeve: Sleeve) -> some View {
+        HStack(spacing: 0) {
+            Stripes(.horizontal).frame(width: 12)
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("by \(sleeve.by)").font(.system(size: 11, weight: .heavy)).italic()
+                    Text(sleeve.name).font(.system(size: 24, weight: .heavy)).tracking(-0.9).lineLimit(2)
+                }
+                .padding(.horizontal, 11).padding(.top, 11).padding(.bottom, 8)
+                ZStack {
+                    Paper.ink
+                    if let picture = sleeve.picture {
+                        Image(nsImage: picture).resizable().aspectRatio(contentMode: .fit)
+                    }
+                }
+                .frame(height: 124)
+                Text(sleeve.about).font(.system(size: 12)).foregroundStyle(Paper.muted).lineLimit(4)
+                    .padding(.horizontal, 11).padding(.vertical, 9)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Paper.ink)
+        }
+        .frame(width: 196, height: 300)
+        .background(Color(hex: 0xF7F2E3))
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
+        .shadow(color: .black.opacity(0.22), radius: 22, y: 14)
     }
 }
 
@@ -926,17 +1009,15 @@ private struct BigButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Paper.onInk)
                 .padding(.horizontal, 30).frame(height: 46)
                 .background(
-                    Capsule().fill(LinearGradient(colors: [Palette.accent, Palette.accentDeep], startPoint: .top, endPoint: .bottom))
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Palette.accent)
                 )
-                .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                .shadow(color: Palette.accentDeep.opacity(enabled ? (hovering ? 0.4 : 0.28) : 0), radius: hovering ? 16 : 10, y: 6)
-                .scaleEffect(hovering && enabled ? 1.03 : 1)
+                .offset(y: hovering && enabled ? -2 : 0)
                 .opacity(enabled ? 1 : 0.35)
-                .contentShape(Capsule())
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()

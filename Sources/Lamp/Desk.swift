@@ -1705,7 +1705,7 @@ enum WishPlace: Equatable {
 /// The desk's backdrop: Lamp's page, as in the welcome.
 struct DeskBackground: View {
     var body: some View {
-        Color(nsColor: LampBackdrop.page)
+        Paper.page
     }
 }
 
