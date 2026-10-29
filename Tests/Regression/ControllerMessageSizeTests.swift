@@ -132,4 +132,43 @@ final class ControllerMessageSizeTests: XCTestCase {
         XCTAssertTrue(errors.contains("Player 2's message of 17000 bytes was not sent: a message between devices is at most \(Self.limit) bytes"), errors)
         XCTAssertEqual(context.evaluateScript("heardErrors.length")?.toInt32(), 2)
     }
+
+    /// On the Xbox the game's page is https, which may not open the relay's plain link: Lamp's WebView2 host opens it for
+    /// the page, which talks to it over the host's pipe, and phones reach the game through it all the same.
+    func testAGameOnTheXboxReachesTheRelayThroughItsHost() throws {
+        let context = try XCTUnwrap(JSContext())
+        var failure: String?
+        context.exceptionHandler = { _, value in failure = value?.toString() }
+        context.evaluateScript("""
+            var window = this, posted = [], heard = [], later = [], listeners = [];
+            var console = { error: function () {}, log: function () {} };
+            window.Lamp = {};
+            window.chrome = { webview: { postMessage: function (m) { posted.push(m); },
+                                         addEventListener: function (kind, fn) { listeners.push(fn); } } };
+            function host(m) { for (var i = 0; i < listeners.length; i++) listeners[i]({ data: m }); }
+            var LampAI = { _post: function () {
+              return Promise.resolve({ links: [{ kind: 'relay', socket: 'ws://192.168.1.20:47900/', app: 'padgame', credential: 'host' }] });
+            } };
+            function WebSocket() { throw new Error('An https page may not open a plain link.'); }
+            function setInterval() { return 0; } function clearInterval() {}
+            function setTimeout(fn) { later.push(fn); return later.length; } function clearTimeout() {}
+            """)
+        context.evaluateScript(TVTemplate.controllersJS)
+        context.evaluateScript("""
+            Lamp.controllers.onButton(function (player, name, down) { heard.push(player + ':' + name + ':' + down); });
+            Lamp.controllers.start();
+            later.shift()();
+            """)
+        context.evaluateScript("""
+            var opened = posted.filter(function (m) { return m.op === 'open'; })[0];
+            host({ lamp: 'ws', ev: 'open', id: opened.id });
+            host({ lamp: 'ws', ev: 'message', id: opened.id, text: JSON.stringify({ t: 'welcome', role: 'host', players: [], now: Date.now() }) });
+            host({ lamp: 'ws', ev: 'message', id: opened.id, text: JSON.stringify({ t: 'button', player: 1, name: 'a', down: true, seq: 1 }) });
+            """)
+        XCTAssertNil(failure)
+        XCTAssertEqual(context.evaluateScript("opened.url")?.toString(), "ws://192.168.1.20:47900/")
+        let hello = context.evaluateScript("JSON.parse(posted.filter(function (m) { return m.op === 'send'; })[0].text).t")?.toString()
+        XCTAssertEqual(hello, "hello", "the page says hello to the relay over the host's pipe")
+        XCTAssertEqual(context.evaluateScript("heard.join(',')")?.toString(), "1:a:true", "a phone's button reaches the game")
+    }
 }

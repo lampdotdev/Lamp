@@ -31,7 +31,7 @@ A phone's browser, joined by a QR code, needs a phone page (`Phone/index.html` i
 of app have both:
 
 - a game on Lamp's game runtime (`make_app_for` with `kind` "game"): Lamp serves its phone page and runs the relay
-  while the game is open on this Mac, in the TV preview, or set to open on a Samsung or LG TV;
+  while the game is open on this Mac, in the TV preview, or set to open on a Samsung or LG TV or the person's Xbox;
 - a TV app's page: while it's open on such a TV or in its TV preview on this Mac.
 
 An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
@@ -39,17 +39,17 @@ over `LampWish`. An Android app has no `LampController` and doesn't join as a pl
 the others through `LampWish` (messages, shared values, files) on whichever devices they're on (the wish-links skill).
 
 So a game played with phones as its controllers is a game like any other (`kind` "game"), with its Phone/ page,
-played on the Mac or put on a Samsung or LG TV (`places` "tv"). A wish's own iPhone app (`LampController`) joins only
+played on the Mac or put on a Samsung or LG TV (`places` "tv") or the Xbox (`places` "xbox-one"). A wish's own iPhone app (`LampController`) joins only
 a TV app's game, not a game's.
 
 Nothing else hosts the phone page yet, whatever device it's on:
 
-- a game played on the Xbox, an iPhone or iPad, or Android: its players there use a controller or touch, and
+- a game played on an iPhone or iPad, or Android: its players there use a controller or touch, and
   `Lamp.controllers` says it can't start (`onError`), so the game must be whole without phones;
 - a page shown by Lamp's other hosts, and a native app, have no host's side of phones.
 
 These are limits of how Lamp hosts phones now, not of the devices. Say so plainly when the person asks for phones
-there, and offer what works: the game on the Mac or a Samsung or LG TV (the TV preview on this Mac hosts phones too,
+there, and offer what works: the game on the Mac, a Samsung or LG TV or the Xbox (the TV preview on this Mac hosts phones too,
 with no TV), or played with a controller, the remote or touch.
 
 ## A page or an app on the phones?
