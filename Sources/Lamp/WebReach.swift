@@ -38,7 +38,7 @@ enum WebReach {
             case "js", "mjs", "ts", "tsx": reader.addScript(file.text, file: file.name)
             case "html", "htm": reader.addHTML(file.text, file: file.name)
             case "css": reader.addCSS(file.text, file: file.name)
-            default: break
+            default: reader.addText(file.text, file: file.name)
             }
         }
         for file in data {
@@ -63,7 +63,9 @@ enum WebReach {
     enum Shape: Hashable {
         case exact(String)
         case prefix(String)
+        /// The page's own address with its path begun (location.href), or its origin with nothing after (location.origin).
         case page
+        case origin
         case any
     }
 
@@ -71,27 +73,45 @@ enum WebReach {
         switch shape {
         case .exact(let text): destination(exact: text)
         case .prefix(let text): destination(prefix: text)
-        case .page: .local
+        case .page, .origin: .local
         case .any: .unknown
         }
     }
 
+    /// An address as a browser reads it: tabs and line breaks dropped wherever they are, control characters and spaces
+    /// trimmed from the ends, and a backslash read as a slash.
+    static func normalized(_ raw: String, end: Bool = true) -> String {
+        var text = raw.filter { $0 != "\t" && $0 != "\n" && $0 != "\r" && $0 != "\r\n" }
+        let edge: (Character) -> Bool = { $0.unicodeScalars.allSatisfy { $0.value <= 0x20 } }
+        text = String(text.drop(while: edge))
+        if end { while let last = text.last, edge(last) { text.removeLast() } }
+        return text.replacingOccurrences(of: "\\", with: "/")
+    }
+
+    /// A data: address is the page's own unless what it holds is a page or code, which can make requests of its own.
+    private static func dataDestination(_ lower: String, complete: Bool) -> Destination {
+        let header = lower.dropFirst("data:".count).prefix { $0 != "," }
+        guard complete || lower.contains(",") else { return .unknown }
+        let type = header.split(separator: ";").first.map(String.init) ?? ""
+        return ["html", "javascript", "ecmascript", "svg", "xml", "css"].contains(where: type.contains) ? .unknown : .local
+    }
+
     /// A whole address: a web address is outside, data and the page's own files are not, any other scheme is unknown.
     static func destination(exact raw: String) -> Destination {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = normalized(raw)
         if let host = webHost(text) { return host.isEmpty ? .external(nil) : .external(host) }
         let lower = text.lowercased()
-        if lower.hasPrefix("data:") || lower.hasPrefix("blob:") || lower.hasPrefix("about:") || text.isEmpty
-            || text.hasPrefix("#") || text.hasPrefix("?") { return .local }
+        if lower.hasPrefix("data:") { return dataDestination(lower, complete: true) }
+        if lower.hasPrefix("blob:") || lower == "about:blank" || text.isEmpty || text.hasPrefix("#") || text.hasPrefix("?") { return .local }
         if scheme(of: text) != nil { return .unknown }
         // A bare host-less path: the app's own files (or, with no file there, nothing).
-        return text.hasPrefix("\\") ? .unknown : .local
+        return .local
     }
 
     /// An address whose start is known: outside when the start names a web address, the app's own when the start is a
     /// path that whatever follows can't turn into another scheme or host, unknown otherwise.
     static func destination(prefix raw: String) -> Destination {
-        let text = String(raw.drop { $0 == " " || $0 == "\t" || $0 == "\n" })
+        let text = normalized(raw, end: false)
         let lower = text.lowercased()
         for web in ["http://", "https://", "ws://", "wss://"] where lower.hasPrefix(web) {
             let rest = text.dropFirst(web.count)
@@ -100,9 +120,10 @@ enum WebReach {
             let host = hostName(String(rest[..<end]))
             return .external(host.isEmpty ? nil : host)
         }
-        if lower.hasPrefix("data:") || lower.hasPrefix("blob:") || text.hasPrefix("#") || text.hasPrefix("?") { return .local }
-        if text.hasPrefix("//") || text.hasPrefix("\\") { return .unknown }
-        if text.hasPrefix("/") { return text.count >= 2 && !"/\\".contains(text[text.index(after: text.startIndex)]) ? .local : .unknown }
+        if lower.hasPrefix("data:") { return dataDestination(lower, complete: false) }
+        if lower.hasPrefix("blob:") || text.hasPrefix("#") || text.hasPrefix("?") { return .local }
+        if text.hasPrefix("//") { return .unknown }
+        if text.hasPrefix("/") { return text.count >= 2 && text[text.index(after: text.startIndex)] != "/" ? .local : .unknown }
         // A relative path: settled once a / ? or # comes before any colon could make it a scheme.
         if let end = text.firstIndex(where: { "/?#".contains($0) }), !text[..<end].contains(":") { return .local }
         return .unknown
@@ -186,7 +207,7 @@ private struct Reader {
     var wild: [ArraySlice<Token>] = []
     var wildAny = false
     /// Import maps from the page's HTML: bare module names and where they lead.
-    var imports: [String: String] = [:]
+    var imports: [String: [String]] = [:]
     /// Names of Lamp's blocks for the web that the page's own code gives a value, so they can't be read as Lamp's.
     var redefined: Set<String> = []
     var result = WebReach.Result()
@@ -213,29 +234,33 @@ private struct Reader {
     mutating func addHTML(_ text: String, file: String) {
         for element in HTML.elements(text) {
             let tag = element.tag
+            if element.unclear { request(.any, .load, at: "\(file): markup it can't read for sure") }
             if tag == "script" {
-                let type = element.attributes["type"]?.lowercased() ?? ""
+                let type = element.attributes["type"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
                 if type == "importmap" {
-                    if let json = try? JSONSerialization.jsonObject(with: Data(element.body.utf8)) as? [String: Any],
-                       let map = json["imports"] as? [String: String] {
-                        imports.merge(map) { $1 }
-                    }
-                } else if element.attributes["src"] == nil, type.isEmpty || type.contains("javascript") || type == "module" {
+                    importMap(element.body, file: file)
+                } else {
+                    // Whatever its type says, read as script: a browser may run it.
                     addScript(element.body, file: file)
                 }
             }
             if tag == "style" { addCSS(element.body, file: file) }
-            for (name, value) in element.attributes {
+            for (name, value) in element.all {
                 if name.hasPrefix("on") { addScript(value, file: file) }
                 if name == "style" { addCSS(value, file: file) }
+                if name == "srcdoc" { addHTML(value, file: file) }
             }
-            if tag == "meta", element.attributes["http-equiv"]?.lowercased() == "refresh",
-               let content = element.attributes["content"], let range = content.range(of: "url=", options: .caseInsensitive) {
-                request(.exact(String(content[range.upperBound...]).trimmingCharacters(in: CharacterSet(charactersIn: " '\""))), .load, at: "\(file): refresh")
+            if tag == "meta", element.attributes["http-equiv"]?.lowercased() == "refresh", let content = element.attributes["content"],
+               let separator = content.firstIndex(where: { $0 == ";" || $0 == "," }) {
+                var target = content[content.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+                if target.lowercased().hasPrefix("url") {
+                    let rest = target.dropFirst(3).trimmingCharacters(in: .whitespaces)
+                    if rest.hasPrefix("=") { target = rest.dropFirst().trimmingCharacters(in: .whitespaces) }
+                }
+                request(.exact(target.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))), .load, at: "\(file): refresh")
             }
-            for (attribute, use) in HTML.urlAttributes(tag: tag, attributes: element.attributes) {
-                guard let value = element.attributes[attribute] else { continue }
-                let addresses = attribute == "srcset" ? HTML.srcset(value) : [value]
+            for (attribute, use, value) in HTML.urlAttributes(element) {
+                let addresses = attribute == "srcset" ? HTML.srcset(value) : attribute == "values" ? value.split(separator: ";").map(String.init) : [value]
                 for address in addresses {
                     request(.exact(address), use, at: "\(file): <\(tag) \(attribute)>")
                     if tag == "base", attribute == "href", case .external = WebReach.destination(exact: address) {
@@ -244,6 +269,31 @@ private struct Reader {
                     }
                 }
             }
+        }
+    }
+
+    /// An import map: where bare module names lead, every entry of every scope among them.
+    mutating func importMap(_ text: String, file: String) {
+        guard let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+            request(.any, .code, at: "\(file): an import map it can't read")
+            return
+        }
+        var maps = [json["imports"] as? [String: Any] ?? [:]]
+        if let scopes = json["scopes"] as? [String: Any] { maps += scopes.values.compactMap { $0 as? [String: Any] } }
+        for map in maps {
+            for (name, target) in map {
+                guard let target = target as? String else { request(.any, .code, at: "\(file): an import map it can't read"); continue }
+                imports[name, default: []].append(target)
+            }
+        }
+    }
+
+    /// Other text the page has (JSON, SVG, plain text): read as markup when it may be, and any web address in it is
+    /// one no request it can follow reads, since a script may load it (a model as JSON, a script named .txt).
+    mutating func addText(_ text: String, file: String) {
+        if text.contains("<") { addHTML(text, file: file) }
+        if text.range(of: #"(?i)(https?|wss?|ftp)\s*:\s*[/\\]{2}|["'(=\s][/\\]{2}[a-z0-9]"#, options: .regularExpression) != nil {
+            request(.any, .load, at: "\(file): a web address in its text")
         }
     }
 
@@ -273,21 +323,27 @@ private struct Reader {
             switch token.kind {
             case .string:
                 fragments(token.value, file: file, joined: true)
-                if case .external = WebReach.destination(exact: token.value) { literals.append((token.value, file)) }
+                if Self.holdsAddress(token.value) { literals.append((token.value, file)) }
             case .template:
                 fragments(token.parts.joined(separator: HTML.hole), file: file)
-                if let first = token.parts.first, case .external = WebReach.destination(prefix: first) { literals.append((first, file)) }
+                for part in token.parts where Self.holdsAddress(part) { literals.append((part, file)) }
                 token.holes.forEach { collectLiterals($0, file: file) }
             default: break
             }
         }
     }
 
+    /// Whether a string holds a web address or a piece of one ('tps://…' from 'ht' + 'tps://…').
+    static func holdsAddress(_ text: String) -> Bool {
+        let plain = WebReach.normalized(text)
+        if case .external = WebReach.destination(exact: plain) { return true }
+        return plain.contains("://") || plain.contains(":/") && plain.lowercased().contains("http")
+    }
+
     mutating func fragments(_ text: String, file: String, joined: Bool = false) {
         if text.contains("<"), text.contains(">") || text.contains(HTML.hole) || text.contains("=") {
             for element in HTML.elements(text) {
-                for (attribute, use) in HTML.urlAttributes(tag: element.tag, attributes: element.attributes) {
-                    guard let value = element.attributes[attribute] else { continue }
+                for (attribute, use, value) in HTML.urlAttributes(element) {
                     // A plain string joined to what follows: `joinedMarkup` reads the value with it.
                     if joined, value.hasSuffix(HTML.open) { continue }
                     for address in attribute == "srcset" ? HTML.srcset(value) : [value] {
@@ -295,9 +351,10 @@ private struct Reader {
                     }
                 }
                 if let style = element.attributes["style"] { CSS.addresses(style).forEach { request($0, .load, at: "\(file): style in a string") } }
+                if let inner = element.attributes["srcdoc"] { fragments(inner, file: file) }
             }
         }
-        if text.contains("url(") || text.contains("@import") || text.contains("image-set(") {
+        if CSS.mayLoad(text) {
             CSS.addresses(text).forEach { request($0, .load, at: "\(file): CSS in a string") }
         }
         // Accounted for here: an address written inside markup or a style is read as one.
@@ -310,6 +367,9 @@ private struct Reader {
         if case .exact(let text) = shape { touched.insert(text) }
         if case .prefix(let text) = shape { touched.insert(text) }
         let destination = WebReach.destination(of: shape)
+        var use = use
+        // A javascript: or data: link runs or shows code when it's clicked.
+        if use == .link, destination == .unknown, case .exact(let text) = shape, WebReach.normalized(text).lowercased().hasPrefix("javascript:") || WebReach.normalized(text).lowercased().hasPrefix("data:") { use = .code }
         switch use {
         case .link:
             if destination != .local { result.links = true }
@@ -389,10 +449,22 @@ private struct Reader {
                 properties[token.text, default: []].append(tokens[(i + 2)..<end])
                 if i >= 2, Self.lampBlocks.contains(tokens[i - 2].text) { redefined.insert(tokens[i - 2].text) }
             }
-            if token.text == "]", i + 1 < tokens.count, tokens[i + 1].text == "=" {
+            if token.text == "]" || token.text == "}", i + 1 < tokens.count, tokens[i + 1].text == "=", let open = Syntax.opening(tokens, i) {
                 let end = Syntax.expressionEnd(tokens, from: i + 2)
                 wild.append(tokens[(i + 2)..<end])
+                // [a, b] = …, ({ a } = …), x[a] = …: the names in it get what can't be told.
+                markOpaque(tokens[(open + 1)..<i])
+                if open > 0, tokens[open].text == "[", tokens[open - 1].kind == .ident { opaque.insert(tokens[open - 1].text) }
             }
+            // window.name = … sets a global name.
+            if token.kind == .ident, previous?.text == ".", i >= 2, ["window", "self", "globalThis", "top", "parent", "frames"].contains(tokens[i - 2].text) {
+                opaque.insert(token.text)
+            }
+            // A Lamp block used as anything but its own methods' receiver may be replaced.
+            if token.kind == .ident, Self.lampBlocks.contains(token.text), previous?.text == "." || i + 1 >= tokens.count || tokens[i + 1].text != "." {
+                redefined.insert(token.text)
+            }
+            if token.kind == .ident, token.text.hasSuffix("Loader") { createsLoaders = true }
             if token.text == "{", Syntax.isObjectLiteral(tokens, at: i) { objectLiteral(tokens, at: i) }
             if token.kind == .ident, token.text == "in" || token.text == "of", let previous, previous.kind == .ident { opaque.insert(previous.text) }
             if token.kind == .ident, token.text == "new", i + 1 < tokens.count, tokens[i + 1].kind == .ident {
@@ -476,12 +548,31 @@ private struct Reader {
             let body = tokens[(close + 2)..<bodyEnd]
             if let tag = Syntax.call(body, "createElement").flatMap({ args in args.first.flatMap { $0.count == 1 ? params.firstIndex(of: $0.first!.text) : nil } }),
                let (key, attributes) = Syntax.forIn(body).flatMap({ loop in params.firstIndex(of: loop.object).map { (loop.key, $0) } }),
-               Syntax.calls(body, "setAttribute").allSatisfy({ $0.first?.count == 1 && $0.first?.first?.text == key }) {
+               Self.forwardsAttributes(body, key: key, object: params[attributes]) {
                 builders[name] = (tag, attributes)
                 builderBodies[script, default: []].append((close + 2)..<bodyEnd)
             }
             i = close + 1
         }
+    }
+
+    /// Whether a builder's body only sets each attribute it's given to the value it's given (or to true's empty
+    /// string): `setAttribute(key, value)` with `value` read from `attrs[key]`, and no other way to set one.
+    static func forwardsAttributes(_ body: ArraySlice<Token>, key: String, object: String) -> Bool {
+        var values: Set<String> = []
+        for j in body.indices where body[j].kind == .ident && j + 5 < body.endIndex && body[j + 1].text == "="
+            && body[j + 2].text == object && body[j + 3].text == "[" && body[j + 4].text == key && body[j + 5].text == "]" {
+            values.insert(body[j].text)
+        }
+        let pure: (Token) -> Bool = { token in
+            token.kind == .string || token.kind == .number || values.contains(token.text) || [object, key].contains(token.text)
+                || ["true", "false", "null", "undefined", "?", ":", "===", "!==", "==", "!=", "(", ")", "[", "]", "!"].contains(token.text)
+        }
+        let sets = Syntax.calls(body, "setAttribute")
+        guard !sets.isEmpty, sets.allSatisfy({ $0.count == 2 && $0[0].count == 1 && $0[0].first?.text == key && $0[1].allSatisfy(pure) }) else { return false }
+        // No other attribute or property set from the object: node[key] = …, setAttributeNS, …
+        for j in body.indices where body[j].text == "]" && j + 1 < body.endIndex && body[j + 1].text == "=" { return false }
+        return !body.contains { ["setAttributeNS", "innerHTML", "outerHTML", "insertAdjacentHTML", "src", "href"].contains($0.text) }
     }
 
     // MARK: Finding requests
@@ -495,7 +586,21 @@ private struct Reader {
             let receiver = afterDot && i >= 2 ? Syntax.receiver(tokens, dot: i - 1) : nil
             let calls = i + 1 < tokens.count && tokens[i + 1].text == "("
             let args = calls ? Syntax.split(tokens[(i + 2)..<Syntax.matching(tokens, i + 1)], by: ",") : []
-            if token.kind == .string, token.value.contains("<") { joinedMarkup(tokens, at: i) }
+            if token.kind == .string, token.value.contains("<") || token.value.contains("=") { joinedMarkup(tokens, at: i) }
+            // A request function used other than by calling it by name (aliased, passed on, called through .call or
+            // ?.()), the global object indexed by a computed name, Reflect, Proxy and with: requests it can't follow.
+            if token.kind == .ident, !afterDot || ["window", "self", "globalThis"].contains(receiver?.text ?? ""),
+               Self.requestFunctions.contains(token.text), previous?.text != "new",
+               !(calls && token.text != "Image" && token.text != "Audio"), previous?.text != "function", previous?.text != "typeof" {
+                request(.any, .load, at: "\(token.text) used as a value")
+            }
+            if token.kind == .ident, i + 1 < tokens.count, tokens[i + 1].text == "[", !afterDot,
+               ["window", "self", "globalThis", "top", "parent", "frames", "document", "location"].contains(token.text) {
+                request(.any, .load, at: "\(token.text)[…]")
+            }
+            if token.kind == .ident, !afterDot, ["Reflect", "Proxy"].contains(token.text) || token.text == "with" && calls {
+                request(.any, .load, at: token.text)
+            }
 
             if token.kind == .ident, calls {
                 let global = !afterDot || ["window", "self", "globalThis"].contains(receiver?.text ?? "")
@@ -512,10 +617,11 @@ private struct Reader {
                     request(shapes(args.first), .link, at: "window.open")
                 } else if name == "open", afterDot, args.count >= 2, !lampBlock {
                     let first = args[0].first
-                    let method = args[0].count == 1 && first?.kind == .string
-                        && ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"].contains(first!.value.uppercased())
-                    // An XMLHttpRequest, or a receiver it can't tell opened with a method it can't read.
-                    if method || kind(of: receiver) == "xhr" || (kind(of: receiver) == nil && args[0].count == 1 && first?.kind == .ident) {
+                    let notMethod = args[0].count == 1 && first?.kind == .string
+                        && !["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"].contains(first!.value.uppercased())
+                    // An XMLHttpRequest, or anything opened with a method it can't rule out (not a database's name).
+                    let other = kind(of: receiver).map { $0 != "xhr" } ?? false
+                    if !notMethod && !other || kind(of: receiver) == "xhr" {
                         request(shapes(args[1]), .load, at: "XMLHttpRequest.open")
                     }
                 } else if name == "sendBeacon", afterDot {
@@ -526,6 +632,14 @@ private struct Reader {
                     request(shapes(args.first), .load, at: "location")
                 } else if name == "setAttribute", afterDot, !ownBodies.contains(where: { $0.contains(i) }) {
                     attribute(args.first, args.count > 1 ? args[1] : nil, tag: kind(of: receiver))
+                } else if name == "setAttributeNS", afterDot {
+                    attribute(args.count > 1 ? args[1] : nil, args.count > 2 ? args[2] : nil, tag: kind(of: receiver))
+                } else if name == "addModule", afterDot {
+                    request(shapes(args.first), .code, at: "addModule")
+                } else if ["setProperty", "insertRule", "replaceSync"].contains(name), afterDot {
+                    let property = args.first.flatMap { $0.count == 1 && $0.first!.kind == .string ? $0.first!.value : nil }
+                    style(name == "setProperty" ? (args.count > 1 ? args[1] : nil) : args.first,
+                          takesAddress: name != "setProperty" ? false : property.map(CSS.takesAddress) ?? true)
                 } else if ["load", "loadAsync", "setPath", "setResourcePath"].contains(name), afterDot, !lampBlock {
                     let loader = kind(of: receiver) == "loader" || receiver?.text == ")" && Syntax.newBefore(tokens, close: i - 2)?.hasSuffix("Loader") == true
                     if loader || (kind(of: receiver) == nil && createsLoaders) {
@@ -550,6 +664,7 @@ private struct Reader {
                 switch name {
                 case "WebSocket", "EventSource", "Request", "Audio": if !args.isEmpty { request(shapes(args.first), .load, at: "new \(name)") }
                 case "Worker", "SharedWorker": request(shapes(args.first), .code, at: "new \(name)")
+                case "RTCPeerConnection", "WebTransport", "Function": request(.any, .load, at: "new \(name)")
                 default: break
                 }
             }
@@ -565,7 +680,13 @@ private struct Reader {
                     let tag = kind(of: receiver)
                     // `background` and `data` are addresses only on the elements that have them (a 3D scene has a
                     // background color, a chart its data).
-                    if ["src", "srcset", "poster", "action", "formAction"].contains(token.text) || token.text == "data" && tag == "object"
+                    if ["host", "hostname", "protocol", "port", "origin", "username", "password"].contains(token.text) {
+                        // An address's host changed: wherever it goes, it isn't known.
+                        request(.any, .load, at: ".\(token.text) =")
+                    } else if ["cssText", "backgroundImage", "background", "listStyleImage", "borderImage", "content", "cursor", "maskImage", "filter"].contains(token.text)
+                                && (i >= 3 && tokens[i - 2].text == "style" || token.text == "cssText") {
+                        style(value, takesAddress: CSS.takesAddress(token.text))
+                    } else if ["src", "srcset", "poster", "action", "formAction", "ping"].contains(token.text) || token.text == "data" && tag == "object"
                         || token.text == "background" && (["body", "table", "td", "th"].contains(tag ?? "") || receiver?.text == "body") {
                         request(shapes(value), tag == "script" ? .code : .load, at: ".\(token.text) =")
                     } else if token.text == "href" {
@@ -577,15 +698,43 @@ private struct Reader {
                     request(shapes(value), .load, at: "location =")
                 }
             }
+            // location[…] = …, location.href via a computed name.
+            if token.text == "]", i + 1 < tokens.count, tokens[i + 1].text == "=", let open = Syntax.opening(tokens, i), open > 0,
+               ["location", "style"].contains(tokens[open - 1].text) {
+                request(.any, .load, at: "\(tokens[open - 1].text)[…] =")
+            }
+        }
+    }
+
+    static let requestFunctions: Set<String> = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "Worker", "SharedWorker",
+                                                "importScripts", "Request", "RTCPeerConnection", "WebTransport", "Image", "Audio", "eval", "Function"]
+
+    /// A style set from code: read as CSS when it's known whole. When it isn't, unknown if it's a property that takes a
+    /// picture, or if the strings it's made of may make a url(…) or @import.
+    mutating func style(_ value: ArraySlice<Token>?, takesAddress: Bool) {
+        let pieces = (value ?? []).contains { ($0.kind == .string || $0.kind == .template) && CSS.mayLoad($0.value + $0.parts.joined(), loose: true) }
+        for shape in shapes(value) {
+            if case .exact(let text) = shape {
+                CSS.addresses(text).forEach { request($0, .load, at: "a style set from code") }
+            } else if takesAddress || pieces {
+                request(.any, .load, at: "a style set from code")
+            }
         }
     }
 
     /// `'<a href="' + address + '">'`: a string that leaves an address attribute open, and what's joined after it.
     mutating func joinedMarkup(_ tokens: [Token], at index: Int) {
-        guard let element = HTML.elements(tokens[index].value).last,
-              let (attribute, value) = element.attributes.first(where: { $0.value.hasSuffix(HTML.open) }),
-              let use = HTML.use(tag: element.tag, attribute: attribute, attributes: element.attributes) else { return }
-        let start = WebReach.Shape.exact(String(value.dropLast()))
+        var start = WebReach.Shape.exact("")
+        var use = Use.load
+        if let element = HTML.elements(tokens[index].value).last,
+           let (attribute, value) = element.all.first(where: { $0.1.hasSuffix(HTML.open) }) {
+            guard let found = HTML.use(tag: element.tag, attribute: attribute, attributes: element.attributes) else { return }
+            use = found
+            start = .exact(String(value.dropLast()))
+        } else if tokens[index].value.range(of: #"(?i)(src|href|srcset|action|formaction|poster|data|ping|background|to|values|srcdoc)\s*=\s*["']?$"#,
+                                              options: .regularExpression) == nil {
+            return
+        }
         var rest: [WebReach.Shape] = [.any]
         if index + 2 < tokens.count, tokens[index + 1].text == "+" {
             let end = Syntax.expressionEnd(tokens, from: index + 2)
@@ -624,7 +773,14 @@ private struct Reader {
             guard let key = entry.first else { continue }
             guard let colon = entry.firstIndex(where: { $0.text == ":" }), colon == entry.startIndex + 1,
                   key.kind == .ident || key.kind == .string else {
-                if entry.count == 1, key.kind == .ident { continue }
+                if entry.count == 1, key.kind == .ident {
+                    // { src } is { src: src }
+                    for tag in tags {
+                        let name: String = if case .exact(let t) = tag { t.lowercased() } else { "" }
+                        if let use = HTML.use(tag: name, attribute: key.text.lowercased()) { request(shapes(entry), use, at: "an element builder") }
+                    }
+                    continue
+                }
                 request([.any], .load, at: "an element builder given attributes it can't read")
                 continue
             }
@@ -730,8 +886,9 @@ private struct Reader {
         }
         // The page's own address.
         let joined = list.map(\.text).joined()
-        if ["location.href", "location.origin", "window.location.href", "window.location.origin", "document.baseURI",
-            "document.location.href", "import.meta.url", "self.location.href"].contains(joined) { return [.page] }
+        if ["location.href", "window.location.href", "document.baseURI", "document.location.href", "import.meta.url",
+            "self.location.href"].contains(joined) { return [.page] }
+        if ["location.origin", "window.location.origin", "self.location.origin"].contains(joined) { return [.origin] }
         // A call: Lamp's blocks as lamp.js defines them, a few string functions, anything else unknown.
         if list.last?.text == ")", let open = Syntax.opening(list, list.count - 1), open > 0 {
             let callee = list[..<open].map(\.text).joined()
@@ -782,13 +939,10 @@ private struct Reader {
         if resolving.contains(key) { return [.any] }
         resolving.insert(key)
         defer { resolving.remove(key) }
-        let values = (properties[name] ?? []) + wild
-        guard !values.isEmpty, !wildAny else {
-            // Still read what it's given, so its addresses count as followed.
-            _ = (properties[name] ?? []).map { shapes($0) }
-            return [.any]
-        }
-        return unique(values.flatMap { shapes($0) })
+        // A property may be given anything at run time (parsed JSON, a response, the DOM), so what the code gives it
+        // is never all it can be. Its values are still read, so the addresses in them count as followed.
+        _ = (properties[name] ?? []).map { shapes($0) }
+        return [.any]
     }
 
     func moduleShapes(_ tokens: ArraySlice<Token>?) -> [WebReach.Shape] {
@@ -799,11 +953,11 @@ private struct Reader {
     /// A module's name as the page's import map resolves it; a bare name with no entry fails to load, so reaches nothing.
     func moduleShape(_ specifier: String) -> [WebReach.Shape] {
         if specifier.hasPrefix(".") || specifier.hasPrefix("/") || WebReach.destination(exact: specifier) != .local { return [.exact(specifier)] }
-        if let exact = imports[specifier] { return [.exact(exact)] }
-        if let match = imports.keys.filter({ $0.hasSuffix("/") && specifier.hasPrefix($0) }).max(by: { $0.count < $1.count }) {
-            return [.exact(imports[match]! + specifier.dropFirst(match.count))]
+        var found = (imports[specifier] ?? []).map(WebReach.Shape.exact)
+        for key in imports.keys where key.hasSuffix("/") && specifier.hasPrefix(key) {
+            found += imports[key]!.map { .exact($0 + specifier.dropFirst(key.count)) }
         }
-        return [.exact("./" + specifier)]
+        return found.isEmpty ? [.exact("./" + specifier)] : found
     }
 
     /// LampAssets.url(name): the name without its leading slashes (lamp.js), so a web address stays one.
@@ -811,18 +965,22 @@ private struct Reader {
         switch shape {
         case .exact(let text): .exact(String(text.drop { $0 == "/" }))
         case .prefix(let text): text.allSatisfy({ $0 == "/" }) ? .any : .prefix(String(text.drop { $0 == "/" }))
-        case .page, .any: shape
+        case .page, .origin, .any: shape
         }
     }
 
     static func join(_ left: WebReach.Shape, _ right: WebReach.Shape) -> WebReach.Shape {
         switch (left, right) {
         case (.page, _): .page
+        // After the origin, only a path, query or fragment keeps it the page's own ("origin@elsewhere" isn't).
+        case (.origin, .exact(let b)): b.isEmpty ? .origin : "/?#".contains(b.first!) ? .page : .any
+        case (.origin, _): .any
         case (.any, _): .any
         case (.prefix, _): left
         case (.exact(let a), .exact(let b)): .exact(a + b)
         case (.exact(let a), .prefix(let b)): .prefix(a + b)
         case (.exact(let a), .page): a.isEmpty ? .page : .prefix(a)
+        case (.exact(let a), .origin): a.isEmpty ? .origin : .prefix(a)
         case (.exact(let a), .any): a.isEmpty ? .any : .prefix(a)
         }
     }
@@ -848,6 +1006,8 @@ private struct Lexer {
     mutating func tokens(untilBrace: Bool = false) -> [Token] {
         var out: [Token] = []
         var braces = 0
+        // Which open parens belong to if/while/for/with, whose ) a regex may follow.
+        var parens: [Bool] = []
         var newline = false
         while i < chars.count {
             let c = chars[i]
@@ -865,20 +1025,27 @@ private struct Lexer {
                 token = string(c)
             } else if c == "`" {
                 token = template()
-            } else if c.isLetter || c == "_" || c == "$" || c == "#" {
-                let start = i
-                while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" || chars[i] == "$" || chars[i] == "#" { i += 1 }
-                token = Token(kind: .ident, text: String(chars[start..<i]))
+            } else if c.isLetter || c == "_" || c == "$" || c == "#" || c == "\\" && peek(1) == "u" {
+                var name = ""
+                while i < chars.count {
+                    if chars[i] == "\\", peek(1) == "u" { i += 1; name += escape(); continue }
+                    guard chars[i].isLetter || chars[i].isNumber || chars[i] == "_" || chars[i] == "$" || chars[i] == "#" else { break }
+                    name.append(chars[i])
+                    i += 1
+                }
+                token = Token(kind: .ident, text: name)
             } else if c.isNumber || c == "." && (peek(1)?.isNumber ?? false) {
                 let start = i
                 while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "." || chars[i] == "_" { i += 1 }
                 token = Token(kind: .number, text: String(chars[start..<i]))
-            } else if c == "/", regexAllowed(after: out.last) {
+            } else if c == "/", regexAllowed(after: out.last) || out.last?.text == ")" && afterControl {
                 token = regex()
             } else {
                 // The } that closes a template's ${…} is the template's.
                 if untilBrace, c == "}", braces == 0 { return out }
                 token = punct()
+                if token.text == "(" { parens.append(["if", "while", "for", "with"].contains(out.last?.text ?? "")) }
+                if token.text == ")" { afterControl = parens.popLast() ?? false }
                 if untilBrace, token.text == "{" { braces += 1 }
                 if untilBrace, token.text == "}" { braces -= 1 }
             }
@@ -890,6 +1057,9 @@ private struct Lexer {
         }
         return out
     }
+
+    /// The last ) closed an if, while, for or with's condition.
+    var afterControl = false
 
     func peek(_ offset: Int) -> Character? { i + offset < chars.count ? chars[i + offset] : nil }
 
@@ -1149,8 +1319,12 @@ private enum HTML {
 
     struct Element {
         let tag: String
+        /// The first of each attribute, as a browser reads it, and every one as written.
         var attributes: [String: String]
+        var all: [(String, String)]
         var body: String
+        /// Markup whose end can't be told for sure (a script holding `<!--` and `<script`).
+        var unclear = false
     }
 
     /// Every element's tag and attributes, with a script's or style's text as its body.
@@ -1161,6 +1335,9 @@ private enum HTML {
         while i < chars.count {
             guard chars[i] == "<" else { i += 1; continue }
             if i + 3 < chars.count, chars[i + 1] == "!", chars[i + 2] == "-", chars[i + 3] == "-" {
+                // <!--> and <!---> end where they start.
+                if i + 4 < chars.count, chars[i + 4] == ">" { i += 5; continue }
+                if i + 5 < chars.count, chars[i + 4] == "-", chars[i + 5] == ">" { i += 6; continue }
                 var j = i + 4
                 while j + 2 < chars.count, !(chars[j] == "-" && chars[j + 1] == "-" && chars[j + 2] == ">") { j += 1 }
                 i = j + 3
@@ -1171,6 +1348,7 @@ private enum HTML {
             while j < chars.count, chars[j].isLetter || chars[j].isNumber || chars[j] == "-" { j += 1 }
             let tag = String(chars[(i + 1)..<j]).lowercased()
             var attributes: [String: String] = [:]
+            var all: [(String, String)] = []
             while j < chars.count, chars[j] != ">" {
                 while j < chars.count, chars[j].isWhitespace || chars[j] == "/" { j += 1 }
                 let nameStart = j
@@ -1194,18 +1372,27 @@ private enum HTML {
                         let start = j
                         while j < chars.count, !chars[j].isWhitespace, chars[j] != ">" { j += 1 }
                         value = String(chars[start..<j])
+                        if j >= chars.count { value += open }
                     }
                 }
-                if !name.isEmpty { attributes[name] = decode(value) }
+                if !name.isEmpty {
+                    let decoded = decode(value)
+                    if attributes[name] == nil { attributes[name] = decoded }
+                    all.append((name, decoded))
+                }
                 if nameStart == j { j += 1 }
             }
             j += 1
-            var element = Element(tag: tag, attributes: attributes, body: "")
+            var element = Element(tag: tag, attributes: attributes, all: all, body: "")
             if tag == "script" || tag == "style" {
                 let close = "</\(tag)"
                 let rest = String(chars[min(j, chars.count)...])
                 if let end = rest.range(of: close, options: .caseInsensitive) {
                     element.body = String(rest[..<end.lowerBound])
+                    // A script holding both can run past its first </script> (the double-escaped state).
+                    if tag == "script", element.body.contains("<!--"), element.body.range(of: "<script", options: .caseInsensitive) != nil {
+                        element.unclear = true
+                    }
                     j += rest.distance(from: rest.startIndex, to: end.lowerBound)
                 } else {
                     element.body = rest
@@ -1220,17 +1407,37 @@ private enum HTML {
 
     static func decode(_ text: String) -> String {
         guard text.contains("&") else { return text }
-        var out = text
-        for (entity, char) in [("&amp;", "&"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"), ("&lt;", "<"), ("&gt;", ">"),
-                               ("&colon;", ":"), ("&#58;", ":"), ("&sol;", "/"), ("&#47;", "/")] {
-            out = out.replacingOccurrences(of: entity, with: char, options: .caseInsensitive)
+        var out = ""
+        var rest = Substring(text)
+        let named = ["amp": "&", "quot": "\"", "apos": "'", "lt": "<", "gt": ">", "colon": ":", "sol": "/", "bsol": "\\",
+                     "period": ".", "tab": "\t", "newline": "\n", "nbsp": "\u{A0}", "commat": "@", "num": "#", "quest": "?"]
+        while let amp = rest.firstIndex(of: "&") {
+            out += rest[..<amp]
+            rest = rest[rest.index(after: amp)...]
+            let body = rest.prefix { $0.isLetter || $0.isNumber || $0 == "#" }
+            var scalar: String?
+            if body.hasPrefix("#x") || body.hasPrefix("#X") {
+                scalar = UInt32(body.dropFirst(2), radix: 16).flatMap(Unicode.Scalar.init).map { String($0) }
+            } else if body.hasPrefix("#") {
+                scalar = UInt32(body.dropFirst()).flatMap(Unicode.Scalar.init).map { String($0) }
+            } else {
+                scalar = named[body.lowercased()]
+            }
+            if let scalar {
+                out += scalar
+                rest = rest[body.endIndex...]
+                if rest.first == ";" { rest = rest.dropFirst() }
+            } else {
+                out += "&"
+            }
         }
-        return out
+        return out + rest
     }
 
-    /// The attributes of `tag` whose value is an address, and whether it's loaded, run as code or a link.
-    static func urlAttributes(tag: String, attributes: [String: String]) -> [(String, Use)] {
-        attributes.keys.compactMap { name in use(tag: tag, attribute: name, attributes: attributes).map { (name, $0) } }
+    /// Every attribute of an element whose value is an address (each one written, not only the first a browser reads),
+    /// and whether it's loaded, run as code or a link.
+    static func urlAttributes(_ element: Element) -> [(String, Use, String)] {
+        element.all.compactMap { name, value in use(tag: element.tag, attribute: name, attributes: element.attributes).map { (name, $0, value) } }
     }
 
     static func use(tag: String, attribute: String, attributes: [String: String] = [:]) -> Use? {
@@ -1243,6 +1450,9 @@ private enum HTML {
             }
             return tag == "link" && attributes["rel"]?.lowercased().contains("modulepreload") == true ? .code : .load
         case "src": return tag == "script" || tag == "iframe" || tag == "frame" || tag == "embed" ? .code : .load
+        // SVG animation of a link or picture: <set attributeName="href" to="…">.
+        case "to", "from", "values":
+            return ["set", "animate"].contains(tag) && ["href", "xlink:href", "src"].contains(attributes["attributename"]?.lowercased() ?? "") ? .load : nil
         case "srcset", "poster", "background", "action", "formaction", "data", "ping", "manifest", "codebase", "archive", "lowsrc", "dynsrc":
             return attribute == "data" && tag != "object" && !tag.isEmpty ? nil : .load
         default: return nil
@@ -1265,9 +1475,7 @@ private enum HTML {
     static func addressesInMarkup(_ text: String) -> [String] {
         var found: [String] = []
         for element in elements(text) {
-            for (attribute, _) in urlAttributes(tag: element.tag, attributes: element.attributes) {
-                if let value = element.attributes[attribute] { found.append(contentsOf: attribute == "srcset" ? srcset(value) : [value]) }
-            }
+            for (attribute, _, value) in urlAttributes(element) { found.append(contentsOf: attribute == "srcset" ? srcset(value) : [value]) }
         }
         return found
     }
@@ -1275,14 +1483,60 @@ private enum HTML {
 
 private enum CSS {
     /// The addresses a style loads: url(…), @import and image-set(…), what can't be told as unknown.
-    static func addresses(_ text: String) -> [WebReach.Shape] {
-        var source = text
-        while let open = source.range(of: "/*"), let close = source.range(of: "*/", range: open.upperBound..<source.endIndex) {
-            source.removeSubrange(open.lowerBound..<close.upperBound)
+    /// Whether a style property takes a picture or other file.
+    static func takesAddress(_ property: String) -> Bool {
+        let name = property.lowercased().replacingOccurrences(of: "-", with: "")
+        return ["background", "backgroundimage", "liststyle", "liststyleimage", "borderimage", "borderimagesource", "content", "cursor",
+                "mask", "maskimage", "filter", "shapeoutside", "src"].contains(name)
+    }
+
+    /// Whether a style may load something: url(…), @import, image-set(…), or, loosely, a piece of one.
+    static func mayLoad(_ text: String, loose: Bool = false) -> Bool {
+        let plain = clean(text).lowercased()
+        return ["url(", "@import", "image-set(", "image("].contains(where: plain.contains) || loose && (plain.contains("url") || plain.contains("import"))
+    }
+
+    /// A style as a browser reads it: comments outside strings dropped, escapes (\\72, \\70 ) turned into the letters
+    /// they stand for.
+    static func clean(_ text: String) -> String {
+        let chars = Array(text)
+        var out = ""
+        var i = 0
+        var quote: Character?
+        while i < chars.count {
+            let c = chars[i]
+            if quote == nil, c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
+                i += 2
+                while i + 1 < chars.count, !(chars[i] == "*" && chars[i + 1] == "/") { i += 1 }
+                i += 2
+                continue
+            }
+            if c == "\\", i + 1 < chars.count {
+                var hex = ""
+                var j = i + 1
+                while j < chars.count, hex.count < 6, chars[j].isHexDigit { hex.append(chars[j]); j += 1 }
+                if !hex.isEmpty {
+                    if j < chars.count, chars[j].isWhitespace { j += 1 }
+                    out += UInt32(hex, radix: 16).flatMap(Unicode.Scalar.init).map { String($0) } ?? ""
+                    i = j
+                } else {
+                    if chars[i + 1] != "\n" { out.append(chars[i + 1]) }
+                    i += 2
+                }
+                continue
+            }
+            if c == "\"" || c == "'" { quote = quote == nil ? c : quote == c ? nil : quote }
+            out.append(c)
+            i += 1
         }
+        return out
+    }
+
+    static func addresses(_ text: String) -> [WebReach.Shape] {
+        let source = clean(text)
         var found: [WebReach.Shape] = []
         var rest = Substring(source)
-        while let match = rest.range(of: #"(url|image-set|@import)\s*\(?\s*"#, options: [.regularExpression, .caseInsensitive]) {
+        while let match = rest.range(of: #"(url|image-set|image|@import)\s*\(?\s*"#, options: [.regularExpression, .caseInsensitive]) {
             var after = rest[match.upperBound...]
             if let quote = after.first, quote == "\"" || quote == "'" {
                 after = after.dropFirst()

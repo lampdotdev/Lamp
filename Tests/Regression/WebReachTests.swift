@@ -115,4 +115,79 @@ final class WebReachTests: XCTestCase {
         XCTAssertFalse(reach("", html: "<a href=\"https://kenney.nl\">Kenney</a>").connects)
         XCTAssertTrue(reach("", html: "<a href=\"https://kenney.nl\">Kenney</a>").links)
     }
+
+    /// Pages written to hide a request: each must still say it connects, or may.
+    func testAPageWrittenToHideARequestStillSaysItMayConnect() {
+        let evil = "'ht' + 'tps://evil.example/x'"
+        let scripts = [
+            "if (1) /\"/.test(''); fetch('https://evil.example/x'); // \"",
+            "fetch(\"\\x01https://evil.example/x\");",
+            "fetch(\"/\\\\evil.example/x\");",
+            "fetch(\"/\\t/evil.example/x\");",
+            "fetch(\"ht\\ntps://evil.example/x\");",
+            "fetch(location.origin + '@evil.example/x');",
+            "const u = new URL('./x.json', location.href); u.hostname = 'evil.example'; fetch(u);",
+            "location.host = 'evil.example';",
+            "const cfg = { url: './a.json' }; const o = JSON.parse(text); fetch(o.url);",
+            "let url = './a.json'; [url] = [\(evil)]; fetch(url);",
+            "var url = './a.json'; window.url = \(evil); fetch(url);",
+            "function el(tag, attrs) { var node = document.createElement(tag); for (var key in attrs) node.setAttribute(key, key == 'src' ? \(evil) : attrs[key]); return node; }\nel('img', { alt: 'x' });",
+            "function el(tag, attrs) { var node = document.createElement(tag); for (var key in attrs) node.setAttribute(key, attrs[key]); return node; }\nvar src = \(evil); el('img', { src });",
+            "window.LampAssets = { text: fetch }; LampAssets.text('x');",
+            "Object.assign(LampAssets, { text: fetch }); LampAssets.text('x');",
+            "const f = fetch; f(\(evil));",
+            "\\u0066etch(\(evil));",
+            "img.setAttributeNS(null, 'href', \(evil));",
+            "document.body.style.backgroundImage = 'url' + '(//evil.example/x.png)';",
+            "const L = THREE.FileLoader; new L().load(\(evil));",
+            "x.open(m(), \(evil));",
+            "a.ping = \(evil); a.click();",
+            "context.audioWorklet.addModule(\(evil));",
+            "location['href'] = \(evil);",
+            "list.innerHTML = '<img src=' + u + '>';",
+            "list.innerHTML = '<img ' + 'src=\"' + u + '\">';",
+            "new RTCPeerConnection({ iceServers: [{ urls: 'stun:evil.example:3478' }] });",
+            "import('data:text/javascript,fetch(\"https://evil.example/x\")');",
+            "s.src = 'data:text/javascript,fetch(1)';",
+            "Reflect.construct(WebSocket, [\(evil)]);",
+            "fetch.call(null, \(evil));",
+            "fetch?.(\(evil));",
+            "globalThis['fe' + 'tch'](\(evil));",
+        ]
+        for script in scripts {
+            let found = WebReach.analyze(code: [("app.js", script)])
+            XCTAssertTrue(found.unknown || found.connects, "hidden: \(script)")
+        }
+        let pages = [
+            "<script type=\"text/ecmascript\">fetch('https://evil.example/x')</script>",
+            "<script type=\" module \">fetch('https://evil.example/x')</script>",
+            "<script type=\"module\" type=\"text/plain\">fetch('https://evil.example/x')</script>",
+            "<img src=\"https://evil.example/x.png\" src=\"./a.png\">",
+            "<!--><img src=\"https://evil.example/x.png\"><!---->",
+            "<script><!--\n// <script></script>\nfetch('https://evil.example/x')\n//--></script>",
+            "<iframe srcdoc=\"<img src='https://evil.example/x.png'>\"></iframe>",
+            "<iframe src=\"data:text/html,<img src=https://evil.example/x.png>\"></iframe>",
+            "<script type=\"importmap\">{ \"imports\": { \"a\": 1 }, \"scopes\": { \"/\": { \"three\": \"https://evil.example/three.js\" } } }</script><script type=\"module\">import 'three';</script>",
+            "<img src=\"ht\ntps://evil.example/x.png\">",
+            "<img src=\"https&#x3a;//evil.example/x.png\">",
+            "<style>.a { background: u\\72l(https://evil.example/x.png) }</style>",
+            "<style>@\\69mport 'https://evil.example/x.css';</style>",
+            "<style>.a { background: url(\"htt\\70s://evil.example/x.png\") }</style>",
+            "<style>.a { content: \"/*\"; background: url(https://evil.example/x.png); content: \"*/\" }</style>",
+            "<meta http-equiv=\"refresh\" content=\"0; https://evil.example/\">",
+            "<meta http-equiv=\"refresh\" content=\"0; url = https://evil.example/\">",
+            "<a href=\"javascript:fetch('https://evil.example/x')\">x</a>",
+            "<svg><set attributeName=\"href\" to=\"https://evil.example/x.png\"/></svg>",
+        ]
+        for page in pages {
+            let found = WebReach.analyze(code: [("index.html", page)])
+            XCTAssertTrue(found.unknown || found.connects, "hidden: \(page)")
+        }
+        for (name, text) in [("pic.svg", "<svg><script>fetch('https://evil.example/x')</script></svg>"),
+                             ("model.json", "{ \"buffers\": [{ \"uri\": \"https://evil.example/b.bin\" }] }"),
+                             ("x.txt", "fetch('https://evil.example/x')")] {
+            let found = WebReach.analyze(code: [(name, text)])
+            XCTAssertTrue(found.unknown || found.connects, "hidden in \(name)")
+        }
+    }
 }
