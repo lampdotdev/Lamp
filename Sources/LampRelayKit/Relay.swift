@@ -170,6 +170,8 @@ public final class Relay: @unchecked Sendable {
     private var proving: [ObjectIdentifier: (peer: RelayPeer, from: String)] = [:]
     /// Who is in a room, each time that changes: the room's key and its members (`peer`, `kind`, `name`, `device`, `since`).
     public var onRoomChanged: @Sendable (_ room: String, _ members: [[String: Any]]) -> Void = { _, _ in }
+    /// What a copy said to Lamp itself (`send` to the relay's name): what it has of a page's change. For Lamp alone.
+    public var onHeard: @Sendable (_ room: String, _ copy: String, _ data: Any) -> Void = { _, _, _ in }
     /// Sockets not yet past their hello: held here, since nothing else holds them until they're a player or a host.
     private var greeting: [ObjectIdentifier: (peer: RelayPeer, from: String)] = [:]
     /// How many sockets may wait to say hello at once, in all and from one address (an IPv6 one by its network, since a
@@ -319,6 +321,23 @@ public final class Relay: @unchecked Sendable {
         }
     }
 
+    /// Lamp's own word to some copies of a wish's apps (a page's change put into each open copy, `Store.pageToCopies`):
+    /// passed as a message from the relay's own name, which no app of a wish has (`prove`), so a page can tell it's
+    /// Lamp's. `done` is told the copies it went to.
+    public func say(in room: String, to copies: [String], data: Any, done: @escaping ([String]) -> Void) {
+        queue.async {
+            guard let known = self.rooms[room] else { return done([]) }
+            let out = Self.json(["t": "message", "from": WishChannel.relayName, "data": data, "at": Self.now])
+            var reached: [String] = []
+            for id in copies.sorted() {
+                guard let member = known.members[id] else { continue }
+                member.send(out)
+                reached.append(id)
+            }
+            done(reached)
+        }
+    }
+
     /// The wish is gone, or its room isn't wanted any more: its members are let go.
     public func endRoom(_ room: String) {
         queue.async { self.closeRoom(room) }
@@ -390,6 +409,8 @@ public final class Relay: @unchecked Sendable {
         guard let tag = (hello["tag"] as? String).flatMap({ Data(base64Encoded: $0) }), tag.count == WishChannel.tagSize,
               let roomKey = tags[tag], let room = rooms[roomKey],
               let id = hello["peer"] as? String, WishChannel.isName(id), room.apps[WishChannel.app(of: id)] != nil,
+              // The relay's own name is Lamp's (`say`): no app takes it.
+              WishChannel.app(of: id) != WishChannel.relayName,
               let clientNonce = (hello["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), clientNonce.count == WishChannel.nonceSize
         else { return peer.close(code: 4003) }
         let serverNonce = WishChannel.random(WishChannel.nonceSize)
@@ -511,6 +532,7 @@ public final class Relay: @unchecked Sendable {
         if kind == "pad" || kind.hasPrefix("file") { return fileOrPad(room, id: id, member: member, kind: kind, message: message) }
         guard kind == "send", member.rate.allowed(member.peer), let data = message["data"] else { return }
         let to = message["to"] as? String
+        if to == WishChannel.relayName { return onHeard(key, id, data) }
         let out = Self.json(["t": "message", "from": id, "data": data, "at": Self.now])
         if let to {
             // To one copy, or to every copy of one app. Told when none is there, or the one it's for has stopped reading,

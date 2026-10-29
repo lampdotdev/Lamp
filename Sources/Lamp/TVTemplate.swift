@@ -180,8 +180,14 @@ enum TVTemplate {
 
     /// lamp.js as an app is given it: with `Lamp.wish` for a TV app that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.carriesWish(project) ? lampJS
+        Template.carriesWish(project) ? withShell(lampJS, for: project)
             : DeviceSupport.webJS + remoteJS.replacingOccurrences(of: wishLine, with: "") + controllersJS
+    }
+
+    /// lamp.js with the app around the page as this build has it (`PageCopies.native`), which a copy tells Lamp before
+    /// it's given a change.
+    static func withShell(_ js: String, for project: LampProject) -> String {
+        js.replacingOccurrences(of: "/*LAMP_SHELL*/''", with: "'\(PageCopies.native(of: project))'")
     }
 
     private static let wishLine = " * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below\n"
@@ -1286,7 +1292,307 @@ extension TVTemplate {
         """#
 
     static let wishJS = wishJSBody.replacingOccurrences(of: "/*LAMP_WISH_CRYPTO*/", with: wishCryptoJS.trimmingCharacters(in: .whitespacesAndNewlines))
-        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS)
+        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS) + pageChangeJS
+
+    /// A change of the page while it's open, for every copy of it that's in the wish's room (`PageCopies`): Lamp's own
+    /// word, from the relay's name, which `Lamp.wish` hands here rather than to the page. Last in lamp.js, so a page
+    /// opening again from a change finds the rest of lamp.js there before it puts the new files in place.
+    static let pageChangeJS = #"""
+
+        /* A change while it's open. Written by Lamp before every build; don't edit.
+         *
+         * Lamp puts a change of this page into each copy open on another device (a TV, the Xbox, an iPad, an Android
+         * frame) as soon as it's made, through the wish's room, and the page takes it in place, keeping everything it
+         * saved: a change of stylesheets alone is swapped in as the page runs; anything else opens the page again from the
+         * new files, which lamp.js, the page's first script, puts in place of the copy's own before any of the page's
+         * scripts run. The files are kept for this session only: the copy's own come back when it's opened afresh, and
+         * Lamp's Reload or Play puts the app there with them.
+         */
+        (function () {
+          'use strict';
+          // Only in a page (not where lamp.js is run on its own, as the tests run it).
+          if (window.__lampPageChange || typeof location === 'undefined' || typeof document === 'undefined') return;
+          var KEY = 'lamp:page-change', pieces = {};
+          // The app around this page as Lamp built it, written in by Lamp: a change of it needs the app put here again.
+          var SHELL = /*LAMP_SHELL*/'';
+          // What this copy has of a change, told to Lamp, which says it's in only once the page says so.
+          function report(state, id, why) {
+            var wish = window.Lamp && window.Lamp.wish;
+            if (wish && wish._toLamp) wish._toLamp({ lampPage: { state: state, id: id || '', why: why ? String(why).slice(0, 300) : '', shell: SHELL } });
+          }
+          var TYPES = { css: 'text/css', js: 'text/javascript', html: 'text/html', htm: 'text/html', json: 'application/json',
+                        svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+                        woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf', mp3: 'audio/mpeg', m4a: 'audio/mp4',
+                        wav: 'audio/wav', ogg: 'audio/ogg', mp4: 'video/mp4', webm: 'video/webm', glb: 'model/gltf-binary' };
+          var here = String(location.href).split('#')[0].split('?')[0];
+          var base = here.slice(0, here.lastIndexOf('/') + 1);
+          var urls = {};
+          function say(text) { if (window.console) console.log('Lamp: ' + text); }
+          function typeOf(path) { return TYPES[path.split('.').pop().toLowerCase()] || 'application/octet-stream'; }
+          function text(b64) { try { return decodeURIComponent(escape(atob(b64))); } catch (e) { return null; } }
+          function bytes(b64) {
+            var s = atob(b64), b = new Uint8Array(s.length);
+            for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+            return b;
+          }
+          // The path in Web/ an address names, or null for one outside the page.
+          function pathOf(address, from) {
+            var a;
+            try { a = String(new URL(address, from || base).href).split('#')[0].split('?')[0]; } catch (e) { return null; }
+            if (a.indexOf(base) !== 0) return null;
+            try { return decodeURIComponent(a.slice(base.length)) || 'index.html'; } catch (e) { return null; }
+          }
+          // A stylesheet's url()s, made to work from anywhere: a file of the change by its own address, any other by the
+          // copy's own, full address.
+          function cssOf(change, path, css) {
+            var from = base + path;
+            function to(address) {
+              var p = pathOf(address, from);
+              if (p !== null && change.files[p]) return urlOf(change, p);
+              try { return new URL(address, from).href; } catch (e) { return address; }
+            }
+            // @import "theme.css" as well as url(...), since from a blob neither finds its file by itself.
+            return css.replace(/@import\s+(['"])([^'"]+)\1/g, function (whole, quote, address) {
+              return /^(data:|blob:)/.test(address) ? whole : '@import url("' + to(address) + '")';
+            }).replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, function (whole, quote, address) {
+              return /^(data:|blob:|#)/.test(address) ? whole : 'url("' + to(address) + '")';
+            });
+          }
+          function urlOf(change, path) {
+            if (urls[path]) return urls[path];
+            var f = change.files[path];
+            if (!f) return null;
+            var body = typeof f.t === 'string' ? (typeOf(path) === 'text/css' ? cssOf(change, path, f.t) : f.t) : bytes(f.b);
+            urls[path] = URL.createObjectURL(new Blob([body], { type: typeOf(path) }));
+            return urls[path];
+          }
+          function addressFor(change, address) {
+            var p = pathOf(address);
+            return p !== null && change.files[p] ? urlOf(change, p) : address;
+          }
+          function rewrite(change, root) {
+            var named = [root].concat(Array.prototype.slice.call(root.querySelectorAll('[src], [href], [poster]')));
+            for (var i = 0; i < named.length; i++) {
+              var el = named[i];
+              if (el.tagName === 'SCRIPT') continue;
+              var names = ['src', 'href', 'poster'];
+              for (var j = 0; j < names.length && el.getAttribute; j++) {
+                var v = el.getAttribute(names[j]);
+                if (!v || /^(#|data:|blob:|javascript:|mailto:)/.test(v)) continue;
+                var to = addressFor(change, v);
+                if (to === v) continue;
+                el.setAttribute(names[j], to);
+                // What it was, so a later change of the same file finds it (`swapStyles`).
+                el.setAttribute('data-lamp-path', pathOf(v));
+              }
+            }
+          }
+          // What the page asks for as it runs (fetch, XMLHttpRequest, a src or href a script sets) is a file of the change
+          // where the change has one, so a level's JSON or a picture loaded by code is the new one too.
+          function overlay(change) {
+            var to = function (address) {
+              if (typeof address !== 'string' || /^(data:|blob:)/.test(address)) return address;
+              var p = pathOf(address);
+              return p !== null && change.files[p] ? urlOf(change, p) : address;
+            };
+            if (window.fetch) {
+              var fetch0 = window.fetch;
+              window.fetch = function (input, init) {
+                if (typeof input === 'string') input = to(input);
+                else if (input && typeof input.url === 'string' && to(input.url) !== input.url) input = to(input.url);
+                return fetch0.call(window, input, init);
+              };
+            }
+            if (window.XMLHttpRequest) {
+              var open0 = XMLHttpRequest.prototype.open;
+              XMLHttpRequest.prototype.open = function (method, url) {
+                var args = Array.prototype.slice.call(arguments);
+                args[1] = to(url);
+                return open0.apply(this, args);
+              };
+            }
+            var kinds = [['HTMLImageElement', 'src'], ['HTMLMediaElement', 'src'], ['HTMLSourceElement', 'src'], ['HTMLLinkElement', 'href']];
+            for (var k = 0; k < kinds.length; k++) {
+              var proto = window[kinds[k][0]] && window[kinds[k][0]].prototype;
+              var d = proto && Object.getOwnPropertyDescriptor(proto, kinds[k][1]);
+              if (!d || !d.set) continue;
+              (function (d, name, proto) {
+                Object.defineProperty(proto, name, { configurable: true, enumerable: d.enumerable, get: d.get,
+                                                     set: function (v) { d.set.call(this, to(v)); } });
+              })(d, kinds[k][1], proto);
+            }
+          }
+          function sync(url) {
+            try { var r = new XMLHttpRequest(); r.open('GET', url, false); r.send(); return r.status === 0 || r.status === 200 ? r.responseText : null; } catch (e) { return null; }
+          }
+
+          // The page opened again from the change kept for this session: what the copy loaded of its own is stopped and
+          // replaced, then its scripts run from the new files in order, lamp.js (already running) left out.
+          function rebuild(change) {
+            var source = change.files['index.html'] && typeof change.files['index.html'].t === 'string' ? change.files['index.html'].t : sync(here);
+            if (!source) return false;
+            var doc = new DOMParser().parseFromString(source, 'text/html');
+            try { window.stop(); } catch (e) {}
+            var head = document.head || document.documentElement.appendChild(document.createElement('head'));
+            var old = head.querySelectorAll('link, style, meta, title, base');
+            for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+            var scripts = [];
+            function take(from, into) {
+              var children = Array.prototype.slice.call(from.childNodes);
+              for (var k = 0; k < children.length; k++) {
+                var node = children[k];
+                if (node.nodeType === 1 && node.tagName === 'SCRIPT') { scripts.push(node); continue; }
+                if (node.nodeType === 1) {
+                  var inner = node.querySelectorAll('script');
+                  for (var m = 0; m < inner.length; m++) { scripts.push(inner[m]); inner[m].parentNode.removeChild(inner[m]); }
+                }
+                var copy = document.importNode(node, true);
+                if (copy.nodeType === 1) rewrite(change, copy);
+                into.appendChild(copy);
+              }
+            }
+            take(doc.head, head);
+            var body = document.body || document.documentElement.appendChild(document.createElement('body'));
+            while (body.attributes.length) body.removeAttribute(body.attributes[0].name);
+            for (var a = 0; a < doc.body.attributes.length; a++) body.setAttribute(doc.body.attributes[a].name, doc.body.attributes[a].value);
+            body.innerHTML = '';
+            take(doc.body, body);
+            if (doc.documentElement) for (var h = 0; h < doc.documentElement.attributes.length; h++) {
+              document.documentElement.setAttribute(doc.documentElement.attributes[h].name, doc.documentElement.attributes[h].value);
+            }
+            // The copy's own document stopped early, so the page's start is said again once its scripts have run; the
+            // browser's own, if it says one late, isn't heard twice.
+            var ours = false;
+            function quiet(e) { if (!e.__lamp && ours && (e.target === document || e.target === window)) e.stopImmediatePropagation(); }
+            window.addEventListener('DOMContentLoaded', quiet, true);
+            window.addEventListener('load', quiet, true);
+            ours = true;
+            overlay(change);
+            for (var s = 0; s < scripts.length; s++) {
+              var given = scripts[s], src = given.getAttribute('src');
+              if (src && /(^|\/)lamp\.js([?#]|$)/.test(src)) continue;
+              // A script that isn't code (JSON, a template) is data the page reads: kept as it is, where the page finds it.
+              var type = (given.getAttribute('type') || '').toLowerCase();
+              if (!src && type && !/^(text|application)\/(javascript|ecmascript)$|^module$/.test(type)) {
+                body.appendChild(document.importNode(given, true));
+                continue;
+              }
+              var el = document.createElement('script');
+              for (var t = 0; t < given.attributes.length; t++) if (given.attributes[t].name !== 'src') el.setAttribute(given.attributes[t].name, given.attributes[t].value);
+              el.async = false;
+              el.src = src ? addressFor(change, src) : URL.createObjectURL(new Blob([given.textContent], { type: 'text/javascript' }));
+              body.appendChild(el);
+            }
+            var end = document.createElement('script');
+            end.async = false;
+            end.src = URL.createObjectURL(new Blob(['window.__lampPageStarted && window.__lampPageStarted();'], { type: 'text/javascript' }));
+            body.appendChild(end);
+            window.__lampPageStarted = function () {
+              window.__lampPageStarted = null;
+              var e = document.createEvent('Event'); e.initEvent('DOMContentLoaded', true, false); e.__lamp = true; document.dispatchEvent(e);
+              var l = document.createEvent('Event'); l.initEvent('load', false, false); l.__lamp = true; window.dispatchEvent(l);
+            };
+            return true;
+          }
+
+          // Only stylesheets changed: each is swapped where the page has it, as it runs.
+          // Only stylesheets changed: each is swapped where the page has it, as it runs. Null when one of them isn't
+          // linked from the page (it's put in by opening the page again), else the links swapped.
+          function swapStyles(change) {
+            var links = document.querySelectorAll('link[rel~="stylesheet"]'), found = [], done = {};
+            for (var i = 0; i < links.length; i++) {
+              var p = links[i].getAttribute('data-lamp-path') || pathOf(links[i].getAttribute('href') || '');
+              if (p === null || change.changed.indexOf(p) < 0 || !change.files[p]) continue;
+              found.push([links[i], p]);
+              done[p] = true;
+            }
+            for (var j = 0; j < change.changed.length; j++) if (!done[change.changed[j]]) return null;
+            for (var k = 0; k < found.length; k++) {
+              delete urls[found[k][1]];
+              found[k][0].setAttribute('data-lamp-path', found[k][1]);
+              found[k][0].href = urlOf(change, found[k][1]);
+            }
+            return found.map(function (f) { return f[0]; });
+          }
+
+          // Told once every swapped stylesheet has loaded, or failed with the first that didn't (a page whose rules turn
+          // away a stylesheet from Lamp's copy, say): within ten seconds either way.
+          function whenLoaded(links, id) {
+            var left = links.length, over = false;
+            var end = function (why) { if (over) return; over = true; report(why ? 'failed' : 'took', id, why); };
+            var timer = setTimeout(function () { end('a stylesheet did not load'); }, 10000);
+            links.forEach(function (link) {
+              link.addEventListener('load', function () { if (--left === 0) { clearTimeout(timer); end(); } });
+              link.addEventListener('error', function () { clearTimeout(timer); end('a stylesheet did not load'); });
+            });
+            if (!left) { clearTimeout(timer); end(); }
+          }
+
+          function take(change) {
+            if (!change || typeof change.files !== 'object' || !(change.changed instanceof Array)) return report('failed', change && change.id, 'the change came malformed');
+            var stylesOnly = change.changed.length > 0;
+            for (var i = 0; i < change.changed.length; i++) if (!/\.css$/i.test(change.changed[i]) || !change.files[change.changed[i]]) stylesOnly = false;
+            var kept = JSON.stringify(change);
+            try { sessionStorage.setItem(KEY, kept); } catch (e) {
+              say('this change is too big to take as the page is open; Reload puts it here.');
+              return report('failed', change.id, 'the page could not keep the change');
+            }
+            var swapped = stylesOnly ? swapStyles(change) : null;
+            if (swapped) { say('the page took the change.'); return whenLoaded(swapped, change.id); }
+            say('the page opens again with the change.');
+            try { sessionStorage.setItem(KEY + ':told', ''); } catch (e) {}
+            location.reload();
+          }
+
+          // One piece of a change, as Lamp sent it through the wish's room: the change is taken once every piece is here.
+          window.__lampPageChange = function (piece) {
+            // Lamp asking what this copy has, before it sends a change.
+            if (piece && piece.ask) return report('here');
+            if (!piece || typeof piece.id !== 'string' || typeof piece.s !== 'string' || !(piece.n > 0) || !(piece.i >= 0) || piece.i >= piece.n) return;
+            var got = pieces[piece.id] || (pieces[piece.id] = { n: piece.n, parts: [], have: 0 });
+            if (got.parts[piece.i] === undefined) { got.parts[piece.i] = piece.s; got.have++; }
+            if (got.have < got.n) return;
+            delete pieces[piece.id];
+            var whole = text(got.parts.join(''));
+            var change;
+            try { change = JSON.parse(whole); } catch (e) { say('a change from Lamp did not arrive whole.'); return report('failed', piece.id, 'the change did not arrive whole'); }
+            change.id = piece.id;
+            take(change);
+          };
+
+          var opening, told = null;
+          try { opening = sessionStorage.getItem(KEY); told = sessionStorage.getItem(KEY + ':told'); } catch (e) {}
+          if (opening) {
+            var kept = null, failed = null;
+            try { kept = JSON.parse(opening); } catch (e) {}
+            // What goes wrong while the page starts again from the change (a script that throws, one that didn't load) is
+            // what it says to Lamp, which offers Reload; the page's own later errors aren't.
+            var watching = true;
+            var caught = function (e) { if (watching && !failed) failed = (e && (e.message || (e.target && (e.target.src || e.target.href)))) || 'the page failed to start'; };
+            window.addEventListener('error', caught, true);
+            try { if (!kept || !rebuild(kept)) failed = 'the page could not open again from the change'; } catch (e) { failed = String(e); }
+            var tell = function () {
+              watching = false;
+              window.removeEventListener('error', caught, true);
+              // Told once per change: opening the page again later in the session says nothing more.
+              if (!kept || told === kept.id || told === null) return;
+              try { sessionStorage.setItem(KEY + ':told', kept.id || ''); } catch (e) {}
+              report(failed ? 'failed' : 'took', kept.id, failed);
+            };
+            // Once its scripts have run and it has had a moment to start; told to Lamp once the room is reached again.
+            var started = window.__lampPageStarted;
+            window.__lampPageStarted = function () { if (started) started(); setTimeout(tellWhenLinked, 1500); };
+            var tries = 0;
+            var tellWhenLinked = function () {
+              var wish = window.Lamp && window.Lamp.wish;
+              var linked = wish && wish.state && wish.state() === 'connected';
+              if (linked || ++tries > 20) return tell();
+              setTimeout(tellWhenLinked, 1000);
+            };
+            if (failed) setTimeout(tellWhenLinked, 0);
+          }
+        })();
+        """#
 
     private static let wishJSBody = #"""
         /* The wish's other apps. Written by Lamp before every build; don't edit.
@@ -1952,6 +2258,8 @@ extension TVTemplate {
               // The wish gained an app or lost one: the others keep what's known of them.
               setRoster(m.apps || []);
             } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
+              // Lamp's own word (the relay's name, which no app has): a change of this page, for lamp.js alone.
+              if (m.from === 'lamp') { if (m.data && m.data.lampPage && window.__lampPageChange) window.__lampPageChange(m.data.lampPage); return; }
               emit('message', [appOf(m.from), m.data, m.from]);
             } else if (m.t === 'values' && isName(m.from)) {
               heardValues(m, m.from);
@@ -3060,6 +3368,7 @@ extension TVTemplate {
                 }
                 for (var j = 0; j < said.length; j++) emit('change', [said[j][0], copyOf(said[j][1]), own(by, said[j][0]) ? by[said[j][0]] : mine]);
               } else if (m.t === 'message') {
+                if (m.from === 'lamp') { if (m.data && m.data.lampPage && window.__lampPageChange) window.__lampPageChange(m.data.lampPage); return; }
                 emit('message', [m.from, m.data, m.copy || m.from]);
               } else if (m.t === 'file') {
                 var data = fromBase64(m.data || ''), size = data.length;
@@ -3226,6 +3535,13 @@ extension TVTemplate {
             };
             store.here = function (name, id) { subscribe(name); return !!here_[name + '\t' + id]; };
           }
+          // A word for Lamp itself (lamp.js's "A change while it's open"): through the app around the page when it's hosted,
+          // else sealed into Lamp's room; nothing while Lamp's room isn't reached.
+          api._toLamp = function (data) {
+            // As text, as `send` hands it over: the app around the page reads it as JSON.
+            if (host) { try { host.postMessage({ op: 'toLamp', data: JSON.stringify(data) }); } catch (e) {} return; }
+            if (socket && socket.readyState === 1 && sendKey) seal(JSON.stringify({ t: 'send', to: 'lamp', data: data }));
+          };
           if (host) hosted();
           else if (stranded) {
             var standStill = function () { started = true; setState('away', STRANDED); };
@@ -3464,6 +3780,16 @@ extension Agent.Rules {
     files as the app grows (scripts, styles, pictures), loaded from index.html with relative paths. File names use \
     letters, digits, dots, dashes and underscores only. Web/lamp.js belongs to Lamp and is rewritten before every \
     build: never edit it, and keep index.html loading it before the app's own scripts.
+    """ + "\n" + pageCopies
+
+    /// Where a page's change goes (`PageCopies`, `PageLive`, `Store.reloadEverywhere`): every page's edit rule ends with
+    /// it (a screen's, a web app's, a web game's, a TV app's), so it's said once.
+    static let pageCopies = """
+    - A change of the page goes into every copy of it that's open (its window on this Mac, a simulator, an iPad, a \
+    TV, the Xbox, an Android device) as soon as your turn ends, each keeping what it saved, without a build or the \
+    person doing anything; a copy that can't take it as it is (a change of Sources/, or of a script that runs before \
+    lamp.js) waits for the person's Reload, which puts it on every device they have the app on. So never say a \
+    change reaches only where Try On points.
     """
 
     static let tvFrameworks = """

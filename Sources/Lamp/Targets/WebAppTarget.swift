@@ -46,5 +46,5 @@ extension Target {
             AppFile.read(dir.appendingPathComponent(ScreenKit.webAppPage.marker), inFolder: wish, last: 1) != nil
         },
         setup: .none,
-        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true }, installFolder: "Web Apps", looksInTVPreview: true)
+        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true }, changesAreWeb: { _ in true }, installFolder: "Web Apps", looksInTVPreview: true)
 }

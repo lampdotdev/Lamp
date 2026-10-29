@@ -605,7 +605,8 @@ enum Transcript {
             case .iphoneSetup: IPhoneSetupLine.shows(line.text, for: project)
             // Reload, while the change it's for still waits: the last such line only, under the latest change.
             // A wish's line is for its other parts' changes too.
-            case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload) } ?? false
+            case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload)
+                || Store.shared.awaitsReloadElsewhere($0) } ?? false
                 && line.id == lines.last(where: { $0.kind == .reload })?.id
             default: true
             }
@@ -668,6 +669,17 @@ enum ToolGroup {
 /// one in the app's title bar does.
 enum ReloadLine {
     static func text(_ name: String) -> String { "Reload \(name) to see this change." }
+    /// Reload reaches the wish's other places too (`Store.reloadEverywhere`): where it opens the app again (where it's
+    /// open) and where it only puts the new version, for next time, so nobody using a TV or a phone is surprised.
+    static func text(_ name: String, reopens: [String], updates: [String]) -> String {
+        guard reopens.count + updates.count > 1 || !updates.isEmpty else { return text(name) }
+        let open = reopens.isEmpty ? "" : "Reload opens \(name) again on \(listed(reopens))"
+        let next = updates.isEmpty ? "" : (open.isEmpty ? "Reload puts this change on " : ", and puts it on ") + listed(updates) + " for next time"
+        return open + next + "."
+    }
+    static func listed(_ names: [String]) -> String {
+        names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
     /// Reload was pressed while the agent was at work on the app: it goes in as soon as the agent is between steps.
     static func queued(_ name: String) -> String { "\(name) reloads in a moment." }
 }

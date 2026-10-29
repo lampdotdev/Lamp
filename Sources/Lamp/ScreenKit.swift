@@ -272,6 +272,7 @@ extension Agent.Rules {
     wish's own folder), `kind` "app", `made` "web" and `devices` every device it's to be on ("mac", "ipad", "android", \
     "android-tv", "tv"…: a page goes wherever the table of devices gives a web host); it stays the same app, with its \
     saves, and the wish's other apps stay as they are.
+    \(pageCopies)
     """ }
 
     /// How a screen looks: like a TV app's page (`tvDesign`), but filling whatever it's shown on rather than a fixed

@@ -864,6 +864,10 @@ enum GameAndroid {
                     tellValues(JSONArray())
                 }
                 "stop" -> LampWish.stop()
+                "toLamp" -> {
+                    val data = json(call.optString("data")) ?: return
+                    LampWish.toLamp(if (data == JSONObject.NULL) null else data)
+                }
                 "send" -> {
                     val data = json(call.optString("data")) ?: return
                     LampWish.send(if (data == JSONObject.NULL) null else data, if (call.isNull("to")) null else call.optString("to"))

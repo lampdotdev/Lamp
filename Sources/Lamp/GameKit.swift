@@ -372,7 +372,7 @@ enum GameKit {
     /// joining from the game's Phone/ page), and `Lamp.wish`, the TV app's block for the wish's other apps and its own
     /// other copies, for a game that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        DeviceSupport.webJS + controllersJS + (Template.carriesWish(project) ? TVTemplate.wishJS : "")
+        DeviceSupport.webJS + controllersJS + (Template.carriesWish(project) ? TVTemplate.withShell(TVTemplate.wishJS, for: project) : "")
     }
 
     /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the blocks make one to hang from.
@@ -1081,6 +1081,7 @@ extension Agent.Rules {
     make_app_for with the game's folder in `app` ("." when it's the wish's own folder), `kind` "game", `made` "web" and \
     `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", "xbox-one"…: a page \
     goes wherever the table of devices gives a web host); it stays the same game, and the wish's other apps stay as they are.
+    \(pageCopies)
     """ }
 
     /// How a page (a web game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the

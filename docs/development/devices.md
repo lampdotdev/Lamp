@@ -472,7 +472,8 @@ from Lamp's player (below) unless it has Swift of its own.
 
 A change to a game while it's played. The app around the page on the Mac and in the simulator (`LampPageLive` in
 `LampPage.swift`) asks Lamp what has changed (`/app/page/live`, held up to 25 s, asked again at once; never on a phone,
-whose copy takes changes when it's installed). When a build's page differs from what that copy was installed with
+whose copy takes a change through the wish's room, as every copy on another device does: "A page's change in every open
+copy" in the kinds-of-app guide). When a build's page differs from what that copy was installed with
 (`PageLive.installed`, the page's files by hash with a hash of the rest of the app, kept in `.lamp/page-live`) and the rest
 is the same, `Store.pageInPlace` answers with every file that differs from the install, copied out of the build; the app
 fetches each (`/app/page/file`), serves it in place of its bundle's (`LampPageFiles`) and keeps it for the next launch of
@@ -492,8 +493,9 @@ installed as before. On the Mac the build is installed when the app closes (`Liv
 player was using is kept too; a controller read through the Gamepad API reappears at its next press. Every copy of the
 page names its build (`lamp-build.js`, beside `lamp-device.js`: build.sh's `stage_page` and `GamePage.stage`), and the
 runtime keeps the latest snapshot every five seconds and as the page hides; a newer build opened within a quarter of an
-hour restores it once. That's how a change reaches the game on a phone, Android, a TV and the Xbox: when Lamp installs it
-there and opens it, the player is back where they were.
+hour restores it once. That's how a change installed on a phone, Android, a TV or the Xbox (Reload or Play) brings the
+player back where they were; a copy open there in the wish's room takes the page's change as it's made, opening again
+from the new files (`PageCopies`).
 
 **Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
 has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,

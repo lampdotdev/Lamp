@@ -14310,6 +14310,15 @@ enum Template {
             return true
         }
 
+        /// A word for Lamp itself, through its room: what a page in this app has of a change Lamp put into it (lamp.js's
+        /// "A change while it's open"). Nothing when Lamp's room isn't reached; it goes nowhere else.
+        func toLamp(_ data: Any) {
+            guard relayIn, JSONSerialization.isValidJSONObject(["data": data]),
+                  let frame = try? JSONSerialization.data(withJSONObject: ["t": "send", "to": "lamp", "data": data]),
+                  frame.count <= Self.messageLimit else { return }
+            say(frame)
+        }
+
         /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
         func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { messageListeners.append { from, data, _ in handler(from, data) } }
 

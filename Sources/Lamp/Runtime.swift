@@ -34,6 +34,8 @@ enum Runtime {
     static func markBuilt(_ project: LampProject, from fingerprint: String) {
         // The build has just run in the agent's folder, which may now hold a link where this file goes.
         try? AppFolder.write(fingerprint, to: builtURL(project), in: project.dir)
+        // A page's build says what its files were, so a copy of it open elsewhere is given only what differs (`PageCopies`).
+        PageCopies.record(project, as: fingerprint)
     }
 
     /// A build that hasn't been installed because the person kept the app open when it was asked to quit. The
@@ -74,11 +76,37 @@ enum Runtime {
         all[tv] = OnTV(at: Date(), fingerprint: made)
         if let data = try? JSONEncoder().encode(all) { try? AppFolder.write(data, to: onTVURL(project), in: project.dir) }
     }
+    /// Every device of the person's Lamp has put the app on (a TV, the Xbox, a phone, an Android device), by its place
+    /// and its id there, with when and from which sources: Reload puts a change on each again (`Store.reloadEverywhere`),
+    /// since only Try On's place keeps which device it is.
+    struct Placed: Codable, Hashable {
+        var place: Destination
+        var device: String
+        var at: Date
+        var fingerprint: String
+    }
+    private static func placedURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("placed.json") }
+    static func putOn(_ project: LampProject, staged: String? = nil) {
+        guard let device = project.device, let made = staged ?? builtFingerprint(project) else { return }
+        let place = project.destination
+        var all = placed(project).filter { !($0.place == place && $0.device == device) }
+        all.append(Placed(place: place, device: device, at: Date(), fingerprint: made))
+        if let data = try? JSONEncoder().encode(all) { try? AppFolder.write(data, to: placedURL(project), in: project.dir) }
+    }
+    static func placed(_ project: LampProject) -> [Placed] {
+        AppFile.read(placedURL(project), in: project).flatMap { try? JSONDecoder().decode([Placed].self, from: $0) } ?? []
+    }
+
     /// Read as everything Lamp reads in the app's folder is: the agent may leave a link or a pipe in its place.
     static func onTV(_ project: LampProject) -> [String: OnTV] {
         AppFile.read(onTVURL(project), in: project).flatMap { try? JSONDecoder().decode([String: OnTV].self, from: $0) } ?? [:]
     }
     /// What the last build was made from (`markBuilt`), the fingerprint taken before its copy was staged.
+    /// When the build `builtFingerprint` names was recorded.
+    static func builtDate(_ project: LampProject) -> Date? {
+        (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    }
+
     static func builtFingerprint(_ project: LampProject) -> String? {
         AppFile.text(builtURL(project), in: project).flatMap { $0.isEmpty ? nil : $0 }
     }

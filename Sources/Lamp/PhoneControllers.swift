@@ -156,6 +156,25 @@ enum ControllerRelay {
         if process == nil { launch() } else { send(line) }
     }
 
+    private static var saying: [Int: CheckedContinuation<[String], Never>] = [:]
+    private static var lastSay = 0
+
+    /// Lamp's own word to some copies in a wish's room (`Relay.say`): the copies it went to, none when the relay isn't
+    /// running or didn't answer within a few seconds.
+    static func say(in room: String, to copies: [String], data: Any) async -> [String] {
+        guard process != nil, rooms[room] != nil, !copies.isEmpty, JSONSerialization.isValidJSONObject(["data": data]) else { return [] }
+        lastSay += 1
+        let ask = lastSay
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(10))
+            saying.removeValue(forKey: ask)?.resume(returning: [])
+        }
+        return await withCheckedContinuation { answer in
+            saying[ask] = answer
+            send(["op": "say", "app": room, "to": copies, "data": data, "ask": ask])
+        }
+    }
+
     static func endRoom(_ key: String) {
         presence[key] = nil
         guard rooms.removeValue(forKey: key) != nil else { return }
@@ -220,6 +239,12 @@ enum ControllerRelay {
                     guard let room = said["app"] as? String else { continue }
                     let members = said["peers"] as? [[String: Any]] ?? []
                     Task { @MainActor in if Self.process === process, rooms[room] != nil { presence[room] = members } }
+                case "heard":
+                    guard let room = said["app"] as? String, let copy = said["from"] as? String, let data = said["data"] else { continue }
+                    Task { @MainActor in if Self.process === process { PageCopies.heard(copy, in: room, data) } }
+                case "said":
+                    let ask = said["ask"] as? Int ?? 0, reached = said["to"] as? [String] ?? []
+                    Task { @MainActor in saying.removeValue(forKey: ask)?.resume(returning: reached) }
                 default:
                     continue
                 }

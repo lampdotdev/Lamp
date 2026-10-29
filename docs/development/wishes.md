@@ -413,7 +413,9 @@ relay lets a peer in only once it has proved it holds the room's key and named a
 every copy of one app or to all as
 a `message` with who sent it, tells the sender when the one it was for isn't there (`undelivered`), and holds peers to a
 phone's size and rate limits (16 KB of JSON a message, `ControllerWire`), and passes files and a game's controls to one
-peer (below). The same
+peer (below). Lamp itself speaks in a room only to put a page's change into its open copies (`Relay.say`, the `say` op
+on the relay's input): a message from the relay's own name, `lamp`, which no app of a wish may take, so lamp.js knows it
+as Lamp's and takes it rather than handing it to the page ("A page's change in every open copy" in the kinds-of-app guide). The same
 block in every language, under one name: `LampWish.shared` in LampSupport.swift (a WebSocket of its own to the relay),
 `Lamp.wish` in lamp.js (the same, from the TV page, in the preview and on a TV), and `LampWish` in LampSupport.kt, whose
 blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp holds the room's socket for the Android app

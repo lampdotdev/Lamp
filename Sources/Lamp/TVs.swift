@@ -242,7 +242,7 @@ enum TVs {
     }
 
     /// Packages the staged app for the Samsung TV, signs it for that TV, installs it and opens it. `say` hears how far it is.
-    static func installSamsung(_ project: LampProject, staged: URL, on record: Record, say: @escaping @Sendable (String) -> Void) async throws {
+    static func installSamsung(_ project: LampProject, staged: URL, on record: Record, opens: Bool = true, say: @escaping @Sendable (String) -> Void) async throws {
         var duid = record.duid
         if duid == nil { duid = (try? await connectSamsung(record))?.duid }
         guard let duid else { throw Failure(message: "Lamp hasn't connected to \(record.name) yet.") }
@@ -273,6 +273,8 @@ enum TVs {
                     .filter { !$0.isEmpty && !$0.hasPrefix("installing") }.suffix(3).joined(separator: " · ")
                 throw Failure(message: "\(record.name) didn't install the app: \(reason)")
             }
+            // Put there to wait for next time, without opening over what the TV shows.
+            guard opens else { return }
             say("Opening \(project.name) on \(record.name)…")
             // The install's stream closes before the TV has finished, so it's asked to open the app until it says it has
             // (launched, or resumed when it was open), for half a minute at most.
@@ -290,7 +292,7 @@ enum TVs {
 
     // MARK: LG
 
-    static func installLG(_ project: LampProject, staged: URL, on record: Record, say: @escaping @Sendable (String) -> Void) async throws {
+    static func installLG(_ project: LampProject, staged: URL, on record: Record, opens: Bool = true, say: @escaping @Sendable (String) -> Void) async throws {
         guard FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path) else {
             throw Failure(message: "\(record.name) hasn't let this Mac in yet: enter its Developer Mode passphrase in its setup.")
         }
@@ -299,6 +301,8 @@ enum TVs {
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         say("Putting \(project.name) on \(record.name)…")
         try await WebOS.install(package, appID: TVTemplate.webOSID(for: project), on: record)
+        // Put there to wait for next time, without opening over what the TV shows.
+        guard opens else { return }
         say("Opening \(project.name) on \(record.name)…")
         try await WebOS.launch(TVTemplate.webOSID(for: project), on: record)
         await WebOS.extendSession(on: record)
