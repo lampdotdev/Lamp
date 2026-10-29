@@ -212,20 +212,23 @@ enum AssetCatalog {
         var texture: Int
     }
 
+    /// Every place the app is shown counts, and the least it allows wins (a Series X beside a phone is the phone's).
     static func budget(for app: LampProject) -> Budget {
         let places = app.openPlaces
-        if places.contains(.tv) { return Budget(place: "a Samsung or LG TV", triangles: 3_000, texture: 1024) }
-        if places.contains(.androidTV) { return Budget(place: "a Google TV or Fire TV stick", triangles: 4_000, texture: 1024) }
+        var budgets = [Budget(place: "this Mac", triangles: 60_000, texture: 4096)]
+        if places.contains(.tv) { budgets.append(Budget(place: "a Samsung or LG TV", triangles: 3_000, texture: 1024)) }
+        if places.contains(.androidTV) { budgets.append(Budget(place: "a Google TV or Fire TV stick", triangles: 4_000, texture: 1024)) }
         if places.contains(.device) {
             let model = GameKit.isGame(app) ? GameKit.xboxModel(for: app) : nil
             if let model, model.localizedCaseInsensitiveContains("Series") {
-                return Budget(place: "the \(model)", triangles: 20_000, texture: 2048)
+                budgets.append(Budget(place: "the \(model)", triangles: 20_000, texture: 2048))
+            } else {
+                budgets.append(Budget(place: "an Xbox One", triangles: 8_000, texture: 1024))
             }
-            return Budget(place: "an Xbox One", triangles: 8_000, texture: 1024)
         }
-        if places.contains(where: \.isAndroid) { return Budget(place: "a mid-range Android phone", triangles: 8_000, texture: 1024) }
-        if places.contains(.ios) { return Budget(place: "an iPhone", triangles: 15_000, texture: 2048) }
-        return Budget(place: "this Mac", triangles: 60_000, texture: 4096)
+        if places.contains(.android) { budgets.append(Budget(place: "a mid-range Android phone", triangles: 8_000, texture: 1024)) }
+        if places.contains(.ios) { budgets.append(Budget(place: "an iPhone", triangles: 15_000, texture: 2048)) }
+        return budgets.min { ($0.triangles, $0.texture) < ($1.triangles, $1.texture) }!
     }
 
     // MARK: How an asset reads to the agent

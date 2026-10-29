@@ -44,9 +44,11 @@ into one numbered sheet for the agent. `fetch` downloads each file (an archive o
 folder, which commands can't write), checks its hash, takes out only the files the index names (`Zip`, Lamp's own
 reading of the archive), makes a model's pictures smaller where the place needs it (`GLB.shrinkingPictures`, the
 binary chunk laid out again) and a lone picture likewise (an atlas's sheet stays, since its XML gives places in
-pixels), and writes them with `AppFolder` into Web/assets/<pack>/ (any app with a page) or Assets/<pack>/. Nothing
-fetched is run or made executable. Each is credited in credits.json (`AssetCatalog.credits`: a pack of CC0 work once,
-CC-BY work as itself, each with its `files`), never as what the wish is based on. Making a model when nothing fits
+pixels), and writes them with `AppFolder` into Web/assets/<pack>/ (any app with a page), app/src/main/assets/<pack>/ (a native
+Android app, whose build packages that folder) or Assets/<pack>/. Nothing
+fetched is run or made executable. Each is credited in credits.json as it's written (`AssetCatalog.credits`: a pack of CC0 work once,
+CC-BY work as itself, each with its `files`), never as what the wish is based on, and one whose credit the wish can't
+keep (`Credits.maxEntries` sources already) isn't brought in. The budget is the least any of the app's places allows. Making a model when nothing fits
 (text- or image-to-3D) isn't built: the PR that added the catalog has the design.
 
 Physics is the engine's own for each make, and its guidance is in the skill for that make: Rapier for a three.js game

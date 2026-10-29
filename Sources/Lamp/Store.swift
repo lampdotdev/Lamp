@@ -6888,8 +6888,9 @@ final class Store: ObservableObject {
 
     /// `assets`: ready-made models, sprites, tiles, icons and textures from Lamp's index of free work (`AssetCatalog`).
     /// With `find` (and `kind`) it lists what fits, within what the slowest place the app is shown can draw, and with
-    /// `show` their pictures in one sheet; with `fetch` it brings the chosen ones into the app's page folder
-    /// (Web/assets/, for a game or another page) or Assets/, checked against the index, and credits each in credits.json.
+    /// `show` their pictures in one sheet; with `fetch` it brings the chosen ones into where the app's build takes files
+    /// from (Web/assets/ for a game or another page, a native Android app's packaged assets, else Assets/), checked
+    /// against the index, and credits each in credits.json as it's written.
     private func assetsCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         // Fetching waits on the network: the turn that asked is taken now, and nothing is written unless that turn
         // is still going when the files arrive (as `make_art`'s pictures).
@@ -6933,16 +6934,28 @@ final class Store: ObservableObject {
         guard unknown.isEmpty else {
             return (400, ["error": "Lamp's free assets have no \(unknown.joined(separator: ", ")): use the ids `find` lists."])
         }
-        // A page's files are served from Web/, so a game or any other page gets them there; any other app in Assets/,
-        // which is bundled with it.
-        var isFolder: ObjCBool = false
-        let page = FileManager.default.fileExists(atPath: app.dir.appendingPathComponent("Web").path, isDirectory: &isFolder) && isFolder.boolValue
-        let base = page ? "Web/assets/" : "Assets/"
+        // Where the app's build takes files from: a page's are served from Web/, so a game or any other page gets them
+        // there; a native Android app's build packages app/src/main/assets; any other app's bundles Assets/.
+        let fm = FileManager.default
+        func folder(_ path: String) -> Bool {
+            var isFolder: ObjCBool = false
+            return fm.fileExists(atPath: app.dir.appendingPathComponent(path).path, isDirectory: &isFolder) && isFolder.boolValue
+        }
+        let page = folder("Web"), android = !page && folder("app/src/main")
+        let base = page ? "Web/assets/" : android ? "app/src/main/assets/" : "Assets/"
         let wishPrefix = app.isPart ? app.dir.lastPathComponent + "/" : ""
-        var fetched: [(item: AssetCatalog.Item, files: [String])] = []
+        var brought = 0
         var said: [String] = [], problems: [String] = []
         for id in Array(NSOrderedSet(array: ids)) as? [String] ?? ids {
             guard let item = byID[id] else { continue }
+            // Its credit has to be kept: a wish holds only so many sources (`Credits.maxEntries`), and one past that is
+            // dropped as it's written, so the asset would be in the app uncredited.
+            let credit = AssetCatalog.credits(for: [(item, [])])
+            let kept = Credits.load(project).merged(with: credit)
+            guard credit.upstream.allSatisfy({ source in kept.upstream.contains { $0.sameWork(as: source) } }) else {
+                problems.append("- \(item.id) wasn't brought in: this wish already credits as many works as Lamp can keep (\(Credits.maxEntries)), so its credit would be lost. Use one from a pack the wish already credits, or make it in code.")
+                continue
+            }
             do {
                 let files = try await AssetCatalog.files(of: item, budget: budget)
                 guard stillAsked() else { return (409, ["error": "The request was stopped, so nothing more was brought in."]) }
@@ -6951,8 +6964,10 @@ final class Store: ObservableObject {
                     try AppFolder.write(file.data, to: app.dir.appendingPathComponent(base + file.path), in: app.dir)
                     paths.append(base + file.path)
                 }
-                fetched.append((item, paths.map { wishPrefix + $0 }))
-                let shown = paths.map { page ? String($0.dropFirst("Web/".count)) : String($0.dropFirst("Assets/".count)) }
+                // Credited as soon as it's written, so a stop before the next one leaves nothing uncredited.
+                try? Credits.add(AssetCatalog.credits(for: [(item, paths.map { wishPrefix + $0 })]), to: project)
+                brought += 1
+                let shown = paths.map { String($0.dropFirst(page ? "Web/".count : base.count)) }
                 var line = "- \(item.id) → " + shown.joined(separator: ", ")
                 if let box = item.box, box.count == 6 {
                     line += String(format: " (box x %.2f…%.2f, y %.2f…%.2f, z %.2f…%.2f in its units)", box[0], box[3], box[1], box[4], box[2], box[5])
@@ -6966,14 +6981,15 @@ final class Store: ObservableObject {
                 problems.append("- \(item.id) wasn't brought in: \(error.localizedDescription).")
             }
         }
-        if !fetched.isEmpty { try? Credits.add(AssetCatalog.credits(for: fetched), to: project) }
         var text = ""
         if !said.isEmpty {
-            text = "Brought in, under \(base) (paths below are \(page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`" : "inside Assets/, as `LampAssets.url(\"…\")` takes them")), and credited in credits.json:\n"
+            let loading = page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`"
+                : android ? "inside the app's packaged assets, as `LampAssets` reads them" : "inside Assets/, as `LampAssets.url(\"…\")` takes them"
+            text = "Brought in, under \(base) (paths below are \(loading)), and credited in credits.json:\n"
                 + said.joined(separator: "\n")
         }
         if !problems.isEmpty { text += (text.isEmpty ? "" : "\n") + problems.joined(separator: "\n") }
-        return (fetched.isEmpty ? 502 : 200, fetched.isEmpty ? ["error": text] : ["text": text])
+        return (brought == 0 ? 502 : 200, brought == 0 ? ["error": text] : ["text": text])
     }
 
     /// Where `make_art` may write a picture: Assets/ in the app's own folder, made if needed. This runs in Lamp,

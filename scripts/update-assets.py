@@ -237,9 +237,10 @@ left_out = []
 def poly_entry(listed, kind, cache):
     """A model as Poly Pizza lists it (in a bundle or a search), with its license as Poly Pizza states it for that model."""
     title, author = listed["title"].strip(), listed["creator"]["username"]
-    license = LICENSES.get(listed.get("license") or "")
+    # Poly Pizza's own field is spelled "licence".
+    license = LICENSES.get(listed.get("licence") or "")
     if not license:
-        left_out.append(f"{title} by {author}: {listed.get('license') or 'no license'}"); return None
+        left_out.append(f"{title} by {author}: {listed.get('licence') or 'no license'}"); return None
     resource = re.fullmatch(r"https://static\.poly\.pizza/([0-9a-f-]{36})\.webp", listed["previewUrl"])
     if not resource:
         left_out.append(f"{title} by {author}: no file"); return None

@@ -42,7 +42,8 @@ with smooth vector art.
 1. `assets` with `find` ("taxi", "low-poly tree", "platformer player") and `kind`, and `show: true`. Each line has an
    id, its triangles, its box in its own units, its animations, its size, its pack, author, license and style.
 2. `assets` with `fetch` and the ids. They land in Web/assets/<pack>/ for a game or another page, or Assets/<pack>/ for
-   a Swift app, and the answer gives each file's path as the app loads it.
+   a Swift app (app/src/main/assets/<pack>/ for a native Android app, read with `LampAssets`), and the answer gives each
+   file's path as the app loads it.
 3. Load each through the runtime (below), then `look_at_app`: a model's size and the way it faces are only certain once
    seen.
 
