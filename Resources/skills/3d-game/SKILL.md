@@ -45,6 +45,10 @@ lamp-game.js once:
   `f.time`), and ends with `renderer.render(scene, camera)`.
 - `touch` names the buttons Lamp's touch controls show on a phone or tablet.
 
+A page laid out at the window's size whose HUD is its own HTML (a strategy game, a page made for phones as well as
+TVs) passes `fill: true` to `game()` and places and sizes its canvas itself, drawing it smaller when frames run slow;
+the rest of this section is for a game drawn at 1920x1080.
+
 When frames run slow, Lamp draws the game smaller and scales it up to the screen by itself (`sharp: true` in `game()`
 keeps it at 1920x1080), so size anything drawn off-screen (a render target, a post-process pass) from
 `renderer.getSize()`, never from 1920x1080. Read lamp-game.js's comments first: they're the whole interface.
