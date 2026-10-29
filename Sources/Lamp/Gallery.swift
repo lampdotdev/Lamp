@@ -739,8 +739,14 @@ enum Gallery {
         review("Partly checked", ImportReview(
             summary: "A 3D driving game that builds real streets and buildings from map data for any place you search, starting in San Francisco, with cars, people, trains and street furniture.",
             capabilities: ["Downloads maps of the places you drive", "Remembers the places you searched"],
-            concerns: [ImportReview.tooLarge], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
             asked: true, detected: found("Uses the camera or microphone", "Connects to the internet"), partial: true),
+               description: "A driving game through real streets anywhere in the world, starting in San Francisco."),
+        review("Checked in parts", ImportReview(
+            summary: "A 3D driving game that builds real streets and buildings from map data for any place you search, starting in San Francisco, with cars, people, trains and street furniture.",
+            capabilities: ["Downloads maps of the places you drive", "Remembers the places you searched"],
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Connects to the internet"), split: true),
                description: "A driving game through real streets anywhere in the world, starting in San Francisco."),
         review("Looks risky", ImportReview(
             summary: "Shows a daily quote, and also reads your browser's saved data and sends it to a website.",
@@ -768,7 +774,7 @@ enum Gallery {
         review("Prepared update", ImportReview(
             summary: "A 3D game of Manhattan you can explore on foot, by car, by bike or by helicopter, with synthesized city sounds.",
             capabilities: ["Draws a 3D Manhattan you can explore", "Plays synthesized city sounds"],
-            concerns: [ImportReview.tooLarge], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
             asked: true, detected: found("Connects to the internet"), partial: true),
                app: "New York Update", existing: "New York", prepared: true),
         review("Android app", ImportReview(summary: "Counts your taps on one screen and remembers the count after closing.",
