@@ -146,7 +146,15 @@ enum DeviceApps {
         return """
 
 
-        (Lamp: \(project.isPart ? "the \(integration.name) app in \(project.dir.lastPathComponent)/" : "this \(integration.name) app") was made the way Lamp made \(integration.name) apps before, which Lamp no longer builds         or puts on a \(integration.name). Lamp has put the scaffold its apps have now beside the old code (\(files)). Before the         change asked for, write the whole app again in that scaffold, following its rules: read the old files for everything         it does and shows, and keep every key it saves data under, with the same names and shapes, since the person's saved         data on the \(integration.name) stays where it is and LampStore reads the same place. Then delete the old code with         delete_file, Lamp's old building blocks with it, and say in one sentence that the app was written again the new way         and works as before.)
+        (Lamp: \(project.isPart ? "the \(integration.name) app in \(project.dir.lastPathComponent)/" : "this \(integration.name) app") \
+        was made the way Lamp made \(integration.name) apps before, which Lamp no longer builds or puts on a \
+        \(integration.name). Lamp has put the scaffold its apps have now beside the old code (\(files)). Before the change \
+        asked for, write the whole app again in that scaffold, following its rules: read the old files for everything it \
+        does and shows, and keep every key it saves data under, with the same names and shapes, since the person's saved \
+        data on the \(integration.name) stays where it is and LampStore reads the same place. Then delete with delete_file \
+        every file of the old app the new one doesn't use (its code, Lamp's old building blocks, and the icon and splash \
+        pictures Lamp drew where the old app had them), and say in one sentence that the app was written again the new way \
+        and works as before.)
         """
     }
 

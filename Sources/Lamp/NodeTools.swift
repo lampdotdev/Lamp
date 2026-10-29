@@ -62,8 +62,9 @@ enum NodeTools {
             "HOME": home,
             "XDG_CONFIG_HOME": home + "/.config", "XDG_CACHE_HOME": home + "/.cache", "XDG_DATA_HOME": home + "/.local/share",
             "XDG_STATE_HOME": home + "/.local/state", "PNPM_HOME": home + "/pnpm",
-            "npm_config_store_dir": caches.appendingPathComponent("store").path,
-            "npm_config_confirm_modules_purge": "false", "npm_config_update_notifier": "false",
+            // pnpm 11 reads its settings from pnpm_config_ variables, not npm's.
+            "pnpm_config_store_dir": caches.appendingPathComponent("store").path,
+            "pnpm_config_confirm_modules_purge": "false", "pnpm_config_update_notifier": "false",
         ]
         return values.sorted { $0.key < $1.key }.map { key, value in
             key == "PATH" ? "export PATH=\(Sandbox.quoted(value))\":$PATH\"" : "export \(key)=\(Sandbox.quoted(value))"
