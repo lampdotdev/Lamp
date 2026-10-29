@@ -50,7 +50,8 @@ enum GamePhones {
         let made = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-phone-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: made) }
         try page.write(to: made)
-        try AppFolder.copy(made, to: target, in: root)
+        // From the temporary folder into `root`: each side reached from its own folder, neither through a link.
+        try AppFolder.copy(made, in: made.deletingLastPathComponent(), to: target, in: root)
     }
 
     /// Puts the page in the copy being installed, in place of any it had; a game without one has none.
