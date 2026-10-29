@@ -2,7 +2,7 @@
 name: Tidy Up
 offer: Make Tidy Up yours
 repository: https://github.com/lampdotdev/tidyup
-commit: f9317d05b04d4a8bdef622b51cd6b2ab649e7e4f
+commit: f03cc57b4079d0dec069d03d2d86ec931246536a
 tweaks:
   - note.text: Write the rules as sticky notes
   - internaldrive: Show what's taking up space
