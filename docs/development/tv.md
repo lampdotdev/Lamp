@@ -104,8 +104,9 @@ buttons, sticks, messages and files, and tilt asked for from a tap), asks the pa
 always wins over a credential the page kept from before. The TV page has `Lamp.controllers` in lamp.js
 (`TVTemplate.controllersJS`), the same in the preview and on a TV: it asks Lamp where its relay is (`/app/controller`,
 through the preview's bridge or the gateway, as it opens and every 15 seconds) and opens its own socket there, with a
-host credential. A game on an LG TV from webOS 5 on is the exception: it asks a service packaged with it instead, and
-runs its phones with no Mac ("Phones as players" in the devices guide, `LGPhones`). A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
+host credential. A game chooses its host with `start({ host })`: on an LG TV from webOS 5 on, `'game'` asks a service
+packaged with it instead and runs its phones with no Mac ("Phones as players" and "Which host" in the devices guide,
+`LGPhones`). A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
 the wish's apps reach each other (under "Wishes of more than one app"), with nothing from Lamp. The preview's page
 reaches them from WebKit itself, never through an `evaluateJavaScript` or a script message per message. lamp.js numbers
 the players, whichever way they came, and tells each its number (`player`). The credentials are the controllers' own

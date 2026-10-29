@@ -214,6 +214,27 @@ function runRaw() {
   });
 }
 
+// A phone that goes away partway through a large file lets the file go: nothing stays open for the life of the service.
+function runAbandoned() {
+  var session = new relay.Session({ root: root, app: 'dev.lamp.app.pong', addresses: function () { return ['192.168.1.40']; }, bind: '127.0.0.1' });
+  fs.writeFileSync(path.join(root, 'big.bin'), Buffer.alloc(32 * 1024 * 1024));
+  function open() { return fs.readdirSync('/dev/fd').length; }
+  function settle(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+  var before;
+  return start(session).then(function () {
+    before = open();
+    return new Promise(function (resolve) {
+      var request = http.get({ port: session.pagePort, path: '/big.bin', headers: { Host: '127.0.0.1:' + session.pagePort } }, function (res) {
+        res.once('data', function () { request.destroy(); resolve(); });
+      });
+      request.on('error', function () {});
+    });
+  }).then(function () { return settle(500); }).then(function () {
+    assert.ok(open() <= before, 'the file is let go when its phone goes away (' + before + ' open before, ' + open() + ' after)');
+    return stop(session);
+  }).then(function () { fs.unlinkSync(path.join(root, 'big.bin')); });
+}
+
 // The service's door on the TV's bus, with webos-service stood in for.
 function runService() {
   var folder = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-service-'));
@@ -270,7 +291,7 @@ setTimeout(function () { console.error('A check timed out.'); process.exit(1); }
 function cleanUp() {
   scratch.forEach(function (folder) { try { execFileSync('rm', ['-rf', folder]); } catch (e) {} });
 }
-run().then(runRaw).then(runService).then(function () {
+run().then(runRaw).then(runAbandoned).then(runService).then(function () {
   cleanUp();
   console.log('LG phone service: all checks passed on Node ' + process.version);
   process.exit(0);

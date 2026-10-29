@@ -91,15 +91,20 @@ final class LGPhonesTests: XCTestCase {
 
     // MARK: The game's page
 
-    /// lamp.js's controllers in a context of their own, with the TV's service bridge, sockets and timers stood in for.
+    /// lamp.js's controllers in a context of their own, with the TV's service bridge, Lamp's gateway, sockets and timers
+    /// stood in for. `posted` holds each ask of Lamp (`path`, `body`), answered by hand with `reply(i, ...)`/`refuse(i, ...)`.
     private func page(_ lampJS: String) throws -> JSContext {
         let context = try XCTUnwrap(JSContext())
         context.exceptionHandler = { _, value in XCTFail(value?.toString() ?? "a script failed") }
         context.evaluateScript("""
-            var window = this, posted = [], bridges = [], sockets = [], timers = [];
+            var window = this, posted = [], bridges = [], sockets = [], timers = [], errors = [];
             var console = { error: function () {}, log: function () {} };
             window.Lamp = {};
-            var LampAI = { _post: function (path) { posted.push(path); return new Promise(function () {}); } };
+            var LampAI = { _post: function (path, body) {
+              var ask = { path: path, body: body };
+              posted.push(ask);
+              return new Promise(function (resolve, reject) { ask.resolve = resolve; ask.reject = reject; });
+            } };
             function PalmServiceBridge() { this.cancelled = false; bridges.push(this); }
             PalmServiceBridge.prototype.call = function (uri, params) { this.uri = uri; this.params = JSON.parse(params); };
             PalmServiceBridge.prototype.cancel = function () { this.cancelled = true; };
@@ -109,44 +114,69 @@ final class LGPhonesTests: XCTestCase {
             function setTimeout(fn) { timers.push(fn); return timers.length; }
             function clearTimeout() {} function setInterval() { return 0; } function clearInterval() {}
             function flush() { var now = timers; timers = []; now.forEach(function (fn) { fn(); }); }
-            function answer(bridge, credential, port) {
-              bridge.onservicecallback(JSON.stringify({ returnValue: true, renew: 15,
-                links: [{ kind: 'relay', socket: 'ws://127.0.0.1:' + port + '/', app: 'dev.lamp.app.pong', credential: credential }] }));
+            function links(credential, port) {
+              return { returnValue: true, renew: 15,
+                links: [{ kind: 'relay', socket: 'ws://127.0.0.1:' + port + '/', app: 'dev.lamp.app.pong', credential: credential }] };
             }
+            function answer(bridge, credential, port) { bridge.onservicecallback(JSON.stringify(links(credential, port))); }
+            function lampAnswers(i, credential, port) { posted[i].resolve(links(credential, port)); }
+            function lampRefuses(i, message) { posted[i].reject(new Error(message)); }
             """)
         context.evaluateScript(lampJS)
+        context.evaluateScript("Lamp.controllers.onError(function (m) { errors.push(m); });")
         return context
     }
 
-    func testAPackagedGameStartsItsPhonesOnItsOwnServiceAndNeverAsksLamp() throws {
-        let lampJS = String(decoding: try LGPhones.naming(Data(GameKit.controllersJS.utf8), service: service), as: UTF8.self)
-        let context = try page(lampJS)
-        context.evaluateScript("Lamp.controllers.start(); flush();")
-        XCTAssertEqual(context.evaluateScript("bridges.length")?.toInt32(), 1)
-        XCTAssertEqual(context.evaluateScript("bridges[0].uri")?.toString(), "luna://\(service)/start")
-        XCTAssertEqual(context.evaluateScript("bridges[0].params.subscribe")?.toBool(), true, "the subscription is the session")
-
-        context.evaluateScript("answer(bridges[0], 'first', 41000); sockets[0].onopen();")
-        XCTAssertEqual(context.evaluateScript("sockets[0].url")?.toString(), "ws://127.0.0.1:41000/")
-        XCTAssertEqual(context.evaluateScript("JSON.parse(sockets[0].sent[0]).credential")?.toString(), "first")
-
-        // The session ended under the page (the service started afresh): it asks its service, not Lamp, for where things are now.
-        context.evaluateScript("sockets[0].onclose({ code: 4005 }); flush();")
-        XCTAssertEqual(context.evaluateScript("bridges[1].uri")?.toString(), "luna://\(service)/session")
-        context.evaluateScript("answer(bridges[1], 'second', 41002); sockets[1].onopen();")
-        XCTAssertEqual(context.evaluateScript("JSON.parse(sockets[1].sent[0]).credential")?.toString(), "second")
-
-        context.evaluateScript("Lamp.controllers.stop();")
-        XCTAssertEqual(context.evaluateScript("bridges[0].cancelled")?.toBool(), true, "stopping lets the service end the session")
-        XCTAssertEqual(context.evaluateScript("posted.length")?.toInt32(), 0, "Lamp is never asked")
+    private func packaged() throws -> String {
+        String(decoding: try LGPhones.naming(Data(GameKit.controllersJS.utf8), service: service), as: UTF8.self)
     }
 
-    func testAServiceThatCannotStartIsSaidAndTriedAgain() throws {
-        let lampJS = String(decoding: try LGPhones.naming(Data(GameKit.controllersJS.utf8), service: service), as: UTF8.self)
-        let context = try page(lampJS)
+    private func settle(_ context: JSContext) {
+        // Promise callbacks run once the script that settled them returns: a second evaluation sees them done.
+        context.evaluateScript("flush();")
+        context.evaluateScript("flush();")
+    }
+
+    func testOneBuildStartsItsPhonesOnWhicheverHostItChooses() throws {
+        let context = try page(packaged())
+
+        context.evaluateScript("Lamp.controllers.start({ host: 'game' }); flush();")
+        XCTAssertEqual(context.evaluateScript("bridges[0].uri")?.toString(), "luna://\(service)/start")
+        XCTAssertEqual(context.evaluateScript("bridges[0].params.subscribe")?.toBool(), true, "the subscription is the session")
+        context.evaluateScript("answer(bridges[0], 'game-host', 41000); sockets[0].onopen();")
+        XCTAssertEqual(context.evaluateScript("sockets[0].url")?.toString(), "ws://127.0.0.1:41000/")
+        XCTAssertEqual(context.evaluateScript("JSON.parse(sockets[0].sent[0]).credential")?.toString(), "game-host")
+        XCTAssertEqual(context.evaluateScript("posted.length")?.toInt32(), 0, "the game's own host never asks Lamp")
+        context.evaluateScript("Lamp.controllers.stop();")
+        XCTAssertEqual(context.evaluateScript("bridges[0].cancelled")?.toBool(), true, "stopping ends the game's session")
+
+        // The same build, the other host: Lamp's relay, with the service packaged and left alone.
+        context.evaluateScript("Lamp.controllers.start({ host: 'lamp' }); flush();")
+        XCTAssertEqual(context.evaluateScript("posted[0].path")?.toString(), "/app/controller")
+        XCTAssertEqual(context.evaluateScript("posted[0].body.host")?.toString(), "lamp")
+        context.evaluateScript("lampAnswers(0, 'lamp-host', 47000);")
+        settle(context)
+        context.evaluateScript("sockets[1].onopen();")
+        XCTAssertEqual(context.evaluateScript("sockets[1].url")?.toString(), "ws://127.0.0.1:47000/")
+        XCTAssertEqual(context.evaluateScript("JSON.parse(sockets[1].sent[0]).credential")?.toString(), "lamp-host")
+        XCTAssertEqual(context.evaluateScript("bridges.length")?.toInt32(), 1, "Lamp's host never touches the service")
+        context.evaluateScript("Lamp.controllers.stop();")
+        XCTAssertEqual(context.evaluateScript("JSON.stringify(posted[posted.length - 1].body)")?.toString(), #"{"stop":true,"host":"lamp"}"#,
+                       "stopping ends Lamp's session")
+        XCTAssertEqual(context.evaluateScript("posted.every(function (p) { return p.body.host === 'lamp'; })")?.toBool(), true,
+                       "every ask while Lamp hosts, renewals included, is for Lamp")
+
+        // No host: as before, whoever answers /app/controller where it runs.
+        context.evaluateScript("var asked = posted.length; Lamp.controllers.start(); flush();")
+        XCTAssertEqual(context.evaluateScript("posted[asked].path")?.toString(), "/app/controller")
+        XCTAssertEqual(context.evaluateScript("JSON.stringify(posted[asked].body)")?.toString(), "{}")
+        XCTAssertEqual(context.evaluateScript("bridges.length")?.toInt32(), 1)
+    }
+
+    func testAGameHostThatFailsIsSaidAndTriedAgainNeverLamp() throws {
+        let context = try page(packaged())
         context.evaluateScript("""
-            var errors = []; Lamp.controllers.onError(function (m) { errors.push(m); });
-            Lamp.controllers.start(); flush();
+            Lamp.controllers.start({ host: 'game' }); flush();
             bridges[0].onservicecallback(JSON.stringify({ returnValue: false, errorText: 'The link for phones couldn\\'t open on this TV.' }));
             flush();
             """)
@@ -156,10 +186,57 @@ final class LGPhonesTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("posted.length")?.toInt32(), 0, "and never turns to Lamp")
     }
 
-    func testAGameWithoutTheServiceAsksLampAsBefore() throws {
+    func testALampHostThatFailsIsSaidAndTriedAgainNeverTheGame() throws {
+        let context = try page(packaged())
+        context.evaluateScript("Lamp.controllers.start({ host: 'lamp' }); flush(); lampRefuses(0, \"Couldn't reach Lamp on your Mac.\");")
+        settle(context)
+        XCTAssertEqual(context.evaluateScript("errors[0]")?.toString(), "Couldn't reach Lamp on your Mac.")
+        XCTAssertEqual(context.evaluateScript("posted.length")?.toInt32(), 2, "Lamp is asked again")
+        XCTAssertEqual(context.evaluateScript("posted[1].body.host")?.toString(), "lamp")
+        XCTAssertEqual(context.evaluateScript("bridges.length")?.toInt32(), 0, "the packaged service is never used instead")
+    }
+
+    func testAGameHostWhereTheBuildHasNoneIsAskedForAndRefusedNotReplaced() throws {
+        // No service packaged (a Samsung TV, an older LG TV, the TV preview): the ask says which host it wants, and the one
+        // answering, Lamp, refuses it rather than host the phones itself.
         let context = try page(GameKit.controllersJS)
-        context.evaluateScript("Lamp.controllers.start(); flush();")
-        XCTAssertEqual(context.evaluateScript("posted[0]")?.toString(), "/app/controller")
-        XCTAssertEqual(context.evaluateScript("bridges.length")?.toInt32(), 0)
+        context.evaluateScript("Lamp.controllers.start({ host: 'game' }); flush();")
+        XCTAssertEqual(context.evaluateScript("posted[0].body.host")?.toString(), "game")
+        context.evaluateScript("lampRefuses(0, 'This copy of the game has no host of its own for phones here.');")
+        settle(context)
+        XCTAssertEqual(context.evaluateScript("errors[0]")?.toString(), "This copy of the game has no host of its own for phones here.")
+        XCTAssertEqual(context.evaluateScript("posted[1].body.host")?.toString(), "game", "asked again for the same host")
+        XCTAssertEqual(context.evaluateScript("sockets.length + bridges.length")?.toInt32(), 0)
+    }
+
+    func testAnAnswerToAnEarlierStartIsNeverTaken() throws {
+        let context = try page(packaged())
+        // Lamp's answer arrives after the game stopped and started again on its own host: no socket to Lamp's relay.
+        context.evaluateScript("Lamp.controllers.start({ host: 'lamp' }); flush(); Lamp.controllers.stop(); Lamp.controllers.start({ host: 'game' }); flush();")
+        context.evaluateScript("lampAnswers(0, 'stale', 47000);")
+        settle(context)
+        XCTAssertEqual(context.evaluateScript("sockets.length")?.toInt32(), 0, "an answer for the session that ended is dropped")
+
+        // The service's refresh for a subscription that's been replaced can't end the new one.
+        context.evaluateScript("""
+            answer(bridges[0], 'first', 41000); sockets[0].onopen();
+            sockets[0].onclose({ code: 4005 }); flush();
+            var lookup = bridges[1];
+            Lamp.controllers.stop(); Lamp.controllers.start({ host: 'game' }); flush();
+            lookup.onservicecallback(JSON.stringify({ returnValue: false, errorText: 'gone' }));
+            """)
+        XCTAssertEqual(context.evaluateScript("lookup.uri")?.toString(), "luna://\(service)/session")
+        XCTAssertEqual(context.evaluateScript("bridges[2].uri")?.toString(), "luna://\(service)/start")
+        XCTAssertEqual(context.evaluateScript("bridges[2].cancelled")?.toBool(), false, "the new subscription stands")
+        XCTAssertEqual(context.evaluateScript("errors.length")?.toInt32(), 0)
+    }
+
+    func testAnUnknownHostOrASecondHostIsRefused() throws {
+        let context = try page(packaged())
+        context.evaluateScript("var refused = []; Lamp.controllers.start({ host: 'cloud' }).catch(function (e) { refused.push(e.message); });")
+        context.evaluateScript("Lamp.controllers.start({ host: 'game' }); Lamp.controllers.start({ host: 'lamp' }).catch(function (e) { refused.push(e.message); });")
+        settle(context)
+        XCTAssertEqual(context.evaluateScript("refused.length")?.toInt32(), 2)
+        XCTAssertEqual(context.evaluateScript("posted.length")?.toInt32(), 0, "the running game host is kept, Lamp isn't asked")
     }
 }

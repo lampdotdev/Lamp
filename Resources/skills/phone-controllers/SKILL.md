@@ -30,11 +30,20 @@ A phone's browser, joined by a QR code, needs a phone page (`Phone/index.html` i
 `Web/`: the phone-pages skill says where) and a page on the screen that uses lamp.js's `Lamp.controllers`. Two kinds
 of app have both:
 
-- a game on Lamp's game runtime (`make_app_for` with `kind` "game"): on the Mac, on an iPhone or iPad while it's in
-  front, and on an LG TV from webOS 5 on (a service Lamp packages with it, so the Mac can be asleep or gone), the game
-  serves its phone page and runs the relay itself, with Lamp open or closed; Lamp does it for the game in the TV
-  preview, or set to open on a Samsung TV, an older LG TV or the person's Xbox;
-- a TV app's page: while it's open on such a TV or in its TV preview on this Mac.
+- a game on Lamp's game runtime (`make_app_for` with `kind` "game");
+- a TV app's page: while it's open on a Samsung or LG TV or in its TV preview on this Mac.
+
+Who serves the phone page and runs the link phones join is the game's choice, `Lamp.controllers.start({ host })`
+(the phone-pages skill):
+
+- Game-owned hosting (`'game'`) runs with the game and needs no Lamp. The game has it on the Mac, on an iPhone or iPad
+  while it's in front, and on an LG TV from webOS 5 on, where Lamp packages a service with the game.
+- Lamp hosting (`'lamp'`) needs Lamp open and the Mac reachable. Lamp has it for the TV preview, a Samsung or LG TV and
+  the Xbox.
+- Device networking and store rules can affect either one.
+
+They're options, not an order, and another approach is fine. A host that isn't there, or fails, is said in
+`onError`; the game never moves to the other one by itself. `start()` with no host keeps where each device ran before.
 
 An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
 over `LampWish`. An Android app has no `LampController` and doesn't join as a player. Every app of the wish's talks to
@@ -67,8 +76,7 @@ choice.
 
 ## Away from home
 
-Phones reach the phone page on the same Wi‑Fi: a game on the Mac runs the relay itself, and everywhere else Lamp runs
-it, open on this Mac. Friends in other
+Phones reach the phone page on the same Wi‑Fi, whichever host serves it. Friends in other
 homes can't join through it: say so if that's what they want. Apps of the wish's that talk through `LampWish` work
 by its own rules (the wish-links skill).
 

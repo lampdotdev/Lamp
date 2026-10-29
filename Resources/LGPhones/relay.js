@@ -690,8 +690,12 @@ Session.prototype.makePageServer = function () {
     });
     if (req.method === 'HEAD') return res.end();
     if (!page.file) return res.end(page.body);
+    // The file lasts as long as its answer does: a phone that goes away partway (a reload, Wi-Fi lost) lets the file go
+    // too, rather than leave it open for the life of the service.
     var stream = fs.createReadStream(page.file);
     stream.on('error', function () { res.destroy(); });
+    res.on('close', function () { stream.destroy(); });
+    res.on('error', function () { stream.destroy(); });
     stream.pipe(res);
   });
   // A page is a few small requests, so a host that holds many open, or one that never finishes its request, is let go

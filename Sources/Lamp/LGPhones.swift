@@ -4,15 +4,16 @@ import LampRelayKit
 /// A game's phones on an LG TV, run by the game itself: Lamp packages a JS service of LG's kind with the game
 /// (`Resources/LGPhones`: `service.js` on the TV's service bus, `relay.js` serving the phone page and the relay its
 /// phones and its page meet at, with ws for WebSocket framing), and the game's page starts it through a subscription
-/// as `Lamp.controllers` starts (lamp.js, named at `TVTemplate.lgServiceMarker` in that package's copy only). The page
-/// never asks Lamp, so phones play on with the Mac asleep, closed or gone. The service carries the phone page Lamp
+/// when it chooses it, `Lamp.controllers.start({ host: 'game' })` (lamp.js, named at `TVTemplate.lgServiceMarker` in
+/// that package's copy only). On that host the page doesn't ask Lamp, so phones play on with the Mac asleep, closed or
+/// gone; `start({ host: 'lamp' })` in the same package has Lamp host them instead. The service carries the phone page Lamp
 /// published at the build, checked as a Mac game's is (`ControllerSnapshot`), with Lamp's lamp-controller.js, so a new
 /// build never changes the page under a game that's being played.
 ///
-/// It goes only where it can run, decided as the package is made, never at run time: a game that takes phones and has
+/// It goes only where it can run, a fact of the package decided as it's made: a game that takes phones and has
 /// a phone page, an app id LG takes as the start of a service's name, and a TV whose webOS is 5 or later (webOS TV 5.0,
 /// whose Node, 8.12, is the oldest ws runs on). Elsewhere (an older TV, or one whose version Lamp hasn't read) the
-/// game's phones are Lamp's, as before, and the page asks Lamp as it always has.
+/// package has no service, and a page that chooses the game's own host hears it isn't there.
 enum LGPhones {
     static let oldestRelease = 5
 
@@ -84,7 +85,7 @@ enum LGPhones {
     /// Whether a game's lamp.js has the place to name its service: one written by a Lamp from before it doesn't.
     static func names(_ lampJS: Data) -> Bool { String(decoding: lampJS, as: UTF8.self).contains(TVTemplate.lgServiceMarker) }
 
-    /// The game's lamp.js naming its service, so the page starts its phones there and never asks Lamp.
+    /// The game's lamp.js naming its service, which `start({ host: 'game' })` uses.
     static func naming(_ lampJS: Data, service id: String) throws -> Data {
         let text = String(decoding: lampJS, as: UTF8.self)
         guard text.contains(TVTemplate.lgServiceMarker),
