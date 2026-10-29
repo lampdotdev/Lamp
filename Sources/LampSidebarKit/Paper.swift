@@ -66,17 +66,30 @@ public struct PaperButtonStyle: ButtonStyle {
     }
 
     public func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .bold))
-            .padding(.horizontal, square ? 0 : 12)
-            .frame(minWidth: square ? height : nil, minHeight: height)
-            .foregroundStyle(kind == .ink ? Paper.onInk : Paper.ink)
-            .background(kind == .ink ? Paper.ink : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                if kind == .outline { RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1) }
-            }
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .contentShape(Rectangle())
+        Drawn(configuration: configuration, kind: kind, height: height, square: square)
+    }
+
+    /// The button as drawn, faded while it can't be pressed.
+    private struct Drawn: View {
+        let configuration: Configuration
+        let kind: Kind
+        let height: CGFloat
+        let square: Bool
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 13, weight: .bold))
+                .padding(.horizontal, square ? 0 : 12)
+                .frame(minWidth: square ? height : nil, minHeight: height)
+                .foregroundStyle(kind == .ink ? Paper.onInk : Paper.ink)
+                .background(kind == .ink ? Paper.ink : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay {
+                    if kind == .outline { RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1) }
+                }
+                .opacity(!enabled ? 0.35 : configuration.isPressed ? 0.7 : 1)
+                .contentShape(Rectangle())
+        }
     }
 }
 

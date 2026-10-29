@@ -427,6 +427,7 @@ private struct ToolsCard: View {
                         store.requestBuildTools()
                         Analytics.capture(.welcomeToolsInstall, ["by": "button"])
                     }
+                    .buttonStyle(PaperButtonStyle(.ink))
                 }
             }
         }
@@ -465,7 +466,7 @@ private struct InlineButton: View {
 
     var body: some View {
         Button(title, action: action)
-            .buttonStyle(.bordered).controlSize(.small)
+            .buttonStyle(PaperButtonStyle(.outline, height: 24))
     }
 }
 
@@ -546,7 +547,7 @@ private struct BuilderCard: View {
             if !installed, let failure = downloads.failure[which] {
                 Text(failure).font(.system(size: 13)).foregroundStyle(Color.orange)
                 Spacer()
-                Button("Try Again") { downloads.start(which) }
+                Button("Try Again") { downloads.start(which) }.buttonStyle(PaperButtonStyle(.outline))
             } else if !installed {
                 ProgressView(value: downloads.progress[which] ?? 0).frame(width: 120)
                 Text("Getting \(name) ready…").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -560,7 +561,7 @@ private struct BuilderCard: View {
                 Text("Finish signing in to \(app) in your browser…").font(.system(size: 13)).foregroundStyle(.secondary)
                 Spacer()
                 // A sign-in page opened in the wrong browser profile or for the wrong account can't be finished.
-                Button("Cancel") { EngineSignIn.cancelSignIn(which) }
+                Button("Cancel") { EngineSignIn.cancelSignIn(which) }.buttonStyle(PaperButtonStyle(.outline))
             } else if signedIn[which] == nil {
                 ProgressView().controlSize(.small)
                 Text("Checking your \(app) sign-in…").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -570,7 +571,7 @@ private struct BuilderCard: View {
                 Text(problem ?? "Sign in so \(name) can build.\(which == .claude ? " It needs a paid Claude plan." : "")")
                     .font(.system(size: 13)).foregroundStyle(problem == nil ? Color.secondary : Color.orange)
                 Spacer()
-                Button("Sign In…") { signIn(which) }
+                Button("Sign In…") { signIn(which) }.buttonStyle(PaperButtonStyle(.ink))
             }
         }
         .padding(.top, 2)
@@ -749,12 +750,13 @@ private struct LampAgentOptions: View {
                 Spacer()
                 if let progress = local.progress[spec.id] {
                     ProgressView(value: progress).frame(width: 100)
-                    Button("Cancel") { local.cancel(spec.id) }
+                    Button("Cancel") { local.cancel(spec.id) }.buttonStyle(PaperButtonStyle(.outline))
                 } else {
                     Button("Download") {
                         local.download(spec)
                         Analytics.capture(.welcomeModelDownload, ["model": spec.id])
                     }
+                    .buttonStyle(PaperButtonStyle(.ink))
                 }
             }
             if let error = local.errors[spec.id] {
@@ -781,17 +783,24 @@ private struct LampAgentOptions: View {
     @ViewBuilder
     private func keyField(name: String, url: String, save: @escaping () -> Void) -> some View {
         HStack(spacing: 10) {
+            // A field as the desk draws one: paper, with a thin ink edge.
             SecureField("Paste your \(name) key", text: $key)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(Paper.card, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
                 .onSubmit(save)
                 .onChange(of: key) { problem = nil }
             if checkingKey {
                 ProgressView().controlSize(.small)
             } else {
                 Button("Save", action: save).disabled(key.trimmed.isEmpty)
+                    .buttonStyle(PaperButtonStyle(.ink))
             }
             Link("Get a key", destination: URL(string: url)!)
-                .font(.system(size: 13, weight: .medium))
+                .buttonStyle(PaperButtonStyle(.outline))
         }
         if let problem {
             Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(.orange)
