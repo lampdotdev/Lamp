@@ -2626,17 +2626,17 @@ enum Template {
 
     /// Lamp's flame in place of a symbol, where an app shows the way to change it with Lamp (the wand at the top
     /// right of its windows, its menu bar panel and menu, its widget): drawn as the system's own `flame` symbol is,
-    /// the icon's outer flame as an outline and its inner one filled, at a symbol's size and weight. It's in
+    /// an outer flame as an outline and an inner one filled, at a symbol's size and weight. It's in
     /// LampSupport.swift and in the widget's own file, which shares nothing else with it.
     static let lampGlyphSwift = #"""
 
-    /// Lamp's flame, drawn like an SF Symbol: the app icon's outer flame as an outline, its inner flame filled.
+    /// Lamp's flame, drawn like an SF Symbol: an outer flame as an outline, an inner flame filled.
     enum LampGlyph {
         /// Width over height.
         static let aspect: CGFloat = 516 / 725
 
-        /// The two flames in a box one unit tall, y down, from the icon's own drawing. The inner one is smaller
-        /// than in the icon, about its foot, so the outline has room around it at a symbol's size.
+        /// The two flames in a box one unit tall, y down, from Lamp's own drawing of them. The inner one is smaller
+        /// than there, about its foot, so the outline has room around it at a symbol's size.
         static let paths: (outer: CGPath, inner: CGPath) = {
             func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: (x - 254) / 725, y: (y - 150) / 725) }
             let outer = CGMutablePath()

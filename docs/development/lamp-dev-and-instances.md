@@ -4,8 +4,8 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 
 ## Two Lamps on one Mac
 
-A build from source is **Lamp Dev**, a separate app from the Lamp people install: its own name and icon (an
-orange DEV banner), bundle id (`dev.lamp.host.dev`), folders (`~/Library/Application Support/Lamp Dev`,
+A build from source is **Lamp Dev**, a separate app from the Lamp people install: its own name and icon (DEV
+written on the icon's paper), bundle id (`dev.lamp.host.dev`), folders (`~/Library/Application Support/Lamp Dev`,
 `~/Applications/Lamp Dev Apps`, `~/Library/Logs/Lamp Dev`), gateway and model-server ports, URL scheme
 (`lamp-dev://`) and Keychain entries, and no self-updating. `Sources/Lamp/Edition.swift` is the one place
 these come from, read off the bundle id that `build.sh` writes (`FLAVOR=dev` by default; `release.sh` passes
@@ -35,7 +35,7 @@ none until the tools come.
 
 A third Lamp, for people who want every change as soon as it's merged: `.github/workflows/nightly.yml` builds, signs,
 notarizes and publishes it from every push to `main` ("Nightlies" in RELEASING.md). It is a release in everything but
-its names: `FLAVOR=nightly` in `build.sh` and `release.sh` gives it the name Lamp Nightly, a dark NIGHTLY band on the
+its names: `FLAVOR=nightly` in `build.sh` and `release.sh` gives it the name Lamp Nightly, NIGHTLY written on the
 icon (`scripts/dev-icon.swift`), the bundle id `dev.lamp.host.nightly`, and so through `Edition` (`isNightly`) its own
 folders (`~/Library/Application Support/Lamp Nightly`, `~/Applications/Lamp Nightly Apps`), a third fixed set of ports,
 the `lamp-nightly://` scheme, its own prefixes for its apps' bundle ids and notifications, Keychain entries under its
