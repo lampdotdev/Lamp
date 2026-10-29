@@ -576,20 +576,36 @@ struct ImportReviewCard: View {
     private enum Part { case name, summary, existing, buttons }
     /// The height of Things to consider as laid out in full; nil when there's nothing to consider.
     @State private var considering: CGFloat?
-    /// What the two scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's
-    /// padding (48) and a 16-point gap after each part but the last (the fixed ones, and the two that scroll).
-    private var budget: CGFloat {
-        let scrolling: CGFloat = considering == nil ? 1 : 2
-        return room - fixed.values.reduce(0, +) - 48 - 16 * (CGFloat(fixed.count) + scrolling - 1)
+    /// The height of the features under What it does as laid out in full; nil when the reviewer named none.
+    @State private var featuring: CGFloat?
+    private var heights: Heights {
+        Self.heights(room: room, fixed: Array(fixed.values), considering: considering, featuring: featuring)
     }
-    /// The two share what's left and never take more between them, whatever the screen: Things to consider is
-    /// shown whole when it fits, and otherwise scrolls, leaving what the app can do a few rows, or half when
-    /// there isn't room for that. A long list of concerns never pushes the buttons off the screen, and Lamp's
-    /// verdict, its first lines, is what stays in view. Below 48 points nothing could be read, so that's the floor.
-    private var shared: CGFloat { max(48, budget) }
-    private var considerLimit: CGFloat { min(considering ?? 0, max(shared - 120, shared / 2)) }
-    /// How tall what the app can do may be: the height a long review always stopped at, or what's left.
-    private var limit: CGFloat { min(460, shared - (considering == nil ? 0 : considerLimit)) }
+
+    /// How tall each part that scrolls may be.
+    struct Heights: Equatable {
+        var considering: CGFloat
+        var featuring: CGFloat
+        var capabilities: CGFloat
+    }
+
+    /// What the scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's padding (48)
+    /// and a 16-point gap after each part but the last (8 above the features, which go on from the summary). They
+    /// never take more between them, whatever the screen: Things to consider is shown whole when it fits, and
+    /// otherwise scrolls, leaving the rest a few rows, or half when there isn't room for that; the features then
+    /// take what they need of that the same way, and what the app can do the rest. A long list of concerns or
+    /// features never pushes the buttons off the screen, and Lamp's verdict, its first lines, is what stays in view.
+    /// Below 48 points nothing could be read, so that's the floor.
+    static func heights(room: CGFloat, fixed: [CGFloat], considering: CGFloat?, featuring: CGFloat?) -> Heights {
+        let scrolling = 1 + (considering == nil ? 0 : 1) + (featuring == nil ? 0 : 1)
+        let budget = room - fixed.reduce(0, +) - 48 - 16 * CGFloat(fixed.count + scrolling - 1) + (featuring == nil ? 0 : 8)
+        let shared = max(48, budget)
+        func part(_ height: CGFloat?, of room: CGFloat) -> CGFloat { min(height ?? 0, max(room - 120, room / 2)) }
+        let consider = part(considering, of: shared)
+        let feature = part(featuring, of: shared - consider)
+        // What the app can do: the height a long review always stopped at, or what's left.
+        return Heights(considering: consider, featuring: feature, capabilities: min(460, shared - consider - feature))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -623,19 +639,30 @@ struct ImportReviewCard: View {
                     section("What it does") {
                         // The reviewer is asked for a sentence or two: a few lines here, the whole of it on hover.
                         Text(review.summary).lineLimit(5).fixedSize(horizontal: false, vertical: true).help(review.summary)
-                        // What the reviewer saw it do for the person: features, said with what the app is, not as
-                        // permissions beside what Lamp's own checks found in the code.
-                        ForEach(review.capabilities, id: \.self) { feature in
-                            Label {
-                                Text(verbatim: feature).lineLimit(2).fixedSize(horizontal: false, vertical: true).help(feature)
-                            } icon: {
-                                // A plain mark: what's listed is what the app does, not something Lamp approved.
-                                Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(.secondary)
-                            }
-                            .font(.callout)
-                        }
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.summary] = $0 }
+                }
+                if !review.capabilities.isEmpty {
+                    // What the reviewer saw it do for the person: features, said with what the app is, not as
+                    // permissions beside what Lamp's own checks found in the code. Up to eight, so they scroll.
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(review.capabilities, id: \.self) { feature in
+                                Label {
+                                    Text(verbatim: feature).lineLimit(2).fixedSize(horizontal: false, vertical: true).help(feature)
+                                } icon: {
+                                    // A plain mark: what's listed is what the app does, not something Lamp approved.
+                                    Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(.secondary)
+                                }
+                                .font(.callout)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { featuring = $0 }
+                    }
+                    .frame(maxHeight: heights.featuring)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, review.summary.isEmpty ? 0 : -8)
                 }
                 let considerations = Self.considerations(review, prepared: prepared)
                 if !considerations.isEmpty {
@@ -648,7 +675,7 @@ struct ImportReviewCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { considering = $0 }
                     }
-                    .frame(maxHeight: considerLimit)
+                    .frame(maxHeight: heights.considering)
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 ScrollView {
@@ -656,7 +683,7 @@ struct ImportReviewCard: View {
                     section(android ? "What it can do" : "What it can do on your Mac") { capabilities(review) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: limit)
+                .frame(maxHeight: heights.capabilities)
                 .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
             } else {
                 HStack(spacing: 10) {

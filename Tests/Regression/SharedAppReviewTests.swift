@@ -257,6 +257,56 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertEqual(unanswered.verdict, .partlyChecked)
     }
 
+    /// On a short screen the scrolling parts share what the fixed ones leave, eight features of two lines and an
+    /// update's note among them, so the sheet stays within its room and the buttons in view.
+    func testTheSheetsListsFitAShortScreen() {
+        let fixed: [CGFloat] = [92, 130, 54, 28]   // name, a five-line summary, an update's note, the buttons
+        // From where the fixed parts leave the scrolling ones their 48-point floor (488 here) upward.
+        for room: CGFloat in [488, 520, 560, 640, 900] {
+            let heights = ImportReviewCard.heights(room: room, fixed: fixed, considering: 110, featuring: 8 * 40 + 7 * 8)
+            let used = fixed.reduce(0, +) + 48 + 16 * 6 - 8 + heights.considering + heights.featuring + heights.capabilities
+            XCTAssertLessThanOrEqual(used, room, "\(room)")
+            XCTAssertGreaterThan(heights.capabilities, 0, "\(room)")
+            XCTAssertGreaterThan(heights.featuring, 0, "\(room)")
+        }
+        // With room to spare, each is shown whole.
+        let tall = ImportReviewCard.heights(room: 1400, fixed: fixed, considering: 110, featuring: 200)
+        XCTAssertEqual(tall.considering, 110)
+        XCTAssertEqual(tall.featuring, 200)
+    }
+
+    /// A model on this Mac gets the parts one at a time (each request starts its server, and a second start alongside
+    /// stops the first's); a service gets them at once. Each outcome stays in its part's place either way.
+    func testAModelOnThisMacIsAskedForOnePartAtATime() async {
+        actor Count {
+            var now = 0, most = 0
+            func start() { now += 1; most = max(most, now) }
+            func end() { now -= 1 }
+        }
+        let requests = (0..<4).map { Sharing.reviewRequest(name: "Tally", description: nil, notes: nil, files: [("Part\($0).swift", "let a = \($0)\n")],
+                                                            boundary: "b", batch: ($0, 4)) }
+        func run(_ kind: AppAI.TextRoute.Kind) async -> (most: Int, outcomes: [Sharing.Outcome]) {
+            let count = Count()
+            let route = AppAI.TextRoute(id: "review", label: "test", group: "test", name: "test", kind: kind, available: true)
+            let outcomes = await Sharing.outcomes(of: requests, via: route) { request in
+                await count.start()
+                try await Task.sleep(for: .milliseconds(100))
+                await count.end()
+                let part = request.prompt.contains("Part3.swift") ? "high" : "low"
+                return #"{"summary": "Counts things.", "capabilities": [], "concerns": [], "risk": "\#(part)"}"#
+            }
+            return (await count.most, outcomes)
+        }
+        let local = await run(.localModel(provider: "mlx", model: "test"))
+        XCTAssertEqual(local.most, 1)
+        let online = await run(.openRouter(model: "test"))
+        XCTAssertEqual(online.most, 4)
+        for outcomes in [local.outcomes, online.outcomes] {
+            let risks = outcomes.map { outcome -> ImportReview.Risk? in if case .answer(let answer) = outcome { answer.risk } else { nil } }
+            XCTAssertEqual(risks, [.low, .low, .low, .high])
+        }
+    }
+
     /// An app past the last request Lamp makes for one review.
     private func oversized() throws -> Sharing.Inspection {
         let lines = (Sharing.batchLimit * Sharing.batchCount) / 15 + 1_000

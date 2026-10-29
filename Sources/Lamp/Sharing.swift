@@ -1474,6 +1474,37 @@ extension Sharing {
         return found
     }
 
+    /// What came of one request for the review: an answer, a reply Lamp couldn't use, or why it didn't run.
+    enum Outcome { case answer(Answer), unusable, failed(String) }
+
+    /// Sends the review's requests and keeps each outcome in its request's place; why the first that came to nothing
+    /// did is what the review says. Through a service they go at once. A model on this Mac takes them one at a time:
+    /// each request starts the model's server if it isn't serving that model, and a second one starting it alongside
+    /// would stop the server the first just started.
+    static func outcomes(of requests: [ReviewRequest], via route: AppAI.TextRoute,
+                         complete: @escaping @Sendable (ReviewRequest) async throws -> String) async -> [Outcome] {
+        @Sendable func ask(_ request: ReviewRequest) async -> Outcome {
+            do {
+                return answer(from: try await complete(request)).map(Outcome.answer) ?? .unusable
+            } catch let failure as AppAI.Failure {
+                return .failed("Lamp's AI check didn't run: \(failure.message)")
+            } catch {
+                return .failed("Lamp's AI check didn't run. Look at the list above carefully.")
+            }
+        }
+        if case .localModel = route.kind {
+            var outcomes: [Outcome] = []
+            for request in requests { outcomes.append(await ask(request)) }
+            return outcomes
+        }
+        return await withTaskGroup(of: (Int, Outcome).self) { group in
+            for (index, request) in requests.enumerated() { group.addTask { (index, await ask(request)) } }
+            var outcomes = [Outcome](repeating: .unusable, count: requests.count)
+            for await (index, outcome) in group { outcomes[index] = outcome }
+            return outcomes
+        }
+    }
+
     static func review(_ package: Package) async -> ImportReview {
         let found = inspect(package)
         var review = ImportReview(inspection: found)
@@ -1497,32 +1528,18 @@ extension Sharing {
         let parts = package.parts.map { "\(Parts.name(of: $0.package.platform)) in \($0.folder)/" }
         // An app with no code of its own beyond what Lamp writes still gets one request: its description and notes.
         let batches = found.batches.isEmpty ? [[]] : found.batches
-        // Every request at once, each answered on its own; why the first that came to nothing did is what's said.
-        enum Outcome { case answer(Answer), unusable, failed(String) }
-        let outcomes = await withTaskGroup(of: (Int, Outcome).self) { group in
-            for (index, files) in batches.enumerated() {
-                let request = reviewRequest(name: package.name, description: package.description, notes: found.about, files: files,
-                                            android: android, web: web, page: page, parts: parts,
-                                            batch: batches.count > 1 ? (index, batches.count) : nil)
-                group.addTask {
-                    do {
-                        let (text, _) = try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
-                                                                 schema: answerSchema, via: route)
-                        return (index, answer(from: text).map(Outcome.answer) ?? .unusable)
-                    } catch let failure as AppAI.Failure {
-                        return (index, .failed("Lamp's AI check didn't run: \(failure.message)"))
-                    } catch {
-                        return (index, .failed("Lamp's AI check didn't run. Look at the list above carefully."))
-                    }
-                }
-            }
-            var outcomes = [Outcome](repeating: .unusable, count: batches.count)
-            for await (index, outcome) in group { outcomes[index] = outcome }
-            return outcomes
+        let requests = batches.enumerated().map { index, files in
+            reviewRequest(name: package.name, description: package.description, notes: found.about, files: files,
+                          android: android, web: web, page: page, parts: parts,
+                          batch: batches.count > 1 ? (index, batches.count) : nil)
         }
-        let answers = outcomes.map { outcome -> Answer? in if case .answer(let answer) = outcome { answer } else { nil } }
+        let said = await outcomes(of: requests, via: route) { request in
+            try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
+                                     schema: answerSchema, via: route).0
+        }
+        let answers = said.map { outcome -> Answer? in if case .answer(let answer) = outcome { answer } else { nil } }
         guard answers.contains(where: { $0 != nil }) else {
-            review.note = outcomes.lazy.compactMap { outcome -> String? in if case .failed(let why) = outcome { why } else { nil } }.first
+            review.note = said.lazy.compactMap { outcome -> String? in if case .failed(let why) = outcome { why } else { nil } }.first
                 ?? "Lamp's AI check gave an answer Lamp couldn't use, so nothing it said is shown. Look at the list above carefully."
             return review
         }
