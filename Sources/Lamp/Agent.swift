@@ -57,7 +57,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,remove_app,connectors,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,remove_app,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -72,7 +72,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + deviceRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + githubRules + deviceRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -86,7 +86,8 @@ enum Agent {
     kind of file (`opens` in capabilities.json), whatever its code does. So "not found" or a failed open \
     there can mean "closed to you" or "not declared": never read it as a fault in the app's code. To \
     read a file elsewhere, use your file tools, which ask the user. `gh` can't see its sign-in there: \
-    clone public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`.
+    clone public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`; `lampify` \
+    reaches a private one with the person's sign-in (`read_only: true` to read it without crediting it).
     """
 
     private static let lookRules = """
@@ -298,6 +299,14 @@ enum Agent {
 
     /// Which services there are and how to build on each is the tool's answer (Connectors), so this stays one
     /// rule however many there are.
+    private static let githubRules = """
+
+    - When a request names a project on GitHub, open the github-projects skill with `read_skill` and do what the request \
+    asks. To make an app from it, read it in a git clone as the skill says and call `lampify` before using any of its \
+    code or assets, and again when the app is done. A project the person names is that project, with its author's \
+    credit: never rewrite it from memory in its place.
+    """
+
     private static let connectorRules = """
 
     - When a wish needs a service the person uses (their Notion, Airtable, GitHub, Home Assistant…) that the \
@@ -614,9 +623,7 @@ enum Agent {
         run it yourself, and build it only where a rule here says to check that it compiles. When you finish, Lamp \
         {{RELAUNCH}}, and if the build fails your next message will contain the compiler errors to fix. If \
         something you need is denied or unavailable, say plainly what you need (for \
-        example "attach the files"); a refused command is final, so never say the user will be asked to approve it. To read a GitHub repo, clone it shallowly into \
-        .lamp/reference/ (`gh repo clone owner/name .lamp/reference/name -- --depth 1` when gh is installed, which \
-        also works for private repos; otherwise `git clone --depth 1`); it's reference only, not part of the app. \
+        example "attach the files"); a refused command is final, so never say the user will be asked to approve it. \
         Never tell the user to approve prompts or change \
         permission settings anywhere else: Lamp is the only place they can approve anything.
         """
@@ -878,8 +885,9 @@ enum Agent {
         from a repository, a library copied in, a model, a picture, a sound, a font, data), add it to `upstream`: \
         `{"name": "Slop New York", "author": "Mr.doob", "url": "https://github.com/mrdoob/slop-newyork", "commit": \
         "<full commit hash>", "license": "MIT", "licenseFile": "Web/LICENSE-slop-newyork"}`, with the license as its SPDX id \
-        (left out when it has none) and its license text kept in the app beside the work. The project an app is made from \
-        goes first, with the full commit it was taken at: Lamp brings the person its updates from there. Never take anything out of \
+        (left out when it has none) and its license text kept in the app beside the work. A project on GitHub is credited \
+        by `lampify`, which writes its entry at the commit it pinned and its license files itself, and marks the project \
+        the app is made from (`"adapted": true`): Lamp brings the person its updates from there. Never take anything out of \
         \(Credits.file), never remove or change a license or a notice of someone else's, and never take an author's \
         name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license can be used here but \
         not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \

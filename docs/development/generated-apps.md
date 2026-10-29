@@ -271,8 +271,54 @@ there is one, with a row that says "An update is available" or "Your app is up t
 GitHub for the default branch's latest commit (`git ls-remote`, confined, no sign-in, no clone, no model), at most daily
 by itself and coalesced across wishes following the same repository, and compares it with the commit the wish has.
 Which repository a wish follows (`AppUpdates.route`): a wish from another wish follows that wish (below); a wish the agent
-made from someone's own project follows the work it's based on, the first `upstream` source, when that's on GitHub with
-the commit it was taken at. A source with no commit is offered nothing.
+made from someone's own project follows the work it's based on (`Credits.basis`: the source marked `adapted`, else the
+first with no mark either way, as credits from before the mark have it; a source marked `adapted: false` is never it, so
+a wish that only uses a library has no route), when that's on GitHub with the commit it was taken at. A source with
+no commit is offered nothing. A wish made from a tag or a branch other than the default is credited at that exact
+commit, and its updates follow the default branch from there.
+
+### Someone's project on GitHub, made into a Lamp app by the agent
+
+A wish never guesses from a link what the person wants: a request naming a project on GitHub goes to the agent as
+typed, with a line naming the github-projects skill (`GitHubProjects.note`), and the agent does what it asks. It reads
+the project in a git clone of its own (`.lamp/reference/<name>`, an approved command like any other). To make an app
+from it, it calls `lampify` (`Store.lampify`, `GitHubProjects`) before using any of its code and again when the app is
+done. lampify's work is all Lamp's, so it asks no approval, and it never runs what the project holds.
+
+- **The commit is pinned once.** The commit given is the one used; with none, the one the wish is already credited at;
+  with none of those, the commit the address names, or its branch, tag or default branch read once
+  (`GitHubProjects.pin`). A later call never moves a branch on by itself, and a commit other than the credited one is
+  refused: moving on is an update's.
+- **What's credited is what Lamp read.** The agent's clone proves nothing about what was copied, so lampify keeps its
+  own untouched copy at the pinned commit in `.lamp/lampify/<owner>/<name>@<commit>`, checked to be that commit of that
+  repository, and before each reuse checked file by file against that commit's tree, computed by Lamp rather than by
+  `git status`, which could run what the copy's own git configuration names (`GitHubProjects.untouched`); a changed
+  copy is fetched again (`GitHubProjects.snapshot`). It's fetched with Lamp's confined git (`RepoImport.clone`), and
+  with the person's sign-in through `gh` for a project only they can read (`GitHubProjects.fetchAnyway`, as Put on
+  GitHub… signs in): the agent's sandbox can't see that sign-in, so a private project reaches the wish this way. With
+  `read_only` it only fetches and gives the copy's path, for explaining a private project: nothing is credited.
+- **The credit** goes in through `Credits.add`, Lamp's own record included: the canonical address, the owner as author,
+  the commit. Every license and notice file anywhere in the project (not its tools': `.git`, `node_modules`, …) is copied
+  as it came into `Licenses/<owner>/<name>/` (two folders, so `foo-bar/baz` and `foo/bar-baz` never share one) at its
+  path in the project (`RepoLicenses`): the license at its top in `licenseFile`, the rest in `noticeFiles`. The SPDX id is recorded only when Lamp can tell it for certain from a single
+  license at the top; otherwise the credit says `LicenseRef-<owner>.<name>`, terms of its own with the texts as the
+  authority, never a guessed id (GPL texts don't say "only" or "or later"). `adapted` marks the project the wish is
+  made from, which its updates follow; a wish has one, and a library or assets it uses are credited `adapted: false`.
+  At most 200 license and notice files are kept, the project's own first; more than that is said in the answer as
+  something missing, never dropped silently. Every file a credit names goes with the shared file and comes back on import (`Credits.Source.termsFiles`,
+  `Sharing.export`, `Sharing.open`), and sharing is refused while one is missing (`ShareCheck`).
+- **The shape** (`GitHubProjects.shape`): the app's structure (`make_app_for`), its line (`Sharing.description`, the
+  wish's or its root app's) and an APP.md naming what it's based on are looked for in the wish; then the wish is made as
+  Put on GitHub… would put it up (`GitHubRepo.stage` with no repository: lamp-app.json from the shared file's manifest,
+  credits.json, the icon, the license files, Lamp's own files, README) and opened again as Open from GitHub… does
+  (`RepoImport.open`). Whatever sharing refuses (a license missing, a key in the code) is reported as something still
+  missing, with the rest. The tree is kept in `.lamp/repository` for a look; nothing goes anywhere until the person
+  chooses Put on GitHub….
+- **A Lamp wish on GitHub** isn't rebuilt: the skill, and lampify when it's called on one, send the person to File →
+  Open from GitHub….
+
+That the agent lampifies a project before copying from it is the skill's instruction and the tool's answer; nothing
+checks what was copied, so a project read in a clone and copied without lampify goes uncredited.
 
 An adapted wish's Review Update… says what preparing it costs, then (`Store.prepareUpdate`) saves the wish as a version
 and makes a separate copy of it, unsaved changes included (`Sharing.export`, then a wish of its own with Lamp's files
@@ -375,7 +421,8 @@ once, without the few seconds' wait for a chat that was never put in.
 A Mac app's About window credits what the wish is based on: Lamp writes `Contents/Resources/Credits.html` from the
 wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About
 window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)", linked), so no app code is needed and an
-app with no credits has none.
+app with no credits has none. Only `Credits.basis` is "Based on", there, in the info panel, the README and the credit
+bar; everything else, and a library in a wish with no basis, is "Uses".
 
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac
