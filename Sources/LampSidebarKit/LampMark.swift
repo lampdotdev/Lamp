@@ -4,21 +4,6 @@ extension ChatLook {
     /// Lamp's icon, drawn from the same shapes as the app's (Resources/Icon/AppIcon.icon): two rings behind an orange
     /// flame with a yellow one inside it, on a tile. Drawn rather than loaded, since the sidebar is a lone program with
     /// no resources of its own, and it says whose chat this is inside someone else's app.
-    /// The outer flame of Lamp's icon on its own, filling the rect it's given as far as its shape allows: drawn in
-    /// one color where Lamp stands beside other providers' logos, which are one-color marks on a white tile.
-    public struct LampFlame: Shape {
-        public init() {}
-
-        public func path(in rect: CGRect) -> Path {
-            let shape = LampMark.Flame(points: LampMark.outer).path(in: CGRect(x: 0, y: 0, width: 1024, height: 1024))
-            let box = shape.boundingRect
-            let scale = min(rect.width / box.width, rect.height / box.height)
-            return shape.applying(CGAffineTransform(translationX: -box.midX, y: -box.midY)
-                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                .concatenating(CGAffineTransform(translationX: rect.midX, y: rect.midY)))
-        }
-    }
-
     public struct LampMark: View {
         let side: CGFloat
         @Environment(\.colorScheme) private var scheme

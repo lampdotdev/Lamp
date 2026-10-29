@@ -2624,106 +2624,52 @@ enum Template {
 
     """# + lampGlyphSwift
 
-    /// Lamp's flame in place of a symbol, where an app shows the way to change it with Lamp (the wand at the top
-    /// right of its windows, its menu bar panel and menu, its widget): drawn as the system's own `flame` symbol is,
-    /// the icon's outer flame as an outline and its inner one filled, at a symbol's size and weight. It's in
-    /// LampSupport.swift and in the widget's own file, which shares nothing else with it.
+    /// Lamp's mark where an app shows the way to change it with Lamp (the wand at the top right of its windows, its
+    /// menu bar panel and menu, its widget): the system's `shuffle` symbol, the one Lamp shows for remixing, at the
+    /// size and weight it's asked for. It's in LampSupport.swift and in the widget's own file, which shares nothing
+    /// else with it.
     static let lampGlyphSwift = #"""
 
-    /// Lamp's flame, drawn like an SF Symbol: the app icon's outer flame as an outline, its inner flame filled.
+    /// Lamp's mark: the system's shuffle symbol, the one Lamp shows for remixing.
     enum LampGlyph {
-        /// Width over height.
-        static let aspect: CGFloat = 516 / 725
+        static let symbol = "shuffle"
 
-        /// The two flames in a box one unit tall, y down, from the icon's own drawing. The inner one is smaller
-        /// than in the icon, about its foot, so the outline has room around it at a symbol's size.
-        static let paths: (outer: CGPath, inner: CGPath) = {
-            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: (x - 254) / 725, y: (y - 150) / 725) }
-            let outer = CGMutablePath()
-            outer.move(to: p(540, 150))
-            outer.addCurve(to: p(770, 600), control1: p(560, 290), control2: p(770, 380))
-            outer.addCurve(to: p(512, 875), control1: p(770, 755), control2: p(655, 875))
-            outer.addCurve(to: p(254, 600), control1: p(369, 875), control2: p(254, 755))
-            outer.addCurve(to: p(398, 325), control1: p(254, 465), control2: p(335, 395))
-            outer.addCurve(to: p(482, 472), control1: p(408, 405), control2: p(440, 450))
-            outer.addCurve(to: p(540, 150), control1: p(468, 350), control2: p(492, 250))
-            outer.closeSubpath()
-            let inner = CGMutablePath()
-            inner.move(to: p(524, 388))
-            inner.addCurve(to: p(662, 648), control1: p(560, 476), control2: p(662, 525))
-            inner.addCurve(to: p(512, 812), control1: p(662, 748), control2: p(597, 812))
-            inner.addCurve(to: p(362, 648), control1: p(427, 812), control2: p(362, 748))
-            inner.addCurve(to: p(452, 474), control1: p(362, 565), control2: p(418, 522))
-            inner.addCurve(to: p(500, 558), control1: p(462, 524), control2: p(480, 548))
-            inner.addCurve(to: p(524, 388), control1: p(494, 486), control2: p(502, 436))
-            inner.closeSubpath()
-            let foot = p(512, 812)
-            var smaller = CGAffineTransform(translationX: foot.x, y: foot.y).scaledBy(x: 0.72, y: 0.72)
-                .translatedBy(x: -foot.x, y: -foot.y)
-            return (outer, inner.copy(using: &smaller) ?? inner)
-        }()
-
-        /// The outline's width as a share of the point size, as heavy as a symbol's lines at that weight.
-        static func line(_ weight: NSFont.Weight) -> CGFloat {
-            switch weight.rawValue {
-            case ..<NSFont.Weight.regular.rawValue: 0.062
-            case ..<NSFont.Weight.medium.rawValue: 0.07
-            case ..<NSFont.Weight.semibold.rawValue: 0.075
-            case ..<NSFont.Weight.bold.rawValue: 0.085
-            default: 0.095
-            }
-        }
-
-        /// An image as a symbol at that point size would be: a template, which a button tints as it does a symbol,
-        /// unless it's given a color of its own.
+        /// The symbol at that point size and weight: a template, which a button tints as it does any symbol, unless
+        /// it's given a color of its own.
         static func image(pointSize: CGFloat, weight: NSFont.Weight, color: NSColor? = nil,
                           description: String = "Customize This App") -> NSImage {
-            let width = pointSize * line(weight)
-            let size = NSSize(width: (pointSize * aspect + width).rounded(.up), height: (pointSize + width).rounded(.up))
-            let image = NSImage(size: size, flipped: true) { box in
-                guard let context = NSGraphicsContext.current?.cgContext else { return false }
-                let ink = (color ?? .black).cgColor
-                context.translateBy(x: (box.width - pointSize * aspect) / 2, y: (box.height - pointSize) / 2)
-                context.scaleBy(x: pointSize, y: pointSize)
-                context.addPath(paths.outer)
-                context.setLineWidth(width / pointSize)
-                context.setLineJoin(.round)
-                context.setStrokeColor(ink)
-                context.strokePath()
-                context.addPath(paths.inner)
-                context.setFillColor(ink)
-                context.fillPath()
-                return true
-            }
+            var configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
+            if let color { configuration = configuration.applying(NSImage.SymbolConfiguration(paletteColors: [color])) }
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+                .withSymbolConfiguration(configuration) ?? NSImage(size: NSSize(width: pointSize, height: pointSize))
             image.isTemplate = color == nil
-            image.accessibilityDescription = description
             return image
         }
 
-        /// The flame in SwiftUI, as tall as `size` points, in the foreground style.
+        /// The SwiftUI weight of the same name as an AppKit one.
+        static func fontWeight(_ weight: NSFont.Weight) -> Font.Weight {
+            switch weight.rawValue {
+            case ..<NSFont.Weight.light.rawValue: .thin
+            case ..<NSFont.Weight.regular.rawValue: .light
+            case ..<NSFont.Weight.medium.rawValue: .regular
+            case ..<NSFont.Weight.semibold.rawValue: .medium
+            case ..<NSFont.Weight.bold.rawValue: .semibold
+            case ..<NSFont.Weight.heavy.rawValue: .bold
+            default: .heavy
+            }
+        }
+
+        /// The symbol in SwiftUI, at `size` points, in the foreground style.
         struct Mark: View {
             var size: CGFloat
             var weight: NSFont.Weight = .medium
 
             var body: some View {
-                ZStack {
-                    Flame(inner: false).stroke(style: StrokeStyle(lineWidth: size * LampGlyph.line(weight), lineJoin: .round))
-                    Flame(inner: true).fill()
-                }
-                .frame(width: size * LampGlyph.aspect, height: size)
-                .padding(size * LampGlyph.line(weight) / 2)
-            }
-        }
-
-        private struct Flame: Shape {
-            let inner: Bool
-
-            func path(in rect: CGRect) -> Path {
-                Path(inner ? LampGlyph.paths.inner : LampGlyph.paths.outer)
-                    .applying(CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: rect.height, y: rect.height))
+                Image(systemName: LampGlyph.symbol).font(.system(size: size, weight: LampGlyph.fontWeight(weight)))
             }
         }
     }
+
     """#
 
 

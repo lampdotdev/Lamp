@@ -35,7 +35,7 @@ extract() {
     perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/' |
     sed -E 's/\{\{WISH_LEAVES_LAMP_CLOSED\}\}//g; s/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
 }
-# Lamp's flame, which both files end with (`lampGlyphSwift`, macOS only in LampSupport).
+# Lamp's mark, which both files end with (`lampGlyphSwift`, macOS only in LampSupport).
 { extract lampSupportTemplate; print "#if os(macOS)"; extract lampGlyphSwift; print "#endif" } > "$work/LampSupport.swift"
 { extract lampWidgetSupportSwift; extract lampGlyphSwift } > "$work/LampWidgetSupport.swift"
 # LampScene.swift, which Lamp writes beside LampSupport.swift into an app whose code imports RealityKit
