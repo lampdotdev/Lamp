@@ -8931,7 +8931,9 @@ final class Store: ObservableObject {
     /// with the agent as pictures are; empty when the integration has no way to read it or the device didn't answer.
     private func deviceAppScreen(_ project: LampProject, run: DeviceApps.Run) async -> String {
         guard Privacy.sharesPictures, deviceRuns[project.id] === run,
-              let screen = try? await DeviceApps.screen(project, on: run.device), !screen.trimmed.isEmpty else { return "" }
+              let screen = try? await DeviceApps.screen(project, on: run.device), !screen.trimmed.isEmpty,
+              // Read again after the wait: another app put on the device meanwhile, or pictures turned off, keeps it back.
+              Privacy.sharesPictures, deviceRuns[project.id] === run else { return "" }
         // Indentation between tags is most of a tree's size; what each node says is kept.
         let compact = screen.replacingOccurrences(of: #">\s+<"#, with: "><", options: .regularExpression)
         let cut = compact.count > 12_000 ? String(compact.prefix(12_000)) + "… (cut)" : compact
