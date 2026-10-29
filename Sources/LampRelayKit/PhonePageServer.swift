@@ -1,18 +1,19 @@
 import Foundation
 import Network
 
-/// One game's phone page, served by the controllers' service (`ControllerService`) on a port of its own, as Lamp serves
-/// a page while it's open (`PhoneSites`): each game's page is an origin of its own in a phone's browser. Plain GETs of
-/// the files of one version of the page (`ControllerSnapshot`), from a phone on the network by one of this Mac's names
+/// One game's phone page, served by the game itself (`ControllerRuntime`) on a port of its own, as Lamp serves a TV
+/// app's page (`PhoneSites`): each game's page is an origin of its own in a phone's browser. Plain GETs of the files of
+/// the page Lamp put in the game's bundle (`ControllerSnapshot`), from a phone on the network by one of this Mac's names
 /// or addresses, or on this Mac by a loopback name; and `lamp-relay.json`, where lamp-controller.js opens its socket.
 public final class PhonePageServer: @unchecked Sendable {
-    public let port: UInt16
+    /// The port asked for (0: any the system gives), then the one it listens on once it does.
+    public private(set) var port: UInt16?
     private let root: URL
     private let app: String
     private let queue = DispatchQueue(label: "dev.lamp.controllers.page")
     private var listener: NWListener?
     /// Connections open now, by the address they came from: a page is a few small requests, so a host that holds many
-    /// open, or one that never finishes its request, is let go before it can use up what the service needs for phones.
+    /// open, or one that never finishes its request, is let go before it can use up what the game needs for phones.
     private var open: [ObjectIdentifier: String] = [:]
     public static let connectionLimit = (all: 64, each: 16)
     public static let headDeadline: TimeInterval = 10
@@ -20,7 +21,7 @@ public final class PhonePageServer: @unchecked Sendable {
     private let hosts: @Sendable () -> Set<String>
     private let relayPort: @Sendable () -> UInt16?
 
-    public init(port: UInt16, root: URL, app: String, hosts: @escaping @Sendable () -> Set<String>, relayPort: @escaping @Sendable () -> UInt16?) {
+    public init(port: UInt16 = 0, root: URL, app: String, hosts: @escaping @Sendable () -> Set<String>, relayPort: @escaping @Sendable () -> UInt16?) {
         self.port = port
         self.root = root
         self.app = app
@@ -28,12 +29,13 @@ public final class PhonePageServer: @unchecked Sendable {
         self.relayPort = relayPort
     }
 
-    /// Starts listening on every interface at its port; `ready` hears true once it does, false when another program has
-    /// the port. `onFailure`: it stopped listening afterwards.
+    /// Starts listening on every interface at its port; `ready` hears true once it does (and `port` says where), false
+    /// when another program has the port. `onFailure`: it stopped listening afterwards.
     public func start(ready: @escaping @Sendable (Bool) -> Void, onFailure: @escaping @Sendable () -> Void = {}) {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = false
-        guard let port = NWEndpoint.Port(rawValue: port), let listener = try? NWListener(using: params, on: port) else { return ready(false) }
+        let asked = port ?? 0
+        guard let listener = try? NWListener(using: params, on: asked == 0 ? .any : (NWEndpoint.Port(rawValue: asked) ?? .any)) else { return ready(false) }
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return connection.cancel() }
             var from = "?"
@@ -57,10 +59,11 @@ public final class PhonePageServer: @unchecked Sendable {
             self.receive(connection, buffer: Data())
         }
         var answered = false
-        listener.stateUpdateHandler = { [weak listener] state in
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+            guard let self else { return }
             switch state {
             case .ready:
-                if !answered { answered = true; ready(true) }
+                if !answered { answered = true; self.port = listener?.port?.rawValue; ready(true) }
             case .failed, .cancelled:
                 if !answered { answered = true; ready(false) } else { onFailure() }
                 listener?.stateUpdateHandler = nil

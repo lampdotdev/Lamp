@@ -587,9 +587,10 @@ extension TVTemplate {
           }
         """#
 
-    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks Lamp where its relay is
-    /// (`/app/controller`), as it opens and every few seconds after, and opens its own socket there, where phones' pages
-    /// join. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
+    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks where its relay is
+    /// (`/app/controller`: Lamp, for a TV app's page, the preview and the Xbox; the game itself on the Mac,
+    /// `ControllerRuntime`), as it opens and every few seconds after, and opens its own socket there, where phones' pages
+    /// join; stopping says so, which closes a game's own relay and page. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
     /// block joins here (`_attach`), so they go on playing with Lamp closed. The page numbers the players itself, whichever
     /// way they came. What a player holds down is let go when it leaves or its link drops, and movement that arrives late
     /// is dropped.
@@ -845,6 +846,7 @@ extension TVTemplate {
               return Promise.resolve();
             },
             stop: function () {
+              if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', { stop: true }, 20000).then(function () {}, function () {});
               started = false;
               clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
               for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }

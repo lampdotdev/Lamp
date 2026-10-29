@@ -147,25 +147,6 @@ fi
 # never pass through Lamp's.
 mkdir -p "$APP/Contents/Helpers"
 cp "$(dirname "$BIN")/LampRelay" "$APP/Contents/Helpers/LampRelay"
-# Phones as controllers for a game on this Mac with Lamp closed (BackgroundControllers, ControllerService): a launch agent
-# Lamp registers with macOS (SMAppService.agent) when the person turns it on. Its plist names the program inside this
-# bundle and the two XPC names Lamp and the games reach it at, all after this Lamp's bundle id, so every Lamp has its own.
-cp "$(dirname "$BIN")/LampControllerService" "$APP/Contents/Helpers/LampControllerService"
-mkdir -p "$APP/Contents/Library/LaunchAgents"
-cat > "$APP/Contents/Library/LaunchAgents/$BUNDLE_ID.controllers.plist" <<AGENT
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>$BUNDLE_ID.controllers</string>
-  <key>BundleProgram</key><string>Contents/Helpers/LampControllerService</string>
-  <key>AssociatedBundleIdentifiers</key><array><string>$BUNDLE_ID</string></array>
-  <key>MachServices</key><dict>
-    <key>$BUNDLE_ID.controllers.manage</key><true/>
-    <key>$BUNDLE_ID.controllers.games</key><true/>
-  </dict>
-  <key>KeepAlive</key><true/>
-</dict></plist>
-AGENT
 # Quick Look for shared .lampapp files: the app's icon as their thumbnail, and its picture when Space is pressed.
 # macOS shows Quick Look only from sandboxed extensions in an app it knows, so they live in Lamp's PlugIns.
 for EXT in LampThumbnail:thumbnail LampPreview:preview; do
@@ -218,6 +199,15 @@ rm -rf "$APP/Contents/Resources/Starters" && rsync -a --exclude '.git' Resources
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as three.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what a game is written against, and its hosts (GameKit.swift)
+# The controller kit a game on the Mac runs its own phones with (GameKit.controllerKit): Lamp's relay and phone-page
+# server, the same Swift as LampRelayKit, as one file the player and every compiled game build into themselves, so a
+# game's phones never need Lamp. The Mac's only: an iPhone copy of a game has no host's side of phones.
+{
+  echo "// Lamp's controller kit (Sources/LampRelayKit in Lamp's source, as one file). Written by Lamp before every build; don't edit."
+  echo "#if os(macOS)"
+  for f in Sources/LampRelayKit/*.swift(on); do cat "$f"; echo; done
+  echo "#endif"
+} > "$APP/Contents/Resources/GameKit/apple/LampControllerKit.swift"
 rm -rf "$APP/Contents/Resources/WebHost" && cp -R Resources/WebHost "$APP/Contents/Resources/WebHost"   # the program that shows an Xbox web app in WebView2 (WebHost.swift)
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
@@ -321,7 +311,6 @@ sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
 sign "$APP/Contents/Frameworks/Sparkle.framework"
 sign "$APP/Contents/Helpers/LampRelay"
-sign "$APP/Contents/Helpers/LampControllerService"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"
 # Lamp's player (GameKit.playerSources, Resources/GameKit/apple/LampPlayer.swift): the Mac app around a game's or a

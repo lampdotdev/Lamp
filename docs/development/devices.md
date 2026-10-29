@@ -475,10 +475,17 @@ there and opens it, the player is back where they were.
 
 **Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
 has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,
-shared with the game (`GameFiles`) and copied with a starter. Lamp serves it while the game is open on this Mac (the
-copy asks `/app/controller` through `LampPageGateway`, whose page Lamp's relay lets in by its `lamp-game://app`
-origin; `Store.servesPhonePage` goes by `openOnMac`, and the phone page is staged at each build, `TVs.stagePhone`), in
-the TV preview and on a Samsung or LG TV (staged with the rest, `TVs.stage`), and ends the session as the game closes.
+shared with the game (`GameFiles`) and copied with a starter. On this Mac the game runs its own phones, so they go on
+playing, and new ones join, whether Lamp is open or not: the phone page is staged at each build (`TVs.stagePhone`) and
+put in the game's bundle as it's installed (`GamePhones`, in `Contents/Resources/Phone`, with lamp-controller.js), and
+the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) from `ControllerRuntime`, LampRelayKit's
+Swift built into the player and every compiled game as one file (`GameKit.controllerKit`, which build.sh writes). As
+`Lamp.controllers` starts, it serves the page (`PhonePageServer`) and runs a `Relay` in the game's process, each on a
+port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
+the game quitting close both. A change of the phone page can't go into the open game as it's played, so it goes in
+with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
+told to update. Lamp serves the page itself in the TV preview and on a Samsung or LG TV (staged with the rest,
+`TVs.stage`).
 On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
 relay's plain link itself: `Lamp.controllers` opens it through the WebView2 host's pipe (`TVTemplate.linksJS`, shared
 with `Lamp.wish`), and Lamp serves the game's phones while it's set to open on the Xbox (`Store.onDevice`), which Lamp
@@ -486,32 +493,6 @@ can't watch, as it does for a TV. On an iPhone or iPad and Android the game has 
 down `/app/controller` from anywhere on the network but a TV or an Xbox the game is set to open on, so
 `Lamp.controllers` reports an error and the game plays with controllers and touch. A game's second screen is a phone joined from `onLink`'s address: `Lamp.phonePage`
 is a TV app's page's only.
-
-**Phones with Lamp closed.** Lamp's own relay and phone sites end with Lamp (`ControllerRelay` ends when its input
-closes). For a game on the Mac, the person can turn on "Keep phone controllers working when Lamp is closed" in Settings
-→ Apps (`BackgroundControllers`): Lamp registers its controllers service, `LampControllerService` in its Helpers, as a
-launch agent with `SMAppService.agent` (its plist, `<bundle id>.controllers.plist`, is in Contents/Library/LaunchAgents,
-written by build.sh with `BundleProgram`, two `MachServices` and `KeepAlive`). macOS starts it at login and keeps it
-running until it's turned off, in Lamp or in System Settings → Login Items; Lamp never launches it any other way, and
-reads what macOS says of it (`SMAppService.status`), never only what was chosen. Everything it does is
-`ControllerHost` in LampRelayKit: it serves each game's phone page on a port of its own (`PhonePageServer`, from a range
-of each Lamp's own, `ControllerService.Names.ports`), runs a `Relay` in its own process with a key only it holds, and
-signs the game's credentials. A restart of the service is a new epoch: earlier credentials are worthless and the game
-asks again.
-
-While it's on, `stageSigned` hands the service each Mac game with a phone page as it's installed: the published page
-with lamp-controller.js beside it (`ControllerSnapshot`, a version named by its digest, kept by the service in its own
-folder, `Application Support/<Lamp>/Controllers`), a verifier of a new key for this build, and the copy's designated
-requirement. The copy's `LampInstall` says which XPC name, version and key (`controllers`, `controllerVersion`,
-`controllerKey`). The game's page asks `/app/controller` as before; `LampPageGateway` sends it to the service
-(`LampControllerLink`): a `hello` that names the game and build, after which the service holds the connection to that
-build's signature (`setCodeSigningRequirement`), then `open` with the key. Asking again every `ControllerService.renew`
-seconds keeps the session; it ends when the game's connection goes or after `ControllerService.lease` without an ask,
-and with no session left nothing listens for phones. Lamp's own management name only takes a connection from the Lamp
-the service is part of (`setConnectionCodeSigningRequirement`). A game the service hosts is never served by Lamp too
-(`Store.servesPhonePage`); when the service doesn't answer the game (turned off, not given this build), the game asks
-Lamp's gateway instead, which serves it while Lamp is open, and nothing opens Lamp. Deleting the game revokes it. TV
-apps, the TV preview, the Xbox and games built before it was on stay with Lamp's own relay.
 
 ### Lamp's player
 
