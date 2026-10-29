@@ -25,7 +25,7 @@ click goes the same way, `Store.openChat`); a wish that opens no Mac window is u
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
-(`DeskWishMenu`): Remix as a New Wish…, Start Again from the Original and Send Changes Back… where they apply, Wish Info
+(`DeskWishMenu`): Duplicate…, Start Again from the Original and Send Changes Back… where they apply, Wish Info
 (its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
 for the menu. Dragged out
@@ -38,11 +38,11 @@ comes forward (the menu bar, a widget, the background, the person's own phone) t
 translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in
 front (⌘[).
 
-**Changing a wish is the first thing the desk offers; a new copy is a choice made on purpose.** The row picked (clicked,
+**Remixing a wish, which changes it in place, is the first thing the desk offers; a new copy is a choice made on purpose.** The row picked (clicked,
 or moved to with the arrows; the first until then) shows beside it what it is, in a panel the toolbar's sidebar button
 slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture
 (`Runtime.previewURL`, else the one its starter shipped), line, who made it and its license, where it runs and its
-remixes, Open with ⋯, and **Change it**: a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
+remixes, Open with ⋯, and **Remix it**: a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
 in its chat, which opens beside it as Open opens it; with nothing written it only opens. A starter's own three changes
 are there to put in the box. The wish changes in place, a version of its own that Undo and Versions take back. A starter
 or a wish opened from GitHub or a file is already the person's own copy, so the original is never touched.
@@ -56,8 +56,9 @@ in the menu only for such a wish that came from a repository (`Contribute.canCon
 wish's chat as the chat's Share menu does. A remix link from the site lands the same way: it opens the person's own
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
 
-**Remix as a New Wish…** (`Store.remix`, in the wish's menu and File → Remix as a New Wish…) is for making something
-else of it. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
+Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
+open the starter itself), and the shuffle mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
+wish's menu and File → Duplicate…) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
 to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
 panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
 the card its starter's chat opens on (the original's starter.md kept as `.lamp/starter-suggestions.md`,

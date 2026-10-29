@@ -2625,7 +2625,8 @@ enum Template {
     """# + lampGlyphSwift
 
     /// Lamp's mark where an app shows the way to change it with Lamp (the wand at the top right of its windows, its
-    /// menu bar panel and menu, its widget): the system's `shuffle` symbol, at the size and weight it's asked for. It's in LampSupport.swift and in the widget's own file, which shares nothing
+    /// menu bar panel and menu, its widget): the system's `shuffle` symbol, the one Lamp shows for remixing, at the
+    /// size and weight it's asked for. It's in LampSupport.swift and in the widget's own file, which shares nothing
     /// else with it.
     static let lampGlyphSwift = #"""
 

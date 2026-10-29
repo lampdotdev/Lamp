@@ -59,7 +59,7 @@ struct LampCommands: Commands {
                 .keyboardShortcut("o")
             Button("Open from GitHub…") { store.chooseRepository() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
-            Button("Remix as a New Wish…") { if let project = store.selected { Task { await store.remix(project) } } }
+            Button("Duplicate…") { if let project = store.selected { Task { await store.remix(project) } } }
                 .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
         }
         CommandGroup(after: .pasteboard) {

@@ -5,8 +5,8 @@ import AVFoundation
 
 /// Lamp's home: every wish in one list (what Lamp came with and what the person made, remixes under their originals),
 /// the place to make a new one, by typing it, saying it, or finding it with the agent's help, and the person's devices
-/// down the side. Open uses a wish, with its chat beside it to change it in place; Remix as a New Wish, in its menu,
-/// makes a new copy of it to become something else.
+/// down the side. Open uses a wish, with its chat beside it; Remix changes it in place; Duplicate…, in its menu, makes
+/// a new copy of it to become something else.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
     @StateObject private var dictation = Dictation()

@@ -314,7 +314,8 @@ struct DeskListRow: View {
 }
 
 /// The wish picked in the list, beside it: its picture and what it is, a few facts, Open with the wish's menu, and a box
-/// to change it, which sends the change to this wish in its chat. A new copy is the menu's Remix as a New Wish….
+/// to remix it, which sends the change to this wish in its chat: a remix changes the wish itself. A new copy is the menu's
+/// Duplicate….
 struct DeskDetail: View {
     @EnvironmentObject private var store: Store
     let row: DeskList.Row
@@ -381,7 +382,7 @@ struct DeskDetail: View {
 
     private var changeBox: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Change it").font(.system(size: 15, weight: .heavy))
+            Text("Remix it").font(.system(size: 15, weight: .heavy))
             TextField("What would you change?", text: $change, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
@@ -397,7 +398,7 @@ struct DeskDetail: View {
                     focused = true
                 }
             }
-            Button(action: send) { Label("Change", systemImage: "wand.and.stars") }
+            Button(action: send) { Label("Remix", systemImage: "shuffle") }
                 .buttonStyle(PaperButtonStyle(.ink, height: 34))
                 .help(change.trimmed.isEmpty ? "Open \(project.title) with its chat" : "Ask for this change in \(project.title)'s chat")
         }
@@ -461,7 +462,7 @@ struct DeskWishMenu: View {
             Button("Open") { store.open(fromDesk: project) }
             Divider()
         }
-        Button("Remix as a New Wish…") {
+        Button("Duplicate…") {
             let asked = request.trimmed
             sent()
             Task { await store.remix(project, change: asked.isEmpty ? nil : asked) }
