@@ -100,16 +100,28 @@ public enum RemixLink {
     /// The page for the request. With an origin, Lamp's site with it and the request as it is, since Lamp starts from a
     /// copy of that; else the wish's Share Link with the request as `ask`, which the page adds to the wish's words; else
     /// Lamp's site with a request that names the app, since without either Lamp makes its own version.
-    public static func url(for offer: RemixOffer, ask: String) -> URL? {
+    /// `from` says where the link was pressed, for the site's counts: "app" (this panel), "page" (a published page's,
+    /// `Publish.withCreditBar`), "readme" and "github" (a repository's README and website, `GitHubRepo`).
+    public static func url(for offer: RemixOffer, ask: String, from: String = "app") -> URL? {
         let words = tidy(ask)
         guard !words.isEmpty else { return nil }
-        let base = offer.origin == nil ? offer.shareLink ?? site : site
-        guard var parts = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
-        let request = offer.origin == nil && offer.shareLink == nil ? tidy(self.request(for: offer, ask: words)) : words
-        let mine: Set = ["ask", "starter", "repo", "commit"]
-        parts.queryItems = (parts.queryItems ?? []).filter { !mine.contains($0.name) } + (offer.origin?.queryItems ?? [])
-            + [URLQueryItem(name: "ask", value: request)]
+        if let origin = offer.origin { return site(for: origin, ask: words, from: from) }
+        guard var parts = URLComponents(url: offer.shareLink ?? site, resolvingAgainstBaseURL: false) else { return nil }
+        let request = offer.shareLink == nil ? tidy(self.request(for: offer, ask: words)) : words
+        let mine: Set = ["ask", "starter", "repo", "commit", "from"]
+        parts.queryItems = (parts.queryItems ?? []).filter { !mine.contains($0.name) }
+            + [URLQueryItem(name: "from", value: from), URLQueryItem(name: "ask", value: request)]
         return parts.url
+    }
+
+    /// Lamp's site with a remix of `origin`: the dialog that opens Lamp on a fresh copy of it, with the request (if any)
+    /// in its chat's box. Spaces are written as %20, as Lamp and the site read them either way.
+    public static func site(for origin: Origin, ask: String? = nil, from: String) -> URL {
+        var parts = URLComponents(url: site, resolvingAgainstBaseURL: false)!
+        let words = ask.map(tidy) ?? ""
+        parts.queryItems = origin.queryItems + [URLQueryItem(name: "from", value: from)]
+            + (words.isEmpty ? [] : [URLQueryItem(name: "ask", value: words)])
+        return parts.url!
     }
 
     /// What pressing Continue with Lamp means, in one line under it: the only thing the person has to accept.

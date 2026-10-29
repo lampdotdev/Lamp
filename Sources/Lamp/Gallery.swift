@@ -891,6 +891,7 @@ enum Gallery {
         repo("Needs a sign-in", stage: .needsGitHub(.signIn)),
         repo("No license", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no license. It can still be used on this Mac.")),
         repo("Ready, first time", stage: .ready),
+        repo("Ready, public", stage: .ready, remix: true),
         repo("Ready, with a share link", stage: .ready, link: true),
         repo("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."], canChooseLicense: false),
         repo("Working", stage: .working("Uploading…")),
@@ -941,13 +942,14 @@ enum Gallery {
     }
 
     private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
-                             canChooseLicense: Bool = true, width: CGFloat? = nil) -> Entry {
+                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false) -> Entry {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
             let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                 stage: stage, repo: ready ? "someone/new-york" : nil, url: up ? "https://github.com/someone/new-york" : nil,
-                                credit: "Based on Slop New York by Mr.doob", openInLamp: link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
+                                credit: "Based on Slop New York by Mr.doob",
+                                openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
                                 canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: false, license: canChooseLicense,
                                 canChooseLicense: canChooseLicense, put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },

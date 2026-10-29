@@ -129,3 +129,18 @@ export function remixLink(origin, text) {
 
 /** A query with spaces as %20, as `wishLink` writes one: Lamp reads "+" as a space too, but nothing need rely on it. */
 const query = (pairs) => Object.entries(pairs).map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
+
+/**
+ * The pictures a repository may show of itself, in the order to try them: the preview and drawn icon a starter's
+ * repository keeps in .github/, then the icon a wish's shared file puts at its root (Put on GitHub). Only for an origin
+ * `remixFrom` checked; raw.githubusercontent.com serves a public repository's files.
+ */
+export function repoPictures(origin) {
+  if (!origin?.repo) return [];
+  const base = `https://raw.githubusercontent.com/${origin.owner}/${origin.name}/${origin.commit ?? "HEAD"}/`;
+  return [
+    { src: `${base}.github/preview.png`, fit: "cover" },
+    { src: `${base}.github/icon/icon.png`, fit: "contain" },
+    { src: `${base}icon.png`, fit: "contain" },
+  ];
+}

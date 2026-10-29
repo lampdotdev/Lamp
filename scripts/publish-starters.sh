@@ -165,6 +165,9 @@ for tree in "$WORK"/trees/*(N/); do
       || gh api -X POST "repos/$repo/pages" -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null 2>&1 \
       || gh api "repos/$repo/pages" >/dev/null
     gh repo edit "$repo" --homepage "$page" >/dev/null
+  elif (( ! DRY )); then
+    # Anything else: its website is the remix on lamp.dev (`GitHubRepo.remixLink`), shown beside its description.
+    gh repo edit "$repo" --homepage "https://lamp.dev/?repo=https%3A%2F%2Fgithub.com%2F${repo//\//%2F}&from=github" >/dev/null
   fi
   # The pin: the address and commit into starter.md's front matter, and the tree fetched at it.
   /usr/bin/python3 scripts/starter-commit.py "$starter" "https://github.com/$repo" "$sha"

@@ -25,12 +25,27 @@ final class GitHubRepoTests: XCTestCase {
         for path in ["Sources/App.swift", "Sources/LampSupport.swift", "Package.swift", "build.sh", "APP.md", "lamp-app.json", Credits.file, ".gitignore"] {
             XCTAssertTrue(has(path), path)
         }
-        // The shared file beside it, and the README pointing at the Share Link and at it.
+        // The shared file beside it. A public repository's README offers it on Lamp's site, by its Open in Lamp button, and
+        // a private one's (which Lamp can't fetch without a sign-in) by the Share Link and the file.
         XCTAssertTrue(has("tally.lampapp"))
+        XCTAssertTrue(has(GitHubRepo.openButton))
         let readme = try String(contentsOf: staged.folder.appendingPathComponent("README.md"), encoding: .utf8)
-        XCTAssertTrue(readme.contains("https://lamp.dev/w/AyTkit4xCc"))
-        XCTAssertTrue(readme.contains("[tally.lampapp](tally.lampapp)"))
+        XCTAssertTrue(readme.contains("<a href=\"https://lamp.dev/?repo=https://github.com/someone/tally&amp;from=readme\"><img src=\"\(GitHubRepo.openButton)\""), readme)
+        XCTAssertFalse(readme.contains("https://lamp.dev/w/AyTkit4xCc"))
+        XCTAssertEqual(staged.remix, "https://lamp.dev/?repo=https://github.com/someone/tally&from=readme", "the card names what the README offers")
         XCTAssertTrue(readme.contains("./build.sh"))
+        let closed = try GitHubRepo.stage(wish, repo: "someone/tally", link: URL(string: "https://lamp.dev/w/AyTkit4xCc"), isPublic: false)
+        defer { try? FileManager.default.removeItem(at: closed.folder.deletingLastPathComponent()) }
+        let closedReadme = try String(contentsOf: closed.folder.appendingPathComponent("README.md"), encoding: .utf8)
+        XCTAssertTrue(closedReadme.contains("https://lamp.dev/w/AyTkit4xCc"))
+        XCTAssertTrue(closedReadme.contains("[tally.lampapp](tally.lampapp)"))
+        XCTAssertFalse(closedReadme.contains("lamp.dev/?repo="))
+        XCTAssertNil(closed.remix)
+        XCTAssertFalse(fm.fileExists(atPath: closed.folder.appendingPathComponent(GitHubRepo.openButton).path))
+        // Each idea is a remix with its request, its words kept from ending the link.
+        let ideas = GitHubRepo.readme(for: wish, credits: Credits(), open: Publish.OpenInLamp(), build: GitHubRepo.Build(alone: true, app: "Mac", others: false),
+                                      repo: "someone/tally", showcase: GitHubRepo.Showcase(ideas: ["Count [by] twos (fast)"], remix: true))
+        XCTAssertTrue(ideas.contains("- [Count \\[by\\] twos (fast)](https://lamp.dev/?repo=https://github.com/someone/tally&from=readme&ask=Count%20%5Bby%5D%20twos%20%28fast%29)"), ideas)
         // Nothing of Lamp's records.
         XCTAssertFalse(has(".lamp"))
         XCTAssertFalse(has(".git"))

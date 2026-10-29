@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { wishHTML, wishLink, copyWish, askFrom, withAsk, exactWishLink, remixFrom, remixLink, WISH_MARK, WISH_LIMIT, ASK_LIMIT } from "../lib/wish.js";
+import { wishHTML, wishLink, copyWish, askFrom, withAsk, exactWishLink, remixFrom, remixLink, WISH_MARK, WISH_LIMIT, ASK_LIMIT, repoPictures } from "../lib/wish.js";
 
 const wish = "A Mac app that sorts my files & asks <first>.\nNothing moves until I say \"yes\".";
 
@@ -99,4 +99,14 @@ test("a remix names only a starter's id or a github.com repository, and Lamp's l
   assert.equal(new URL(remixLink({ repo: "https://github.com/a/b", commit: "abc1234" }, "")).searchParams.get("text"), null);
   assert.match(wishHTML("Snow & ice", { repo: "https://github.com/a/b", commit: "abc1234" }),
     /^<span data-lamp-wish="repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&amp;commit=abc1234" [^>]*>Snow &amp; ice<\/span>$/);
+});
+
+test("a repository's pictures come from its own files, a starter's from the site", () => {
+  const origin = remixFrom("?repo=https%3A%2F%2Fgithub.com%2Flampdotdev%2Fhours");
+  assert.deepEqual(repoPictures(origin).map((p) => p.src), [
+    "https://raw.githubusercontent.com/lampdotdev/hours/HEAD/.github/preview.png",
+    "https://raw.githubusercontent.com/lampdotdev/hours/HEAD/.github/icon/icon.png",
+    "https://raw.githubusercontent.com/lampdotdev/hours/HEAD/icon.png",
+  ]);
+  assert.deepEqual(repoPictures({ starter: "newyork" }), []);
 });
