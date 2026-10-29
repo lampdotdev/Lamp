@@ -385,6 +385,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// asking the person (14.4 on); WebKit's snapshot otherwise, or when the window can't be captured (minimized, say).
     static func picture(_ project: LampProject) async -> Picture? {
         guard let preview = open[project.id] else {
+            await PreviewPlayers.learnShape(project)
             let shape = PreviewPlayers.shape(of: project)
             guard let taken = await PreviewPlayers.picture(project, width: shape.width * 960 / max(shape.width, shape.height)) else { return nil }
             let now = Date()
@@ -530,6 +531,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
 
     /// What's on the screen, focusable things and text, in reading order.
     static func items(_ project: LampProject) async -> [Item] {
+        if open[project.id] == nil { await PreviewPlayers.learnShape(project) }
         guard let page = page(project), let json = await page.js(screenScript),
               let list = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] else { return [] }
         var counts: [String: Int] = [:]
@@ -605,6 +607,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// Carries out `use_app`'s actions on the preview, one after another, with the screen read again after each. The
     /// report says what each landed on and what has focus after it.
     static func perform(_ actions: [Simulator.Driver.Action], on project: LampProject, stillMine: @escaping @MainActor () -> Bool) async -> String {
+        if open[project.id] == nil { await PreviewPlayers.learnShape(project) }
         guard let preview = page(project) else { return "The app isn't open in the preview." }
         var screen = await items(project)
         var report: [String] = []

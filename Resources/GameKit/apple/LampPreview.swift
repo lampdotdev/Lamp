@@ -52,6 +52,10 @@ enum LampPreviewInfo {
     /// This opening of the preview: a new one is a new session for phones too.
     let run = UUID().uuidString
     private var loaded: CheckedContinuation<Void, Never>?
+    /// Which navigation `loaded` waits for: a timer left by an earlier one never ends a later one's wait.
+    private var navigation = 0
+    /// The load under way, which the next waits for: two asked at once open one after the other.
+    private var loading: Task<String?, Never>?
     private var control: LampPreviewControl?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -105,6 +109,16 @@ enum LampPreviewInfo {
     /// Opens a version of the page Lamp handed over (Pages/<version>), from its start. A name that isn't one of them is
     /// refused: the preview serves only what's in its own folder.
     func load(_ version: String) async -> String? {
+        let before = loading
+        let mine = Task { @MainActor in
+            _ = await before?.value
+            return await self.open(version)
+        }
+        loading = mine
+        return await mine.value
+    }
+
+    private func open(_ version: String) async -> String? {
         guard Self.isVersion(version) else { return "No such version of the app." }
         let folder = LampPreviewInfo.folder.appendingPathComponent("Pages").appendingPathComponent(version)
         guard (try? folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])).map({ $0.isDirectory == true && $0.isSymbolicLink != true }) == true,
@@ -123,12 +137,15 @@ enum LampPreviewInfo {
     }
 
     private func navigate(_ start: (WKWebView) -> Void) async {
+        finishLoading()
+        navigation += 1
+        let this = navigation
         await withCheckedContinuation { continuation in
             loaded = continuation
             start(webView)
             Task {
                 try? await Task.sleep(for: .seconds(10))
-                self.finishLoading()
+                if self.navigation == this { self.finishLoading() }
             }
         }
     }
@@ -172,7 +189,10 @@ enum LampPreviewInfo {
             })();
             """
         if (try? await webView.evaluateJavaScript(put)) as? Bool == true {
-            FileManager.default.createFile(atPath: done.path, contents: Data(), attributes: [.posixPermissions: 0o600])
+            // Not marked, it would be handed over again at every opening, bringing back what the app has since removed.
+            if !FileManager.default.createFile(atPath: done.path, contents: Data(), attributes: [.posixPermissions: 0o600]) {
+                LampPageLog.write("Warning: the preview couldn't note that what the app saved in Lamp's preview was brought over.")
+            }
         } else {
             LampPageLog.write("Warning: what the app saved in Lamp's preview couldn't be brought over yet; it's tried again at the next opening.")
         }
@@ -248,7 +268,7 @@ enum LampPreviewInfo {
     private static func openLog() -> FileHandle? {
         let url = LampPreviewInfo.folder.appendingPathComponent("console.log")
         if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > 4 << 20 { try? FileManager.default.removeItem(at: url) }
-        let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let fd = Darwin.open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
         return fd < 0 ? nil : FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }
 }
@@ -302,12 +322,38 @@ enum LampPreviewInfo {
         if rename(partial.path, file.path) != 0 { try? FileManager.default.removeItem(at: partial) }
     }
 
+    /// Connections open now: a request is one line, answered at once, so a few at a time is plenty, and one that
+    /// hasn't said what it wants in a few seconds is let go.
+    private var connections = 0
+    static let connectionLimit = 8
+    static let requestDeadline: TimeInterval = 5
+
     private func accept(_ connection: NWConnection) {
         // Only from this Mac's loopback, which is all the listener is on; anything else is let go.
-        guard case .hostPort(let host, _) = connection.endpoint, "\(host)" == "127.0.0.1" else { return connection.cancel() }
+        guard case .hostPort(let host, _) = connection.endpoint, "\(host)" == "127.0.0.1", connections < Self.connectionLimit else { return connection.cancel() }
+        connections += 1
+        var counted = true
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .failed, .cancelled:
+                MainActor.assumeIsolated {
+                    if counted { counted = false; self?.connections -= 1 }
+                }
+            default: break
+            }
+        }
         connection.start(queue: .main)
         receive(connection, buffer: Data())
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.requestDeadline) { [weak self, weak connection] in
+            MainActor.assumeIsolated {
+                guard let self, let connection, !self.answering.contains(ObjectIdentifier(connection)) else { return }
+                connection.cancel()
+            }
+        }
     }
+
+    /// Connections whose request came whole and is being answered (a load can take seconds).
+    private var answering: Set<ObjectIdentifier> = []
 
     private func receive(_ connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { [weak self] data, _, done, error in
@@ -318,7 +364,9 @@ enum LampPreviewInfo {
                 guard buffer.count <= Self.requestLimit else { return connection.cancel() }
                 if let end = buffer.firstIndex(of: 0x0A) {
                     let line = buffer[..<end]
+                    self.answering.insert(ObjectIdentifier(connection))
                     Task { @MainActor in
+                        defer { self.answering.remove(ObjectIdentifier(connection)) }
                         guard let answer = await self.answer(Data(line)) else { return connection.cancel() }
                         var out = (try? JSONSerialization.data(withJSONObject: answer)) ?? Data("{}".utf8)
                         out.append(0x0A)
@@ -367,6 +415,8 @@ enum LampPreviewInfo {
             let value = try? await app.webView.evaluateJavaScript(source)
             return ["value": value as? String ?? ""]
         case "close":
+            // Not to be found any more from now: a Lamp asking to open the app again opens a new preview.
+            stop()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { app.window.close() }
             return ["ok": true]
         default:

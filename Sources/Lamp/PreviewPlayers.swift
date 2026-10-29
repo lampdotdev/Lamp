@@ -55,7 +55,7 @@ enum PreviewPlayers {
         return Control(port: port, key: key, pid: pid, run: run)
     }
 
-    static func isOpen(_ project: LampProject) -> Bool { control(for: project.id) != nil }
+    static func isOpen(_ project: LampProject) -> Bool { control(for: project.id).map { closing[project.id] != $0.pid } ?? false }
 
     /// A preview's bundle id, by the store its page keeps its saves in, which outlasts renames: beside this Lamp's apps'
     /// ("dev.lamp.preview.…" for "dev.lamp.app.…"), never among them, so it's never taken for one of the apps.
@@ -81,6 +81,13 @@ enum PreviewPlayers {
     private static var shapes: [String: CGSize] = [:]
     static func shape(of project: LampProject) -> CGSize { shapes[project.id] ?? CGSize(width: 1920, height: 1080) }
 
+    /// The shape an open preview says it has: one an earlier Lamp reshaped is found as it is.
+    static func learnShape(_ project: LampProject) async {
+        guard shapes[project.id] == nil, let open = control(for: project.id), let answer = try? await ask(open, ["op": "hello"]),
+              let sides = answer["shape"] as? [NSNumber], sides.count == 2 else { return }
+        shapes[project.id] = CGSize(width: sides[0].doubleValue, height: sides[1].doubleValue)
+    }
+
     /// Opens the staged app (again, from its start) in its preview, which is opened if it isn't: nil once it has loaded.
     static func show(_ project: LampProject, staged: URL, inFront: Bool, title: String, isTV: Bool) async -> String? {
         do {
@@ -89,8 +96,12 @@ enum PreviewPlayers {
             let version = try keep(staged, in: folder)
             Runtime.startLog(project)
             readLog(project, from: nil)
-            if try await makeCopy(of: project, title: title, isTV: isTV), let open = control(for: project.id) {
-                // A new copy for an open preview (the phone page changed, or Lamp's player): the old one goes first.
+            // One being closed (Stop just now) is let go entirely first, rather than handed the app as it closes.
+            if let closing = closing[project.id] { await waitGone(closing); self.closing[project.id] = nil }
+            try await makeCopy(of: project, title: title, isTV: isTV) {
+                // A new copy for an open preview (the phone page changed, or Lamp's player): the old one goes first,
+                // so it never serves the new copy's files to its own phones.
+                guard let open = control(for: project.id) else { return }
                 _ = try? await ask(open, ["op": "close"])
                 await waitGone(open.pid)
             }
@@ -154,7 +165,7 @@ enum PreviewPlayers {
 
     /// Makes the preview's copy of Lamp's player when it has none, or when what it's made of changed: the player, the
     /// app's phone page, what it's told about itself. True when a new copy was made.
-    private static func makeCopy(of project: LampProject, title: String, isTV: Bool) async throws -> Bool {
+    private static func makeCopy(of project: LampProject, title: String, isTV: Bool, replacing: () async -> Void) async throws {
         guard let player = GameKit.playerURL else { throw Failure(message: "This copy of Lamp is missing its player.") }
         guard let store = TVPreview.store(for: project.instance) else { throw Failure(message: "The app has no store for what it saves yet.") }
         let fm = FileManager.default
@@ -175,7 +186,7 @@ enum PreviewPlayers {
             .map { Data(SHA256.hash(data: $0)).base64EncodedString() } ?? "", isTV ? "tv" : "device"].joined(separator: "\n")
         let stampFile = folder.appendingPathComponent("copy.stamp")
         if fm.fileExists(atPath: target.appendingPathComponent("Contents/MacOS/\(GameKit.playerExe)").path),
-           (try? String(contentsOf: stampFile, encoding: .utf8)) == stamp { return false }
+           (try? String(contentsOf: stampFile, encoding: .utf8)) == stamp { return }
         let partial = folder.appendingPathComponent(".partial-" + UUID().uuidString + ".app")
         defer { try? fm.removeItem(at: partial) }
         try fm.copyItem(at: player, to: partial)
@@ -188,10 +199,10 @@ enum PreviewPlayers {
         // the copy is trusted by it.
         let signed = await Subprocess.run("/usr/bin/codesign", ["--force", "--sign", "-", partial.path], mergeErrors: true, timeout: 60)
         guard signed.ok else { throw Failure(message: "The preview couldn't be signed: \(signed.output)") }
+        await replacing()
         try? fm.removeItem(at: target)
         try fm.moveItem(at: partial, to: target)
         try stamp.write(to: stampFile, atomically: true, encoding: .utf8)
-        return true
     }
 
     /// What the app's page saved while its preview was a window of Lamp's own (`TVPreview`, in Lamp's store for it),
@@ -234,8 +245,12 @@ enum PreviewPlayers {
 
     // MARK: Using it
 
+    /// Previews asked to close, by app, until they're gone: never taken for open meanwhile.
+    private static var closing: [String: pid_t] = [:]
+
     static func close(_ project: LampProject) {
         guard let open = control(for: project.id) else { return }
+        closing[project.id] = open.pid
         Task { _ = try? await ask(open, ["op": "close"]) }
     }
 
