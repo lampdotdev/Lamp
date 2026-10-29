@@ -240,7 +240,7 @@ something the wish is based on is share-alike. The README promises `./build.sh` 
 with Apple's tools and nothing of Lamp's (`Recipe.buildsAlone`: the Mac app's; an app for the Mac and the iPhone is
 built by Xcode from a project Lamp keeps, so its README says Lamp builds it). The README leads with trying the wish
 before changing it: in a public repository, an Open in Lamp button (`GitHubRepo.openButton`, drawn into `.github/` by
-`writeButtons`), after Play in your browser for a game with a page, both to lamp.dev's remix link
+`writeButtons` as lamp.dev's buttons are, words alone), after Play in your browser for a game with a page, both to lamp.dev's remix link
 (`GitHubRepo.remixLink`, `RemixLink.site`: the repository without a commit, so it's always the latest, and `from=readme`
 for the site's counts); then the wish's ideas (`RemixSuggestions`, a starter's tweaks), each that link with its request.
 A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and the shared file instead; the

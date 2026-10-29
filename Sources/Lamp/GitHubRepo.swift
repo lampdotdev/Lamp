@@ -214,26 +214,23 @@ enum GitHubRepo {
     static let openButton = ".github/open-in-lamp.svg"
     static let playButton = ".github/play-in-browser.svg"
 
-    /// The buttons drawn as lamp.dev's are: Open in Lamp in the paper's color on ink beside the sleeves' stripes, Play in
-    /// the stripes' yellow with ink; each edged so it holds on GitHub's dark theme as on its light one.
+    /// The buttons drawn as lamp.dev's are, words alone: Open in Lamp in the paper's color on ink, Play in your browser
+    /// in ink on the stripes' yellow. Each is edged so it holds on GitHub's dark theme as on its light one.
+    static let openWidth = 164, playWidth = 220
+
     static func writeButtons(in tree: URL) throws {
-        let stripes = ["#1f8a4a", "#7cbf3a", "#f6b81c", "#f08a1c", "#e2402a", "#d23778"].enumerated()
-            .map { "<rect x=\"16\" y=\"\(12 + $0.offset * 4)\" width=\"26\" height=\"4\" fill=\"\($0.element)\"/>" }.joined()
-        let font = "font-family=\"-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif\" font-size=\"18\" font-weight=\"800\""
-        let open = """
-            <svg xmlns="http://www.w3.org/2000/svg" width="196" height="48" viewBox="0 0 196 48" role="img" aria-label="Open in Lamp">\
-            <rect x="1" y="1" width="194" height="46" rx="6" fill="#1b1a17" stroke="#f2ecda" stroke-width="2"/>\(stripes)\
-            <text x="56" y="31" fill="#f2ecda" \(font)>Open in Lamp</text></svg>
+        func button(_ words: String, width: Int, fill: String, ink: String, edge: String) -> String {
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" width="\(width)" height="48" viewBox="0 0 \(width) 48" role="img" aria-label="\(words)">\
+            <rect x="1" y="1" width="\(width - 2)" height="46" rx="6" fill="\(fill)" stroke="\(edge)" stroke-width="2"/>\
+            <text x="\(width / 2)" y="30.5" text-anchor="middle" fill="\(ink)" \
+            font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="18" font-weight="800">\(words)</text></svg>
 
             """
-        let play = """
-            <svg xmlns="http://www.w3.org/2000/svg" width="236" height="48" viewBox="0 0 236 48" role="img" aria-label="Play in your browser">\
-            <rect x="1" y="1" width="234" height="46" rx="6" fill="#f6b81c" stroke="#1b1a17" stroke-width="2"/>\
-            <path d="M20 14 L36 24 L20 34 Z" fill="#1b1a17"/>\
-            <text x="48" y="31" fill="#1b1a17" \(font)>Play in your browser</text></svg>
-
-            """
-        for (path, svg) in [(openButton, open), (playButton, play)] {
+        }
+        let buttons = [(openButton, button("Open in Lamp", width: openWidth, fill: "#1b1a17", ink: "#f2ecda", edge: "#f2ecda")),
+                       (playButton, button("Play in your browser", width: playWidth, fill: "#f6b81c", ink: "#1b1a17", edge: "#1b1a17"))]
+        for (path, svg) in buttons {
             let file = tree.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(svg.utf8).write(to: file)
@@ -268,9 +265,9 @@ enum GitHubRepo {
         if let remix {
             var buttons: [String] = []
             if let play = showcase.play {
-                buttons.append("<a href=\"\(Publish.escaped(play))\"><img src=\"\(playButton)\" width=\"236\" height=\"48\" alt=\"Play in your browser\"></a>")
+                buttons.append("<a href=\"\(Publish.escaped(play))\"><img src=\"\(playButton)\" width=\"\(playWidth)\" height=\"48\" alt=\"Play in your browser\"></a>")
             }
-            buttons.append("<a href=\"\(Publish.escaped(remixLink(remix)))\"><img src=\"\(openButton)\" width=\"196\" height=\"48\" alt=\"Open in Lamp\"></a>")
+            buttons.append("<a href=\"\(Publish.escaped(remixLink(remix)))\"><img src=\"\(openButton)\" width=\"\(openWidth)\" height=\"48\" alt=\"Open in Lamp\"></a>")
             text += "<p align=\"center\">" + buttons.joined(separator: "&nbsp;&nbsp;") + "</p>\n\n"
         }
         if !links.isEmpty { text += "<p align=\"center\">" + links.joined(separator: " · ") + "</p>\n\n" }
