@@ -54,7 +54,8 @@ enum NodeTools {
 
     /// What a command needs first in its shell to run with Lamp's Node and pnpm: them first on the path, and a home
     /// folder, a store and caches of their own in the caches folder (the sandbox closes the person's home, where they
-    /// would look otherwise). pnpm asks before it empties a node_modules it didn't make, and nobody is there to answer.
+    /// would look otherwise). The commands say themselves not to ask before emptying a node_modules (nobody is there to
+    /// answer): pnpm takes that from its command line, not from the environment.
     static var shellPrefix: String {
         let home = caches.appendingPathComponent("home").path
         let values = [
@@ -64,7 +65,7 @@ enum NodeTools {
             "XDG_STATE_HOME": home + "/.local/state", "PNPM_HOME": home + "/pnpm",
             // pnpm 11 reads its settings from pnpm_config_ variables, not npm's.
             "pnpm_config_store_dir": caches.appendingPathComponent("store").path,
-            "pnpm_config_confirm_modules_purge": "false", "pnpm_config_update_notifier": "false",
+            "pnpm_config_update_notifier": "false",
         ]
         return values.sorted { $0.key < $1.key }.map { key, value in
             key == "PATH" ? "export PATH=\(Sandbox.quoted(value))\":$PATH\"" : "export \(key)=\(Sandbox.quoted(value))"

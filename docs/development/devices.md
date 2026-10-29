@@ -138,8 +138,10 @@ engine, since none of the three loads them by itself. The package step runs on L
 `declared.ignore` names: node_modules, the SDK's build folders, `.roku`, `.agents`, all also kept out of versions and of
 what the app is built from), installs from the store, and runs `rk dev --no-sideload`, which type-checks (an error comes
 back to the agent like a compiler's), then zips `dist-dev/pkg-dir`; Lamp's install path sideloads that zip as before, with
-the developer password Lamp keeps. That build is plain JavaScript: the token with the `rsg_typescript` claim that Roku's
-documents mention is only checked for Hermes bytecode (`--compile-ts`), which Lamp doesn't build. The agent never runs
+the developer password Lamp keeps. That build is plain JavaScript, and still a retail Roku runs it only with Roku's device token carrying the
+`rsg_typescript` claim: without one, Roku OS 15.3 installs the app and closes it as it opens ("is not permitted to run
+TypeScript" in its log), and Roku doesn't yet say how a person gets one. The rules have the agent say so rather than
+blame the Roku's version. The agent never runs
 pnpm, npx or rk: a package it needs goes in package.json and the next prepare installs it.
 
 `look_at_app` and `use_app` on a Roku app also give the agent the SDK's view of it (`declared.inspect` "roku-sdk",
