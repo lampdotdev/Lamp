@@ -12,7 +12,9 @@ var os = require('os');
 var path = require('path');
 var Module = require('module');
 
-var service = path.join(__dirname, '../../Resources/LGPhones');
+// LG_SERVICE_DIR runs the checks against another copy of the service (an earlier one, to see a check fail without a fix).
+var service = process.env.LG_SERVICE_DIR || path.join(__dirname, '../../Resources/LGPhones');
+var net = require('net');
 var WebSocket = require(path.join(service, 'node_modules/ws'));
 var relay = require(path.join(service, 'relay.js'));
 
@@ -172,6 +174,43 @@ function run() {
   });
 }
 
+// Connections that never prove themselves: held to a few from one address, and let go when the session stops, upgraded
+// or not, so nothing from an ended session (its key among it) is still reachable.
+function runRaw() {
+  var session = new relay.Session({ root: root, app: 'dev.lamp.app.pong', addresses: function () { return ['192.168.1.40']; }, bind: '127.0.0.1' });
+  var held = [];
+  function open(port) {
+    var s = net.connect(port, '127.0.0.1');
+    s.on('error', function () {});
+    s.gone = new Promise(function (resolve) { s.on('close', function () { resolve(true); }); });
+    return s;
+  }
+  function settle(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+  return start(session).then(function () {
+    for (var i = 0; i < 8; i++) held.push(open(session.relayPort));
+    return settle(200);
+  }).then(function () {
+    var ninth = open(session.relayPort);
+    return Promise.race([ninth.gone, settle(1000).then(function () { return false; })]);
+  }).then(function (gone) {
+    assert.strictEqual(gone, true, 'a ninth connection waiting from one address is let go');
+    return stop(session);
+  }).then(function () {
+    return Promise.race([Promise.all(held.map(function (s) { return s.gone; })), settle(1000).then(function () { return false; })]);
+  }).then(function (gone) {
+    assert.ok(gone, 'every connection to the relay goes when the session stops');
+    // One device's IPv6 addresses count as one place.
+    var a = relay.addressOf({ remoteAddress: 'fe80::1:2:3:4' }), b = relay.addressOf({ remoteAddress: 'fe80::5:6:7:8' });
+    assert.strictEqual(a, b, 'two addresses in one /64 are one place');
+    assert.notStrictEqual(relay.addressOf({ remoteAddress: '2001:db8:0:1::1' }), relay.addressOf({ remoteAddress: '2001:db8:0:2::1' }));
+    // A port that can't open is said, not thrown: the service goes on, and the next start can work.
+    var nowhere = new relay.Session({ root: root, app: 'dev.lamp.app.pong', addresses: function () { return []; }, bind: '203.0.113.9' });
+    return new Promise(function (resolve) { nowhere.start(function (error) { resolve(error); }); });
+  }).then(function (error) {
+    assert.ok(error && /couldn't open/.test(error.message), 'a listener that can\'t open is an error the caller hears');
+  });
+}
+
 // The service's door on the TV's bus, with webos-service stood in for.
 function runService() {
   var folder = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-service-'));
@@ -224,7 +263,7 @@ function runService() {
 // A check that waits for something that never comes fails rather than hangs.
 setTimeout(function () { console.error('A check timed out.'); process.exit(1); }, 20000);
 
-run().then(runService).then(function () {
+run().then(runRaw).then(runService).then(function () {
   console.log('LG phone service: all checks passed on Node ' + process.version);
   process.exit(0);
 }, function (error) {

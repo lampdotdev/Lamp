@@ -105,7 +105,8 @@ function isServed(relative) {
   return relative.split('/').every(function (step) { return step.length > 0 && step.charAt(0) !== '.' && Buffer.byteLength(step) <= 255; });
 }
 
-// The answer to a GET of `full` asked for as `host`: { status, type, body }.
+// The answer to a GET of `full` asked for as `host`: { status, type, body }, or a file's { file, size } to stream, so a
+// large picture or sound never sits whole in the TV's memory.
 function answer(root, full, host, hosts, relay) {
   var text = function (status, said) { return { status: status, type: TYPES.txt, body: Buffer.from(said) }; };
   if (!names(host, hosts)) return text(403, 'Not for this host.');
@@ -131,7 +132,7 @@ function answer(root, full, host, hosts, relay) {
     var stat = fs.statSync(at);
     if (!stat.isFile() || stat.size > FILE_LIMIT) return missing;
     var ext = path.extname(at).slice(1).toLowerCase();
-    return { status: 200, type: TYPES[ext] || 'application/octet-stream', body: fs.readFileSync(at) };
+    return { status: 200, type: TYPES[ext] || 'application/octet-stream', file: at, size: stat.size };
   } catch (e) {
     return missing;
   }
@@ -244,10 +245,13 @@ function chunkHeader(data) {
   if (data.length < WIRE.header || data[0] !== 1) return null;
   return { player: data[1], id: data.readUInt32BE(4) };
 }
-function addressOf(request) {
-  var a = String(request.socket.remoteAddress || '?').replace(/^::ffff:/, '');
-  // An IPv6 address by its network: a device can take many there.
-  return a.indexOf(':') >= 0 ? a.split(':').slice(0, 4).join(':') : a;
+// Where a connection comes from, for its limits: an IPv6 address by its /64, since a device can take many there.
+function addressOf(socket) {
+  var a = String(socket.remoteAddress || '?').replace(/^::ffff:/i, '').split('%')[0].toLowerCase();
+  if (a.indexOf(':') < 0) return a;
+  var halves = a.split('::'), head = halves[0] ? halves[0].split(':') : [], tail = halves.length > 1 && halves[1] ? halves[1].split(':') : [];
+  var groups = halves.length > 1 ? head.concat(new Array(Math.max(0, 8 - head.length - tail.length) + 1).join('0').split(''), tail) : head;
+  return groups.slice(0, 4).map(function (g) { return parseInt(g, 16) || 0; }).join(':');
 }
 
 function Game(app, key) {
@@ -275,8 +279,9 @@ Game.prototype.admits = function (origin) {
   return +m[2] === this.pagePort && this.hosts.indexOf(m[1].replace(/^\[|\]$/g, '')) >= 0;
 };
 
-Game.prototype.accept = function (socket, from) {
+Game.prototype.accept = function (socket, from, raw) {
   var self = this, peer = new Peer(socket, from), greeted = false;
+  peer.raw = raw;
   this.greeting.push(peer);
   var forget = function () { var i = self.greeting.indexOf(peer); if (i >= 0) self.greeting.splice(i, 1); };
   peer.onClose = forget;
@@ -295,6 +300,7 @@ Game.prototype.hello = function (peer, text) {
   if (!hello || hello.t !== 'hello' || hello.app !== this.app) return peer.close(4003);
   var claim = check(hello.credential, ['host', 'join', 'controller'], this.app, this.generation, this.key);
   if (!claim) return peer.close(4003);
+  if (peer.raw) peer.raw.proven = true;
   if (claim.kind === 'host') return this.joinAsHost(peer);
   this.joinAsPlayer(peer, claim.kind === 'controller' ? claim.player : null);
 };
@@ -568,7 +574,11 @@ Session.prototype.serially = function (work) {
 Session.prototype.start = function (callback) {
   var self = this;
   this.serially(function (done) {
-    self.open(function (error) { done(); callback(error, error ? null : self.answer()); });
+    self.open(function (error) {
+      var answer = error ? null : self.answer();
+      done();
+      callback(error, answer);
+    });
   });
 };
 
@@ -595,21 +605,32 @@ Session.prototype.open = function (done) {
   try { if (!fs.statSync(path.join(this.root, 'index.html')).isFile()) throw new Error(); } catch (e) {
     return done(new Error('The game has no phone page yet: put one in Phone/index.html.'));
   }
-  var game = new Game(this.app, crypto.randomBytes(32));
-  var relayServer = http.createServer(function (req, res) { res.writeHead(426); res.end(); });
+  var game = new Game(this.app, crypto.randomBytes(32)), raw = [];
+  var relayServer = http.createServer(function (req, res) { res.writeHead(426, { 'Connection': 'close' }); res.end(); });
+  // Every connection counts from the moment it's taken, upgraded or not: one that hasn't proven itself with a credential
+  // within a few seconds is let go, and only so many wait at once, in all and from one address. All of them go when the
+  // session stops.
+  relayServer.on('connection', function (socket) {
+    var from = addressOf(socket), waiting = raw.filter(function (s) { return !s.proven; });
+    if (self.game !== game || waiting.length >= GREETING_LIMIT.all
+        || waiting.filter(function (s) { return s.from === from; }).length >= GREETING_LIMIT.each) return socket.destroy();
+    socket.from = from;
+    raw.push(socket);
+    socket.on('close', function () { var i = raw.indexOf(socket); if (i >= 0) raw.splice(i, 1); });
+    setTimeout(function () { if (!socket.proven) socket.destroy(); }, 5000);
+  });
   var sockets = new WebSocket.Server({
     server: relayServer, maxPayload: MESSAGE_LIMIT, perMessageDeflate: false, clientTracking: false,
-    verifyClient: function (info) {
-      if (!game.admits(info.req.headers.origin)) return false;
-      // Unproven sockets are held to these from their handshake to their hello.
-      var from = addressOf(info.req);
-      return game.greeting.length < GREETING_LIMIT.all
-        && game.greeting.filter(function (p) { return p.from === from; }).length < GREETING_LIMIT.each;
-    }
+    // Nothing from a session that has ended: its key is no longer the one anything should get in with.
+    verifyClient: function (info) { return self.game === game && game.admits(info.req.headers.origin); }
   });
-  sockets.on('connection', function (socket, req) { game.accept(socket, addressOf(req)); });
+  // The server's own errors are the session's to handle (below); ws repeats them here, where unheard they'd be thrown.
+  sockets.on('error', function () {});
+  sockets.on('connection', function (socket, req) { game.accept(socket, req.socket.from, req.socket); });
   var pageServer = this.pageServer = this.makePageServer();
   this.relayServer = relayServer;
+  this.relaySockets = sockets;
+  this.relayRaw = raw;
   this.game = game;
   var waiting = 2, failed = null;
   var listened = function (error) {
@@ -626,10 +647,16 @@ Session.prototype.open = function (done) {
   };
   [relayServer, pageServer].forEach(function (server) {
     var told = false;
-    server.once('error', function (error) {
+    server.on('error', function (error) {
       if (!told) { told = true; return listened(error); }
-      // It stopped listening (the network went away under it): the session starts afresh, with a new key.
-      if (self.relayServer === relayServer) { self.close(); self.onChange(); }
+      // It stopped listening (the network went away under it): the session starts afresh, with a new key, in its
+      // turn among starts and stops.
+      self.serially(function (done) {
+        var ended = self.relayServer === relayServer;
+        if (ended) self.close();
+        done();
+        if (ended) self.onChange();
+      });
     });
     server.listen(0, self.bind, function () { if (!told) { told = true; listened(null); } });
   });
@@ -658,10 +685,14 @@ Session.prototype.makePageServer = function () {
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { 'Content-Type': TYPES.txt }); return res.end('Not allowed'); }
     var page = answer(self.root, req.url, req.headers.host, game ? game.hosts : [], game ? { port: self.relayPort, app: self.app } : null);
     res.writeHead(page.status, {
-      'Content-Type': page.type, 'Content-Length': page.body.length, 'Cache-Control': 'no-store',
+      'Content-Type': page.type, 'Content-Length': page.file ? page.size : page.body.length, 'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Connection': 'close'
     });
-    res.end(req.method === 'HEAD' ? undefined : page.body);
+    if (req.method === 'HEAD') return res.end();
+    if (!page.file) return res.end(page.body);
+    var stream = fs.createReadStream(page.file);
+    stream.on('error', function () { res.destroy(); });
+    stream.pipe(res);
   });
   // A page is a few small requests, so a host that holds many open, or one that never finishes its request, is let go
   // before it can use up what the game needs for phones.
@@ -683,7 +714,11 @@ Session.prototype.close = function () {
   this.timers = [];
   if (this.game) this.game.end();
   this.game = null;
+  if (this.relaySockets) { try { this.relaySockets.close(); } catch (e) {} }
   if (this.relayServer) { try { this.relayServer.close(); } catch (e) {} }
+  (this.relayRaw || []).slice().forEach(function (s) { s.destroy(); });
+  this.relaySockets = null;
+  this.relayRaw = null;
   if (this.pageServer) {
     try { this.pageServer.close(); } catch (e) {}
     this.pageServer.openSockets.slice().forEach(function (s) { s.destroy(); });
@@ -694,4 +729,4 @@ Session.prototype.close = function () {
   this.pagePort = null;
 };
 
-module.exports = { Session: Session, issue: issue, check: check, localAddresses: localAddresses, WIRE: WIRE };
+module.exports = { Session: Session, issue: issue, check: check, localAddresses: localAddresses, addressOf: addressOf, WIRE: WIRE };
