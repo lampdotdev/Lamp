@@ -5,7 +5,8 @@ import AVFoundation
 
 /// Lamp's home: every wish in one list (what Lamp came with and what the person made, remixes under their originals),
 /// the place to make a new one, by typing it, saying it, or finding it with the agent's help, and the person's devices
-/// down the side. Open uses a wish, with its chat beside it; Remix makes a new copy of it to change.
+/// down the side. Open uses a wish, with its chat beside it; Remix changes it in place; Duplicate…, in its menu, makes
+/// a new copy of it to become something else.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
     @StateObject private var dictation = Dictation()
@@ -36,7 +37,6 @@ struct WishDesk: View {
     private var panelFits: Bool { deskWidth - 220 - 40 - Self.panelWidth >= Self.listWithPanel }
     @AppStorage("deskSort") private var column = DeskList.Column.name
     @AppStorage("deskAscending") private var ascending = true
-    @AppStorage("deskOnlyRemixes") private var onlyRemixes = false
     /// Lamp has looked on the network before, so macOS has asked about it: from then on the desk looks for devices
     /// each time it's shown (`lookForDevices`).
     @AppStorage(Store.localNetworkAskedKey) private var lookedBefore = false
@@ -53,10 +53,7 @@ struct WishDesk: View {
     /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
     private var wishes: [LampProject] { store.wishes.filter { !$0.isDeviceSetup } }
 
-    private var rows: [DeskList.Row] {
-        let all = DeskList.rows(wishes, entries: entries, by: column, ascending: ascending)
-        return onlyRemixes ? all.filter { $0.madeBy == "You" } : all
-    }
+    private var rows: [DeskList.Row] { DeskList.rows(wishes, entries: entries, by: column, ascending: ascending) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -118,15 +115,13 @@ struct WishDesk: View {
         }
     }
 
-    /// The filters, then the person's devices: what a new wish can be for. Settings at the foot. Its first line starts
+    /// The person's devices: what a new wish can be for. Settings at the foot. Its first line starts
     /// where the bar does beside it.
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    filter("Everything", count: wishes.count, on: !onlyRemixes) { onlyRemixes = false }
-                    filter("Your remixes", count: rows(remixesOnly: true), on: onlyRemixes) { onlyRemixes = true }
-                    DeskDevices(wishFor: wishFor).padding(.top, 24)
+                    DeskDevices(wishFor: wishFor)
                 }
                 .padding(.horizontal, 12).padding(.top, Self.top).padding(.bottom, 20)
             }
@@ -145,27 +140,6 @@ struct WishDesk: View {
         .frame(width: 220)
         .background(Paper.panel)
         .overlay(alignment: .trailing) { Self.separator }
-    }
-
-    private func rows(remixesOnly: Bool) -> Int {
-        DeskList.rows(wishes, entries: entries, by: column, ascending: ascending).filter { $0.madeBy == "You" }.count
-    }
-
-    private func filter(_ name: String, count: Int, on: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Text(name).fontWeight(on ? .heavy : .regular)
-                Spacer()
-                Text("\(count)").foregroundStyle(Paper.muted)
-            }
-            .font(.system(size: 14))
-            .foregroundStyle(Paper.ink)
-            .padding(.horizontal, 10).frame(height: 32)
-            .background(Paper.ink.opacity(on ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     private var list: some View {
@@ -222,8 +196,16 @@ struct WishDesk: View {
 
     private func readEntries() async {
         let read = wishes.map { ($0, store.apps(of: $0)) }
-        let found = await Task.detached { read.map { DeskEntry.read($0.0, apps: $0.1) } }.value
+        var found = await Task.detached { read.map { DeskEntry.read($0.0, apps: $0.1) } }.value
         guard !Task.isCancelled else { return }
+        entries = Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        // Then whether each that arrived from somewhere has been changed since, which asks git: a wish made here has no
+        // original to go back to.
+        for (index, entry) in found.enumerated() where entry.arrived && !entry.remixedHere {
+            guard let project = wishes.first(where: { $0.id == entry.id }) else { continue }
+            found[index].changedFromOriginal = await store.original(toStartAgain: project) != nil
+            guard !Task.isCancelled else { return }
+        }
         entries = Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
     }
 
@@ -1210,6 +1192,77 @@ enum WishHUD {
 }
 
 extension Store {
+    /// A change asked of a wish from the desk's panel: sent to this wish, as if typed in its chat, which opens beside it
+    /// (`open(fromDesk:)`). It changes in place, a version of its own that Undo and Versions take back; a starter or a
+    /// wish from GitHub is already the person's own copy, so the original is never touched. Nothing asked only opens it.
+    func change(_ project: LampProject, asking request: String) {
+        let request = request.trimmed
+        if !request.isEmpty { send(request, to: project) }
+        open(fromDesk: project)
+    }
+
+    /// The version a starter's copy, or a wish opened from GitHub or a shared file, last arrived as ("From Lamp", or what
+    /// an update brought), when the wish has changed since: what Start Again from the Original goes back to. Nil for a
+    /// wish unchanged since, one remixed here, and one with no such version. What's on disk counts, saved or not; Lamp's
+    /// own files, rewritten by each Lamp, aren't a change, nor are files attached to requests.
+    func original(toStartAgain project: LampProject) async -> AppVersion? {
+        guard !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(Self.remixedHereMark).path),
+              let arrival = await Versions.list(project).first(where: { Self.arrivalMessages.contains($0.message) }) else { return nil }
+        let owned = Set(GitHubRepo.ownedPaths(in: project))
+        var changed = false
+        let paths = "-- . ':!.lamp' ':!\(Attachments.folder)'"
+        func look(_ line: String) { if !line.trimmed.isEmpty, !owned.contains(line.trimmed) { changed = true } }
+        // The arrival against the files as they are, then files git doesn't know yet.
+        _ = await Versions.git("git diff --name-only \"$LAMP_VERSION\" \(paths)", cwd: project.dir,
+                               env: ["LAMP_VERSION": arrival.id], onLine: look)
+        if !changed { _ = await Versions.git("git ls-files --others --exclude-standard \(paths)", cwd: project.dir, onLine: look) }
+        return changed ? arrival : nil
+    }
+
+    /// Start Again from the Original: the wish's files go back to the version it arrived as, as a new version (so this
+    /// too is undone with Undo), and it opens with its chat, which says so (`opening`; from the chat it's open already).
+    func startAgain(_ project: LampProject, opening: Bool = true) async {
+        // The wish's work is held from the first look to the restore, so no request or other restore comes between.
+        guard begin(project) != nil else { return }
+        defer { finish(project) }
+        guard let arrival = await original(toStartAgain: project) else { return }
+        // What a stopped or failed turn left unsaved is kept as a version first, so Undo brings that back too; a restore
+        // would otherwise overwrite it for good.
+        if await Versions.hasUnsavedChanges(project),
+           await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": "Unfinished change"]) != .saved {
+            log(project, .error, "Lamp couldn't save the unfinished change, so it didn't start again.")
+            return
+        }
+        // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
+        ContributeCards.shared.close(project)
+        if opening { open(fromDesk: project) }
+        await restoreBegun(project, to: arrival)
+    }
+
+    /// Duplicate the Original: a fresh copy of the starter a changed copy came from, as this Lamp ships it, put on the
+    /// desk as a remix link from the site puts one (`put(starter:)`), and opened with its chat. The changed copy stays.
+    func duplicateOriginal(of project: LampProject) {
+        guard let name = Starters.starter(of: project)?.name, let starter = Starters.bundled.first(where: { $0.name == name }),
+              let copy = put(starter: starter) else {
+            NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of the original \(project.name).")).runModal()
+            return
+        }
+        open(fromDesk: copy)
+    }
+
+    /// Send Changes Back… from the desk: the wish's chat, with the card that sends them (`ContributeCards`), as the
+    /// chat's Share menu opens it.
+    func sendChangesBack(_ project: LampProject) {
+        open(fromDesk: project)
+        ContributeCards.shared.open(project)
+    }
+
+    /// Wish Info from the desk: the wish's chat, on its info panel, with its credits first.
+    func showInfo(_ project: LampProject) {
+        SidebarServer.shared.show(.info, for: project)
+        open(fromDesk: project)
+    }
+
     /// Change… on a wish: its chat beside it in its own window, opening it when it's closed, for a Mac app with
     /// windows that has been made; anything else (a wish still being found, a menu bar app, a widget, an iPhone
     /// app) in Lamp's panel, beside whatever shows it or on its own (`ChatPanel`).

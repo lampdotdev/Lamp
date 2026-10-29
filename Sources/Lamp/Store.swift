@@ -2947,7 +2947,8 @@ final class Store: ObservableObject {
     private static let duplicatedState = [".lamp/notes.md", ".lamp/models.json", ".lamp/art",
                                           ".lamp/versions", ".lamp/version-titles.json", Credits.arrivedPath]
 
-    /// Remixes a wish: a copy of it to change into something of the person's own, "<name> Remix", with the same code,
+    /// Duplicate… on the desk (Remix there changes a wish in place): a copy of it to change into something of the person's
+    /// own, "<name> Remix", with the same code,
     /// history and icon artwork on a different background, so the two tell apart at a glance, and a link back to the
     /// original at the end of its credits' chain (`Credits.remixOf`, by the original's identity), which the desk nests it
     /// under. Then builds it and, with `change`, asks for that change in the copy's chat. The original stays as it was.
@@ -7628,6 +7629,11 @@ final class Store: ObservableObject {
     func restore(_ project: LampProject, to version: AppVersion) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
+        await restoreBegun(project, to: version)
+    }
+
+    /// `restore` for a caller that has begun the wish's work itself (`begin`), and finishes it afterwards.
+    func restoreBegun(_ project: LampProject, to version: AppVersion) async {
         dropPausedRequest(project)
         let renaming = self.renaming(project, to: version, in: await Versions.list(project))
         guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version), renaming: renaming) else {
