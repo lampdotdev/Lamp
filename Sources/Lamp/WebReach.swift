@@ -38,7 +38,9 @@ enum WebReach {
             case "js", "mjs", "ts", "tsx": reader.addScript(file.text, file: file.name)
             case "html", "htm": reader.addHTML(file.text, file: file.name)
             case "css": reader.addCSS(file.text, file: file.name)
-            default: reader.addText(file.text, file: file.name)
+            case "svg", "xml", "xhtml": reader.addHTML(file.text, file: file.name)
+            case "json": reader.addJSON(file.text, file: file.name)
+            default: break
             }
         }
         for file in data {
@@ -205,6 +207,8 @@ private struct Reader {
     /// be told (`obj[key] = …`, `{...rest}`), which any property may be.
     var properties: [String: [ArraySlice<Token>]] = [:]
     var wild: [ArraySlice<Token>] = []
+    /// Property names set by `obj.name = …` anywhere.
+    var assignedProperties: Set<String> = []
     var wildAny = false
     /// Import maps from the page's HTML: bare module names and where they lead.
     var imports: [String: [String]] = [:]
@@ -263,6 +267,10 @@ private struct Reader {
                 let addresses = attribute == "srcset" ? HTML.srcset(value) : attribute == "values" ? value.split(separator: ";").map(String.init) : [value]
                 for address in addresses {
                     request(.exact(address), use, at: "\(file): <\(tag) \(attribute)>")
+                    if use == .code { readable(address, .code, at: "\(file): <\(tag) \(attribute)>") }
+                    if tag == "link", attribute == "href", element.attributes["rel"]?.lowercased().contains("stylesheet") == true {
+                        readable(address, .load, at: "\(file): <link>")
+                    }
                     if tag == "base", attribute == "href", case .external = WebReach.destination(exact: address) {
                         // Every relative address on the page then goes there.
                         request(.exact(address), .load, at: "\(file): <base>")
@@ -290,11 +298,30 @@ private struct Reader {
 
     /// Other text the page has (JSON, SVG, plain text): read as markup when it may be, and any web address in it is
     /// one no request it can follow reads, since a script may load it (a model as JSON, a script named .txt).
-    mutating func addText(_ text: String, file: String) {
-        if text.contains("<") { addHTML(text, file: file) }
-        if text.range(of: #"(?i)(https?|wss?|ftp)\s*:\s*[/\\]{2}|["'(=\s][/\\]{2}[a-z0-9]"#, options: .regularExpression) != nil {
-            request(.any, .load, at: "\(file): a web address in its text")
+    mutating func addJSON(_ text: String, file: String) {
+        func walk(_ value: Any) {
+            if let string = value as? String, Self.holdsAddress(string) { request(.any, .load, at: "\(file): a web address in its data") }
+            if let object = value as? [String: Any] { object.values.forEach(walk) }
+            if let list = value as? [Any] { list.forEach(walk) }
         }
+        guard let json = try? JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed) else {
+            if Self.holdsAddress(text) { request(.any, .load, at: "\(file): a web address in its data") }
+            return
+        }
+        walk(json)
+    }
+
+    /// A file the page runs, shows or styles itself with must be one this reads; any other (a script named .dat) may do
+    /// anything.
+    mutating func readable(_ address: String, _ use: Use, at place: String) {
+        guard WebReach.destination(exact: address) == .local else { return }
+        var path = WebReach.normalized(address)
+        if let end = path.firstIndex(where: { $0 == "?" || $0 == "#" }) { path = String(path[..<end]) }
+        let lower = path.lowercased()
+        if path.isEmpty || lower.hasPrefix("data:") || lower.hasPrefix("blob:") || lower.hasPrefix("about:") { return }
+        let ext = (path as NSString).pathExtension.lowercased()
+        let read: Set<String> = use == .code ? ["js", "mjs", "html", "htm", "svg", "xml", "xhtml"] : ["css"]
+        if !read.contains(ext) { request(.any, .load, at: "\(place): \(path) isn't a file it reads") }
     }
 
     mutating func addCSS(_ text: String, file: String) {
@@ -447,6 +474,7 @@ private struct Reader {
             if token.kind == .ident, previous?.text == ".", i + 1 < tokens.count, tokens[i + 1].text == "=" {
                 let end = Syntax.expressionEnd(tokens, from: i + 2)
                 properties[token.text, default: []].append(tokens[(i + 2)..<end])
+                assignedProperties.insert(token.text)
                 if i >= 2, Self.lampBlocks.contains(tokens[i - 2].text) { redefined.insert(tokens[i - 2].text) }
             }
             if token.text == "]" || token.text == "}", i + 1 < tokens.count, tokens[i + 1].text == "=", let open = Syntax.opening(tokens, i) {
@@ -589,14 +617,17 @@ private struct Reader {
             if token.kind == .string, token.value.contains("<") || token.value.contains("=") { joinedMarkup(tokens, at: i) }
             // A request function used other than by calling it by name (aliased, passed on, called through .call or
             // ?.()), the global object indexed by a computed name, Reflect, Proxy and with: requests it can't follow.
-            if token.kind == .ident, !afterDot || ["window", "self", "globalThis"].contains(receiver?.text ?? ""),
-               Self.requestFunctions.contains(token.text), previous?.text != "new",
-               !(calls && token.text != "Image" && token.text != "Audio"), previous?.text != "function", previous?.text != "typeof" {
+            if token.kind == .ident, Self.requestFunctions.contains(token.text), !calls, Self.usedAsValue(tokens, at: i) {
                 request(.any, .load, at: "\(token.text) used as a value")
             }
             if token.kind == .ident, i + 1 < tokens.count, tokens[i + 1].text == "[", !afterDot,
-               ["window", "self", "globalThis", "top", "parent", "frames", "document", "location"].contains(token.text) {
-                request(.any, .load, at: "\(token.text)[…]")
+               ["window", "self", "globalThis", "top", "parent", "frames", "document", "location", "this"].contains(token.text) {
+                // document[hidden] reads a name; anything built is unknown, as is any name on the global object.
+                let close = Syntax.matching(tokens, i + 1)
+                let plainName = close == i + 3 && tokens[i + 2].kind == .ident
+                if !(plainName && ["document", "this"].contains(token.text)), !(close == i + 3 && tokens[i + 2].kind == .string && !Self.requestFunctions.contains(tokens[i + 2].value)) {
+                    request(.any, .load, at: "\(token.text)[…]")
+                }
             }
             if token.kind == .ident, !afterDot, ["Reflect", "Proxy"].contains(token.text) || token.text == "with" && calls {
                 request(.any, .load, at: token.text)
@@ -606,10 +637,22 @@ private struct Reader {
                 let global = !afterDot || ["window", "self", "globalThis"].contains(receiver?.text ?? "")
                 let name = token.text
                 let lampBlock = receiver.map { Self.lampBlocks.contains($0.text) && !redefined.contains($0.text) } ?? false
-                if name == "fetch", global {
+                if name == "fetch" || name == "importScripts" && afterDot {
+                    // On whatever it's reached through (this, top, parent, a window): the global function.
+                    if name == "fetch" { request(shapes(args.first), .load, at: "fetch") } else { args.forEach { request(shapes($0), .code, at: "importScripts") } }
+                } else if ["eval", "Function"].contains(name) || ["setTimeout", "setInterval"].contains(name) && !Self.isFunction(args.first) {
+                    // Text run as code: where it goes can't be told.
+                    request(.any, .code, at: "\(name) of text")
+                } else if name == "assign", receiver?.text == "Object" {
+                    // Object.assign(element, { src: … })
+                    for object in args.dropFirst() where object.first?.text == "{" && object.last?.text == "}" {
+                        for entry in Syntax.split(object.dropFirst().dropLast(), by: ",") {
+                            guard let key = entry.first, entry.count > 2, entry[entry.startIndex + 1].text == ":" else { continue }
+                            let attribute = (key.kind == .string ? key.value : key.text).lowercased()
+                            if HTML.use(tag: "", attribute: attribute) != nil { request(shapes(entry.dropFirst(2)), .load, at: "Object.assign") }
+                        }
+                    }
                     request(shapes(args.first), .load, at: "fetch")
-                } else if name == "importScripts", global {
-                    args.forEach { request(shapes($0), .code, at: "importScripts") }
                 } else if name == "import", !afterDot {
                     request(moduleShapes(args.first), .code, at: "import()")
                 } else if name == "open", global, previous?.text != "new" {
@@ -617,8 +660,9 @@ private struct Reader {
                     request(shapes(args.first), .link, at: "window.open")
                 } else if name == "open", afterDot, args.count >= 2, !lampBlock {
                     let first = args[0].first
+                    // A method is a word in capitals (GET, PROPFIND); a database's name isn't.
                     let notMethod = args[0].count == 1 && first?.kind == .string
-                        && !["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"].contains(first!.value.uppercased())
+                        && !(first!.value.uppercased() == first!.value && first!.value.allSatisfy { $0.isLetter || $0 == "-" } && !first!.value.isEmpty)
                     // An XMLHttpRequest, or anything opened with a method it can't rule out (not a database's name).
                     let other = kind(of: receiver).map { $0 != "xhr" } ?? false
                     if !notMethod && !other || kind(of: receiver) == "xhr" {
@@ -632,6 +676,7 @@ private struct Reader {
                     request(shapes(args.first), .load, at: "location")
                 } else if name == "setAttribute", afterDot, !ownBodies.contains(where: { $0.contains(i) }) {
                     attribute(args.first, args.count > 1 ? args[1] : nil, tag: kind(of: receiver))
+                    if args.first?.count == 1, args.first?.first?.value.lowercased() == "style" { style(args.count > 1 ? args[1] : nil, takesAddress: false) }
                 } else if name == "setAttributeNS", afterDot {
                     attribute(args.count > 1 ? args[1] : nil, args.count > 2 ? args[2] : nil, tag: kind(of: receiver))
                 } else if name == "addModule", afterDot {
@@ -680,13 +725,21 @@ private struct Reader {
                     let tag = kind(of: receiver)
                     // `background` and `data` are addresses only on the elements that have them (a 3D scene has a
                     // background color, a chart its data).
-                    if ["host", "hostname", "protocol", "port", "origin", "username", "password"].contains(token.text) {
+                    if ["host", "hostname", "protocol", "port", "origin", "username", "password", "href", "search", "pathname"].contains(token.text) && token.text != "href" && token.text != "search" && token.text != "pathname",
+                       ["url", "location", "a", "area"].contains(tag ?? "") || receiver?.text == "location" {
                         // An address's host changed: wherever it goes, it isn't known.
                         request(.any, .load, at: ".\(token.text) =")
-                    } else if ["cssText", "backgroundImage", "background", "listStyleImage", "borderImage", "content", "cursor", "maskImage", "filter"].contains(token.text)
-                                && (i >= 3 && tokens[i - 2].text == "style" || token.text == "cssText") {
+                    } else if (i >= 3 && tokens[i - 2].text == "style") || token.text == "cssText" {
                         style(value, takesAddress: CSS.takesAddress(token.text))
-                    } else if ["src", "srcset", "poster", "action", "formAction", "ping"].contains(token.text) || token.text == "data" && tag == "object"
+                    } else if ["textContent", "text", "innerText"].contains(token.text), tag == "script" {
+                        request(.any, .code, at: "a script's text set from code")
+                    } else if ["textContent", "innerText"].contains(token.text), tag == "style" {
+                        style(value, takesAddress: false)
+                    } else if token.text == "value", i >= 5, tokens[i - 4].text == "attributes", HTML.use(tag: "", attribute: tokens[i - 2].text.lowercased()) != nil {
+                        // img.attributes.src.value = …
+                        request(shapes(value), .load, at: "attributes.\(tokens[i - 2].text).value =")
+                    } else if ["src", "srcset", "poster", "formAction", "ping"].contains(token.text) || token.text == "data" && tag == "object"
+                                || token.text == "action" && (tag == "form" || receiver?.text.lowercased().contains("form") == true)
                         || token.text == "background" && (["body", "table", "td", "th"].contains(tag ?? "") || receiver?.text == "body") {
                         request(shapes(value), tag == "script" ? .code : .load, at: ".\(token.text) =")
                     } else if token.text == "href" {
@@ -698,12 +751,40 @@ private struct Reader {
                     request(shapes(value), .load, at: "location =")
                 }
             }
-            // location[…] = …, location.href via a computed name.
-            if token.text == "]", i + 1 < tokens.count, tokens[i + 1].text == "=", let open = Syntax.opening(tokens, i), open > 0,
-               ["location", "style"].contains(tokens[open - 1].text) {
-                request(.any, .load, at: "\(tokens[open - 1].text)[…] =")
+            // location[…] = …, style[…] = …, element['src'] = …
+            if token.text == "]", i + 1 < tokens.count, tokens[i + 1].text == "=", let open = Syntax.opening(tokens, i), open > 0 {
+                let end = Syntax.expressionEnd(tokens, from: i + 2)
+                let key = open + 2 == i && tokens[open + 1].kind == .string ? tokens[open + 1].value.lowercased() : nil
+                if ["location", "style"].contains(tokens[open - 1].text) {
+                    request(.any, .load, at: "\(tokens[open - 1].text)[…] =")
+                } else if let key, HTML.use(tag: "", attribute: key) != nil || ["src", "href"].contains(key) {
+                    request(shapes(tokens[(i + 2)..<end]), .load, at: "['\(key)'] =")
+                }
             }
         }
+    }
+
+    /// Whether `setTimeout`'s first argument is code given as a function (not text to run).
+    static func isFunction(_ tokens: ArraySlice<Token>?) -> Bool {
+        guard let tokens, let first = tokens.first else { return false }
+        if first.text == "function" || first.text == "async" || tokens.contains(where: { $0.text == "=>" }) { return true }
+        // A name or a.b: a function, unless it's a string it was given.
+        return first.kind == .ident && tokens.allSatisfy { $0.kind == .ident || $0.text == "." } && !["atob", "unescape", "decodeURIComponent"].contains(first.text)
+    }
+
+    /// Whether a request function's name at `index` is used as a value (aliased, passed on, called by another way) rather
+    /// than tested (`if (window.fetch)`, `typeof fetch`, `x instanceof Image`) or named as an object's key.
+    static func usedAsValue(_ tokens: [Token], at index: Int) -> Bool {
+        var start = index
+        while start >= 2, tokens[start - 1].text == ".", tokens[start - 2].kind == .ident { start -= 2 }
+        let before = start > 0 ? tokens[start - 1].text : ""
+        let after = index + 1 < tokens.count ? tokens[index + 1].text : ""
+        if ["typeof", "instanceof", "new", "function", "!", "&&", "||", "?", "!=", "!==", "==", "==="].contains(before) { return false }
+        if after == ":" && ["{", ","].contains(before) { return false }
+        if ["&&", "||", "?", "!=", "!==", "==", "==="].contains(after) { return false }
+        // if (window.fetch) / while (…)
+        if after == ")", before == "(", start >= 2, ["if", "while"].contains(tokens[start - 2].text) { return false }
+        return true
     }
 
     static let requestFunctions: Set<String> = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "Worker", "SharedWorker",
@@ -712,7 +793,7 @@ private struct Reader {
     /// A style set from code: read as CSS when it's known whole. When it isn't, unknown if it's a property that takes a
     /// picture, or if the strings it's made of may make a url(…) or @import.
     mutating func style(_ value: ArraySlice<Token>?, takesAddress: Bool) {
-        let pieces = (value ?? []).contains { ($0.kind == .string || $0.kind == .template) && CSS.mayLoad($0.value + $0.parts.joined(), loose: true) }
+        let pieces = CSS.mayLoad((value ?? []).filter { $0.kind == .string || $0.kind == .template }.map { $0.value + $0.parts.joined() }.joined(), loose: true)
         for shape in shapes(value) {
             if case .exact(let text) = shape {
                 CSS.addresses(text).forEach { request($0, .load, at: "a style set from code") }
@@ -724,24 +805,48 @@ private struct Reader {
 
     /// `'<a href="' + address + '">'`: a string that leaves an address attribute open, and what's joined after it.
     mutating func joinedMarkup(_ tokens: [Token], at index: Int) {
-        var start = WebReach.Shape.exact("")
+        var start = ""
         var use = Use.load
+        // What still has to come before the value: "=" and a quote when the string stops at the attribute's name.
+        var needsEquals = false
         if let element = HTML.elements(tokens[index].value).last,
            let (attribute, value) = element.all.first(where: { $0.1.hasSuffix(HTML.open) }) {
             guard let found = HTML.use(tag: element.tag, attribute: attribute, attributes: element.attributes) else { return }
             use = found
-            start = .exact(String(value.dropLast()))
-        } else if tokens[index].value.range(of: #"(?i)(src|href|srcset|action|formaction|poster|data|ping|background|to|values|srcdoc)\s*=\s*["']?$"#,
-                                              options: .regularExpression) == nil {
+            start = String(value.dropLast())
+        } else if let match = tokens[index].value.range(of: #"(?i)(src|href|srcset|action|formaction|poster|data|ping|background|to|values|srcdoc)\s*(=\s*["']?)?$"#,
+                                                         options: .regularExpression) {
+            needsEquals = !tokens[index].value[match].contains("=")
+        } else {
             return
         }
+        // Everything joined after the string, read as one value, up to where the attribute ends.
         var rest: [WebReach.Shape] = [.any]
         if index + 2 < tokens.count, tokens[index + 1].text == "+" {
-            let end = Syntax.expressionEnd(tokens, from: index + 2)
-            let operand = Syntax.split(tokens[(index + 2)..<end], by: "+").first ?? []
-            rest = shapes(operand)
+            rest = shapes(tokens[(index + 2)..<Syntax.expressionEnd(tokens, from: index + 2)])
         }
-        request(rest.map { Self.join(start, $0) }, use, at: "markup joined to a value")
+        let quoted = tokens[index].value.last.map { $0 == "\"" || $0 == "'" } ?? false
+        let values = rest.map { shape -> WebReach.Shape in
+            var shape = Self.join(.exact(start), shape)
+            if needsEquals {
+                guard case .exact(let text) = shape else { return .any }
+                let value = text.drop { $0.isWhitespace }.dropFirst().drop { $0.isWhitespace }
+                guard text.drop(while: { $0.isWhitespace }).first == "=" else { return .exact("") }
+                shape = .exact(String(value.first == "\"" || value.first == "'" ? value.dropFirst() : value))
+            }
+            return Self.cut(shape, quoted: quoted || needsEquals)
+        }
+        request(values, use, at: "markup joined to a value")
+    }
+
+    /// An attribute's value ends at its closing quote, or at a space or > when it has none.
+    static func cut(_ shape: WebReach.Shape, quoted: Bool) -> WebReach.Shape {
+        let stop: (Character) -> Bool = { quoted ? $0 == "\"" || $0 == "'" || $0 == ">" : $0.isWhitespace || $0 == ">" }
+        switch shape {
+        case .exact(let text): return .exact(String(text.prefix { !stop($0) }))
+        case .prefix(let text): return text.contains(where: stop) ? .exact(String(text.prefix { !stop($0) })) : shape
+        default: return shape
+        }
     }
 
     /// setAttribute(name, value) on an element of `tag` (nil when it can't be told).
@@ -812,7 +917,8 @@ private struct Reader {
                 var j = 1
                 while j + 2 < tokens.count, tokens[j + 1].text == "." { j += 2 }
                 let name = tokens[j].text
-                kinds.insert(name == "XMLHttpRequest" ? "xhr" : name == "Image" ? "img" : name == "Audio" ? "audio" : name.hasSuffix("Loader") ? "loader" : nil)
+                kinds.insert(name == "XMLHttpRequest" ? "xhr" : name == "Image" ? "img" : name == "Audio" ? "audio" : name == "URL" ? "url"
+                             : name.hasSuffix("Loader") ? "loader" : nil)
             } else {
                 kinds.insert(nil)
             }
@@ -902,6 +1008,10 @@ private struct Reader {
                 return [.any]
             }
         }
+        // a.b: what object a is given says what b is, when a is only ever given object literals and nothing sets b.
+        if list.count == 3, list[1].text == ".", list[0].kind == .ident, list[2].kind == .ident, let own = objectProperty(list[0].text, list[2].text) {
+            return own
+        }
         // a.b.c: what property c is given.
         if list.count >= 3, list[list.count - 2].text == ".", list.last!.kind == .ident,
            stride(from: 1, to: list.count, by: 2).allSatisfy({ list[$0].text == "." }) {
@@ -932,6 +1042,27 @@ private struct Reader {
         // url += …: what it was, and more after.
         if appends.contains(name) { result = unique(result + result.map { Self.join($0, .any) }) }
         return result
+    }
+
+    /// `object.name` where `object` is only ever given object literals: what those give `name`. Nil when it can't tell
+    /// (the name is ever set some other way, an object has no such entry, a spread or computed key).
+    mutating func objectProperty(_ object: String, _ name: String) -> [WebReach.Shape]? {
+        guard !opaque.contains(object), !assignedProperties.contains(name), !wildAny, let values = bindings[object], !values.isEmpty else { return nil }
+        var found: [ArraySlice<Token>] = []
+        for value in values {
+            guard value.first?.text == "{", Syntax.matching(Array(value), 0) == value.count - 1 else { return nil }
+            var entry: ArraySlice<Token>?
+            for item in Syntax.split(value.dropFirst().dropLast(), by: ",") {
+                guard let key = item.first else { continue }
+                if key.text == "..." || key.text == "[" { return nil }
+                if item.count > 2, item[item.startIndex + 1].text == ":", (key.kind == .string ? key.value : key.text) == name {
+                    entry = item.dropFirst(2)
+                }
+            }
+            guard let entry else { return nil }
+            found.append(entry)
+        }
+        return unique(found.flatMap { shapes($0) })
     }
 
     mutating func property(_ name: String) -> [WebReach.Shape] {
@@ -1339,8 +1470,9 @@ private enum HTML {
                 if i + 4 < chars.count, chars[i + 4] == ">" { i += 5; continue }
                 if i + 5 < chars.count, chars[i + 4] == "-", chars[i + 5] == ">" { i += 6; continue }
                 var j = i + 4
-                while j + 2 < chars.count, !(chars[j] == "-" && chars[j + 1] == "-" && chars[j + 2] == ">") { j += 1 }
-                i = j + 3
+                // A comment ends at --> or --!>.
+                while j + 2 < chars.count, !(chars[j] == "-" && chars[j + 1] == "-" && (chars[j + 2] == ">" || chars[j + 2] == "!" && j + 3 < chars.count && chars[j + 3] == ">")) { j += 1 }
+                i = j + (j + 2 < chars.count && chars[j + 2] == "!" ? 4 : 3)
                 continue
             }
             var j = i + 1
@@ -1410,7 +1542,10 @@ private enum HTML {
         var out = ""
         var rest = Substring(text)
         let named = ["amp": "&", "quot": "\"", "apos": "'", "lt": "<", "gt": ">", "colon": ":", "sol": "/", "bsol": "\\",
-                     "period": ".", "tab": "\t", "newline": "\n", "nbsp": "\u{A0}", "commat": "@", "num": "#", "quest": "?"]
+                     "period": ".", "tab": "\t", "newline": "\n", "nbsp": "\u{A0}", "commat": "@", "num": "#", "quest": "?",
+                     "lpar": "(", "rpar": ")", "lsqb": "[", "rsqb": "]", "lbrack": "[", "rbrack": "]", "lcub": "{", "rcub": "}",
+                     "lbrace": "{", "rbrace": "}", "semi": ";", "comma": ",", "excl": "!", "equals": "=", "plus": "+", "dollar": "$",
+                     "percnt": "%", "ast": "*", "midast": "*", "verbar": "|", "vert": "|", "grave": "`", "hat": "^", "lowbar": "_"]
         while let amp = rest.firstIndex(of: "&") {
             out += rest[..<amp]
             rest = rest[rest.index(after: amp)...]
@@ -1486,8 +1621,7 @@ private enum CSS {
     /// Whether a style property takes a picture or other file.
     static func takesAddress(_ property: String) -> Bool {
         let name = property.lowercased().replacingOccurrences(of: "-", with: "")
-        return ["background", "backgroundimage", "liststyle", "liststyleimage", "borderimage", "borderimagesource", "content", "cursor",
-                "mask", "maskimage", "filter", "shapeoutside", "src"].contains(name)
+        return ["backgroundimage", "liststyleimage", "borderimage", "borderimagesource", "maskimage", "shapeoutside", "src"].contains(name)
     }
 
     /// Whether a style may load something: url(…), @import, image-set(…), or, loosely, a piece of one.

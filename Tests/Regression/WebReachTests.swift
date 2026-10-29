@@ -118,7 +118,7 @@ final class WebReachTests: XCTestCase {
 
     /// Pages written to hide a request: each must still say it connects, or may.
     func testAPageWrittenToHideARequestStillSaysItMayConnect() {
-        let evil = "'ht' + 'tps://evil.example/x'"
+        let evil = "'https:' + '/' + '/evil.example/x'"
         let scripts = [
             "if (1) /\"/.test(''); fetch('https://evil.example/x'); // \"",
             "fetch(\"\\x01https://evil.example/x\");",
@@ -153,6 +153,21 @@ final class WebReachTests: XCTestCase {
             "fetch.call(null, \(evil));",
             "fetch?.(\(evil));",
             "globalThis['fe' + 'tch'](\(evil));",
+            "this.fetch(\(evil));",
+            "top.fetch(\(evil));",
+            "parent.fetch(\(evil));",
+            "document.defaultView.fetch(\(evil));",
+            "setTimeout(atob('ZmV0Y2goJ2h0dHBzOi8vZXZpbC5leGFtcGxlJyk='));",
+            "var s = document.createElement('script'); s.textContent = atob(code); document.head.appendChild(s);",
+            "Function(atob(code))();",
+            "eval(atob(code));",
+            "Object.assign(new Image(), { src: \(evil) });",
+            "var i = new Image(); i['src'] = \(evil);",
+            "img.attributes.src.value = \(evil);",
+            "list.innerHTML = '<img src' + '=\"/' + '/evil.example/p.gif\">';",
+            "el.setAttribute('style', 'background:u' + 'rl(//evil.example/x.png)');",
+            "var st = document.createElement('style'); st.textContent = 'a{background:u' + 'rl(//evil.example/x.png)}';",
+            "[new XMLHttpRequest()][0].open('PROPFIND', \(evil));",
         ]
         for script in scripts {
             let found = WebReach.analyze(code: [("app.js", script)])
@@ -178,16 +193,42 @@ final class WebReachTests: XCTestCase {
             "<meta http-equiv=\"refresh\" content=\"0; url = https://evil.example/\">",
             "<a href=\"javascript:fetch('https://evil.example/x')\">x</a>",
             "<svg><set attributeName=\"href\" to=\"https://evil.example/x.png\"/></svg>",
+            "<!-- --!><img src=\"https://evil.example/x.png\"><!-- -->",
+            "<div style=\"background:url&lpar;https://evil.example/x.png)\"></div>",
+            "<script src=\"logic.dat\"></script>",
+            "<link rel=\"stylesheet\" href=\"theme.dat\">",
+            "<iframe src=\"inner.dat\"></iframe>",
         ]
         for page in pages {
             let found = WebReach.analyze(code: [("index.html", page)])
             XCTAssertTrue(found.unknown || found.connects, "hidden: \(page)")
         }
         for (name, text) in [("pic.svg", "<svg><script>fetch('https://evil.example/x')</script></svg>"),
-                             ("model.json", "{ \"buffers\": [{ \"uri\": \"https://evil.example/b.bin\" }] }"),
-                             ("x.txt", "fetch('https://evil.example/x')")] {
+                             ("model.json", "{ \"buffers\": [{ \"uri\": \"https://evil.example/b.bin\" }] }")] {
             let found = WebReach.analyze(code: [(name, text)])
             XCTAssertTrue(found.unknown || found.connects, "hidden in \(name)")
         }
+    }
+
+    /// Ordinary page code that reaches only the page's own files says so.
+    func testOrdinaryPageCodeStaysTheAppsOwn() {
+        let honest = [
+            "var SPR = { hero: 'img/hero.png' }; img.src = SPR.hero;",
+            "this.action = mixer.clipAction(clip); this.origin = new Vector3(); this.port = port;",
+            "if (window.fetch) { start(); }",
+            "var options = { fetch: true };",
+            "if (x instanceof Image) { draw(x); }",
+            "if (document[hidden]) pause();",
+            "el.style.background = color; el.style.filter = `blur(${n}px)`;",
+            "el.style.transform = 'translate(' + x + 'px, ' + y + 'px)';",
+            "setTimeout(tick, 100); setTimeout(function () { tick(); }, 100);",
+            "var s = document.createElement('script'); s.src = 'extra.js'; document.head.appendChild(s);",
+        ]
+        for script in honest {
+            let found = WebReach.analyze(code: [("app.js", script)])
+            XCTAssertFalse(found.unknown || found.connects, "\(found.why) for \(script)")
+        }
+        let credits = WebReach.analyze(code: [("README.md", "Models by Kenney: https://kenney.nl"), ("LICENSE.txt", "See https://example.org/license")])
+        XCTAssertFalse(credits.unknown || credits.connects, "\(credits.why)")
     }
 }
