@@ -31,8 +31,9 @@ A phone's browser, joined by a QR code, needs a phone page (`Phone/index.html` i
 of app have both:
 
 - a game on Lamp's game runtime (`make_app_for` with `kind` "game"): on the Mac the game serves its phone page and
-  runs the relay itself while it's open, with Lamp open or closed; Lamp does it for the game in the TV preview, or
-  set to open on a Samsung or LG TV or the person's Xbox;
+  runs the relay itself while it's open, with Lamp open or closed, and so does it on an LG TV from webOS 5 on (a
+  service Lamp packages with it, so the Mac can be asleep or gone); Lamp does it for the game in the TV preview, or set
+  to open on a Samsung TV, an older LG TV or the person's Xbox;
 - a TV app's page: while it's open on such a TV or in its TV preview on this Mac.
 
 An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`

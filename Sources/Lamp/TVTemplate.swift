@@ -9,10 +9,13 @@ enum TVTemplate {
     static let webFolder = "Web"
     static let supportFile = "Web/lamp.js"
     /// A page for a phone, as a controller or a companion to the TV app, which Lamp hands out from this Mac while the app
-    /// runs (`Store.phonePage`). It never goes on the TV.
+    /// runs (`Store.phonePage`). It goes on a TV only inside an LG game's own phone service (`LGPhones`).
     static let phoneFolder = "Phone"
     /// Where Lamp writes the phone page's address into the staged copy of lamp.js (`TVs.stage`).
     static let phoneMarker = "/*LAMP_PHONE*/null"
+    /// Where lamp.js names the game's own phone service on an LG TV (`LGPhones`), filled in only in the package that
+    /// carries it.
+    static let lgServiceMarker = "/*LAMP_LG_SERVICE*/null"
 
     /// Whether an app's folder is a TV app, read off what every version keeps: Lamp's script in `Web/`. A device app
     /// whose integration takes the web building blocks may keep them at the same path (an Xbox's), so its own marker
@@ -589,7 +592,8 @@ extension TVTemplate {
 
     /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks where its relay is
     /// (`/app/controller`: Lamp, for a TV app's page, the preview and the Xbox; the game itself on the Mac,
-    /// `ControllerRuntime`), as it opens and every few seconds after, and opens its own socket there, where phones' pages
+    /// `ControllerRuntime`; on an LG TV, the game's own service when its package carries one, `LGPhones`, through a
+    /// subscription that is the session), as it opens and every few seconds after, and opens its own socket there, where phones' pages
     /// join; stopping says so, which closes a game's own relay and page. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
     /// block joins here (`_attach`), so they go on playing with Lamp closed. The page numbers the players itself, whichever
     /// way they came. What a player holds down is let go when it leaves or its link drops, and movement that arrives late
@@ -636,6 +640,9 @@ extension TVTemplate {
           var relayLinks = lampLinks(pipe);
           // Players that come another way than Lamp's relay: each way's own code joins them here (`_attach`).
           var others = [];
+          // On an LG TV, a game packaged with its own phone service (LGPhones) runs its phones there, with no Mac: the
+          // service is named here in that package's copy only, and then the page never asks Lamp.
+          var lgService = /*LAMP_LG_SERVICE*/null, lgBridge = null;
         /*LAMP_FILES*/
           var files = lampFiles(function (route, file) {
             var number = byKey[route.key];
@@ -798,27 +805,62 @@ extension TVTemplate {
             if (code === 4003 || code === 4005) return ask(1000);
             l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
           }
+          // Where the relay is and the page's credential for it, from Lamp or the game's own service.
+          function take(answer) {
+            var list = answer.links || [];
+            for (var i = 0; i < list.length; i++) {
+              var info = list[i], id = 'relay';
+              if (info.kind !== 'relay') continue;
+              var l = links[id] || (links[id] = { id: id, kind: info.kind, socket: null, offset: null });
+              l.credential = info.credential;
+              l.app = info.app;
+              if (!l.socket) { l.address = info.socket; connect(l); }
+            }
+          }
           function ask(after) {
             clearTimeout(askTimer);
             askTimer = setTimeout(function () {
               if (!started) return;
+              if (lgService) return askService();
               LampAI._post('/app/controller', {}, 20000).then(function (answer) {
                 if (!started) return;
-                var list = answer.links || [];
-                for (var i = 0; i < list.length; i++) {
-                  var info = list[i], id = 'relay';
-                  if (info.kind !== 'relay') continue;
-                  var l = links[id] || (links[id] = { id: id, kind: info.kind, socket: null, offset: null });
-                  l.credential = info.credential;
-                  l.app = info.app;
-                  if (!l.socket) { l.address = info.socket; connect(l); }
-                }
+                take(answer);
                 ask((answer.renew || 15) * 1000);
               }, function (error) {
                 emit('error', [error.message]);
                 ask(5000);
               });
             }, after || 0);
+          }
+          function lgCall(method, params, fn) {
+            var bridge = new PalmServiceBridge();
+            bridge.onservicecallback = function (text) {
+              var answer; try { answer = JSON.parse(text); } catch (e) {}
+              fn(answer && typeof answer === 'object' ? answer : { returnValue: false });
+            };
+            bridge.call('luna://' + lgService + '/' + method, JSON.stringify(params));
+            return bridge;
+          }
+          function lgFailed(answer) {
+            emit('error', [answer.errorText || "The game's phones couldn't start on this TV."]);
+            if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; }
+            ask(5000);
+          }
+          // The subscription is the session: held from start() to stop(), and the service tells it each time the relay
+          // or the TV's address changes. A relay that turned the page away is asked for a fresh credential.
+          function askService() {
+            try {
+              if (lgBridge) {
+                lgCall('session', {}, function (answer) { if (!started) return; if (answer.returnValue === false) lgFailed(answer); else take(answer); });
+                return;
+              }
+              var bridge = lgBridge = lgCall('start', { subscribe: true }, function (answer) {
+                if (!started || lgBridge !== bridge) return;
+                if (answer.returnValue === false) lgFailed(answer); else take(answer);
+              });
+            } catch (e) {
+              lgFailed({ errorText: "The game's phones couldn't start on this TV: " + e.message });
+            }
           }
           function askLink() {
             if (links.relay) sendOn(links.relay, { t: 'link' });
@@ -846,7 +888,8 @@ extension TVTemplate {
               return Promise.resolve();
             },
             stop: function () {
-              if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', { stop: true }, 20000).then(function () {}, function () {});
+              if (lgService) { if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; } }
+              else if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', { stop: true }, 20000).then(function () {}, function () {});
               started = false;
               clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
               for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }

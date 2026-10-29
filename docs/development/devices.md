@@ -495,8 +495,23 @@ Swift built into the player and every compiled game as one file (`GameKit.contro
 port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
 the game quitting close both. A change of the phone page can't go into the open game as it's played, so it goes in
 with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
-told to update. Lamp serves the page itself in the TV preview and on a Samsung or LG TV (staged with the rest,
-`TVs.stage`).
+told to update. Lamp serves the page itself in the TV preview and on a Samsung TV (staged with the rest,
+`TVs.stage`). On an LG TV the game runs its own phones there, with the Mac asleep or gone: Lamp packages a JS service of
+LG's kind with it (`LGPhones`, from `Resources/LGPhones`: `service.js` on the TV's service bus, `relay.js` serving the
+phone page Lamp published at the build and running the relay, the same protocol, credentials and limits as
+LampRelayKit's, with ws, put there by `scripts/update-lg-ws.sh`, for WebSocket framing), and names it in that package's
+lamp.js only (`TVTemplate.lgServiceMarker`). `Lamp.controllers` then subscribes to the service's `start` instead of asking
+Lamp: the subscription is the session, its answers are where the relay is and the page's host credential (again
+whenever the relay starts afresh or the TV's address moves), and the page cancelling it (`stop()`, or the game closing)
+ends the session, its sockets and its key, after which LG's service manager ends the service by its own idle rule.
+Only the game the service was packaged with may start it or be given a host credential (the caller's app id,
+`message.sender`). The key is made from Node's crypto for each session and kept only in the service's memory. Whether
+the service goes in is decided as the package is made, never at run time: a game that takes phones, has a phone page
+and an app id LG takes as the start of a service's name (no minus sign, no period before a digit), on a TV whose webOS
+release is 5 or later (`LGPhones.runs`: webOS TV 5.0's Node, 8.12, is the oldest ws runs on). Any other LG TV, one whose
+version Lamp hasn't read among them, keeps Lamp's phones as before; its lamp.js names no service and asks Lamp.
+`Tests/LGPhones/relay-test.js` runs the service on real sockets under each Node an LG TV has, with LG's
+`webos-service` stood in for.
 On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
 relay's plain link itself: `Lamp.controllers` opens it through the WebView2 host's pipe (`TVTemplate.linksJS`, shared
 with `Lamp.wish`), and Lamp serves the game's phones while it's set to open on the Xbox (`Store.onDevice`), which Lamp

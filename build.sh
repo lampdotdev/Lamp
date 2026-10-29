@@ -204,6 +204,7 @@ rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Conten
 # game's phones never need Lamp.
 scripts/controller-kit.sh "$APP/Contents/Resources/GameKit/apple/LampControllerKit.swift"
 rm -rf "$APP/Contents/Resources/WebHost" && cp -R Resources/WebHost "$APP/Contents/Resources/WebHost"   # the program that shows an Xbox web app in WebView2 (WebHost.swift)
+rm -rf "$APP/Contents/Resources/LGPhones" && cp -R Resources/LGPhones "$APP/Contents/Resources/LGPhones"   # the service an LG game runs its own phones with (LGPhones.swift)
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
