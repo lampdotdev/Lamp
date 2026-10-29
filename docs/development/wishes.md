@@ -69,7 +69,9 @@ never from the wish's list, so a rename, an Undo or a restored version can't par
 apps, and every restore takes them in again at once (`Store.followRestored`, comparing folders and kinds,
 `Parts.match`: a part the version doesn't have is quit and then forgotten, one the person keeps open over unsaved work
 stays listed until it's closed, and one it brings back or changes is listed again). A wish's name is in its meta.json,
-which no version holds, so the versions that change it carry it (`Lamp-Name`, `Lamp-Renamed-From`), and Undo or going
+which no version holds, so the versions that change it carry it (`Lamp-Name`, `Lamp-Renamed-From`). It changes only through
+`Store.performRename`: Rename on the desk, the first request's name for an untitled wish, and the agent's `rename_app`
+when the person asks for a new name in the chat (in place, keeping the folder the turn works in). Undo or going
 back to a version gives back the name that version had (`Versions.name(at:in:)`), its parts with it. Lamp's own files
 (build.sh, the Info.plist lines) carry the name and what the wish's list makes of each app's building blocks, so a
 rename and every restore write them for every app of the wish, under the name the version gives, before the version is

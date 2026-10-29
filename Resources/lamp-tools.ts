@@ -24,6 +24,7 @@
  *   an app), the devices it's on and whether it's made as a web page or native code; the wish's other apps stay. The
  *   reply says how to adapt the code and gives a new app's rules.
  * - `remove_app`: takes one of the wish's apps away, by its folder; its versions keep it.
+ * - `rename_app`: gives the wish the name the person asked for, as Rename on the desk does.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
  * - `lampify`: gives an app made from someone's project on GitHub its credit at one pinned commit, the project's
@@ -614,6 +615,23 @@ const removeApp = defineTool({
 	},
 });
 
+const renameApp = defineTool({
+	...spec("rename_app"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_RENAME_URL;
+		if (!url) throw new Error("Lamp isn't available to change that.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 const connectors = defineTool({
 	...spec("connectors"),
 	async execute(_toolCallId, params, signal) {
@@ -740,6 +758,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
 	pi.registerTool(removeApp);
+	pi.registerTool(renameApp);
 	pi.registerTool(connectors);
 	pi.registerTool(lampify);
 	pi.registerTool(networkDevices);

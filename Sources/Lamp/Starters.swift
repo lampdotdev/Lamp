@@ -124,6 +124,22 @@ enum Starters {
         return parse(text, folder: project.dir)
     }
 
+    /// Where a remix keeps the starter.md of the starter it was made from, when it was remixed with no change asked:
+    /// its chat offers the same changes to try. Kept apart from starter.md, which says the app came with Lamp.
+    static func suggestionsFile(of project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/starter-suggestions.md") }
+
+    /// What an app's chat offers to change first: its starter's, or the one of the starter it was remixed from.
+    static func suggestions(of project: LampProject) -> Starter? {
+        if let starter = starter(of: project) { return starter }
+        guard let text = try? String(contentsOf: suggestionsFile(of: project), encoding: .utf8) else { return nil }
+        return parse(text, folder: project.dir)
+    }
+
+    /// The file holding what an app's chat offers to change first, for a remix of it to offer too.
+    static func suggestionsSource(of project: LampProject) -> URL? {
+        [file(of: project), suggestionsFile(of: project)].first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     /// The starter in a folder: its starter.md, with its tree beside it. Nil without a tree (not fetched), which is
     /// said once, since a build without it ships a starter short.
     static func read(_ folder: URL) -> Starter? {

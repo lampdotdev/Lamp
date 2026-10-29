@@ -544,6 +544,29 @@
     }
   },
   {
+    "name": "rename_app",
+    "label": "Rename the wish",
+    "description": "Gives the wish a new name, the way Rename on Lamp's desk does: on the desk, in the chat, on its installed apps and in their window titles, saved as a version of its own so Undo in the chat's toolbar gives the old name back. Its bundle ID stays, so the app keeps its settings and saved data. Call it whenever the person asks for a new name (\"call it Sprout\"), before changing anything else: a name written only into the app's code or headings leaves Lamp, the desk and the installed app under the old one. Only when they asked for it.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The new name, as the person gave it"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
     "name": "connectors",
     "label": "Connectors",
     "description": "Lists the services an app can connect to: the person's own accounts (Notion, Linear, Airtable, GitHub, Home Assistant and more) and open data (weather, exchange rates, food products), or, with service set, how to build on one. Call it before writing code for a service the person uses that the accounts on this device can't reach, or for weather, exchange rates or food data.",

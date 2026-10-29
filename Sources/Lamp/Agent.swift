@@ -57,7 +57,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -178,7 +178,8 @@ enum Agent {
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `plan` for what \
     you're building; `progress` for a line on how longer work is going; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
-    (the iPhone, the Mac or a TV), and `remove_app` when they want one of the wish's apps gone. A change of mind \
+    (the iPhone, the Mac or a TV), `remove_app` when they want one of the wish's apps gone, and `rename_app` when they \
+    ask for a new name, never only the name in its code or headings. A change of mind \
     ("never mind, make it a timer instead") changes the app the wish has, in its own code and, when what it's made for \
     changes, with `make_app_for` and its folder in `app`; one more app of another kind ("an Android app as well") is \
     `another`, only once they chose it when you asked them with `ask`, before changing anything; two apps of one kind \
