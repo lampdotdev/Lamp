@@ -24,7 +24,23 @@ pad.send({ ready: true });                       // JSON to the TV app, 16 KB at
 
 Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped. The number comes from the TV app once it's there (`onPlayer`), so show the state until then.
 
-On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game: `Lamp.controllers.start()`, then `onLink(fn(url))` for the address phones open, to show as a QR code (it changes every few minutes, and `fn` is called again each time), `onJoin`/`onLeave(fn(player))`, `onButton(fn(player, name, down))`, `onAxis(fn(player, name, x, y))`, `onMessage(fn(player, data))`, `onError(fn(message))`, `send(player, data)` (player 0 for every phone; 16 KB of JSON at most), `isHeld(player, name)`, `players()` and `stop()`. A phone that leaves or drops has every button it held let go before `onLeave`, and movement that arrives late is dropped, so the game never acts on a stale stick.
+On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game: `Lamp.controllers.start()`, then `onLink(fn(url))` for the address phones open, to show as a QR code (below; it changes every few minutes, and `fn` is called again each time), `onJoin`/`onLeave(fn(player))`, `onButton(fn(player, name, down))`, `onAxis(fn(player, name, x, y))`, `onMessage(fn(player, data))`, `onError(fn(message))`, `send(player, data)` (player 0 for every phone; 16 KB of JSON at most), `isHeld(player, name)`, `players()` and `stop()`. A phone that leaves or drops has every button it held let go before `onLeave`, and movement that arrives late is dropped, so the game never acts on a stale stick.
+
+### The join code
+
+Draw the code with `LampQR`, which lamp.js has (its comment says how): never write a QR encoder or load one. A join link carries a signed credential, so it's long (about 170 characters, more with a long name or host); `LampQR` fits any length a link has.
+
+```js
+var code = document.getElementById('join-code');   // a <canvas> in the join card
+Lamp.controllers.onLink(function (url) {             // before start(), so the first link is drawn too
+  try { LampQR.draw(code, url, { size: 240 }); joinNote.textContent = 'Scan to play'; }
+  catch (e) { joinNote.textContent = 'Couldn\'t draw the code: ' + e.message; }
+});
+Lamp.controllers.onError(function (message) { joinNote.textContent = message; });
+Lamp.controllers.start();
+```
+
+Show the join card from the start (say the game is getting ready for phones until the first link), and draw into the same canvas each time `onLink` calls again. A code that couldn't be drawn and phones that can't join (`start()` rejects, `onError`) each say so in the card; neither hides it as if the game had no phones. In a game drawn on a canvas (three.js, Phaser), put the join card in HTML over it, or draw `LampQR.matrix(url)` (its `size` and `dark(x, y)`) into the scene yourself, with a light border four modules wide.
 
 ## Files
 
@@ -58,4 +74,4 @@ A phone's page is not one of the wish's apps. When the wish has an iPhone, Mac o
 
 ## A second screen
 
-For a page that shows something beside the TV rather than steering it (a hand of cards, a scoreboard, a buzzer that needs no game), the TV page draws a QR code of `Lamp.phonePage(hash)`, the page's address with `#hash` after it, inside `Lamp.onPhonePage(fn)`: it's called at once when there's an address and again whenever it moves, so redraw the code there. It's null when the app has no `Phone/index.html`. `Lamp.phonePage` and `Lamp.onPhonePage` are a TV app's page's only: a game on Lamp's runtime draws its QR code of the address `Lamp.controllers.onLink` gives, so every phone that opens it joins as a player, and what each phone shows is what the game sends it (`send`). What the phone and the TV say to each other still goes through `Lamp.controllers` and `LampController` (`send` and `onMessage`, `sendFile` and `onFile`); nothing else carries messages between them.
+For a page that shows something beside the TV rather than steering it (a hand of cards, a scoreboard, a buzzer that needs no game), the TV page draws a QR code of `Lamp.phonePage(hash)` with `LampQR.draw`, the page's address with `#hash` after it, inside `Lamp.onPhonePage(fn)`: it's called at once when there's an address and again whenever it moves, so redraw the code there. It's null when the app has no `Phone/index.html`. `Lamp.phonePage` and `Lamp.onPhonePage` are a TV app's page's only: a game on Lamp's runtime draws its QR code of the address `Lamp.controllers.onLink` gives (the join code, above), so every phone that opens it joins as a player, and what each phone shows is what the game sends it (`send`). What the phone and the TV say to each other still goes through `Lamp.controllers` and `LampController` (`send` and `onMessage`, `sendFile` and `onFile`); nothing else carries messages between them.

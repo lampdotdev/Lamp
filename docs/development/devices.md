@@ -126,7 +126,10 @@ installer, license and password while Lamp waits for the Roku's restart, then wh
 comments, so a change to one of those is made to all of them. A declared kind asks for them by library in
 `app.declared.support` (`"web": "Web/lamp.js"`, `"brightscript": "components/Lamp"`); the TV kit always has the web one
 in its `Web/lamp.js`, the Xbox's integration asks for it too. The web library is plain ES5 with Promises
-(`DeviceSupport.webJS`, LampStore on localStorage); the BrightScript one runs each LampAI call in a Task node
+(`DeviceSupport.webJS`, LampStore on localStorage), and ends with `LampQR` (`DeviceSupport.qrJS`), which draws the QR
+code a page shows phones: Kazuhiko Arase's QR Code Generator (`Resources/WebLibraries/qrcode`, MIT, put there by
+`scripts/update-qrcode.sh` from one npm release, checked against its SHA-512), inside lamp.js with its license, since a
+join link with its credential is longer than the encoders the agent writes for itself tend to hold; the BrightScript one runs each LampAI call in a Task node
 (`LampAITask`), since a Roku refuses network calls on its render thread, and keeps LampStore in the registry. Lamp writes
 them before every turn and build (`DeviceSupport.write`, from `Template.writeOwnedFiles` and `writeSupport`), the agent
 can't delete them, and versions leave them out of their names and diffs. How an app reaches the gateway comes in two
