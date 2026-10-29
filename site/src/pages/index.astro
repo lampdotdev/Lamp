@@ -5,7 +5,7 @@ import ChangeStory from "../components/ChangeStory.astro";
 import RemixDialog from "../components/RemixDialog.astro";
 import { together } from "../lib/text";
 import { DOWNLOAD_URL } from "../lib/download";
-import type { Sleeve, Tape } from "../lib/tapes";
+import type { Sleeve } from "../lib/tapes";
 import { STARTERS } from "../lib/starters";
 import newYork from "../assets/starters/newyork.png";
 import laptopFill from "@phosphor-icons/core/assets/fill/laptop-fill.svg?raw";
@@ -30,7 +30,7 @@ import picture from "@phosphor-icons/core/assets/duotone/image-duotone.svg?raw";
 const pitch = "Start from scratch or an app/game someone made. Change it live. Run it wherever you want.";
 const description = `Remixable software. ${pitch} No code.`;
 
-// The screenshots the 3D tapes print on their labels (lib/tapes.ts), one for each starter.
+// The screenshots the 3D sleeves are printed with (lib/tapes.ts), one for each starter.
 const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { eager: true, import: "default" });
 const shot = async (id: string) => (await getImage({ src: pictures[`../assets/starters/${id}.png`], width: 1000, format: "webp" })).src;
 const shots: Record<string, string> = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => [starter.id, await shot(starter.id)])));
@@ -38,37 +38,36 @@ const shots: Record<string, string> = Object.fromEntries(await Promise.all(START
 /** The `d` of each path in one of Phosphor's icons, joined, to draw on a canvas. */
 const iconPath = (svg: string) => [...svg.matchAll(/ d="([^"]+)"/g)].map((match) => match[1]).join(" ");
 
-// New York's sleeve in the hero: its screenshot and where it plays on the front, the changes its starter suggests on
-// the back, and its printed "Remix me" opening the remix dialog for it (RemixDialog.astro), as a link to the
-// homepage with `?starter=newyork` would.
-const sleeve: Sleeve = {
-  title: "New York", by: "Made by Mr.doob", kind: "Game · 3D", line: "Walk, drive, bike or fly", shot: shots.newyork,
-  tweaks: ["Make it a snowy winter night", "Make it a lot more fun", "Move the city to the Moon"],
-  places: [
-    { label: "Mac", icon: iconPath(laptopFill) },
-    { label: "iPad", icon: iconPath(tabletFill) },
-    { label: "Xbox", icon: iconPath(controllerFill) },
-    { label: "TV", icon: iconPath(tvFill) },
-  ],
-  remix: "?starter=newyork",
+// Where something plays, as a sleeve's icons show it.
+const PLACES: Record<string, string> = {
+  Mac: iconPath(laptopFill), iPad: iconPath(tabletFill), Xbox: iconPath(controllerFill), TV: iconPath(tvFill),
 };
+const places = (labels: string[]) => labels.map((label) => ({ label, icon: PLACES[label] }));
 
-// The shelf: one stack of a few starters, each original with a remix of it under it, and a blank tape at the
-// bottom. Originals alternate their sleeves' two printings, with their screenshot on the spine; remixes are written
-// on in the marker colors, in turn.
-const SHELF = ["homehq", "newyork", "fireside", "localcrossings"];
+/** A starter's sleeve: the original's, or, given one of its changes, a remix's, its "Remix me" opening the remix dialog
+ * for the starter (RemixDialog.astro), as a link to the homepage with `?starter=` would, with a remix's change in it. */
 const inks = ["#b8264f", "#1f7a42", "#a8361f"];
-const tapes: Tape[] = [
-  ...SHELF.flatMap((id, i): Tape[] => {
+function sleeveOf(id: string, change?: { text: string; ink: string }): Sleeve {
+  const starter = STARTERS.find((starter) => starter.id === id)!;
+  const common = { title: starter.name, kind: starter.kind, shot: shots[id], tweaks: starter.tweaks, places: places(starter.places) };
+  return change
+    ? { ...common, look: "remix", by: `A remix of ${starter.name}`, line: change.text, ink: change.ink, treat: starter.treat,
+        remix: `?starter=${id}&ask=${encodeURIComponent(change.text)}` }
+    : { ...common, look: "original", by: `Made by ${starter.by}`, line: starter.about, remix: `?starter=${id}` };
+}
+
+// New York's sleeve in the hero.
+const sleeve: Sleeve = sleeveOf("newyork");
+
+// The shelf: the same sleeves for a few starters, each original with a remix of it under it, and a blank one at the
+// bottom; remixes are written on in the marker colors, in turn.
+const SHELF = ["homehq", "newyork", "fireside", "localcrossings"];
+const shelf: Sleeve[] = [
+  ...SHELF.flatMap((id, i) => {
     const starter = STARTERS.find((starter) => starter.id === id)!;
-    return [
-      { look: "original", stripes: i % 2 ? "cool" : "warm", title: starter.name, caption: `THE ORIGINAL · BY ${starter.by.toUpperCase()}`, side: `A${i + 1}`, shot: shots[id],
-        name: starter.name, by: starter.by, remix: `?starter=${id}` },
-      { look: "marker", title: starter.remix, caption: `REMIX OF ${starter.name.toUpperCase()}`, side: `B${i + 1}`, ink: inks[i % inks.length], shot: shots[id], treat: starter.treat,
-        name: starter.name, by: starter.by, remix: `?starter=${id}&ask=${encodeURIComponent(starter.remix)}` },
-    ];
+    return [sleeveOf(id), sleeveOf(id, { text: starter.remix, ink: inks[i % inks.length] })];
   }),
-  { look: "blank", title: "your idea here…", caption: "" },
+  { look: "blank", title: "your idea here…", by: "", kind: "", line: "", tweaks: [], places: [] },
 ];
 
 // What Lamp can put something on today, as people name their things, from what a visitor most likely has to what
@@ -144,27 +143,28 @@ const devices = [
       </div>
     </section>
 
-    <!-- From the shelf: a stack of tapes, in 3D once lib/tapes.ts has drawn it, each original with its screenshot on
-         its spine and a remix of it under it. A tape that's clicked flies out laid out as the hero's sleeve, its "Remix me" opening the remix dialog.
-         Without WebGL, and for screen readers, the same tapes as a list, as tall as it needs, each linking to its remix;
-         a keyboard reaches a button for each tape that opens the remix dialog for it, as its "Remix me" does. -->
+    <!-- From the shelf: a stack of sleeves, in 3D once lib/tapes.ts has drawn it, the hero's sleeve for each starter,
+         lying flat with its spine out, each original with a remix of it under it. One that's clicked comes out and
+         stands up as the hero's does, its "Remix me" opening the remix dialog. Without WebGL, and for screen readers,
+         the same sleeves as a list, as tall as it needs, each linking to its remix; a keyboard reaches a button for each
+         that opens the remix dialog for it, as its "Remix me" does. -->
     <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
-      <div class="tape-host order-last min-h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:min-h-[40rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
+      <div class="tape-host order-last min-h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:min-h-[40rem] lg:order-none" data-tape-stack data-sleeves={JSON.stringify(shelf)}>
         <ul class="tape-fallback flex h-full flex-col justify-center gap-2">
           {
-            tapes.map((tape) => (
-              <li class:list={["flex min-h-14 flex-col justify-center px-4 py-2", tape.look === "marker" ? "bg-[#f7f2e3] ring-1 ring-tape/20" : "bg-[#26241f] text-paper"]}>
-                {tape.remix ? (
-                  <a href={`/${tape.remix}`} data-remix-link class:list={["underline-offset-4 hover:underline", tape.look === "original" ? "text-lg font-black" : "font-marker text-lg", tape.look === "marker" && "text-[#b8264f]"]}>{tape.title}</a>
+            shelf.map((item) => (
+              <li class:list={["flex min-h-14 flex-col justify-center px-4 py-2", item.look === "remix" ? "bg-[#f7f2e3] ring-1 ring-tape/20" : "bg-[#26241f] text-paper"]}>
+                {item.remix ? (
+                  <a href={`/${item.remix}`} data-remix-link class:list={["underline-offset-4 hover:underline", item.look === "original" ? "text-lg font-black" : "font-marker text-lg text-[#b8264f]"]}>{item.look === "remix" ? item.line : item.title}</a>
                 ) : (
-                  <span class="font-marker text-lg">{tape.title}</span>
+                  <span class="font-marker text-lg">{item.title}</span>
                 )}
-                {tape.caption && <span class="text-[11px] font-bold tracking-wider">{tape.caption}</span>}
+                {item.by && <span class="text-[11px] font-bold tracking-wider uppercase">{item.by}</span>}
               </li>
             ))
           }
         </ul>
-        {tapes.map((tape, i) => tape.remix && <button type="button" class="tape-control" data-tape={i}>Remix {tape.look === "marker" ? `${tape.name}: ${tape.title}` : tape.title}</button>)}
+        {shelf.map((item, i) => item.remix && <button type="button" class="tape-control" data-sleeve={i}>Remix {item.look === "remix" ? `${item.title}: ${item.line}` : item.title}</button>)}
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
         <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>

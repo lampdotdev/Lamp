@@ -9,13 +9,14 @@ sleeves. The stripes are green to magenta, in that order, never blue or purple (
 reds under its words). They're the hero's whole field, on the slant, with plain white words kept to the bands they
 read on; elsewhere they sit beside headings (a tab above each), never on a heading's letters. "Change it live" shows
 the making, not the app in use: a plain Mac window changing as it's asked from Lamp's chat beside it
-(`ChangeStory.astro`). New York's sleeve in the hero (its screenshot, where it plays and a "Remix me" button that
-opens the remix dialog for it on the front, the changes it suggests on the back) and the stack of tapes in "From the shelf"
-(a few of the starters in `src/lib/starters.ts`, each original with its screenshot on its spine and a remix of it
-under it) are three.js (`src/lib/tapes.ts`), drawn
-from canvases in the page's fonts: they're lit with soft shadows, lean toward the pointer and turn over or fly out
-when clicked (a chosen tape laid out as the sleeve is, its "Remix me" opening the remix dialog for that starter, with
-a remix's change already in its box), on a canvas that runs past its box (so nothing is cropped) and lets the pointer through, over a flat HTML
+(`ChangeStory.astro`). New York's sleeve in the hero and the stack of sleeves in "From the shelf" are one sleeve
+(`src/lib/tapes.ts`, filled from `src/lib/starters.ts`), three.js drawn from canvases in the page's fonts: its
+screenshot shown whole, where it plays and a "Remix me" that opens the remix dialog on the front (a remix's change in
+marker there too), what it is and the changes its starter suggests on the back, and the screenshot, the name (or a
+remix's change) and the stripes on its spine. On the shelf the sleeves lie flat, spines out, each original with a
+remix of it under it; one that's clicked stands up as the hero's does. They're lit with soft shadows, lean toward the
+pointer and turn over when clicked (an arrow round the right side shows which way while the pointer is on one), on a canvas that runs past its box (so nothing is cropped) and lets the pointer
+through, over a flat HTML
 version kept for screen readers and browsers without WebGL. The device icons are Phosphor's duotone set, with the
 fill in the sleeve's colors. Apps and games get the same weight on it, and
 every example is a real starter (`Resources/Starters`), with the pictures and changes it ships with; the devices it
