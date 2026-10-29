@@ -12719,8 +12719,8 @@ final class Store: ObservableObject {
     }
 
     /// Whether a build gives the app itself App Intents, read off its last build, which `deploy` copies and so never
-    /// takes them out of: it has them, or there's none yet, or it was made without Xcode's tool (build.sh's `intents`
-    /// leaves its folder in .build/appintents only when it ran). A build that ran the tool and wrote none writes none
+    /// takes them out of: it has them, or there's none yet, or it was made without Xcode's tool (build.sh empties
+    /// .build/appintents at the start of each build, and its `intents` leaves a folder there only when it ran). A build that ran the tool and wrote none writes none
     /// again: the code that imports App Intents declares none in the app, as when they're all the widget's, which
     /// keeps its own whatever the app is signed with.
     nonisolated static func buildCanGiveIntents(_ project: LampProject) -> Bool {

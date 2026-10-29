@@ -382,7 +382,9 @@ enum Template {
         let plist = ios ? "$bundle/Info.plist" : "$bundle/Contents/Info.plist"
         return """
         # App Intents (Shortcuts, Siri, Spotlight, a widget's buttons): Xcode's tools write what the code declares into the app.
+        # What they did is kept in .build/appintents for this build alone: Lamp reads there whether they ran.
         INTENTS=""
+        rm -rf .build/appintents
         if grep -rqs --include='*.swift' -e 'import AppIntents' Sources Widget; then
           if PROCESSOR="$(xcrun -f appintentsmetadataprocessor 2>/dev/null)"; then
             INTENTS=1
