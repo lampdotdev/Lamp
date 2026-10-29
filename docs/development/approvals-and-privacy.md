@@ -27,14 +27,6 @@ A capability given to one engine must be given to all of them that can take it, 
   never the command (`Agent.codexNote`, and the reviewer is asked for a rationale it can pass on). Under Always Lamp's hook asks about every Codex command
   and under Never there's no hook; in both a command needing more than the sandbox is refused (`approval_policy="never"`).
   pi keeps Lamp's own check (`CommandRisk`).
-  Every engine's shell commands also go through the downloads check (`Fetched`), in the hook that runs before each one
-  (pi's approval, Claude Code's `claude-confine`, Codex's `codex-devices`; every engine's under Always): a command the
-  decision model says may fetch from the internet, or copy, move, link or unpack what was fetched, is written down in
-  Lamp's own folder before the answer goes back, and every later command of the wish is checked against those
-  commands and gets Lamp's card when it may run, load or make executable something they saved. What can't be decided
-  counts against the command (written down; with records, the card), nothing is dropped for age or number, an Allow
-  covers that one command, and a deleted wish leaves its records to every other wish. It is the model reading
-  commands, not a record of files: a chain it doesn't connect runs. Under Never it is off with the rest.
   Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
   that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
