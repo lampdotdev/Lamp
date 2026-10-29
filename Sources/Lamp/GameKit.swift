@@ -1081,6 +1081,7 @@ extension Agent.Rules {
     make_app_for with the game's folder in `app` ("." when it's the wish's own folder), `kind` "game", `made` "web" and \
     `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", "xbox-one"…: a page \
     goes wherever the table of devices gives a web host); it stays the same game, and the wish's other apps stay as they are.
+    \(pageCopies)
     """ }
 
     /// How a page (a web game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the

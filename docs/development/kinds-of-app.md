@@ -31,13 +31,38 @@ apart (`Runtime.markBuilt` writes this Mac's and the simulator's in their copies
 `LampProject.at(_:)` is the app as it would be there, for building or opening it without moving Try On. Opening a place
 whose build is older than the code builds it first (`Store.open`). After anything that changed a wish (a request, Undo,
 a restore, an update for this Lamp: every hold's end, `Store.finish`), `Store.updatePlaces`, once the wish has been left
-alone for a moment (so a run of requests builds each place once), builds each other place that had a build and is behind, and puts it where Lamp reaches it without opening anything: this Mac, a booted simulator,
-Lamp's running emulator, or the copy open there, which takes it as a request's change would (a page's Mac copy waits
-for Reload). The chat's status lines of that work are taken away again; what it couldn't reach is said in one line, and
-is tried again every couple of minutes, a few times, and otherwise at the next change or when opened there. A copy open
-on Android counts only on its own place: the phone's and the TV's share a package and Lamp's emulators a serial. A TV or an Xbox is never reached this way: putting an app
-on one opens it over whatever it shows. A request sent meanwhile ends the work, which starts again after it. Try On says
-beside a place that's behind that it's updated when opened (`placesBehind`).
+alone for a moment (so a run of requests builds each place once; a second when only pages changed, which every open
+copy takes as it is, else 20), first puts a page's change into each copy open on the person's other devices through the
+wish's room (`PageCopies`, below), then builds each other place that had a build and is behind, and puts it where Lamp
+reaches it without opening anything: this Mac, a booted simulator, Lamp's running emulator, or the copy open there,
+which takes it as a request's change would (a page's copy on this Mac or in the simulator takes its page in place,
+`PageLive`; anything else waits for Reload). The chat says in one line where a page's change went; the status lines of
+that work are taken away again; what it couldn't reach is said in one line, and is tried again every couple of minutes, a
+few times, and otherwise at the next change or when opened there. A copy open on Android counts only on its own place:
+the phone's and the TV's share a package and Lamp's emulators a serial. A TV or an Xbox is never built for this way:
+putting an app on one opens it over whatever it shows. A request sent meanwhile ends the work, which starts again after
+it. Try On says beside a place that's behind that it's updated when opened (`placesBehind`).
+
+**A page's change in every open copy.** A kind whose change is new web files (`Target.changesAreWeb`: a screen, a web
+app, a web game, a TV app) has each build of its page record its files by hash, and the hash of everything else
+(`PageCopies.record`, from `Runtime.markBuilt`). A copy of it open on another device (an iPad, a TV, the Xbox, an Android
+device) is in the wish's room as it uses the wish, and Lamp sends it every file that differs from its place's build, as
+Lamp's own word through the relay (`Relay.say`, from the relay's name, which no app may take), in pieces under a
+message's size; lamp.js puts them together and takes them in place ("A change while it's open" in lamp.js,
+`TVTemplate.pageChangeJS`): stylesheets alone are swapped as the page runs; anything else opens the page again from the
+new files, kept for the session, which lamp.js, the page's first script, puts in place of the copy's own before any of
+its scripts run, so what the page saved stays. Where each copy is comes from the device it says (`PageCopies.place`);
+this Mac's and the simulator's copies take changes from Lamp itself (`PageLive`), and the preview is Lamp's own. A copy
+whose place has no record (built by an earlier Lamp), a change of anything but the page, a script before lamp.js, a
+module script or more than 3 MB of files waits for Reload (`PageCopies.cannot`), and the chat shows its Reload line
+(`Store.placesAwaitReload`).
+
+**Reload is every place.** Reload, in the app's title bar or the chat's line, puts the change on every place of the wish
+the person has it on and Lamp can reach (`Store.reloadEverywhere`): this Mac, the booted simulator and Lamp's running
+emulator (a copy open there opens again with it; one that isn't is only given it), and each device of the person's Lamp
+put the app on (`Runtime.placed`: a TV, the Xbox, an iPhone or iPad, an Android device, recorded as each install there
+works), where it's installed and opened as Play does, since Reload is the person's go-ahead. The chat says in one line
+where it went and which places couldn't be reached.
 
 
 ## The table of devices

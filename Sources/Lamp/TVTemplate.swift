@@ -3656,6 +3656,16 @@ extension Agent.Rules {
     files as the app grows (scripts, styles, pictures), loaded from index.html with relative paths. File names use \
     letters, digits, dots, dashes and underscores only. Web/lamp.js belongs to Lamp and is rewritten before every \
     build: never edit it, and keep index.html loading it before the app's own scripts.
+    """ + "\n" + pageCopies
+
+    /// Where a page's change goes (`PageCopies`, `PageLive`, `Store.reloadEverywhere`): every page's edit rule ends with
+    /// it (a screen's, a web app's, a web game's, a TV app's), so it's said once.
+    static let pageCopies = """
+    - A change of the page goes into every copy of it that's open (its window on this Mac, a simulator, an iPad, a \
+    TV, the Xbox, an Android device) as soon as your turn ends, each keeping what it saved, without a build or the \
+    person doing anything; a copy that can't take it as it is (a change of Sources/, or of a script that runs before \
+    lamp.js) waits for the person's Reload, which puts it on every device they have the app on. So never say a \
+    change reaches only where Try On points.
     """
 
     static let tvFrameworks = """
