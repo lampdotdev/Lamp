@@ -295,7 +295,7 @@ enum TVs {
             throw Failure(message: "\(record.name) hasn't let this Mac in yet: enter its Developer Mode passphrase in its setup.")
         }
         say("Packaging \(project.name) for \(record.name)…")
-        let package = try await TVPackage.ipk(for: project, staged: staged)
+        let package = try await TVPackage.ipk(for: project, staged: staged, phones: try LGPhones.service(for: project, on: record))
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         say("Putting \(project.name) on \(record.name)…")
         try await WebOS.install(package, appID: TVTemplate.webOSID(for: project), on: record)
@@ -315,7 +315,7 @@ enum TVs {
     /// Copies the app's web files into Lamp's folder, as Devices.stage does for a phone: by a command under the app's
     /// own sandbox, so it reads only the app's folder, links kept as links, then none allowed. What the preview shows and
     /// what goes on a TV are only the app's own files. Its phone page, if it has one, is copied beside them the same way
-    /// and never goes in a package. Gives back the copy of the web files.
+    /// and goes in a package only inside an LG game's phone service (`LGPhones`). Gives back the copy of the web files.
     static func stage(_ project: LampProject, folder: String = TVTemplate.webFolder) async throws -> URL {
         let fm = FileManager.default
         let dir = stagingFolder(for: project)
@@ -510,7 +510,9 @@ enum TVPackage {
     }
 
     /// An LG package (`.ipk`): an ar archive of the package's version, its control file and its data, as LG's packager makes it.
-    static func ipk(for project: LampProject, staged: URL) async throws -> URL {
+    /// `phones`: the game's own phone service (`LGPhones`), in the package beside the app, as LG's packager puts an app's
+    /// services, with the game's lamp.js naming it.
+    static func ipk(for project: LampProject, staged: URL, phones: LGPhones.Service? = nil) async throws -> URL {
         let fm = FileManager.default
         let id = TVTemplate.webOSID(for: project)
         let work = fm.temporaryDirectory.appendingPathComponent("lamp-ipk-\(UUID().uuidString)")
@@ -520,16 +522,32 @@ enum TVPackage {
         try fm.createDirectory(at: info, withIntermediateDirectories: true)
         try fm.createDirectory(at: work.appendingPathComponent("control"), withIntermediateDirectories: true)
         var size = 0
-        for (path, data) in DeviceSupport.fill(try files(in: staged), for: project) where path != "appinfo.json" {
+        let filled = DeviceSupport.fill(try files(in: staged), for: project)
+        // A game whose lamp.js comes from before the service (built by an earlier Lamp, not built since) asks Lamp for its
+        // phones, so it goes as it always has, without one.
+        let service = filled.first { $0.path == "lamp.js" }.flatMap { LGPhones.names($0.data) ? phones : nil }
+        for (path, data) in filled where path != "appinfo.json" {
             let url = app.appendingPathComponent(path)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: url)
-            size += data.count
+            var written = data
+            if path == "lamp.js", let service { written = try LGPhones.naming(data, service: service.id) }
+            try written.write(to: url)
+            size += written.count
+        }
+        if let service {
+            let folder = work.appendingPathComponent("data/usr/palm/services/\(service.id)")
+            for (path, data) in service.files {
+                let url = folder.appendingPathComponent(path)
+                try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url)
+                size += data.count
+            }
         }
         try Data(TVTemplate.webOSAppInfo(for: project).utf8).write(to: app.appendingPathComponent("appinfo.json"))
         if let icon = await icon(for: project, size: 80, in: work) { try icon.write(to: app.appendingPathComponent("icon.png")) }
         if let large = await icon(for: project, size: 130, in: work) { try large.write(to: app.appendingPathComponent("largeIcon.png")) }
-        let packageInfo = ["app": id, "id": id, "loc_name": project.name, "package_format_version": 2, "vendor": "Lamp", "version": "1.0.0"] as [String: Any]
+        var packageInfo = ["app": id, "id": id, "loc_name": project.name, "package_format_version": 2, "vendor": "Lamp", "version": "1.0.0"] as [String: Any]
+        if let service { packageInfo["services"] = [service.id] }
         try JSONSerialization.data(withJSONObject: packageInfo, options: [.sortedKeys]).write(to: info.appendingPathComponent("packageinfo.json"))
         let control = """
             Package: \(id)

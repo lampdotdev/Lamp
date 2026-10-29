@@ -11605,7 +11605,13 @@ final class Store: ObservableObject {
         }
         // The page stopping its controllers: Lamp's sessions end with what they're for (the preview closing, the app no
         // longer set to open on a TV), not with this; a game on the Mac answers it itself.
-        if ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any])?["stop"] as? Bool == true { return (200, [:]) }
+        let asked = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        if asked["stop"] as? Bool == true { return (200, [:]) }
+        // A page that chose the game itself as its phones' host (`start({ host: 'game' })`) and reached Lamp has no host of
+        // its own here: it hears so, and Lamp never hosts its phones in the game's place.
+        if asked["host"] as? String == "game" {
+            return (409, ["error": "This copy of the game has no host of its own for phones here: start({ host: 'lamp' }) has Lamp host them."])
+        }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         // A game's copy on this Mac runs its own phones; one that asks here was built by an earlier Lamp.
         if !request.fromPreview, !request.fromNetwork, project.platform.target.takesPhones {
