@@ -37,7 +37,6 @@ struct WishDesk: View {
     private var panelFits: Bool { deskWidth - 220 - 40 - Self.panelWidth >= Self.listWithPanel }
     @AppStorage("deskSort") private var column = DeskList.Column.name
     @AppStorage("deskAscending") private var ascending = true
-    @AppStorage("deskOnlyRemixes") private var onlyRemixes = false
     /// Lamp has looked on the network before, so macOS has asked about it: from then on the desk looks for devices
     /// each time it's shown (`lookForDevices`).
     @AppStorage(Store.localNetworkAskedKey) private var lookedBefore = false
@@ -54,10 +53,7 @@ struct WishDesk: View {
     /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
     private var wishes: [LampProject] { store.wishes.filter { !$0.isDeviceSetup } }
 
-    private var rows: [DeskList.Row] {
-        let all = DeskList.rows(wishes, entries: entries, by: column, ascending: ascending)
-        return onlyRemixes ? all.filter(\.remix) : all
-    }
+    private var rows: [DeskList.Row] { DeskList.rows(wishes, entries: entries, by: column, ascending: ascending) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -119,15 +115,13 @@ struct WishDesk: View {
         }
     }
 
-    /// The filters, then the person's devices: what a new wish can be for. Settings at the foot. Its first line starts
+    /// The person's devices: what a new wish can be for. Settings at the foot. Its first line starts
     /// where the bar does beside it.
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    filter("Everything", count: wishes.count, on: !onlyRemixes) { onlyRemixes = false }
-                    filter("Your remixes", count: rows(remixesOnly: true), on: onlyRemixes) { onlyRemixes = true }
-                    DeskDevices(wishFor: wishFor).padding(.top, 24)
+                    DeskDevices(wishFor: wishFor)
                 }
                 .padding(.horizontal, 12).padding(.top, Self.top).padding(.bottom, 20)
             }
@@ -146,27 +140,6 @@ struct WishDesk: View {
         .frame(width: 220)
         .background(Paper.panel)
         .overlay(alignment: .trailing) { Self.separator }
-    }
-
-    private func rows(remixesOnly: Bool) -> Int {
-        DeskList.rows(wishes, entries: entries, by: column, ascending: ascending).filter(\.remix).count
-    }
-
-    private func filter(_ name: String, count: Int, on: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Text(name).fontWeight(on ? .heavy : .regular)
-                Spacer()
-                Text("\(count)").foregroundStyle(Paper.muted)
-            }
-            .font(.system(size: 14))
-            .foregroundStyle(Paper.ink)
-            .padding(.horizontal, 10).frame(height: 32)
-            .background(Paper.ink.opacity(on ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     private var list: some View {
@@ -1246,12 +1219,12 @@ extension Store {
     }
 
     /// Start Again from the Original: the wish's files go back to the version it arrived as, as a new version (so this
-    /// too is undone with Undo), and it opens with its chat, which says so.
-    func startAgain(_ project: LampProject) async {
+    /// too is undone with Undo), and it opens with its chat, which says so (`opening`; from the chat it's open already).
+    func startAgain(_ project: LampProject, opening: Bool = true) async {
         guard let arrival = await original(toStartAgain: project) else { return }
         // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
         ContributeCards.shared.close(project)
-        open(fromDesk: project)
+        if opening { open(fromDesk: project) }
         await restore(project, to: arrival)
     }
 

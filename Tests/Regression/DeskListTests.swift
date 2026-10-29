@@ -12,8 +12,7 @@ final class DeskListTests: XCTestCase {
                   changed: Date(timeIntervalSince1970: changed), identity: identity, original: original)
     }
 
-    /// A remix made here comes right after its original, whatever the sort puts between them, says it's the person's, and is
-    /// what Your remixes lists.
+    /// A remix made here comes right after its original, whatever the sort puts between them, says it's the person's.
     func testRemixesSitUnderTheirOriginal() {
         let york = wish("New York"), snowy = wish("Snowy"), buzzer = wish("Buzzer")
         let entries = [york.id: entry(york, identity: "A", starter: true, author: "Mr.doob"),
@@ -23,8 +22,6 @@ final class DeskListTests: XCTestCase {
         XCTAssertEqual(rows.map(\.id), ["buzzer", "new york", "snowy"])
         XCTAssertEqual(rows.map(\.nested), [false, false, true])
         XCTAssertEqual(rows.map(\.madeBy), ["Lamp", "Mr.doob", "You"])
-        // Only the remix is in Your remixes: a starter changed in place isn't one.
-        XCTAssertEqual(rows.map(\.remix), [false, false, true])
     }
 
     /// Sorting by when they changed puts the latest first, and a remix still follows its original.

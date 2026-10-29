@@ -72,8 +72,6 @@ struct DeskList {
         let madeBy: String
         /// It's a remix of the row above it, or of another remix of that one.
         let nested: Bool
-        /// A new wish made from another with Remix as a New Wish: what Your remixes lists. A wish changed in place isn't one.
-        let remix: Bool
         var id: String { project.id }
     }
 
@@ -115,9 +113,7 @@ struct DeskList {
         var seen = Set<String>()
         func add(_ project: LampProject, nested: Bool) {
             guard seen.insert(project.id).inserted else { return }
-            let entry = entries[project.id]
-            result.append(Row(project: project, entry: entry, madeBy: made(project), nested: nested,
-                              remix: entry?.remixedHere == true || parent(project) != nil))
+            result.append(Row(project: project, entry: entries[project.id], madeBy: made(project), nested: nested))
             for child in (children[project.id] ?? []).sorted(by: before) { add(child, nested: true) }
         }
         for project in projects.filter({ parent($0) == nil }).sorted(by: before) { add(project, nested: false) }

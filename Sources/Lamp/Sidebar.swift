@@ -477,7 +477,9 @@ final class SidebarServer {
             let versions = versions(for: project, busy: busy)
             state.versions = versions.list
             state.hasEarlierVersions = versions.more
-        case .info: state.info = AppInfoView.sections(for: project, models: AppModels.load(project), store: store)
+        case .info:
+            state.info = AppInfoView.sections(for: project, models: AppModels.load(project), store: store,
+                                              changedFromOriginal: changedFromOriginal(project, busy: busy, lines: log.count))
         case nil: break
         }
         state.sharing = sharing.removeValue(forKey: project.id)
@@ -602,6 +604,25 @@ final class SidebarServer {
     private var panels: [String: SidebarPanel] = [:]
     /// The wish's file after Share…, until it's been sent.
     private var sharing: [String: SidebarSharing] = [:]
+
+    /// Whether each wish has changed since it arrived, for its info panel's credits, read again (it asks git) when a turn
+    /// starts or ends and when the chat changes.
+    private var originals: [String: (key: String, changed: Bool)] = [:]
+
+    private func changedFromOriginal(_ project: LampProject, busy: Bool, lines: Int) -> Bool {
+        let key = "\(busy) \(lines)"
+        let known = originals[project.id]?.changed ?? false
+        if originals[project.id]?.key != key {
+            originals[project.id] = (key, known)
+            Task { [weak self] in
+                let changed = await Store.shared.original(toStartAgain: project) != nil
+                guard let self, self.originals[project.id]?.key == key else { return }
+                self.originals[project.id] = (key, changed)
+                if changed != known { self.scheduleUpdate() }
+            }
+        }
+        return known
+    }
 
     /// What the toolbar knows of each app's history, read again as Lamp's window reads it: when a turn starts or ends
     /// and when the chat changes.

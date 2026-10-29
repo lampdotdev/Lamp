@@ -4,7 +4,7 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 
 Lamp's window is the desk and only the desk (`WishDesk`, `Desk.swift`): no wish's chat is ever drawn in it. It's drawn
 on Lamp's paper (`Paper`, in LampSidebarKit, which the welcome and the chat draw from too): the person's wishes in one
-list, the place to make a new one above it, and down the side the filters and the person's devices. Everything someone
+list, the place to make a new one above it, and down the side the person's devices. Everything someone
 makes with Lamp is a **wish** in what they read; a wish may be made of an app, a widget, a menu bar item, a watch app,
 so "app" stays where it means that piece. A wish is a thing to change as much as to use, and it may run in several
 places, so the desk shows none of a Mac's icon grid and makes no difference between a game and an app.
@@ -18,8 +18,8 @@ Who made it is "You" for what was made or remixed here, the author of the work a
 names none), or "Shared" for a wish that came from someone else (`DeskList.madeBy`). Clicking a column's name sorts by it,
 and again the other way, kept between launches; nothing is dragged into an order. A remix made here sits under its
 original, whatever the sort, joined to it by the stripes' line (`DeskList.rows`: by the last link of its chain,
-`Credits.remixOf`, naming the original's identity). The filters are Everything and Your remixes: the wishes made with
-Remix as a New Wish… (`DeskList.Row.remix`), never one changed in place. Open (or a double click) opens it to use and change at once (`Store.open(fromDesk:)`), always with its chat
+`Credits.remixOf`, naming the original's identity). The list has no filters: a remix is found under its original, and
+most wishes are changed in place rather than remixed. Open (or a double click) opens it to use and change at once (`Store.open(fromDesk:)`), always with its chat
 beside whatever shows it: a Mac app with windows opens with its chat beside it (`Store.change`, below; a notification's
 click goes the same way, `Store.openChat`); a wish that opens no Mac window is used (`Store.use`) with its chat in Lamp's
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
@@ -49,8 +49,9 @@ or a wish opened from GitHub or a file is already the person's own copy, so the 
 
 A wish that arrived from somewhere and has been changed since (`Store.original(toStartAgain:)`: its files differ from
 the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
-original" in the panel, with Start Again beside it; the same is Start Again from the Original in its menu
-(`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. Send Changes Back… is
+original" in the panel, with Start Again beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
+creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Again from the Original in
+its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. Send Changes Back… is
 in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
 wish's chat as the chat's Share menu does. A remix link from the site lands the same way: it opens the person's own
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
@@ -71,7 +72,7 @@ a window of its own over the desk, so the chat is laid out once, at its real siz
 motion, or the chat opens on another screen than the bar's, it opens at once. "Not sure?" beside the bar opens a few
 ideas (`DeskIdeas`) and Help Me Find One.
 
-**The devices** (`DeskDevices`) are down the side under the filters, since a wish for the TV or the phone is what Lamp
+**The devices** (`DeskDevices`) are down the side, since a wish for the TV or the phone is what Lamp
 is for and Settings is no place to find that out. Until Lamp has looked on the network (`localNetworkAsked`) they're an
 invitation to, whose Find My Devices is the look macOS asks about; from then on the desk looks each time it's shown or
 Lamp comes to the front, at most once a minute (`lookForDevices`), and the list is this Mac, then the person's own, then
