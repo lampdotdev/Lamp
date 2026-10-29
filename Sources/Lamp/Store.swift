@@ -11404,9 +11404,9 @@ final class Store: ObservableObject {
     }
 
     /// A game set to open on the person's Xbox (its integration's device: the one chosen under Try On, else theirs),
-    /// which Lamp can't watch either. A package Lamp makes now runs its phones in the console's host and never asks
-    /// here (lamp_controllers.h); Lamp serves only a package made by an earlier Lamp, whose host opens the page's link
-    /// to Lamp's relay for it.
+    /// which Lamp can't watch either. Lamp serves the phones of a game that chose Lamp (`start({ host: 'lamp' })`, or no
+    /// host), and of a package made by an earlier Lamp; the console's host opens the page's link to Lamp's relay for it.
+    /// A game that chose its own host runs them in the console's host instead (lamp_controllers.h) and doesn't ask here.
     static func onDevice(_ project: LampProject) -> Bool {
         project.platform.target.takesPhones && project.onDevice
     }
@@ -11569,9 +11569,15 @@ final class Store: ObservableObject {
         guard project.hasTV || project.platform.target.takesPhones else {
             return (409, ["error": "This app was built by an earlier Lamp: open it from Lamp on your Mac to update it, and it joins the TV app's game again."])
         }
+        let asked = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        // A page that chose the game's own host (`start({ host: 'game' })`) is told this isn't it, rather than given
+        // Lamp's relay in its place: the game decides where its phones go.
+        if asked["host"] as? String == "game" {
+            return (409, ["error": "The game's own host isn't here: Lamp answered. Start with host 'lamp', or play where the game hosts its phones."])
+        }
         // The page stopping its controllers: Lamp's sessions end with what they're for (the preview closing, the app no
         // longer set to open on a TV), not with this; a game on the Mac answers it itself.
-        if ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any])?["stop"] as? Bool == true { return (200, [:]) }
+        if asked["stop"] as? Bool == true { return (200, [:]) }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         // A game's copy on this Mac runs its own phones; one that asks here was built by an earlier Lamp.
         if !request.fromPreview, !request.fromNetwork, project.platform.target.takesPhones {

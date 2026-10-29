@@ -93,11 +93,15 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
               let url = URL(string: lampGateway + path) else {
             return replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
         }
-        // A game's phones are its own, on the Mac, the iPhone and the iPad: it serves their page and runs their relay
-        // itself (`LampControllers`), so they go on playing, and new ones join, whether Lamp is open or not. Never asked
-        // of Lamp: a game that can't open its own says why, rather than lean on Lamp after all.
+        // A game's phones on the Mac, the iPhone and the iPad are hosted here: it serves their page and runs their relay
+        // itself (`LampControllers`), so they go on playing, and new ones join, whether Lamp is open or not. A game that
+        // chose Lamp's host (`start({ host: 'lamp' })`) is told Lamp doesn't host them here, and one that can't open its
+        // own says why: neither is handed the other host in its place.
         if path == "/app/controller" {
             let body = (call["body"] as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any] ?? [:]
+            if body["host"] as? String == "lamp", body["stop"] as? Bool != true {
+                return replyHandler(["status": 409, "body": #"{"error":"Lamp doesn't host this game's phones on this device: start with host 'game'."}"#], nil)
+            }
             let reply: @Sendable (Int, [String: Any]) -> Void = { status, answer in
                 let text = (try? JSONSerialization.data(withJSONObject: answer)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 DispatchQueue.main.async { replyHandler(["status": status, "body": text], nil) }

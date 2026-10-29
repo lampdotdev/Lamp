@@ -20,12 +20,13 @@
 // Chromium's web view never shakes the controller, so lamp.js sends a page's vibrationActuator calls here (`rumble`
 // messages), and the host plays them with Windows.Gaming.Input, as a native game's lamp_rumble does.
 //
-// A game's phones play it with no Lamp (lamp_controllers.h): as Lamp.controllers starts, the host serves the game's phone
-// page from the package's Phone folder and runs the relay its phones join, each on a port the system gives it, with a
-// key made for that session and kept only in memory. The page asks the host for its session (`controllers` messages,
-// never Lamp), and its own link to the relay is carried over the host's pipe straight into the relay, never over the
-// network, so only the page can be the game's host. Stopping, the console setting the app aside, and the page going
-// away end the session: listeners close, players are let go and the key is forgotten; the page's next ask opens a new one.
+// A game that chose its own host for its phones (`Lamp.controllers.start({ host: 'game' })`) plays with no Lamp
+// (lamp_controllers.h): the host serves the game's phone page from the package's Phone folder and runs the relay its
+// phones join, each on a port the system gives it, with a key made for that session and kept only in memory. The page
+// asks the host for its session (`controllers` messages), and its own link to the relay is carried over the host's
+// pipe straight into the relay, never over the network, so only the page can be the game's host. Stopping, the console setting the app aside, the page going
+// away, and no ask from it for 45 s end the session: listeners close, players are let go and the key is forgotten;
+// the page's next ask opens a new one.
 //
 // The page is laid out at 1920x1080 CSS pixels, as in Lamp's preview on the Mac and as the rules say: the console's
 // web view would otherwise lay it out at 1280x720 and scale it up, so the host zooms it out to match.
@@ -706,6 +707,10 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     // The page's asks, one at a time, so a stop and the start after it happen in the order they were asked.
     std::deque<PhoneAsk> phone_asks;
     bool phone_busy = false;
+    // When the page last asked for its session (every 15 s while it plays): a session no page asks for any more is
+    // ended, even if it never had a host, so a page gone without stopping leaves nothing listening.
+    int64_t phone_asked_at = 0;
+    static constexpr int64_t phone_unasked_ms = 45000;
 
     void phone_ask(PhoneAsk ask) {
         phone_asks.push_back(ask);
@@ -718,6 +723,8 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         while (!phone_asks.empty()) {
             auto ask = phone_asks.front();
             phone_asks.pop_front();
+            // An ask from a page that has gone since opens nothing.
+            if (ask.page != page) continue;
             if (ask.stop) {
                 phones_close(L"the game stopped its controllers");
                 answer_phones(ask, 200, JsonObject());
@@ -763,6 +770,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             co_return;
         }
         uint64_t session = phone_session;
+        phone_asked_at = lampc::wall_ms();
         if (!phones) {
             if (phone_app.empty()) phone_app = to_string(Windows::ApplicationModel::Package::Current().Id().Name());
             phone_key = lampc::random_text(32);
@@ -844,8 +852,9 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
 
     void phone_tick(uint64_t session) {
         if (session != phone_session || !phones) return;
-        phones->tick();
         int64_t now = lampc::wall_ms();
+        if (now - phone_asked_at > phone_unasked_ms) return phones_close(L"the page stopped asking for it");
+        phones->tick();
         for (auto const& conn : std::vector<std::shared_ptr<Conn>>(conns)) {
             if (conn->peer) conn->peer->tick(now);
             // A request never finished, or an answer never taken, is let go before it can use up what the game needs for phones.

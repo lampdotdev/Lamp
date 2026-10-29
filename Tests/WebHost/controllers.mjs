@@ -152,6 +152,11 @@ try {
   assert.equal((await a.hear('player')).number, 1);
   tell({ op: 'send', text: JSON.stringify({ t: 'send', player: 0, data: { score: 7, name: 'ünï/code' } }) });
   assert.deepEqual((await a.hear('message')).data, { score: 7, name: 'ünï/code' });
+  // null is a message too, both ways.
+  a.send({ t: 'message', data: null });
+  assert.equal((await pageSaid('message')).data, null);
+  tell({ op: 'send', text: JSON.stringify({ t: 'send', player: 1, data: null }) });
+  assert.equal((await a.hear('message')).data, null);
   step('a phone joins by the link, its presses and sticks reach the page, and the page\'s messages reach it');
 
   // A second phone, then the first drops and comes back as the same player with its controller credential.

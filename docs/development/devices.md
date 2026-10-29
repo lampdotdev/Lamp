@@ -511,18 +511,26 @@ background mode keeps it alive. `ControllerAddresses` gives a phone only an addr
 network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
 the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
 window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
-On the Xbox the game runs its own phones too, in Lamp's WebView2 host (`lamp_web_host.cpp`, with the protocol in
+Which host runs a game's phones is the game's choice as it starts them: `Lamp.controllers.start({ host: 'game' })` for
+its own, `{ host: 'lamp' }` for Lamp's relay and the page Lamp serves (`PhoneSites`), and no host for what each device
+did before either was offered. The page script sends the choice with every ask (`TVTemplate.controllersJS`), and each
+answerer refuses the one it isn't: Lamp's gateway turns down `host: 'game'` (`Store.controllerSession`), and the app
+around a Mac, iPhone or iPad game turns down `host: 'lamp'` (LampPage.swift), so a host that's missing or fails is an
+error the game hears (`onError`), never the other host in its place. The skills give the agent both as options, with
+what each needs, not an order.
+On the Xbox a game that chose its own runs its phones in Lamp's WebView2 host (`lamp_web_host.cpp`, with the protocol in
 `Resources/WebHost/lamp_controllers.h`, plain C++ that keeps to LampRelayKit's wire message for message): the page is
 in the package as `Phone/`, beside `Web/` (`GamePhones.xboxPage`, `WebHost.payload`), and the page asks the host for its
-session (`controllers` messages over the host's pipe, never Lamp's `/app/controller`), which opens the page server and
+session (`controllers` messages over the host's pipe, not Lamp's `/app/controller`), which opens the page server and
 the relay on ports the system gives (`StreamSocketListener`), with a key made for that session from the system's
 randomness and kept only in the host's memory. The page is https and may not open a plain link itself, so its link to
 the relay goes over the pipe (`TVTemplate.linksJS`, shared with `Lamp.wish`) and the host carries it straight into the
 relay (`ws://lamp-controllers.invalid/`, never dialed): only that link may be the game's host, and a host's credential
-from the network is turned away. Stopping, the console setting the app aside and the page going away end the session;
-coming back, the page's next ask opens a new one, with a new code. `scripts/check-web-host-controllers.sh` runs the
-protocol on the Mac against a real WebSocket client; the host itself only runs on a console. A package made by an
-earlier Lamp asks Lamp, which still serves its phones while the game is set to open on the Xbox (`Store.onDevice`).
+from the network is turned away. Stopping, the console setting the app aside, the page going away and 45 s with no ask from
+the page end the session; coming back, the page's next ask opens a new one, with a new code. `scripts/check-web-host-controllers.sh` runs the
+protocol on the Mac against a real WebSocket client; the host itself only runs on a console. A game on the Xbox that chose
+Lamp (or no host), and a package made by an earlier Lamp, ask Lamp, which serves their phones while the game is set to
+open on the Xbox (`Store.onDevice`).
 On Android the game has no host's side of phones yet: Lamp turns
 down `/app/controller` from anywhere on the network but a TV or an Xbox the game is set to open on, so
 `Lamp.controllers` reports an error and the game plays with controllers and touch. A game's second screen is a phone joined from `onLink`'s address: `Lamp.phonePage`

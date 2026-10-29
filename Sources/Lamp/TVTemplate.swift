@@ -589,7 +589,8 @@ extension TVTemplate {
 
     /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks where its relay is
     /// (`/app/controller`: Lamp, for a TV app's page and the preview; the game itself on the Mac, `ControllerRuntime`;
-    /// on the Xbox the game's own host, `controllers` messages over its pipe, lamp_controllers.h), as it opens and every
+    /// on the Xbox the game's own host, `controllers` messages over its pipe, lamp_controllers.h; `start({ host })`
+    /// chooses the game's own or Lamp's, never one for the other), as it opens and every
     /// few seconds after, and opens its own socket there, where phones' pages
     /// join; stopping says so, which closes a game's own relay and page. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
     /// block joins here (`_attach`), so they go on playing with Lamp closed. The page numbers the players itself, whichever
@@ -601,6 +602,10 @@ extension TVTemplate {
          * Lamp.controllers.start()                    opens a game for phones on this Wi-Fi; Promise. The phones' page is
          *                                              Phone/index.html, loading lamp-controller.js (its own comment says how);
          *                                              the wish's iPhone or Mac app joins with LampController.
+         * Lamp.controllers.start({ host: 'game' })     the game's own host runs the phones' page and link, with no Lamp
+         * Lamp.controllers.start({ host: 'lamp' })     Lamp on the Mac runs them (its relay and the page it serves)
+         *                                              With no host, each device does as it always has. A host that isn't
+         *                                              there, or fails, is said in onError, and the other is never tried.
          * Lamp.controllers.onLink(fn(url))             the address phones open (show it as a QR code); it changes every
          *                                              few minutes, and fn is called each time
          * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
@@ -799,8 +804,10 @@ extension TVTemplate {
             if (code === 4003 || code === 4005) return ask(1000);
             l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
           }
-          // Where the game's session is: on the Xbox the game's own host runs its phones and answers (`controllers`
-          // messages), never Lamp; elsewhere Lamp, or the app around the page, answers /app/controller.
+          // Where the game's session is, by the host the game chose: the game's own (on the Xbox its WebView2 host,
+          // asked with `controllers` messages; on the Mac, iPhone and iPad the app around the page) or Lamp's. Each says
+          // when it can't, and the other is never asked in its place. With none chosen, each device does as it always has.
+          var host = null;
           var sessionAsks = {}, sessionAskId = 0;
           if (pipe) pipe.addEventListener('message', function (e) {
             var m = e.data, waiting = m && m.lamp === 'controllers' && sessionAsks[m.id];
@@ -810,7 +817,11 @@ extension TVTemplate {
             else waiting.reject(new Error((m.body && m.body.error) || 'Phones could not join the game.'));
           });
           function session(stop) {
-            if (!pipe) return LampAI._post('/app/controller', stop ? { stop: true } : {}, 20000);
+            if (!pipe || host !== 'game') {
+              var body = stop ? { stop: true } : {};
+              if (host) body.host = host;
+              return LampAI._post('/app/controller', body, 20000);
+            }
             return new Promise(function (resolve, reject) {
               var id = ++sessionAskId;
               sessionAsks[id] = { resolve: resolve, reject: reject };
@@ -856,8 +867,16 @@ extension TVTemplate {
           }
 
           var api = {
-            start: function () {
-              if (started) return Promise.resolve();
+            start: function (options) {
+              var chosen = options && options.host;
+              if (chosen !== undefined && chosen !== 'game' && chosen !== 'lamp') {
+                return Promise.reject(new Error("Lamp.controllers.start: host is 'game' or 'lamp'."));
+              }
+              if (started) {
+                return (chosen || null) === host || chosen === undefined ? Promise.resolve()
+                  : Promise.reject(new Error('Lamp.controllers: started with another host; call stop() first.'));
+              }
+              host = chosen || null;
               started = true;
               ask(0);
               beatTimer = setInterval(beat, 5000);
@@ -867,6 +886,7 @@ extension TVTemplate {
             stop: function () {
               if (started && (pipe || (window.LampAI && LampAI._post))) session(true).then(function () {}, function () {});
               started = false;
+              host = null;
               clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
               for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }
               for (var i = 0; i < others.length; i++) others[i].stop();
@@ -3425,9 +3445,9 @@ extension Agent.Rules {
 
     static let tvPhone = """
     - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
-    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
-    the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
-    first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
+    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; who serves it is a \
+    choice made as the app starts its controllers, and the phone-controllers skill says what each choice needs. Open \
+    it first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
     phone's hardware or data the phone keeps.
     """
 

@@ -1269,7 +1269,7 @@ private:
             host_->send_text(out.dump());
         } else if (kind == "message") {
             auto data = m.get("data");
-            if (!data || data->type == Json::Type::null) return;
+            if (!data) return;
             Json out = msg("message");
             out["player"] = number; out["data"] = *data; out["at"] = t;
             host_->send_text(out.dump());
@@ -1349,7 +1349,7 @@ private:
             send_link();
         } else if (kind == "send") {
             auto data = m.get("data");
-            if (!data || data->type == Json::Type::null) return;
+            if (!data) return;
             Json out = msg("message");
             out["data"] = *data;
             std::string text = out.dump();

@@ -133,8 +133,9 @@ final class ControllerMessageSizeTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("heardErrors.length")?.toInt32(), 2)
     }
 
-    /// On the Xbox the game's own host runs its phones: the page asks the host for its session, never Lamp, and its link
-    /// to the relay goes over the host's pipe (an https page may not open a plain link), where phones reach the game.
+    /// On the Xbox a game that chose its own host runs its phones there: the page asks the host for its session, not
+    /// Lamp, and its link to the relay goes over the host's pipe (an https page may not open a plain link), where phones
+    /// reach the game.
     func testAGameOnTheXboxReachesItsOwnHostsRelayWithoutLamp() throws {
         let context = try XCTUnwrap(JSContext())
         var failure: String?
@@ -154,7 +155,7 @@ final class ControllerMessageSizeTests: XCTestCase {
         context.evaluateScript(TVTemplate.controllersJS)
         context.evaluateScript("""
             Lamp.controllers.onButton(function (player, name, down) { heard.push(player + ':' + name + ':' + down); });
-            Lamp.controllers.start();
+            Lamp.controllers.start({ host: 'game' });
             later.shift()();
             var asked = posted.filter(function (m) { return m.lamp === 'controllers'; })[0];
             host({ lamp: 'controllers', id: asked.id, status: 200, body: { renew: 15,
