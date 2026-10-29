@@ -648,7 +648,10 @@ function drawScale(to) {
     check.warm = false;
     renderer.setSize(Math.round(WIDTH * SCALES[level]), Math.round(HEIGHT * SCALES[level]), false);
 }
-const drawn = () => `${Math.round(WIDTH * SCALES[level])}x${Math.round(HEIGHT * SCALES[level])}`;
+// A page that sizes its own canvas (`fill`) is drawn at whatever it chose.
+let fills = false;
+const drawn = () => fills ? `${renderer.domElement.width}x${renderer.domElement.height}`
+    : `${Math.round(WIDTH * SCALES[level])}x${Math.round(HEIGHT * SCALES[level])}`;
 
 function measure(now) {
     const ms = lastTick ? now - lastTick : 0;
@@ -700,19 +703,25 @@ function fit() {
 // The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialized before game() is called). A 2D
 // game calls phaser() from lamp-phaser.js instead, which calls this with Phaser's canvas.
 // `sharp: true` keeps it drawn at 1920x1080 however slow frames are (the log still says how fast they come).
+// `fill: true` is for a page laid out at the window's size, as a web page is (a strategy game whose HUD is the page's own
+// HTML, made for phones as well as TVs): the page puts the canvas where it wants it and sizes it itself, drawing it
+// smaller when frames run slow, and the runtime only measures and logs the frame rate.
 // `snapshot`, `restore`, `busy` and `assetChanged` keep the player's place through a change Lamp makes while the game is
 // played (see "Changes while it's played" below).
-export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false,
+export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false, fill = false,
                              snapshot, restore, busy, assetChanged }) {
     renderer = given;
-    adapting = !sharp;
+    fills = fill;
+    adapting = !sharp && !fill;
     frameFunction = frame;
     hooks = { snapshot, restore, busy, assetChanged };
     if (buttons === false) drawsTouch = false;
     else if (buttons != null) touchButtons = buttons;
     readsKeyboard = keyboard !== false;
-    renderer.setPixelRatio(1);
-    renderer.setSize(WIDTH, HEIGHT, false);
+    if (!fill) {
+        renderer.setPixelRatio(1);
+        renderer.setSize(WIDTH, HEIGHT, false);
+    }
     document.documentElement.style.background = document.body.style.background = '#000';
     document.body.style.margin = '0';
     document.body.style.overflow = 'hidden';
@@ -720,9 +729,11 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     document.body.style.webkitUserSelect = document.body.style.userSelect = 'none';
     document.body.style.webkitTouchCallout = 'none';
     document.body.style.touchAction = 'none';
-    document.body.append(renderer.domElement);
-    fit();
-    window.addEventListener('resize', fit);
+    if (!fill) {
+        document.body.append(renderer.domElement);
+        fit();
+        window.addEventListener('resize', fit);
+    }
     // Where the player was, if the page is opened again for a change: known before init, so the game starts there.
     if (!preview) await claim();
     // In the preview a start-up that fails ends the play with what it said, rather than leaving Lamp waiting for frames.
