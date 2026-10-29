@@ -16,7 +16,7 @@ LampSupport.swift: `LampCalendar.events(from:to:)` / `.add(...)`, `LampReminders
 
 ## Mail and files (Mac only)
 
-- Email: `LampMail.inbox(limit:)` / `.search(text)` / `.body(of:)` / `.draft(to:subject:body:)` (a draft opens in Mail
+- Email: `LampMail.inbox(limit:since:before:)` / `.search(text, since:)` / `.body(of:)` / `.draft(to:subject:body:)` (a draft opens in Mail
   for the person to send; nothing is sent by the app).
 - Their files in Google Drive, Dropbox, OneDrive or iCloud Drive are folders on the Mac: `LampFolders.synced` lists
   them and `LampFolders.synced("Google Drive")` gives one; read, write and watch them as files.
