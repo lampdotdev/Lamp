@@ -37,4 +37,12 @@ final class WebAppPreviewPlacesTests: XCTestCase {
         XCTAssertTrue(phone.contains("\"390x844\" (an iPhone or an Android phone)"))
         XCTAssertFalse(phone.contains("1920x1080"))
     }
+
+    /// An app made into a web app (`make_app_for`) is told the web app's own design rule, not a TV app's.
+    func testAnAppMadeIntoAMacWebAppIsntToldToDesignForATV() {
+        let rules = Target.webApp.guidance.changeRules(webApp([.mac]))
+        XCTAssertFalse(rules.contains("1920×1080"), "a Mac web app isn't laid out at a TV's size")
+        XCTAssertTrue(rules.contains("\"1280x800\" (a Mac window)"))
+        XCTAssertFalse(rules.contains("390x844"))
+    }
 }
