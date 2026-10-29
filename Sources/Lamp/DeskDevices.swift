@@ -31,6 +31,14 @@ struct DeskDevices: View {
 
     private var invitation: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                ForEach(["iphone", "ipad", "tv", "gamecontroller", "hifispeaker", "photo"], id: \.self) {
+                    Image(systemName: $0)
+                }
+            }
+            .font(.system(size: 15))
+            .foregroundStyle(Paper.muted)
+            .accessibilityHidden(true)
             Text("Run it on your TV, phone, Xbox and more")
                 .font(.callout)
                 .foregroundStyle(Paper.muted)
@@ -38,7 +46,7 @@ struct DeskDevices: View {
             if store.lookingForDevices {
                 LookingForDevices()
             } else {
-                Button("Find My Devices") { store.refreshDevices() }
+                Button { store.refreshDevices() } label: { Label("Find My Devices", systemImage: "dot.radiowaves.left.and.right") }
                     .buttonStyle(PaperButtonStyle(.ink))
             }
         }

@@ -28,6 +28,8 @@ struct WishDesk: View {
     /// each time it's shown (`lookForDevices`).
     @AppStorage(Store.localNetworkAskedKey) private var lookedBefore = false
     @State private var lastLook: Date?
+    /// Where the side's first line and the bar both start, under the window's title.
+    private static let top: CGFloat = 14
 
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
     /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
@@ -45,7 +47,7 @@ struct WishDesk: View {
                 header
                 list
             }
-            .padding(.top, 14).padding(.horizontal, 20)
+            .padding(.top, Self.top).padding(.horizontal, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             if let row = rows.first(where: { $0.id == picked }) {
                 DeskDetail(row: row, remixes: remixes(of: row))
@@ -55,12 +57,6 @@ struct WishDesk: View {
         }
         .background(DeskBackground().ignoresSafeArea())
         .navigationTitle("Lamp")
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                SettingsLink { Label("Settings", systemImage: "gearshape") }
-                    .help("Settings (⌘,)")
-            }
-        }
         .modifier(ClearToolbar())
         // Drawn on Lamp's paper, as in the welcome, whatever the Mac's appearance.
         .environment(\.colorScheme, .light)
@@ -92,15 +88,29 @@ struct WishDesk: View {
         }
     }
 
-    /// The filters, then the person's devices: what a new wish can be for.
+    /// The filters, then the person's devices: what a new wish can be for. Settings at the foot. Its first line starts
+    /// where the bar does beside it.
     private var sidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                filter("Everything", count: wishes.count, on: !onlyRemixes) { onlyRemixes = false }
-                filter("Your remixes", count: rows(remixesOnly: true), on: onlyRemixes) { onlyRemixes = true }
-                DeskDevices(wishFor: wishFor).padding(.top, 24)
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    filter("Everything", count: wishes.count, on: !onlyRemixes) { onlyRemixes = false }
+                    filter("Your remixes", count: rows(remixesOnly: true), on: onlyRemixes) { onlyRemixes = true }
+                    DeskDevices(wishFor: wishFor).padding(.top, 24)
+                }
+                .padding(.horizontal, 12).padding(.top, Self.top).padding(.bottom, 20)
             }
-            .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 20)
+            SettingsLink {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Paper.muted)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Settings (⌘,)")
+            .accessibilityLabel("Settings")
+            .padding(.leading, 14).padding(.bottom, 12)
         }
         .frame(width: 220)
         .background(Paper.panel)
@@ -165,6 +175,9 @@ struct WishDesk: View {
             bar
             if hasMicrophone {
                 TalkButton(listening: dictation.isListening, level: dictation.level, action: toggleTalk)
+                    // Laid out no taller than the bar, its round spilling over a little, so the bar starts where the
+                    // side's first line does.
+                    .frame(height: 42)
             }
             Button { showingIdeas.toggle() } label: {
                 Label("Not sure?", systemImage: "lightbulb")

@@ -118,6 +118,10 @@ struct DeskList {
         return date.formatted(sameYear ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year())
     }
 
+    /// Open's and Remix's symbols, alone on a row's buttons and beside their words in the side panel.
+    static let openSymbol = "arrow.up.right"
+    static let remixSymbol = "dot.circle.and.hand.point.up.left.fill"
+
     static func symbol(_ place: Destination) -> String {
         switch place {
         case .mac: "laptopcomputer"
@@ -179,7 +183,7 @@ struct DeskListRow: View {
     static let madeByWidth: CGFloat = 96
     static let placesWidth: CGFloat = 84
     static let changedWidth: CGFloat = 76
-    static let buttonsWidth: CGFloat = 140
+    static let buttonsWidth: CGFloat = 72
     static let nest: CGFloat = 30
 
     private var project: LampProject { row.project }
@@ -215,10 +219,15 @@ struct DeskListRow: View {
                 Text(DeskList.when(row.entry?.changed)).font(.system(size: 13)).foregroundStyle(Paper.muted)
                     .frame(width: Self.changedWidth, alignment: .leading)
                 HStack(spacing: 6) {
-                    Button("Open") { store.open(fromDesk: project) }.buttonStyle(PaperButtonStyle(.ink))
-                    Button("Remix") { Task { await store.remix(project) } }.buttonStyle(PaperButtonStyle(.outline))
+                    Button { store.open(fromDesk: project) } label: { Label("Open", systemImage: DeskList.openSymbol) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(PaperButtonStyle(.ink, square: true))
+                        .help("Open \(project.title)")
+                    Button { Task { await store.remix(project) } } label: { Label("Remix", systemImage: DeskList.remixSymbol) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(PaperButtonStyle(.outline, square: true))
                         .disabled(!canRemix)
-                        .help("Make a new copy of \(project.title) to change. The original stays as it is.")
+                        .help("Remix: make a new copy of \(project.title) to change. The original stays as it is.")
                 }
                 .frame(width: Self.buttonsWidth, alignment: .trailing)
             }
@@ -288,7 +297,7 @@ struct DeskListRow: View {
         ZStack {
             Paper.ink
             if let picture {
-                Image(nsImage: picture).resizable().aspectRatio(contentMode: .fill)
+                Image(nsImage: picture).resizable().interpolation(.high).antialiased(true).aspectRatio(contentMode: .fill)
             } else {
                 AppIcon(project: project, size: 30)
             }
@@ -318,13 +327,15 @@ struct DeskDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                ZStack {
-                    Paper.ink
-                    if let picture { Image(nsImage: picture).resizable().aspectRatio(contentMode: .fill) }
-                }
-                .frame(height: 160)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                // Filled into a box of the panel's width: the picture sits over it, so its own width never widens the
+                // panel past the room it's given.
+                Paper.ink
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 160)
+                    .overlay {
+                        if let picture { Image(nsImage: picture).resizable().interpolation(.high).antialiased(true).aspectRatio(contentMode: .fill) }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 5) {
                     Text(project.title).font(.system(size: 23, weight: .heavy)).tracking(-0.8)
                     if let about = row.entry?.about {
@@ -337,8 +348,8 @@ struct DeskDetail: View {
                     if !remixes.isEmpty { fact("Remixes", remixes.map(\.title).joined(separator: ", ")) }
                 }
                 .font(.system(size: 13))
-                Button("Open") { store.open(fromDesk: project) }
-                    .buttonStyle(PaperButtonStyle(.ink, height: 34))
+                Button { store.open(fromDesk: project) } label: { Label("Open", systemImage: DeskList.openSymbol) }
+                    .buttonStyle(PaperButtonStyle(.outline, height: 34))
                 Paper.rule.frame(height: 1)
                 remixBox
             }
@@ -371,8 +382,8 @@ struct DeskDetail: View {
                     focused = true
                 }
             }
-            Button("Remix", action: remix)
-                .buttonStyle(PaperButtonStyle(.outline, height: 34))
+            Button(action: remix) { Label("Remix", systemImage: DeskList.remixSymbol) }
+                .buttonStyle(PaperButtonStyle(.ink, height: 34))
                 .disabled(store.busy.contains(project.id) || !project.scaffolded || project.untitled || !AppUpdates.mayRemix(project))
                 .help("Make a new copy of \(project.title) with this change. The original stays as it is.")
         }

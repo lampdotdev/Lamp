@@ -57,16 +57,19 @@ public struct PaperButtonStyle: ButtonStyle {
     public enum Kind { case ink, outline }
     let kind: Kind
     let height: CGFloat
-    public init(_ kind: Kind, height: CGFloat = 30) {
+    /// As wide as it's tall, for a button that shows only its symbol.
+    let square: Bool
+    public init(_ kind: Kind, height: CGFloat = 30, square: Bool = false) {
         self.kind = kind
         self.height = height
+        self.square = square
     }
 
     public func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .bold))
-            .padding(.horizontal, 12)
-            .frame(minHeight: height)
+            .padding(.horizontal, square ? 0 : 12)
+            .frame(minWidth: square ? height : nil, minHeight: height)
             .foregroundStyle(kind == .ink ? Paper.onInk : Paper.ink)
             .background(kind == .ink ? Paper.ink : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay {
