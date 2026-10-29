@@ -478,6 +478,16 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
   return { THREE, scene, camera, canvas, texture, flat, solid, pointer, hit, on, hand, run };
 }
 
+/** Whether a sleeve has been turned over in this browser, after which the arrow that shows the way never shows again. */
+const TURNED = "lamp.sleeveTurned";
+const turned = {
+  once: (() => { try { return localStorage.getItem(TURNED) === "1"; } catch { return false; } })(),
+  now() {
+    this.once = true;
+    try { localStorage.setItem(TURNED, "1"); } catch { /* kept for this visit only */ }
+  },
+};
+
 /** Eases `value` toward `target`, by how long the frame took. */
 const ease = (value: number, target: number, dt: number, speed = 7) => value + (target - value) * (1 - Math.exp(-dt * speed));
 
@@ -503,29 +513,53 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
   };
   const remix = () => { if (sleeve.remix) document.dispatchEvent(new CustomEvent("lamp:remix", { detail: sleeve.remix })); };
 
-  // The turn it takes when clicked (its right side swinging toward the viewer), shown by an arrow round its right side
-  // from the back to the front, its head in front pointing the way the front goes: seen while the pointer is on the
-  // sleeve and not on its button. It's placed by whoever shows the sleeve, at its place and lean but never its turn,
-  // and fades in and out as `aim` asks.
+  // The turn it takes when clicked (its right side swinging toward the viewer), shown by a flat magenta arrow round
+  // its right side, from the back to the front, its tail fading in from nothing and its head in front pointing the way
+  // the front goes: seen while the pointer is on the sleeve and not on its button, until a sleeve has been turned over
+  // once (`turnedOnce`). It's placed by whoever shows the sleeve, at its place and lean but never its turn, and fades
+  // in and out as `aim` asks.
   const arrow = new THREE.Group();
-  const ink = new THREE.MeshStandardMaterial({ color: INK, roughness: 0.35, transparent: true, opacity: 0 });
+  const fadeIn = sheet(256, 1);
+  const ramp = fadeIn.ctx.createLinearGradient(0, 0, 256, 0);
+  ramp.addColorStop(0, "rgb(255 255 255 / 0)");
+  ramp.addColorStop(0.75, "rgb(255 255 255 / 1)");
+  fadeIn.ctx.fillStyle = ramp;
+  fadeIn.ctx.fillRect(0, 0, 256, 1);
+  const ink = new THREE.MeshBasicMaterial({
+    color: "#d23778", map: new THREE.CanvasTexture(fadeIn.canvas), transparent: true, opacity: 0,
+    side: THREE.DoubleSide, depthWrite: false,
+  });
   const along = (t: number) => new THREE.Vector3(0.86 * Math.cos(t), 0, 0.48 * Math.sin(t));
-  const [from, to] = [-1.2, 1.3];
-  const path = new THREE.CatmullRomCurve3(Array.from({ length: 24 }, (_, i) => along(from + ((to - from) * i) / 23)));
-  arrow.add(new THREE.Mesh(new THREE.TubeGeometry(path, 64, 0.034, 12), ink));
-  const head = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.24, 20), ink);
+  const [from, to, steps, band] = [-1.25, 1.25, 48, 0.07];
+  // A band standing round the sleeve, as tall as `band`, its texture running from the tail (0) to the head (1).
+  const ribbon: number[] = [], uvs: number[] = [], order: number[] = [];
+  for (let i = 0; i < steps; i++) {
+    const at = along(from + ((to - from) * i) / (steps - 1));
+    ribbon.push(at.x, -band / 2, at.z, at.x, band / 2, at.z);
+    uvs.push(i / (steps - 1), 0, i / (steps - 1), 1);
+    if (i) order.push(2 * i - 2, 2 * i - 1, 2 * i, 2 * i - 1, 2 * i + 1, 2 * i);
+  }
+  // Its head: a flat triangle in the band, twice as tall, pointing on along the curve.
   const end = along(to);
-  const ahead = end.clone().sub(along(to - 0.08)).normalize();
-  head.position.copy(end).addScaledVector(ahead, 0.08);
-  head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), ahead);
-  arrow.add(head);
+  const ahead = end.clone().sub(along(to - 0.05)).normalize();
+  const tip = end.clone().addScaledVector(ahead, 0.2);
+  const base = steps * 2;
+  ribbon.push(end.x, -band * 1.6, end.z, end.x, band * 1.6, end.z, tip.x, 0, tip.z);
+  uvs.push(1, 0, 1, 1, 1, 0.5);
+  order.push(base, base + 1, base + 2);
+  const shape = new THREE.BufferGeometry();
+  shape.setAttribute("position", new THREE.Float32BufferAttribute(ribbon, 3));
+  shape.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  shape.setIndex(order);
+  arrow.add(new THREE.Mesh(shape, ink));
   arrow.visible = false;
   let aimed = false;
-  /** Shows the arrow, or not. */
-  const aim = (on: boolean) => { aimed = on; };
+  /** Shows the arrow, or not; never again once a sleeve has been turned. */
+  const aim = (on: boolean) => { aimed = on && !turned.once; };
   /** Fades the arrow toward what `aim` asked, by how long the frame took. */
   const fade = (dt: number) => {
-    ink.opacity = ease(ink.opacity, aimed ? 1 : 0, dt, 10);
+    if (turned.once) aimed = false;
+    ink.opacity = ease(ink.opacity, aimed ? 1 : 0, dt, aimed ? 10 : 6);
     arrow.visible = ink.opacity > 0.01;
   };
   return { box, onButton, point, remix, arrow, aim, fade };
@@ -546,16 +580,15 @@ export async function mountSleeve(host: HTMLElement) {
   sleeveGroup.add(box);
   s.scene.add(sleeveGroup, built.arrow);
 
-  // Clicked, it turns over: a turn and a half, landing on whichever side it wasn't on, with a hop. A click on the
-  // front's printed "Remix me" button opens the remix dialog instead. The button that turns it (for a keyboard) says which
+  // Clicked, it flips over: half a turn, onto whichever side it wasn't on. A click on the front's printed "Remix me"
+  // button opens the remix dialog instead. The button that turns it (for a keyboard) says which
   // way up it is.
   const button = host.querySelector<HTMLButtonElement>("[data-turn]");
   let spin = 0;
-  let hop = 0;
   let back = false;
   const turn = () => {
-    spin -= Math.PI * 3;
-    hop = 1;
+    turned.now();
+    spin -= Math.PI;
     back = !back;
     button?.setAttribute("aria-pressed", String(back));
   };
@@ -583,10 +616,9 @@ export async function mountSleeve(host: HTMLElement) {
       const tilt = reduced ? { x: 0, y: 0 } : s.pointer;
       // It turns toward the pointer across, and leans back from it up and down: below it, the front tips up.
       rotation = { x: ease(rotation.x, 0.06 - tilt.y * 0.3, dt, 5), y: ease(rotation.y, -0.35 + tilt.x * 0.6, dt, 5) };
-      spun = ease(spun, spin, dt, reduced ? 12 : 3.2);
-      hop = ease(hop, 0, dt, 2.5);
-      sleeveGroup.rotation.set(rotation.x, rotation.y + spun, Math.sin(spun) * 0.12);
-      sleeveGroup.position.y = (reduced ? 0 : Math.sin(time * 1.3) * 0.04) + Math.sin(hop * Math.PI) * 0.35;
+      spun = ease(spun, spin, dt, reduced ? 12 : 5);
+      sleeveGroup.rotation.set(rotation.x, rotation.y + spun, 0);
+      sleeveGroup.position.y = reduced ? 0 : Math.sin(time * 1.3) * 0.04;
       built.arrow.rotation.set(rotation.x, rotation.y, 0);
       built.arrow.position.copy(sleeveGroup.position);
       built.fade(dt);
@@ -644,7 +676,10 @@ export async function mountStack(host: HTMLElement) {
   s.on("click", (event) => {
     const { i, onButton } = pointedAt(event);
     if (onButton) items[i].built.remix();
-    else if (i >= 0 && i === chosen) items[i].turns += 1;
+    else if (i >= 0 && i === chosen) {
+      items[i].turns += 1;
+      turned.now();
+    }
     else if (i >= 0) {
       chosen = i;
       items[i].turns = 0;
