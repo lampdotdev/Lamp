@@ -27,7 +27,7 @@ parts), check:
   the main one prominent; never the small size, which in the wand's narrow panel was too slight to find.
   Where they don't fit beside a card's words they go under them (`ChatLook.OfferCard`).
 - **One set of colors.** The desk, the welcome and the chat draw from `Paper` (LampSidebarKit): ink on warm paper, as
-  on lamp.dev, and the six stripes only for what's Lamp's own (the welcome's band, a remix's line to its original).
+  on lamp.dev, and cream ink on night paper when the Mac is dark (nothing forces either look), and the six stripes only for what's Lamp's own (the welcome's band, a remix's line to its original).
   A new screen takes its colors and its two buttons (`PaperButtonStyle`) from there, never the system's accent.
   The welcome's hello is a SceneKit stage behind its words (`WelcomeScene`; SceneKit, as Lamp still runs on macOS 14):
   the stripes come down a wall and along the floor, three starters float over them as thin rounded slabs that lean a
