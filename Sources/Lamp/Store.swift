@@ -748,6 +748,9 @@ final class Store: ObservableObject {
         var shown: [Date] = []
         /// Why the latest change couldn't go into the open app (LiveReload's reason, in words), for the agent's look.
         var reloadWhy: String?
+        /// The latest change went into an open game by its page opening again (its code couldn't be swapped in, why in
+        /// `reloadWhy`): told with the look, since the player's place was kept but the world was built again.
+        var pageReopened = false
         /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
         var endedReloadWait = false
         /// The person pressed Reload while the agent worked, and the app reopened with the change that waited
@@ -8215,6 +8218,7 @@ final class Store: ObservableObject {
                         turn.updatedInPlace = true
                         turn.outcomes.append(.live)
                         turn.reloadWhy = nil
+                        turn.pageReopened = false
                         turn.autoApplied += 1
                         // A step, not the turn's end: "is updated" is said once the request is done, and here the
                         // agent is still at work on it.
@@ -8352,12 +8356,14 @@ final class Store: ObservableObject {
         case .cannot:
             return false
         case .held:
+            owner?.reloadWhy = PageLive.shared.reason(project)
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)
         case .unchanged, .went:
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
-            owner?.reloadWhy = nil
+            owner?.pageReopened = outcome == .went("reloading")
+            owner?.reloadWhy = owner?.pageReopened == true ? PageLive.shared.reason(project) : nil
             if outcome != .unchanged { owner?.shown.append(Date()) }
             pageWentIn(project, saying: false)
             if inFront { log(project, .status, "\(project.name) is updated") }
@@ -8695,6 +8701,7 @@ final class Store: ObservableObject {
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.reloadWhy = nil
+            owner?.pageReopened = false
             await DataSnapshots.wentIn(project)
             prepareIconMeanwhile(project)
             return nil
@@ -12670,6 +12677,12 @@ final class Store: ObservableObject {
             case .live?:
                 note = saved > 0 ? "What you saved went into the open app by itself as you saved it (\(saved) \(saved == 1 ? "time" : "times")), without reopening it: the person is seeing it now, with the window as they left it."
                     : "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
+                // A game's page that couldn't swap the code in opened again from its snapshot: the place is kept, the
+                // world was built again.
+                if turn.pageReopened {
+                    note = "The change went into the open game, but its page opened again for it" + (turn.reloadWhy.map { " (\($0))" } ?? "")
+                        + " and started from its snapshot: the person waited for the world to be built again. Where you can, make the next change one its modules swap in (the game skill, \"Changes while it's played\")."
+                }
                 if turn.endedReloadWait {
                     note += " The change that was waiting for Reload went in with it, so nothing waits for Reload now; don't tell the person to press it."
                     turn.endedReloadWait = false

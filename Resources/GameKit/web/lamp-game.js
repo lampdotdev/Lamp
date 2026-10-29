@@ -752,7 +752,12 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
         last = now;
         measure(now);
-        step(dt);
+        try { step(dt); } catch (e) {
+            // New code swapped in that fails as it runs goes back out the safe way: the page opens again from where
+            // the player was before it.
+            if (swapGuard) { log(`Error: ${e && e.message || e}`); return swapFailed(e); }
+            throw e;
+        }
         // The first frame drawn from a snapshot has gone without an error: from here an error is the game's own.
         guarding = false;
         live();
@@ -763,31 +768,62 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
 
 // MARK: Changes while it's played
 //
-// Lamp changes the game while the person plays it. A change of files the game loaded through the runtime (asset(),
-// texture(), model(), sound.load()) goes into the running game: the runtime puts a new copy of what it loaded in itself,
-// and then calls the game's `assetChanged(path)` for each changed file, which replaces anything of the game's own made
-// from it (a material from a shader's source, a clone of a model, a level read from JSON) and returns true when it has.
-// A change of code (a .js, .html or .css file), or of a file nothing put in, opens the page again with the new code,
-// keeping the player's place: just before, `snapshot()` gives what matters of where the game is (the level, the
-// player's position, the camera, the score, the mode, which menu or overlay is open…) as plain JSON. The new copy
+// Lamp changes the game while the person plays it, and puts each change into the running game when it can, so the
+// world it built (the scene, the renderer, geometry, compiled shaders) and the player stay as they are:
+//
+// - Files the game loaded through the runtime (asset(), texture(), model(), sound.load()): the runtime puts a new copy
+//   of what it loaded in itself, and then calls the game's `assetChanged(path)` for each changed file, which replaces
+//   anything of the game's own made from it (a material from a shader's source, a clone of a model, a level read from
+//   JSON) and returns true when it has.
+// - A stylesheet the page links: the new one replaces it.
+// - A module of the game's that takes its new versions: one that calls `hot(import.meta).accept()` (below). Its new
+//   version runs, and what it exports is put into what the running game holds: each exported class gets the new
+//   methods (so every object made from it, made before or after, runs the new code with its own fields kept), each
+//   exported plain object the new functions and the values the change changed (its other values, which the game may
+//   have changed as it ran, stay), and each exported array the new contents when the change changed them. A module that doesn't take its changes is swapped through the modules that import
+//   it: when every one of them, or one above it, takes them, it runs again for them, and they take theirs.
+//
+// Anything else opens the page again with the new code, keeping the player's place: the HTML, a module nothing above
+// takes changes for (the one that builds the world, as a rule), a module that imports others in a circle, a class whose
+// constructor or fields changed (objects already made have the old fields), an exported function or value that
+// changed (whoever imported it holds the old one), or code a module's exported functions may use, changed outside its
+// classes. The log says which, and why. Just before, `snapshot()` gives what matters of where the game is (the level,
+// the player's position, the camera, the score, the mode, which menu or overlay is open…) as plain JSON. The new copy
 // starts straight there: `pendingRestore()` gives that state while the game starts (in init, or in a Phaser scene's
 // init or create), so the game builds the place it was in rather than its title or intro, and the runtime calls
 // nothing more. A game that doesn't read it and has `restore(state)` is started as usual and then given the state,
 // before its first frame is drawn. A game without either starts again, from its own save() and load(). If starting
-// from the state throws (init, a scene's create, restore or the first frame), the game starts fresh, and the log says so.
-// While `busy()` is true (a match or a round under way, a race, a fight) a change of code waits, and goes in at the
-// next moment busy() is false (a pause, between rounds); the person can also put it in at once. Where the app around the
-// page has no Reload of Lamp's own, the page shows a small "Reload to apply" to press.
+// from the state throws (init, a scene's create, restore or the first frame), the game starts fresh, and the log says
+// so. New code swapped in that throws in its first second opens the page again from the place before the swap.
+// While `busy()` is true (a match or a round under way, a race, a fight) a change that opens the page again waits, and
+// goes in at the next moment busy() is false (a pause, between rounds); the person can also put it in at once. A swap
+// goes in at once, busy or not. Where the app around the page has no Reload of Lamp's own, the page shows a small
+// "Reload to apply" to press.
 // Wherever else the game is played (Android, the Xbox, a TV, a phone), a change reaches it when Lamp installs it there
 // again: the runtime keeps the latest snapshot, and the new copy restores it once, when it opens.
+//
+// A module that takes its changes ends with
+//
+//   hot(import.meta).accept();
+//
+// and keeps its state in objects made from the classes it exports (the game holds them: `new Traffic(scene)`), with
+// its tuning in constants or plain objects it reads where it uses them, rather than copied into fields as an object is
+// made: what a constructor built or copied stays as it was until the page opens again. Everything a module defines
+// that the game calls goes out through its exports, classes above all; a class it keeps to itself keeps its old
+// methods. `accept(next, { changed })` takes a function, called once the new version is in, with its exports and the
+// names of what changed in them (`Traffic.update`, `TUNING.topSpeed`); it does what the change needs done that the
+// swap doesn't (build again what a changed method built once), and returns false to have the page opened again
+// instead. For what a module makes at its top level (a listener, an element, a timer), `hot(import.meta).dispose(data
+// => …)` takes it away as the old version goes, keeping in `data` what the next needs, which reads it as
+// `hot(import.meta).data`. Nothing here runs in Lamp's preview or where changes come by an install.
 
 let hooks = {}, started = false, waiting = null, pill = null;
 // The place this copy starts in (claim()), whether the game read it (pendingRestore()), and whether an error now means
 // the state didn't take.
 let pending = null, reopened = false, taken = false, guarding = false;
 const host = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampLive;
-const tellHost = (gen, state) => { try { const h = host(); h && h.postMessage({ gen, state }); } catch (e) {} };
-// What a change of these is, is code: the page is opened again for it.
+const tellHost = (gen, state, why) => { try { const h = host(); h && h.postMessage(why ? { gen, state, why } : { gen, state }); } catch (e) {} };
+// What a change of these is, is code: swapped in, or the page is opened again for it.
 const CODE = /\.(m?js|html?|css)$/i;
 // Each copy of the page names its build (lamp-build.js, written with lamp-device.js), so a snapshot is restored only by a
 // newer build. A copy without one restores only what the page itself kept for its reopening.
@@ -809,13 +845,17 @@ function isBusy() {
 }
 
 // Lamp's app around the page hands it a change: `changed` the files changed, `gen` its number, `now` when the person
-// pressed Reload, `pill` when the page is to show its own Reload. Returns true: the page takes changes.
+// pressed Reload, `pill` when the page is to show its own Reload. Returns true: the page takes changes. One change is
+// put in at a time, so one arriving during a swap waits for it.
+let queue = Promise.resolve();
 window.__lampLive = change => {
     if (preview) return false;
-    if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])] };
-    waiting = null;
     changes = Math.max(changes + 1, change.gen || 0);
-    apply(change);
+    queue = queue.then(() => {
+        if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])] };
+        waiting = null;
+        return apply(change);
+    }).catch(e => log(`Lamp: ${e && e.message || e}`));
     return true;
 };
 
@@ -823,42 +863,398 @@ async function apply(change) {
     const paths = (change.changed || []).map(clean);
     // Not started yet: nothing to keep.
     if (!started) { tellHost(change.gen, 'reloading'); location.reload(); return; }
-    if (paths.length && !paths.some(p => CODE.test(p))) {
-        let all = true;
-        for (const path of paths) {
-            let done = false;
-            for (const swap of swaps.get(path) || []) { try { await swap(); done = true; } catch (e) { log(`Lamp: couldn't put in the new ${path} (${e && e.message || e}).`); } }
-            if (hooks.assetChanged) { try { if (await hooks.assetChanged(path)) done = true; } catch (e) { log(`Error: assetChanged('${path}'): ${e && e.message || e}`); } }
-            if (!done) all = false;
-        }
-        if (all) { log(`Lamp: put in ${paths.join(', ')} while the game ran.`); tellHost(change.gen, 'swapped'); return; }
+    // Where the player is before anything is swapped, for the page to open from should the swap not take.
+    const before = takeSnapshot(), began = performance.now();
+    const said = [];
+    let why = paths.length ? null : 'nothing to put in', touched = false;
+    for (const path of paths.filter(p => !CODE.test(p))) {
+        let done = false;
+        for (const swap of swaps.get(path) || []) { try { await swap(); done = true; } catch (e) { log(`Lamp: couldn't put in the new ${path} (${e && e.message || e}).`); } }
+        if (hooks.assetChanged) { try { if (await hooks.assetChanged(path)) done = true; } catch (e) { log(`Error: assetChanged('${path}'): ${e && e.message || e}`); } }
+        if (done) said.push(path); else why = why || `nothing the game loaded through lamp-game.js is made from ${path}`;
     }
-    if (isBusy() && !change.now) {
+    const code = paths.filter(p => CODE.test(p));
+    if (!why && code.length) {
+        const swapped = await swapCode(code);
+        if (swapped.why) { why = swapped.why; touched = swapped.touched; } else said.push(...swapped.said);
+    }
+    if (!why) {
+        log(`Lamp: put in ${said.join('; ')} while the game ran (${Math.round(performance.now() - began)} ms).`);
+        if (code.length) swapGuard = { until: time + 1, change, state: before };
+        tellHost(change.gen, 'swapped');
+        return;
+    }
+    change = { ...change, why };
+    // Half swapped is no place to wait in: the page opens again now, from where the player was before.
+    if (isBusy() && !change.now && !touched) {
         waiting = change;
-        tellHost(change.gen, 'held');
+        log(`Lamp: a change that needs the page opened again (${why}) waits for a pause in the game.`);
+        tellHost(change.gen, 'held', why);
         if (change.pill) showPill();
         return;
     }
-    reopen(change);
+    reopen(change, touched ? before : undefined);
 }
 
-// Opens the page again with the new code, with the player's place kept for the new code to restore.
-function reopen(change) {
+// Opens the page again with the new code, with the player's place kept for the new code to restore: where it is now, or
+// `state` taken before a swap that didn't take.
+function reopen(change, state = takeSnapshot()) {
     hidePill();
-    const state = takeSnapshot();
     try { store('session').setItem(LIVE, JSON.stringify({ state, input: current, padName, gen: change.gen })); } catch (e) {}
-    log(state == null ? 'Lamp: opening the game again for a change of its code; it has no snapshot(), so it starts from its own saves.'
-        : 'Lamp: opening the game again for a change of its code, keeping where the player was.');
-    tellHost(change.gen, 'reloading');
+    const why = change.why ? ` (${change.why})` : '';
+    log(state == null ? `Lamp: opening the game again for a change of its code${why}; it has no snapshot(), so it starts from its own saves.`
+        : `Lamp: opening the game again for a change of its code${why}, keeping where the player was.`);
+    tellHost(change.gen, 'reloading', change.why);
     location.reload();
 }
 
 // Each frame: a waiting change goes in once the game isn't busy; the latest snapshot is kept for the next install.
 let kept = 0;
 function live() {
+    if (swapGuard && time > swapGuard.until) swapGuard = null;
     if (waiting && !isBusy()) { const change = waiting; waiting = null; reopen(change); }
     if (hooks.snapshot && time - kept >= 5) { kept = time; keepLast(); }
 }
+
+// MARK: Swapping code in
+//
+// What the runtime knows of the game's modules: each that called hot(), by its path beside the page, with every version
+// of it that has run (its exports, and the values of its plain objects as each version made them, to tell what a
+// change changed from what the game changed as it ran), its source as the last version ran, and the address its
+// latest version was loaded from, which a module loaded afresh imports it by.
+const modules = new Map(), latest = new Map(), loading = new Set();
+// The swap that went in last, watched for its first second: an error in it opens the page again.
+let swapGuard = null, versionCount = 0;
+// Where the page's files are, read when first needed: a copy of the runtime run outside a page has no URL.
+let base = null;
+const pageBase = () => base || (base = new URL('.', location.href));
+const pathOf = url => {
+    try {
+        const u = new URL(url, location.href), b = pageBase();
+        if (u.protocol !== b.protocol || u.host !== b.host || !u.pathname.startsWith(b.pathname)) return null;
+        return decodeURIComponent(u.pathname.slice(b.pathname.length));
+    } catch (e) { return null; }
+};
+const addressOf = path => new URL(path, pageBase()).href;
+const source = f => Function.prototype.toString.call(f);
+const isClass = v => typeof v === 'function' && /^class\b/.test(source(v));
+const isPlain = v => !!v && typeof v === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(v));
+const valueText = v => { try { return typeof v === 'function' ? 'function ' + source(v) : JSON.stringify(v) ?? String(v); } catch (e) { return String(v); } };
+// Code as it reads with its comments and spacing gone, so a comment added beside a method changes nothing.
+const bare = text => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').replace(/\s+/g, '');
+
+// A module's handle on its changes while the game is played (see "Changes while it's played" above): `accept()` takes
+// them, `dispose(fn)` takes away what this version made as it goes, `data` is what the last version's disposers kept.
+export function hot(meta) {
+    const path = pathOf(meta && meta.url);
+    const quiet = { data: {}, accept() {}, dispose() {} };
+    if (preview || path == null || !host()) return quiet;
+    let entry = modules.get(path);
+    if (!entry) modules.set(path, entry = { path, accepts: false, onAccept: null, disposers: [], data: {}, versions: [], text: null });
+    // Each version says for itself whether it takes the next, and what to take away when it goes.
+    entry.accepts = false;
+    entry.onAccept = null;
+    entry.disposers = [];
+    if (!loading.has(path) && !entry.versions.length) {
+        // The version the page loaded first, which every module that imported it holds: known once it has run.
+        import(meta.url).then(ns => { if (!entry.versions.length) entry.versions.push(versionOf(ns)); }, () => {});
+        fetch(meta.url, { cache: 'no-store' }).then(a => a.ok ? a.text() : null).then(t => { if (entry.text == null) entry.text = t; }, () => {});
+    }
+    return {
+        data: entry.data,
+        accept(callback) { entry.accepts = true; entry.onAccept = typeof callback === 'function' ? callback : null; },
+        dispose(callback) { if (typeof callback === 'function') entry.disposers.push(callback); },
+    };
+}
+
+function versionOf(ns) {
+    const made = {};
+    for (const name of Object.keys(ns)) {
+        if (Array.isArray(ns[name])) made[name] = valueText(ns[name]);
+        if (!isPlain(ns[name])) continue;
+        made[name] = {};
+        for (const key of Object.keys(ns[name])) made[name][key] = valueText(ns[name][key]);
+    }
+    return { ns, made };
+}
+
+// The game's modules, read from the page: what each imports (static imports, re-exports and import() of a written-out
+// path), so a change can go up to the modules that take it. Kept between changes, and read again for what changed.
+const imports = new Map(), texts = new Map();
+const SPECIFIER = /(\bimport\s*\(\s*|\bfrom\s*|\bimport\s+)(['"])([^'"\n]+)\2/g;
+// Lamp's own files beside the page never change with the game, and three.js is large: they aren't read.
+const lampOwn = path => /^(three|rapier|phaser)\//.test(path) || /^lamp(-[\w-]+)?\.js$/.test(path);
+let importMap = null;
+function resolve(specifier, from) {
+    if (/^\.{0,2}\//.test(specifier)) return new URL(specifier, from).href;
+    if (/^[a-z][\w+.-]*:/i.test(specifier)) return specifier;
+    if (!importMap) {
+        importMap = {};
+        for (const s of document.querySelectorAll('script[type="importmap"]')) { try { Object.assign(importMap, JSON.parse(s.textContent).imports || {}); } catch (e) {} }
+    }
+    if (importMap[specifier]) return new URL(importMap[specifier], location.href).href;
+    const prefix = Object.keys(importMap).filter(k => k.endsWith('/') && specifier.startsWith(k)).sort((a, b) => b.length - a.length)[0];
+    return prefix ? new URL(importMap[prefix] + specifier.slice(prefix.length), location.href).href : null;
+}
+const importsIn = (text, from) => [...text.matchAll(SPECIFIER)].map(m => pathOf(resolve(m[3], from) || '')).filter(p => p != null && !lampOwn(p));
+
+async function readText(path) {
+    const answer = await fetch(`${addressOf(path)}?lamp=${changes}`, { cache: 'no-store' });
+    if (!answer.ok) throw new Error(`${path} couldn't be read`);
+    return answer.text();
+}
+
+async function readModules(changed) {
+    for (const path of changed) imports.delete(path);
+    const roots = [];
+    for (const s of document.querySelectorAll('script[type="module"]')) {
+        const path = s.src ? pathOf(s.src) : `the page's own script ${roots.length + 1}`;
+        if (path == null) continue;
+        if (!s.src) imports.set(path, importsIn(s.textContent, location.href));
+        roots.push(path);
+    }
+    const unread = () => [...new Set([...roots, ...[...imports.values()].flat()])].filter(p => !imports.has(p));
+    let next = unread();
+    while (next.length) {
+        await Promise.all(next.map(async path => {
+            const text = await readText(path).catch(() => '');
+            if (changed.includes(path)) texts.set(path, text);
+            imports.set(path, importsIn(text, addressOf(path)));
+        }));
+        next = unread();
+    }
+    return roots;
+}
+
+// Puts changed modules and stylesheets into the running game: { said } what went in, or { why } it couldn't, with
+// `touched` when something was already taken away or swapped, so the page must open again now.
+async function swapCode(paths) {
+    const html = paths.find(p => /\.html?$/i.test(p));
+    if (html) return { why: `${html} changed` };
+    const code = paths.filter(p => /\.m?js$/i.test(p)), styles = paths.filter(p => /\.css$/i.test(p));
+    const said = [];
+    if (code.length) {
+        const swapped = await swapModules(code);
+        if (swapped.why) return swapped;
+        said.push(...swapped.said);
+    }
+    for (const path of styles) {
+        const links = [...document.querySelectorAll('link[rel~="stylesheet"]')].filter(l => pathOf(l.href) === path);
+        if (!links.length) return { why: `no link in the page loads ${path}`, touched: said.length > 0 };
+        try {
+            await Promise.all(links.map(old => new Promise((done, failed) => {
+                const next = old.cloneNode();
+                next.href = `${addressOf(path)}?lamp=${++versionCount}`;
+                next.onload = () => { old.remove(); done(); };
+                next.onerror = () => { next.remove(); failed(new Error(`${path} didn't load`)); };
+                old.after(next);
+            })));
+        } catch (e) { return { why: e.message, touched: said.length > 0 }; }
+        said.push(path);
+    }
+    return { said };
+}
+
+async function swapModules(changed) {
+    const roots = await readModules(changed);
+    const importers = new Map();
+    for (const [path, deps] of imports) for (const dep of deps) importers.set(dep, [...(importers.get(dep) || []), path]);
+    const takes = path => { const m = modules.get(path); return !!(m && m.accepts && m.versions.length && m.text != null); };
+    // Every module the change runs again, up to those that take it (the boundaries).
+    const again = new Set(), boundaries = new Set();
+    const up = path => {
+        if (again.has(path)) return null;
+        again.add(path);
+        if (takes(path)) { boundaries.add(path); return null; }
+        const by = importers.get(path) || [];
+        if (!by.length) return roots.includes(path) ? `${path} doesn't take changes while the game runs` : `nothing imports ${path}`;
+        for (const above of by) { const why = up(above); if (why) return why; }
+        return null;
+    };
+    for (const path of changed) {
+        if (lampOwn(path)) return { why: `Lamp's own ${path} changed` };
+        if (!imports.has(path)) return { why: `nothing imports ${path}` };
+        const why = up(path);
+        if (why) return { why };
+    }
+    // Run again in order, what each imports before it.
+    const order = [], seen = new Map();
+    const visit = path => {
+        if (seen.get(path) === 2) return true;
+        if (seen.get(path) === 1) return false;
+        seen.set(path, 1);
+        for (const dep of imports.get(path) || []) if (again.has(dep) && !visit(dep)) return false;
+        seen.set(path, 2);
+        order.push(path);
+        return true;
+    };
+    for (const path of again) if (!visit(path)) return { why: `${path} is in a circle of modules that import each other` };
+
+    // What the old versions made at their top level goes before the new ones run, as each asked.
+    let touched = false;
+    for (const path of order) {
+        const m = modules.get(path);
+        for (const dispose of m ? m.disposers : []) {
+            touched = true;
+            try { await dispose(m.data); } catch (e) { log(`Error: dispose in ${path}: ${e && e.message || e}`); }
+        }
+    }
+    // The new versions, each importing the others' new versions and the rest of the game as it runs: a module none of
+    // whose imports changed is loaded from its own address, with a new query; one that imports another that runs again
+    // is loaded from its source with those imports pointed at the new versions.
+    const loaded = new Map(), addresses = new Map();
+    for (const path of order) {
+        const address = `${addressOf(path)}?lamp=${++versionCount}`;
+        const deps = imports.get(path) || [];
+        loading.add(path);
+        try {
+            const text = texts.get(path) ?? await readText(path);
+            texts.set(path, text);
+            let from = address;
+            if (deps.some(d => again.has(d) || latest.has(d))) {
+                const written = text.replace(SPECIFIER, (all, lead, quote, specifier) => {
+                    const target = resolve(specifier, addressOf(path));
+                    const p = target && pathOf(target);
+                    if (!target) return all;
+                    return lead + quote + (p != null && addresses.has(p) ? addresses.get(p) : p != null && latest.has(p) ? latest.get(p) : target) + quote;
+                }).replace(/\bimport\.meta\b/g, `({ url: ${JSON.stringify(address)}, resolve: s => new URL(s, ${JSON.stringify(address)}).href })`);
+                from = URL.createObjectURL(new Blob([written], { type: 'text/javascript' }));
+            }
+            loaded.set(path, await import(from));
+            addresses.set(path, from);
+        } catch (e) {
+            return { why: `${path} didn't load (${e && e.message || e})`, touched: true };
+        } finally { loading.delete(path); }
+    }
+    // Each boundary's new exports must fit what the game holds of the old ones.
+    for (const path of boundaries) {
+        const rerun = (imports.get(path) || []).find(d => again.has(d));
+        const why = fits(modules.get(path), loaded.get(path), texts.get(path), path, rerun);
+        if (why) return { why, touched };
+    }
+    const said = [];
+    for (const path of boundaries) {
+        const m = modules.get(path), ns = loaded.get(path);
+        const changedNames = putIn(m, ns);
+        m.versions.push(versionOf(ns));
+        m.text = texts.get(path);
+        if (m.onAccept) {
+            try {
+                if (await m.onAccept(ns, { changed: changedNames }) === false) return { why: `${path} asked for the page to be opened again`, touched: true };
+            } catch (e) { return { why: `accept in ${path} failed (${e && e.message || e})`, touched: true }; }
+        }
+        said.push(changedNames.length ? `${path} (${changedNames.slice(0, 8).join(', ')}${changedNames.length > 8 ? '…' : ''})` : path);
+    }
+    for (const path of order) {
+        latest.set(path, addresses.get(path));
+        const m = modules.get(path);
+        if (m && !boundaries.has(path)) { m.versions.push(versionOf(loaded.get(path))); m.text = texts.get(path); }
+        if (!boundaries.has(path)) said.push(`${path}, run again for the modules that import it`);
+    }
+    for (const path of changed) texts.delete(path);
+    return { said };
+}
+
+// Why the new exports can't be put into the old, or null when they can.
+function fits(m, ns, text, path, rerun) {
+    const last = m.versions[m.versions.length - 1].ns;
+    let holdsCode = false;
+    for (const name of Object.keys(ns)) {
+        const now = ns[name], was = last[name];
+        // A new export: nothing holds an old one.
+        if (was === undefined) continue;
+        if (isClass(now) || isClass(was)) {
+            if (!isClass(now) || !isClass(was)) return `${name} in ${path} is a class in one version and not the other`;
+            if (shell(was) !== shell(now)) return `the constructor or fields of ${name} in ${path} changed`;
+        } else if (typeof now === 'function' || typeof was === 'function') {
+            if (typeof now !== 'function' || typeof was !== 'function' || source(now) !== source(was)) return `${path} exports the function ${name}, which changed`;
+            holdsCode = true;
+        } else if ((isPlain(now) && isPlain(was)) || (Array.isArray(now) && Array.isArray(was))) {
+            continue;
+        } else if (valueText(now) !== valueText(was)) {
+            return `${path} exports ${name}, whose value changed`;
+        } else if (now && typeof now === 'object') holdsCode = true;
+    }
+    if (holdsCode && rerun) return `${path} exports functions, which go on using the old ${rerun}`;
+    if (holdsCode && outside(m.text, last) !== outside(text, ns)) return `code outside the classes in ${path} changed, which what it exports may use`;
+    return null;
+}
+
+// A class as it reads without its methods, accessors and static methods: its constructor, fields and what it extends.
+function shell(C) {
+    let text = source(C);
+    for (const [from, skip] of [[C.prototype, ['constructor']], [C, ['length', 'name', 'prototype']]]) {
+        for (const key of Reflect.ownKeys(from)) {
+            if (skip.includes(key)) continue;
+            const d = Object.getOwnPropertyDescriptor(from, key);
+            for (const f of [d.value, d.get, d.set]) if (typeof f === 'function') { const s = source(f), i = text.indexOf(s); if (i >= 0) text = text.slice(0, i) + text.slice(i + s.length); }
+        }
+    }
+    return bare(text);
+}
+
+// A module's source without its exported classes.
+function outside(text, ns) {
+    for (const value of Object.values(ns)) if (isClass(value)) { const s = source(value), i = text.indexOf(s); if (i >= 0) text = text.slice(0, i) + text.slice(i + s.length); }
+    return bare(text);
+}
+
+// Puts a new version's exports into every earlier version's, which the game holds; returns what changed.
+function putIn(m, ns) {
+    const changed = new Set(), last = m.versions[m.versions.length - 1];
+    for (const name of Object.keys(ns)) {
+        const now = ns[name];
+        const earlier = [...new Set(m.versions.map(v => v.ns[name]))].filter(v => v !== undefined && v !== now);
+        if (isClass(now)) {
+            for (const C of earlier) for (const key of putClass(C, now)) changed.add(`${name}.${key}`);
+            // An object made by either version is an instance of both.
+            const family = [...earlier, now];
+            // A subclass inherits this static: it answers for its own class alone.
+            function has(o) { return (family.includes(this) ? family : [this]).some(K => Function.prototype[Symbol.hasInstance].call(K, o)); }
+            for (const K of family) Object.defineProperty(K, Symbol.hasInstance, { value: has, configurable: true });
+        } else if (Array.isArray(now)) {
+            // An array is taken whole: the change's new one when it changed it, else the one the game has.
+            const held = earlier[earlier.length - 1];
+            if (valueText(now) !== last.made[name] || !Array.isArray(held)) {
+                changed.add(name);
+                for (const A of earlier) if (Array.isArray(A)) A.splice(0, A.length, ...now);
+            } else now.splice(0, now.length, ...held);
+        } else if (isPlain(now)) {
+            const before = last.made[name] || {}, held = earlier[earlier.length - 1];
+            for (const key of Object.keys(now)) {
+                const fresh = valueText(now[key]);
+                if (fresh !== before[key]) changed.add(`${name}.${key}`);
+                // What the change changed goes in; what it didn't keeps what the game made of it, in both copies.
+                if (fresh !== before[key] || typeof now[key] === 'function' || !held || !(key in held)) for (const O of earlier) O[key] = now[key];
+                else now[key] = held[key];
+            }
+        }
+    }
+    return [...changed];
+}
+
+function putClass(C, N) {
+    const changed = [];
+    const code = d => d ? [d.value, d.get, d.set].filter(f => typeof f === 'function').map(source).join('\n') : '';
+    for (const [from, to, skip] of [[N.prototype, C.prototype, ['constructor']], [N, C, ['length', 'name', 'prototype', Symbol.hasInstance]]]) {
+        for (const key of Reflect.ownKeys(from)) {
+            if (skip.includes(key)) continue;
+            const d = Object.getOwnPropertyDescriptor(from, key);
+            if (!d.get && !d.set && typeof d.value !== 'function') continue;
+            if (code(Object.getOwnPropertyDescriptor(to, key)) !== code(d)) changed.push(String(key));
+            Object.defineProperty(to, key, d);
+        }
+    }
+    return changed;
+}
+
+// Swapped code that fails in its first second: the page opens again from where the player was before the swap.
+function swapFailed(e) {
+    const guard = swapGuard;
+    swapGuard = null;
+    reopen({ ...guard.change, why: `the code swapped in failed as it ran (${e && e.message || e})` }, guard.state);
+}
+if (!preview) window.addEventListener('error', e => { if (swapGuard) swapFailed(e.error || e.message); });
 
 function keepLast() {
     if (!buildID) return;
