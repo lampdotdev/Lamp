@@ -9,9 +9,11 @@ import Foundation
 /// against them, at most `maxCalls`), the call ids, and that a turn with `maxSteps - 1` steps behind it is asked for a
 /// reply only. Limits across the turn (writes, time, cancel) are the page's, since nothing here outlives a request.
 ///
-/// Only OpenRouter answers for now, with its tool calling. The other routes say so rather than half-work: Claude Code
-/// and Codex would take a JSON plan through their schema flags, a GGUF model on this Mac through `response_format`, and
-/// mlx_lm.server has neither.
+/// Every text route answers, each its own way, and each answer is read into the same calls-or-reply and checked here the
+/// same way: OpenRouter with its tool calling; Claude Code and Codex with a fresh run per step that must answer in the
+/// step's JSON shape (`planSchema`), with nothing of their own to run; a GGUF model on this Mac held to that shape by
+/// llama.cpp's `response_format`; an MLX model with mlx_lm.server's tool calling where its version has it, otherwise
+/// asked for the shape in words. A turn stays on the route its first step took.
 enum AppAct {
     static let maxTools = 24
     static let maxCalls = 8
@@ -20,7 +22,12 @@ enum AppAct {
     static let maxBody = 256 * 1024
     /// Lamp's own tool, the way every answer that isn't a call comes back.
     static let replyTool = "reply"
-    static let unsupported = "Doing things for you needs OpenRouter set up in Lamp for now: other AI there can't take this yet."
+    /// The turn's time on a route: OpenRouter answers a step in a few seconds; Claude Code and Codex start a program for
+    /// every step, and a model on this Mac answers more slowly, so they get longer, never more than `parse` allows.
+    static func turnSeconds(for route: AppAI.TextRoute) -> Double {
+        if case .openRouter = route.kind { return 25 }
+        return 60
+    }
 
     struct Failure: Error, Equatable { let status: Int; let message: String }
 
@@ -240,7 +247,7 @@ enum AppAct {
         let history = (body["history"] as? [[String: Any]] ?? []).suffix(3).map {
             (said: $0["said"] as? String ?? "", heard: $0["heard"] as? String ?? "")
         }
-        let seconds = (body["seconds"] as? NSNumber)?.doubleValue ?? 25
+        let seconds = (body["seconds"] as? NSNumber)?.doubleValue ?? 60
         return Request(request: request, about: body["about"] as? String ?? "", now: body["now"] as? String ?? "",
                        context: body["context"], tools: tools, history: Array(history), steps: steps,
                        route: body["route"] as? String, seconds: Swift.max(1, Swift.min(seconds, 60)),
@@ -283,6 +290,16 @@ enum AppAct {
     /// "auto" and "none" there ("required", or naming `reply`, finds no provider), so an answer may also be words
     /// without a call, which is the reply; the step asked for a reply only says "none".
     static func openRouterBody(_ r: Request, model: String, tag: String, retry: String? = nil) -> [String: Any] {
+        var body = chatBody(r, tag: tag, retry: retry)
+        body["model"] = model
+        body["tool_choice"] = r.final ? "none" : "auto"
+        body["usage"] = ["include": true]
+        body["provider"] = ["require_parameters": true]
+        return body
+    }
+
+    /// The system prompt and the person's message, the same for every route.
+    static func framing(_ r: Request, tag: String) -> (system: String, user: String) {
         var system = r.about.trimmed.isEmpty ? "" : r.about.trimmed + "\n\n"
         system += rules + "\n\n" + fenceRules(tag)
         if !r.now.isEmpty { system += "\n\n" + r.now }
@@ -292,6 +309,13 @@ enum AppAct {
             user = "Earlier in this conversation:\n" + r.history.map { "You said: \($0.said)\nThe person said: \($0.heard)" }.joined(separator: "\n")
                 + "\n\nNow the person says: " + user
         }
+        return (system, user)
+    }
+
+    /// An OpenAI-style chat with tools, Lamp's `reply` among them: OpenRouter's (`openRouterBody` adds what's its own)
+    /// and mlx_lm.server's. A step asked for a reply only is sent no tools by the caller that can't say "none".
+    static func chatBody(_ r: Request, tag: String, retry: String?) -> [String: Any] {
+        let (system, user) = framing(r, tag: tag)
         var messages: [[String: Any]] = [["role": "system", "content": system], ["role": "user", "content": user]]
         for step in r.steps {
             messages.append(["role": "assistant", "content": "", "tool_calls": step.calls.map { call in
@@ -314,9 +338,7 @@ enum AppAct {
                            "properties": ["text": ["type": "string"], "ask": ["type": "boolean"],
                                           "choices": ["type": "array", "maxItems": maxChoices,
                                                       "items": ["type": "string", "maxLength": maxChoiceLength]] as [String: Any]]] as [String: Any]] as [String: Any]])
-        let choice = r.final ? "none" : "auto"
-        return ["model": model, "messages": messages, "tools": tools, "tool_choice": choice, "max_tokens": 2000,
-                "usage": ["include": true], "provider": ["require_parameters": true]]
+        return ["messages": messages, "tools": tools, "max_tokens": 2000]
     }
 
     enum Answer: Equatable {
@@ -389,13 +411,103 @@ enum AppAct {
 
     struct ParseProblem: Error { let reason: String; init(_ reason: String) { self.reason = reason } }
 
+    // MARK: A step as JSON (Claude Code, Codex, models on this Mac)
+
+    /// The shape a step's answer must have on the routes without OpenAI-style tool calls: `calls`, each one tool's name
+    /// and its arguments, or a `reply`. Written for the strictest of the schema flags it goes to (Codex's): every key
+    /// required and nothing else allowed, an optional argument as one that may be null, and only the keywords they
+    /// all take. Bounds and formats are left to `Tool.problem`, which checks every call whatever the route held it to.
+    /// A step asked for a reply only has no `calls` to give.
+    static func planSchema(_ r: Request) -> [String: Any] {
+        func plain(_ arg: Arg) -> [String: Any] {
+            var s: [String: Any]
+            switch arg.kind {
+            case .string: s = ["type": "string"]; if !arg.oneOf.isEmpty { s["enum"] = arg.oneOf }
+            case .integer, .number, .boolean: s = ["type": arg.kind.rawValue]
+            case .date, .datetime: s = ["type": "string"]
+            case .list: s = ["type": "array", "items": arg.of.first.map(plain) ?? ["type": "string"]]
+            }
+            let about = (arg.schema["description"] as? String) ?? ""
+            if !about.isEmpty { s["description"] = about }
+            if arg.optional { s = ["anyOf": [s, ["type": "null"]]] }
+            return s
+        }
+        func object(_ properties: [String: Any]) -> [String: Any] {
+            ["type": "object", "properties": properties, "required": properties.keys.sorted(), "additionalProperties": false]
+        }
+        let reply = object(["text": ["type": "string"], "ask": ["type": "boolean"],
+                            "choices": ["type": "array", "items": ["type": "string"]] as [String: Any]])
+        if r.final { return object(["reply": reply]) }
+        let calls: [[String: Any]] = r.tools.map { tool in
+            var args: [String: Any] = [:]
+            for (name, arg) in tool.args { args[name] = plain(arg) }
+            return object(["name": ["type": "string", "enum": [tool.name]], "args": object(args)])
+        }
+        return object(["calls": ["type": "array", "items": ["anyOf": calls]] as [String: Any],
+                       "reply": ["anyOf": [reply, ["type": "null"]]]])
+    }
+
+    static let planRules = """
+    Answer with JSON only, in this shape: {"calls": [{"name": a tool's name, "args": {its arguments}}], "reply": null} to \
+    use tools, or {"calls": [], "reply": {"text": ..., "ask": true or false, "choices": [...]}} to finish. An optional \
+    argument you don't give is null. `choices` is [] when any answer could do. The tools' results come back to you in \
+    the next message.
+    """
+
+    /// The step as one prompt, for a route that takes text and answers in `planSchema`'s shape: the tools described,
+    /// then the turn so far, every earlier call and its result fenced as outside text.
+    static func planPrompt(_ r: Request, tag: String, retry: String?, schemaInPrompt: Bool) -> (system: String, prompt: String) {
+        var (system, user) = framing(r, tag: tag)
+        system += "\n\n" + planRules
+        if r.final { system += "\nOnly a reply is possible now: answer {\"reply\": {...}}." }
+        var tools: [String] = r.tools.map { tool in
+            "- \(tool.name): " + (tool.reads ? "Looks up, changes nothing. " : "Changes the app's data. ") + tool.about
+                + "\n  Arguments: " + json(tool.schema)
+        }
+        if r.final { tools = [] }
+        if !tools.isEmpty { system += "\n\nThe app's tools:\n" + tools.joined(separator: "\n") }
+        if schemaInPrompt { system += "\n\nThe JSON Schema your answer must fit:\n" + json(planSchema(r)) }
+        var prompt = user
+        for (i, step) in r.steps.enumerated() {
+            prompt += "\n\nYour answer \(i + 1) called:\n" + json(step.calls.map { ["name": $0.name, "args": $0.args] as [String: Any] })
+            let results = step.calls.map { call -> Any in
+                var result = step.results[call.id] ?? ["ok": false, "skipped": "The app didn't run this."]
+                result["name"] = call.name
+                return result
+            }
+            prompt += "\nWhat happened, in that order:\n" + fence(tag, json(results))
+        }
+        if let retry { prompt += "\n\nYour last answer couldn't be used: \(retry) Answer again." }
+        return (system, prompt)
+    }
+
+    /// Reads an answer in `planSchema`'s shape into the same calls or reply as a tool-calling answer, so it's checked
+    /// the same way (`parse(openRouterMessage:)`). An optional argument left null is left out, as the page expects.
+    static func parse(plan text: String, for r: Request) -> Result<Parsed, ParseProblem> {
+        guard let plan = (try? JSONSerialization.jsonObject(with: Data(AppAI.stripFences(text).utf8))) as? [String: Any] else {
+            return .failure(.init("It wasn't the JSON asked for."))
+        }
+        let calls = plan["calls"] as? [Any] ?? []
+        if !calls.isEmpty {
+            var toolCalls: [[String: Any]] = []
+            for item in calls {
+                guard let call = item as? [String: Any], let name = call["name"] as? String else { return .failure(.init("A call had no name.")) }
+                let args = (call["args"] as? [String: Any] ?? [:]).filter { !($0.value is NSNull) }
+                toolCalls.append(["function": ["name": name, "arguments": json(args)]])
+            }
+            return parse(openRouterMessage: ["tool_calls": toolCalls], for: r)
+        }
+        guard let reply = plan["reply"] as? [String: Any] else { return .failure(.init("It had neither calls nor a reply.")) }
+        var args: [String: Any] = ["text": reply["text"] ?? "", "ask": reply["ask"] ?? false]
+        if let choices = reply["choices"] { args["choices"] = choices }
+        return parse(openRouterMessage: ["tool_calls": [["function": ["name": replyTool, "arguments": json(args)]]]], for: r)
+    }
+
     // MARK: Routes
 
     /// Whether this route can take a step, and if not, the sentence the page gets.
     static func refusal(for route: AppAI.TextRoute) -> String? {
-        guard route.available else { return AppAI.noTextRoute }
-        if case .openRouter = route.kind { return nil }
-        return unsupported
+        route.available ? nil : AppAI.noTextRoute
     }
 
     /// One step, end to end: the page's request, the route (pinned for the turn by its id once the first step chose
@@ -419,33 +531,41 @@ enum AppAct {
             route = AppAI.route(for: appModel)
         }
         if let refused = refusal(for: route) { return (501, ["error": refused], 0) }
-        guard case .openRouter(let model) = route.kind else { return (501, ["error": unsupported], 0) }
-        // One deadline for the whole step, from the seconds the page has left: every attempt below (a call asked for
-        // again, a content-filter retry, its wait) gets only what's left of it, and none starts once it has passed.
-        let deadline = started.addingTimeInterval(r.seconds)
+        // One deadline for the whole step, from the seconds the page has left and never past the route's own: every
+        // attempt below (a call asked for again, a content-filter retry, its wait) gets only what's left of it, none
+        // starts once it has passed, and a Claude Code or Codex run still going then is stopped.
+        let seconds = turnSeconds(for: route)
+        let deadline = started.addingTimeInterval(Swift.min(r.seconds, seconds))
         let tag = "outside-text-" + String(UUID().uuidString.prefix(8)).lowercased()
         var cost = 0.0
         var retry: String?
+        // The only retry in a step: one more attempt with the reason the first couldn't be used. Nothing under it
+        // tries again by itself, so a step is at most two model calls on every route.
         for attempt in 0..<2 {
             do {
-                let (message, more) = try await openRouterStep(openRouterBody(r, model: model, tag: tag, retry: retry), until: deadline)
+                let (answer, more) = try await ask(route, r, tag: tag, retry: retry, until: deadline)
                 cost += more
-                switch parse(openRouterMessage: message, for: r) {
+                switch answer {
                 case .success(let parsed):
                     var json = parsed.json
                     json["route"] = route.id
+                    json["seconds"] = seconds
                     return (200, json, cost)
                 case .failure(let problem):
                     // Asked once more with the reason; a second miss is a reply that says it couldn't, so the page
                     // never sees a call that doesn't fit.
                     if attempt == 0 { retry = problem.reason; continue }
-                    return (200, ["reply": "I couldn't work out how to do that.", "ask": false, "route": route.id, "trouble": problem.reason], cost)
+                    return (200, ["reply": "I couldn't work out how to do that.", "ask": false, "route": route.id, "seconds": seconds,
+                                  "trouble": problem.reason], cost)
                 }
             } catch let late as OutOfTime {
                 return (504, ["error": "This step ran out of time."], cost + late.cost)
             } catch let failure as AppAI.Failure {
+                // A run stopped at the deadline says so in its own words; it's the step's time that ran out.
+                if Date() >= deadline { return (504, ["error": "This step ran out of time."], cost + failure.cost) }
                 return (502, ["error": failure.message], cost + failure.cost)
             } catch {
+                if Date() >= deadline { return (504, ["error": "This step ran out of time."], cost) }
                 return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"], cost)
             }
         }
@@ -454,6 +574,75 @@ enum AppAct {
 
     /// The step's deadline passed (or less than a second of it was left) before an attempt could start.
     struct OutOfTime: Error { var cost = 0.0 }
+
+    /// mlx-lm passes the tools to the model's chat template, and reads its tool calls back, from this version on.
+    static let mlxToolsSince = [0, 30, 4]
+
+    static func mlxTakesTools(_ version: String?) -> Bool {
+        guard let version else { return false }
+        let parts = version.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
+        for (have, need) in zip(parts + [0, 0, 0], mlxToolsSince) where have != need { return have > need }
+        return true
+    }
+
+    /// One attempt on the turn's route, its answer read but not yet asked again: the route's adapter.
+    static func ask(_ route: AppAI.TextRoute, _ r: Request, tag: String, retry: String?, until deadline: Date) async throws -> (Result<Parsed, ParseProblem>, Double) {
+        switch route.kind {
+        case .openRouter(let model):
+            let (message, cost) = try await openRouterStep(openRouterBody(r, model: model, tag: tag, retry: retry), until: deadline)
+            return (parse(openRouterMessage: message, for: r), cost)
+        case .engine(.pi, _):
+            throw AppAI.Failure(message: AppAI.noTextRoute)
+        case .engine(let engine, let model):
+            let left = deadline.timeIntervalSinceNow
+            guard left >= 1 else { throw OutOfTime() }
+            let (system, prompt) = planPrompt(r, tag: tag, retry: retry, schemaInPrompt: false)
+            let (text, cost) = try await AppAI.viaEngine(engine, prompt: prompt, images: [], system: system, model: model,
+                                                         schema: planSchema(r), timeLimit: left, sealed: true)
+            return (parse(plan: text, for: r), cost)
+        case .localModel(_, let model):
+            let base = try await LocalModels.shared.ensureServer(for: model)
+            let left = deadline.timeIntervalSinceNow
+            guard left >= 1 else { throw OutOfTime() }
+            guard LocalModels.model(model)?.format == .mlx else {
+                // llama.cpp holds the answer to the shape by itself.
+                let (system, prompt) = planPrompt(r, tag: tag, retry: retry, schemaInPrompt: false)
+                let (text, _) = try await AppAI.viaOpenAICompatible("\(base)/v1/chat/completions", key: nil, prompt: prompt, images: [],
+                                                                    system: system, model: model, schema: planSchema(r), timeout: left)
+                return (parse(plan: text, for: r), 0)
+            }
+            if mlxTakesTools(LocalModels.mlxVersion) {
+                var body = chatBody(r, tag: tag, retry: retry)
+                body["model"] = model
+                if r.final { body["tools"] = nil }
+                return (parse(openRouterMessage: try await localChat(base, body, timeout: left), for: r), 0)
+            }
+            // An older mlx-lm takes neither tools nor a schema: the shape is asked for in words and checked here.
+            let (system, prompt) = planPrompt(r, tag: tag, retry: retry, schemaInPrompt: true)
+            let (text, _) = try await AppAI.viaOpenAICompatible("\(base)/v1/chat/completions", key: nil, prompt: prompt, images: [],
+                                                                system: system, model: model, timeout: left)
+            return (parse(plan: text, for: r), 0)
+        }
+    }
+
+    /// One chat completion with tools from a model server on this Mac: the message, with its tool calls.
+    static func localChat(_ base: String, _ body: [String: Any], timeout: TimeInterval) async throws -> [String: Any] {
+        var request = URLRequest(url: URL(string: "\(base)/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard (response as? HTTPURLResponse)?.statusCode == 200, var message = (obj["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any] else {
+            throw AppAI.Failure(message: (obj["error"] as? [String: Any])?["message"] as? String ?? "The local model didn't answer.")
+        }
+        // Reasoning models may wrap their thinking in <think>…</think>; only the answer is a reply.
+        if let text = message["content"] as? String {
+            message["content"] = text.replacingOccurrences(of: #"(?s)<think>.*?</think>"#, with: "", options: .regularExpression)
+        }
+        return message
+    }
 
     /// One chat completion with tools. Its own call, not `viaOpenRouter`'s, since what comes back is the message
     /// with its tool calls rather than text. The content-filter retry is the same, inside the same deadline.

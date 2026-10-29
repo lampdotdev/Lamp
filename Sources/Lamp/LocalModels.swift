@@ -108,6 +108,22 @@ final class LocalModels: ObservableObject {
     /// `mlx_lm.server`, if installed (`PythonTools` installs it from Settings).
     nonisolated static var mlxServerPath: String? { ToolLocator.path(named: "mlx_lm.server") }
 
+    /// The mlx-lm version behind `mlx_lm.server`, read off the package in the environment uv installed it into
+    /// (`bin/mlx_lm.server` beside `lib/python3.x/site-packages/mlx_lm-<version>.dist-info`); nil when it can't tell.
+    nonisolated static var mlxVersion: String? {
+        guard let path = mlxServerPath else { return nil }
+        let env = URL(fileURLWithPath: path).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
+        let lib = env.appendingPathComponent("lib")
+        let fm = FileManager.default
+        for python in (try? fm.contentsOfDirectory(atPath: lib.path)) ?? [] where python.hasPrefix("python") {
+            let packages = lib.appendingPathComponent(python).appendingPathComponent("site-packages")
+            for name in (try? fm.contentsOfDirectory(atPath: packages.path)) ?? [] where name.hasPrefix("mlx_lm-") && name.hasSuffix(".dist-info") {
+                return String(name.dropFirst("mlx_lm-".count).dropLast(".dist-info".count))
+            }
+        }
+        return nil
+    }
+
     /// Every runnable model in the Hugging Face cache, Local's folder and Lamp's old folder.
     nonisolated static func scan() -> [InstalledModel] {
         let fm = FileManager.default

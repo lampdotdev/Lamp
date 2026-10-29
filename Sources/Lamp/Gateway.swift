@@ -573,9 +573,12 @@ enum AppAI {
 
     /// One-shot answer from an external coding agent, using the user's own sign-in (and so their subscription).
     /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
-    private static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
-                                  system: String, model: String, schema: [String: Any]? = nil,
-                                  timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
+    /// `sealed` takes Codex's own tools away too (commands, web search, connectors, sub-agents) and refuses any
+    /// approval, for a caller whose answer decides what an app does next (`AppAct`): Claude Code's `--restricted`
+    /// with no tools already leaves it nothing to run.
+    static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
+                          system: String, model: String, schema: [String: Any]? = nil,
+                          timeLimit: TimeInterval? = nil, sealed: Bool = false) async throws -> (String, Double) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -620,9 +623,12 @@ enum AppAI {
                 env["LAMP_MODEL"] = model
                 modelArg = "-m \"$LAMP_MODEL\" "
             }
+            // Every key here is one of Codex's documented settings; --ignore-user-config already leaves out the
+            // person's MCP servers.
+            let seal = sealed ? #"-c approval_policy="never" -c features.shell_tool=false -c features.unified_exec=false -c web_search="disabled" -c features.apps=false -c features.multi_agent=false "# : ""
             command = """
             "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-              -s read-only -c hooks={} -c model_reasoning_effort="low" \(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
+              -s read-only -c hooks={} -c model_reasoning_effort="low" \(seal)\(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
             """
         case .pi:
             throw Failure(message: noTextRoute, needs: .text)
@@ -668,11 +674,13 @@ enum AppAI {
     }
 
     /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.
-    private static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
-                                            system: String, model: String, schema: [String: Any]? = nil) async throws -> (String, Double) {
+    /// `timeout` is for a caller with a deadline of its own; otherwise a model has time to load first.
+    static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
+                                    system: String, model: String, schema: [String: Any]? = nil,
+                                    timeout: TimeInterval = 600) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 600   // local models may need to load first
+        request.timeoutInterval = timeout
         if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var messages: [[String: Any]] = []
@@ -1228,7 +1236,7 @@ enum AppAI {
         throw Failure(message: "The AI didn't answer.")
     }
 
-    private static func stripFences(_ text: String) -> String {
+    static func stripFences(_ text: String) -> String {
         var t = text.trimmed
         if t.hasPrefix("```") {
             t = String(t.drop(while: { $0 != "\n" }).dropFirst())
