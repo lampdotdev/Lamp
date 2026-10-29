@@ -68,6 +68,10 @@ jobs:
         # These standalone checks live outside the Swift package's regression test target.
         run: scripts/test-bug-report.sh
 
+      - name: Phone prerequisite checks
+        # These checks also live outside the Swift package and need no phone or Apple account.
+        run: python3 scripts/check-phone-tools.py
+
       - name: Regression tests
         # Each test in a process of its own, several at once: most of the suite waits on compilers, sockets and apps it
         # starts rather than on the processor, so it takes a few minutes instead of twenty. The suites that need a key,
