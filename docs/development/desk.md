@@ -13,7 +13,7 @@ places, so the desk shows none of a Mac's icon grid and makes no difference betw
 set apart for the starters (a starter deleted is gone; a remix of it from the site puts it back). Each row is the wish's
 icon (narrower than a picture, and easier to find again down a list), its name and its about.json line, who made it, where
 it runs (each place its apps open, `openPlaces`), when it last changed, and **Open** with **Remix** beside it (`DeskListRow`),
-all read from its files away from the main thread for each change to the wishes and as each turn ends (`DeskEntry`).
+in a narrow window only the icon, the name and the buttons, the rest being in the side panel (`DeskListRow.compact`); all read from its files away from the main thread for each change to the wishes and as each turn ends (`DeskEntry`).
 Who made it is "You" for what was made or remixed here, the author of the work a starter is made from (Lamp when it
 names none), or "Shared" for a wish that came from someone else (`DeskList.madeBy`). Clicking a column's name sorts by it,
 and again the other way, kept between launches; nothing is dragged into an order. A remix made here sits under its

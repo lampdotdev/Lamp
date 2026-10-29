@@ -25,6 +25,9 @@ struct WishDesk: View {
     @AppStorage("deskPanelShown") private var panelShown = true
     /// The list has the keyboard: the arrows move the pick up and down it.
     @FocusState private var listFocused: Bool
+    /// The list's width, which decides whether its rows have room for every column.
+    @State private var listWidth: CGFloat = 1000
+    private var compact: Bool { listWidth < DeskListRow.compactBelow }
     @AppStorage("deskSort") private var column = DeskList.Column.name
     @AppStorage("deskAscending") private var ascending = true
     @AppStorage("deskOnlyRemixes") private var onlyRemixes = false
@@ -54,7 +57,7 @@ struct WishDesk: View {
             sidebar
             VStack(alignment: .leading, spacing: 14) {
                 header
-                list
+                list.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { listWidth = $0 }
             }
             .padding(.top, Self.top).padding(.horizontal, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -158,12 +161,12 @@ struct WishDesk: View {
 
     private var list: some View {
         VStack(spacing: 0) {
-            DeskListHeader(column: $column, ascending: $ascending)
+            DeskListHeader(column: $column, ascending: $ascending, compact: compact)
             ScrollViewReader { scroller in
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(rows) { row in
-                            DeskListRow(row: row, selected: row.id == current) {
+                            DeskListRow(row: row, selected: row.id == current, compact: compact) {
                                 picked = row.id
                                 listFocused = true
                             }

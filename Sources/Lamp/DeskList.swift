@@ -20,6 +20,8 @@ struct DeskEntry: Equatable, Sendable {
     var identity: String?
     var original: String?
     var picture: URL?
+    /// When the picture was last written: an app saves a new one under the same name each time it opens.
+    var pictureDate: Date?
     /// The changes its starter suggests, as the remix box's ideas.
     var ideas: [String] = []
 
@@ -36,13 +38,15 @@ struct DeskEntry: Equatable, Sendable {
         // its window before anything is drawn in it.
         let versions = (try? String(contentsOf: history, encoding: .utf8))?.split(separator: "\n").count ?? 0
         let shipped = Starters.isStarter(project) && versions <= 1 ? Starters.shippedPreview(of: project) : nil
+        let picture = shipped ?? (fm.fileExists(atPath: preview.path) ? preview : Starters.shippedPreview(of: project))
         var places: [Destination] = []
         for app in apps.isEmpty ? [project] : apps { for place in app.openPlaces where !places.contains(place) { places.append(place) } }
         return DeskEntry(id: project.id, about: AppDescription.description(of: project), author: adapted?.author,
                          isStarter: Starters.isStarter(project), arrived: !credits.remixOf.isEmpty,
                          license: adapted?.license, places: places, changed: changed,
                          identity: Sharing.identity(of: project, create: false), original: credits.remixOf.last?.wish,
-                         picture: shipped ?? (fm.fileExists(atPath: preview.path) ? preview : Starters.shippedPreview(of: project)),
+                         picture: picture,
+                         pictureDate: picture.flatMap { (try? fm.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date },
                          ideas: Starters.starter(of: project)?.tweaks.map(\.title) ?? [])
     }
 }
@@ -120,7 +124,7 @@ struct DeskList {
 
     /// Open's and Remix's symbols, alone on a row's buttons and beside their words in the side panel.
     static let openSymbol = "arrow.up.right"
-    static let remixSymbol = "dot.circle.and.hand.point.up.left.fill"
+    static let remixSymbol = "shuffle"
 
     static func symbol(_ place: Destination) -> String {
         switch place {
@@ -137,13 +141,17 @@ struct DeskList {
 struct DeskListHeader: View {
     @Binding var column: DeskList.Column
     @Binding var ascending: Bool
+    /// Too narrow for every column: only the name, as the rows have (`DeskListRow.compact`).
+    var compact = false
 
     var body: some View {
         HStack(spacing: 12) {
             sorter(.name).padding(.leading, DeskListRow.pictureWidth + 12).frame(maxWidth: .infinity, alignment: .leading)
-            sorter(.madeBy).frame(width: DeskListRow.madeByWidth, alignment: .leading)
-            sorter(.runsOn).frame(width: DeskListRow.placesWidth, alignment: .leading)
-            sorter(.changed).frame(width: DeskListRow.changedWidth, alignment: .leading)
+            if !compact {
+                sorter(.madeBy).frame(width: DeskListRow.madeByWidth, alignment: .leading)
+                sorter(.runsOn).frame(width: DeskListRow.placesWidth, alignment: .leading)
+                sorter(.changed).frame(width: DeskListRow.changedWidth, alignment: .leading)
+            }
             Color.clear.frame(width: DeskListRow.buttonsWidth, height: 1)
         }
         .padding(.horizontal, 10).padding(.bottom, 7)
@@ -175,6 +183,9 @@ struct DeskListRow: View {
     @EnvironmentObject private var store: Store
     let row: DeskList.Row
     let selected: Bool
+    /// In a narrow window only the icon, the name and the buttons fit: who made it, where it runs and when it changed
+    /// are in the side panel.
+    var compact = false
     let select: () -> Void
     @State private var hovered = false
 
@@ -186,6 +197,8 @@ struct DeskListRow: View {
     static let changedWidth: CGFloat = 76
     static let buttonsWidth: CGFloat = 72
     static let nest: CGFloat = 30
+    /// The list's width below which a row shows only its icon, name and buttons.
+    static let compactBelow: CGFloat = 600
 
     private var project: LampProject { row.project }
     /// A starter clicked before Lamp had built it, which opens by itself once it's ready: the one wait the desk shows.
@@ -208,17 +221,19 @@ struct DeskListRow: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Text(row.madeBy).font(.system(size: 13)).lineLimit(1).frame(width: Self.madeByWidth, alignment: .leading)
-                HStack(spacing: 4) {
-                    ForEach(row.entry?.places ?? [], id: \.self) { place in
-                        Image(systemName: DeskList.symbol(place)).help(GameKit.placeName(place))
+                if !compact {
+                    Text(row.madeBy).font(.system(size: 13)).lineLimit(1).frame(width: Self.madeByWidth, alignment: .leading)
+                    HStack(spacing: 4) {
+                        ForEach(row.entry?.places ?? [], id: \.self) { place in
+                            Image(systemName: DeskList.symbol(place)).help(GameKit.placeName(place))
+                        }
                     }
+                    .font(.system(size: 13))
+                    .foregroundStyle(Paper.ink.opacity(0.75))
+                    .frame(width: Self.placesWidth, alignment: .leading)
+                    Text(DeskList.when(row.entry?.changed)).font(.system(size: 13)).foregroundStyle(Paper.muted)
+                        .frame(width: Self.changedWidth, alignment: .leading)
                 }
-                .font(.system(size: 13))
-                .foregroundStyle(Paper.ink.opacity(0.75))
-                .frame(width: Self.placesWidth, alignment: .leading)
-                Text(DeskList.when(row.entry?.changed)).font(.system(size: 13)).foregroundStyle(Paper.muted)
-                    .frame(width: Self.changedWidth, alignment: .leading)
                 HStack(spacing: 6) {
                     Button { store.open(fromDesk: project) } label: { Label("Open", systemImage: DeskList.openSymbol) }
                         .labelStyle(.iconOnly)
@@ -340,7 +355,8 @@ struct DeskDetail: View {
             .padding(18)
         }
         .background(Paper.card)
-        .task(id: row.entry?.picture) {
+        // Again when the picture is rewritten, not only when it's another file.
+        .task(id: [row.entry?.picture?.path, row.entry?.pictureDate?.description]) {
             guard let url = row.entry?.picture else { picture = nil; return }
             picture = await Task.detached { NSImage(contentsOf: url) }.value
         }

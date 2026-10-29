@@ -76,7 +76,9 @@ struct OnboardingView: View {
                 }
             }
             .id(step)
-            .transition(.asymmetric(insertion: .stage(from: forward ? 1 : -1), removal: .stage(from: forward ? -1 : 1)))
+            // With Reduce Motion a step fades in its place, as the stage behind it doesn't move either.
+            .transition(reduceMotion ? .opacity
+                        : .asymmetric(insertion: .stage(from: forward ? 1 : -1), removal: .stage(from: forward ? -1 : 1)))
             .opacity(leaving ? 0 : 1)
             .scaleEffect(leaving ? 1.03 : 1)
         }
@@ -127,8 +129,9 @@ struct OnboardingView: View {
         forward = next.rawValue > step.rawValue
         UserDefaults.standard.set(next.rawValue, forKey: Onboarding.stepKey)
         Analytics.capture(.welcomeStep, ["step": "\(next)", "back": !forward])
-        // As long and as eased as the camera's move along the stage, so the step rides with it.
-        withAnimation(.easeInOut(duration: 0.9)) { step = next }
+        // As long and as eased as the camera's move along the stage, so the step rides with it; a short fade where the
+        // person asked for less motion.
+        withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : .easeInOut(duration: 0.9)) { step = next }
     }
 
     /// Takes a wish from the site: one its link brought or, the first time the welcome is ever shown, one its
