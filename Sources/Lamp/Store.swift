@@ -5826,7 +5826,10 @@ final class Store: ObservableObject {
             // replaced New Window can't open one), something has to be on screen: if there's nothing, relaunch it.
             let shown = await acknowledged.wait(seconds: 1.5)
             guard !running.isTerminated else { return }   // it's relaunching itself (LampWindows.relaunch)
-            guard !shown, !Self.hasWindow(running.processIdentifier) else { return noteOpened(true, for: project) }
+            guard !shown, !Self.hasWindow(running.processIdentifier) else {
+                await sayWhereItIs(project)
+                return noteOpened(true, for: project)
+            }
             // Only if it goes when asked: one that doesn't may hold something, and is left as it is.
             let asked = Date()
             guard await AppQuit.close(running, id: project.id, runtime: Runtime.macFolder(project),
@@ -5848,6 +5851,7 @@ final class Store: ObservableObject {
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
             noteOpened(true, for: project)
+            await sayWhereItIs(project)
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
             noteOpened(false, for: project)
@@ -8565,6 +8569,37 @@ final class Store: ObservableObject {
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
     /// `early` returns as soon as the app has shown itself rather than once its first seconds have passed: for a look,
     /// which tells of a death after that with its next answer (`lateCrash`).
+    /// "… is ready" in the chat, in place of those before it when nothing has been said since: opened again and
+    /// again from the desk, an app would otherwise stack a line for each time. Lines in passing ("Building…") and
+    /// details don't count as something said.
+    private func sayReady(_ project: LampProject, _ words: String) {
+        let ready = "\(project.name) is ready"
+        var lines = logs[project.id] ?? []
+        while let last = lines.lastIndex(where: { !($0.kind == .detail || $0.kind == .status && $0.text.hasSuffix("…")) }),
+              lines[last].kind == .status, lines[last].text.hasPrefix(ready) {
+            lines.remove(at: last)
+        }
+        if lines.count != logs[project.id]?.count { logs[project.id] = lines }
+        log(project, .status, words)
+    }
+
+    /// An app opened as it was, with no build to say "… is ready": one out of sight in the menu bar still says where
+    /// it is, as `readyWords` does after a build. One with a window shows itself and says nothing.
+    private func sayWhereItIs(_ project: LampProject) async {
+        let words = await readyWords(project)
+        if words != "\(project.name) is ready" { sayReady(project, words) }
+    }
+
+    /// What the chat says once an app opens in front. One that lives in the menu bar says so: its panel drops down
+    /// as it opens (`LampMenuBar`), but closes at the first click elsewhere, and nothing else on screen says where
+    /// the app went.
+    private func readyWords(_ project: LampProject) async -> String {
+        guard project.platform == .mac, await Task.detached(operation: { WishPlace.of(project) }).value == .menuBar else {
+            return "\(project.name) is ready"
+        }
+        return "\(project.name) is ready, in your menu bar at the top right of the screen"
+    }
+
     /// `saysReady` false keeps "… is ready" out of the chat, for a reopen in the middle of a request (`reloadInTurn`),
     /// whose end says what the request came to.
     /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
@@ -8738,7 +8773,7 @@ final class Store: ObservableObject {
             await watchWidget(of: project)
             // In place is all there is to it: a card that said it didn't get there says so no longer.
             noteOpened(true, for: project)
-            if inFront { log(project, .status, "\(project.name) is ready") }
+            if inFront { sayReady(project, "\(project.name) is ready") }
             upgradeIconArt(project)
             refreshOpenApps()
             stamps[project.id] = BuildStamp.read(project.installedURL)
@@ -8765,7 +8800,7 @@ final class Store: ObservableObject {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
                 owner?.shown.append(Date())
-                if inFront, saysReady { log(project, .status, "\(project.name) is ready") }
+                if inFront, saysReady { sayReady(project, await readyWords(project)) }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {

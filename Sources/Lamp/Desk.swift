@@ -1018,7 +1018,8 @@ enum WishPlace: Equatable {
         // An app with a window lives there, whatever else it has: one with a menu bar item beside its window opens
         // its window, and its chat goes beside it.
         let hasWindow = code.contains("WindowGroup") || code.contains("Window(")
-        if code.contains("LampMenuBar("), !hasWindow { return .menuBar }
+        // Called either way: `LampMenuBar("Name", …) { … }` or with its content alone, `LampMenuBar { … }`.
+        if code.range(of: #"\bLampMenuBar\s*[({]"#, options: .regularExpression) != nil, !hasWindow { return .menuBar }
         if Template.Capabilities.load(project).background == true, !hasWindow { return .background }
         return .window
     }
