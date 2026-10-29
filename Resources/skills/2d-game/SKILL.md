@@ -144,6 +144,12 @@ the top edge between them, never under a thumb.
 
 Nothing is loaded from the network, ever: the art is in Web/ or made in code.
 
+- **Ready-made sprite sheets and tilesets** from the `assets` tool: a platformer's characters with their walk, jump
+  and hurt frames, enemies, coins, tiles, a space shooter's ships, a top-down racer's cars and track, pixel-art towns
+  and dungeons, UI and icons, each pack in one style. Before drawing a game's characters, enemies and tiles, look
+  there (`find` with `show`): a pack's matching frames are what code and `make_art` struggle to give. Open the assets
+  skill to choose and to load an XML atlas or a tilesheet with spacing.
+
 - **Shapes made in code** are the quickest and always match: draw once with `this.make.graphics({ add: false })`
   (rectangles, circles, rounded boxes, polygons, a gradient of bands) and `generateTexture('coin', 48, 48)`, in a
   Boot scene, then use the texture like any picture. A palette of four to eight colors, used everywhere, makes a game

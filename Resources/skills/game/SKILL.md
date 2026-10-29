@@ -49,11 +49,12 @@ A game is for fun, and fun is designed from the first build, not added at the en
   secret, a joke in a name, a combo that does something special, weather that changes, a celebration that's over the
   top. Many small ones beat one big one.
 
-Make what's in it in code by default: 3D models from three.js shapes (the 3d-game skill), music and effects from
-`sound` (below), pictures from `make_art` or drawn in code. Made that way it matches the game's style and is the
-person's to share. Use a file only when the person gives it or names where it comes from and its license allows
-sharing; it goes into the game's own folder, credited as the rules say. The game never loads anything from the
-network while it's played.
+What's in it is made in code (3D models from three.js shapes, the 3d-game skill; music and effects from `sound`,
+below; pictures drawn in code or painted with `make_art`) or ready-made from Lamp's free assets: models, characters
+with their animations, sprite sheets, tilesets and textures, fetched and credited by the `assets` tool (the assets
+skill says when each suits and how to keep one style). Either way it's the person's to share. Any other file only
+when the person gives it or names where it comes from and its license allows sharing; it goes into the game's own
+folder, credited as the rules say. The game never loads anything from the network while it's played.
 
 When asked to make a game more fun, play it first and find what's flat (a loop that doesn't pull, a curve that's
 too easy or too hard, an action that answers with nothing), then work on those four: the loop and the curve, the
@@ -161,8 +162,9 @@ to time. When frames are late, draw less.
 
 ## The look
 
-Sprites, characters and backgrounds are art from `make_art`, all in one style, on a transparent background where they
-move. Shapes and colors made in code, well lit, look better than mismatched models. Score, pause and menus are plain
+Sprites, characters and backgrounds are art from `make_art` or one ready-made pack (the assets skill), all in one
+style, on a transparent background where they move. Shapes and colors made in code, well lit, look better than
+mismatched models. Score, pause and menus are plain
 and large, over the game (SwiftUI over a SpriteView; HTML over the canvas in a page).
 
 After changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches flicker a

@@ -16,6 +16,8 @@
  *   in a line what they cover. These open them when a request needs them, and replace them.
  * - `make_art`: asks Lamp to paint a picture for the app in its icon's style and save it in Assets/; the reply
  *   shows it to the agent.
+ * - `assets`: asks Lamp to find free ready-made models, sprites, tiles, icons and textures in its index, or to fetch the
+ *   chosen ones into the app and credit them; Lamp does the fetching, and the reply may show their pictures.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
  * - `make_app_for`: gives the wish a new app, or changes the one whose folder `app` names, given what it is (a game or
@@ -90,7 +92,7 @@ const lookAtApp = defineTool({
 });
 
 /**
- * Lamp's answer to look_at_app, use_app or make_art: its text, then its pictures (if the model can see them). Lamp
+ * Lamp's answer to look_at_app, use_app, make_art or assets: its text, then its pictures (if the model can see them). Lamp
  * sends the pictures' bytes, read where no link can lead elsewhere; a path read here could have been swapped for a
  * link to any file by then.
  */
@@ -116,7 +118,7 @@ async function pictureReply(response: Response, model: { input: string[] } | und
 }
 
 /**
- * Keeps the pictures in the conversation few enough to send. Every look_at_app, use_app and make_art reply
+ * Keeps the pictures in the conversation few enough to send. Every look_at_app, use_app, make_art and assets reply
  * carries one, and the conversation is sent whole with every request: left in, they add up until the provider
  * refuses the request (Anthropic takes 30 MB of images in one; OpenRouter drops the connection at about 5 MB of
  * body, which pi reports as a connection error). So after each turn the older ones are taken out of what the
@@ -546,6 +548,21 @@ const makeArt = defineTool({
 	},
 });
 
+const assets = defineTool({
+	...spec("assets"),
+	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		const url = process.env.LAMP_ASSETS_URL;
+		if (!url) throw new Error("Lamp isn't available to find assets.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
+		});
+		return pictureReply(response, ctx.model, "Lamp couldn't do that with the assets.");
+	},
+});
+
 const offerSetup = defineTool({
 	...spec("offer_setup"),
 	async execute(_toolCallId, params, signal) {
@@ -719,6 +736,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(nameVersion);
 	pi.registerTool(restoreVersion);
 	pi.registerTool(makeArt);
+	pi.registerTool(assets);
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
 	pi.registerTool(removeApp);

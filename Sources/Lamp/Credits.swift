@@ -35,6 +35,9 @@ struct Credits: Codable, Equatable {
         /// The project the wish was made from, as against the libraries and assets it uses: the one whose updates the
         /// wish follows (`AppUpdates.route`). At most one source says so.
         var adapted: Bool? = nil
+        /// The files of it in the wish, for work brought in a file at a time (a model, a sprite sheet, a texture: the
+        /// `assets` tool's), so what each file is and whose it is can be told from the credits.
+        var files: [String]? = nil
 
         /// Every file of its terms the wish keeps: its license, then the others.
         var termsFiles: [String] { (licenseFile.map { [$0] } ?? []) + (noticeFiles ?? []) }
@@ -169,7 +172,8 @@ struct Credits: Codable, Equatable {
             result.upstream[index] = Source(name: newer.name, author: newer.author ?? source.author, url: newer.url ?? source.url,
                                             commit: newer.commit ?? source.commit, license: newer.license ?? source.license,
                                             licenseFile: newer.licenseFile ?? source.licenseFile,
-                                            noticeFiles: newer.noticeFiles ?? source.noticeFiles, adapted: newer.adapted ?? source.adapted)
+                                            noticeFiles: newer.noticeFiles ?? source.noticeFiles, adapted: newer.adapted ?? source.adapted,
+                                            files: Self.union(source.files, newer.files))
         }
         for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameLink(as: remix) }) { result.remixOf.append(remix) }
         // A link both have keeps the address it has, or takes the one the newer file gives; its commit is the newer
@@ -181,6 +185,14 @@ struct Credits: Codable, Equatable {
         }
         for picture in other.generated where !result.generated.contains(picture) { result.generated.append(picture) }
         return result.checked
+    }
+
+    /// Two lists of files as one, each once, in the order first seen; nil when both are.
+    private static func union(_ one: [String]?, _ other: [String]?) -> [String]? {
+        guard one != nil || other != nil else { return nil }
+        var result = one ?? []
+        for file in other ?? [] where !result.contains(file) { result.append(file) }
+        return result
     }
 
     /// The chain with one more wish at its end. The same wish shared again (an update, a second share) stays one link,
@@ -274,6 +286,7 @@ struct Credits: Codable, Equatable {
 
     static let maxEntries = 32
     static let maxPictures = 500
+    static let maxFiles = 500
     static let maxText = 100
 
     /// Only entries Lamp can show as they are: one plain line for each name, an https address, a commit that's a
@@ -333,9 +346,10 @@ extension Credits.Source {
     var checked: Credits.Source? {
         guard let name = Credits.text(name) else { return nil }
         let notices = (noticeFiles ?? []).compactMap(Credits.validPath)
+        let files = Array((files ?? []).compactMap(Credits.validPath).prefix(Credits.maxFiles))
         return Credits.Source(name: name, author: Credits.text(author), url: Credits.validURL(url), commit: Credits.validCommit(commit),
                               license: Credits.validLicense(license), licenseFile: Credits.validPath(licenseFile),
-                              noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted)
+                              noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted, files: files.isEmpty ? nil : files)
     }
 
     /// The same work: the same address, or for one with none, the same name.

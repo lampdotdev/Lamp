@@ -375,6 +375,63 @@
     }
   },
   {
+    "name": "assets",
+    "label": "Assets",
+    "description": "Lamp's index of free, ready-made 3D models (buildings, vehicles, characters with animations, nature, props), 2D sprite sheets, tilesets, UI pieces, icons and tileable textures, by people who publish them for anyone to use (CC0, or CC-BY with credit). With `find` it lists what fits your words, best first, leaving out what's too heavy for the slowest place the app is shown; `show` adds their pictures in one numbered sheet, to judge their style together. With `fetch` it brings the chosen ones into the app (Web/assets/ for a game or another page, the packaged assets for an Android app, else Assets/), checked, made lighter where a picture is too big for that place, and credited in credits.json for you. Nothing is loaded from the network while the app runs. Read the assets skill before choosing between these and making things yourself.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "find": {
+          "type": "string",
+          "description": "What you're looking for, in a few plain words: \"taxi\", \"low-poly tree\", \"platformer player\", \"brick wall texture\"."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "any",
+            "model",
+            "building",
+            "vehicle",
+            "character",
+            "nature",
+            "prop",
+            "2d",
+            "sprites",
+            "tileset",
+            "ui",
+            "icons",
+            "texture"
+          ],
+          "description": "Only this kind: `model` is any 3D kind, `2d` any flat one."
+        },
+        "show": {
+          "type": "boolean",
+          "description": "With `find`: also show the found assets' pictures, numbered as listed."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "With `find`: how many to list (default 12, at most 30)."
+        },
+        "fetch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The ids `find` listed, to bring into the app (at most 40 at a time)."
+        },
+        "part": {
+          "type": "string",
+          "description": "For a wish of more than one app: which one they're for, by its device (\"iphone\", \"tv\", \"mac\") or its folder (\"mac2\", \"roku\"). Needed then; left out only when the wish has one app."
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Finding cars for the streets\", \"Bringing in the town's buildings\"."
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
     "name": "offer_setup",
     "label": "Offer setup",
     "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now.",

@@ -22,6 +22,6 @@ Each prop that matters goes in `props` by name, and look_at_app with `prop` show
 
 LampSceneView already avoids RealityKit's flicker; keep it that way: no sun shadows (they make the whole picture flicker; `lampShadow` instead), and flat things laid on others (roads, markings, decals, a sign's writing) a few centimeters above them, never at the same height. After big changes, look_at_app with `motion`.
 
-A model code can't reasonably make can come from a free CC0 library (Kenney, Poly Haven) as .glb: download it into Assets/, turn it into USD with `usdextract -o Assets/Name file.glb` (part of macOS), and load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`.
+A model code can't reasonably make can come ready-made from the `assets` tool (the assets skill), which fetches the .glb into Assets/<pack>/ and credits it: turn it into USD with `usdextract -o Assets/Name Assets/<pack>/name.glb` (part of macOS), and load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`.
 
 A real place (a town to drive, a campus, a neighborhood) is built from map data: open the maps skill too.
