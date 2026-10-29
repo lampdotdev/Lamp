@@ -292,14 +292,15 @@ Lamp takes such a link as a remix or not at all (`Wish.isRemix`, `Wish.remix`): 
 badly is refused with an alert, never taken for a plain wish. Everything in it is untrusted: a starter only by a plain
 folder name that this Lamp ships and that runs here (`Store.starter(named:)`); a repository only as an https
 github.com address with nothing after its name, and a commit only in full, 40 hex digits (a shallow fetch takes no abbreviation) (`RepoImport.Source` with the
-commit as its ref). A starter is copied as the first launch copies one (`Store.openCopy`, `put(starter:)`, its chain
-naming the starter at the commit this Lamp ships) and opened with its chat, the request written into its box
-(`writeIn`); another link for the same starter goes into that copy while nothing has been asked of it (its first build out of
-sight isn't). A repository
+commit as its ref). A starter opens with its chat, the request written into its box (`writeIn`, `Store.openCopy`): a copy of it on the
+desk that nothing has been asked of and whose box is empty (the one Lamp came with, or one an earlier link opened; its
+first build out of sight isn't asking, and the copy the last link opened is taken with that link's request in its box),
+else a fresh copy, made as the first launch makes one (`put(starter:)`, its chain naming the
+starter at the commit this Lamp ships). A link without a request opens it with an empty box. A repository
 goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
 box. Nothing is sent or built from the link. During the welcome a starter's remix waits (`Onboarding.keptRemix`, saved
-like the welcome's wish) and opens once setup is done, in the desk's own copy of the starter, which was put there
-moments before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
+like the welcome's wish) and opens once setup is done, in the desk's own copy of the starter, put there moments
+before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
 links are read as a browser's form writes them too (`Wish.items`: "+" is a space).
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,

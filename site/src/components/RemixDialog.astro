@@ -16,7 +16,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
 <!--
   A remix brought by a link from a published page's Remix panel, or from the panel beside an app on a Mac without Lamp
   (`RemixLink` in Lamp): `?ask=` with the request, and, when the page names what it's a copy of, `starter=` or
-  `repo=` and `commit=` (lib/wish.js). It shows what the remix starts from (a starter's tape, a repository's name) and the
+  `repo=` and `commit=` (lib/wish.js), and `from=` where it was pressed. It shows what the remix starts from (a starter's
+  tape, a repository's own picture or else its name) and the
   request in a box to change, then Open in Lamp on a Mac (a link Lamp opens on a fresh copy with the request waiting in
   its chat) and Download for Mac, which copies the request with Lamp's mark, naming the starter or repository, for
   Lamp's first open. The ideas page keeps its own card (WishDialog.astro); this one is dressed as the homepage is.
@@ -61,7 +62,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
 </dialog>
 
 <script>
-  import { askFrom, copyWish, remixFrom, remixLink, wishLink } from "../../lib/wish.js";
+  import { askFrom, copyWish, remixFrom, remixLink, repoPictures, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
 
   type Known = Record<string, { name: string; by: string; about: string; shot: string }>;
@@ -95,6 +96,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     const { signal } = setup;
     shown = search;
     shot.hidden = written.hidden = about.hidden = true;
+    shot.removeAttribute("src");
+    delete shot.dataset.fit;
     by.textContent = from.textContent = "";
     ask.textContent = first.ask;
     status.textContent = first.status;
@@ -128,6 +131,19 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       remixOf(origin.name, origin.owner);
       written.textContent = origin.name;
       written.hidden = false;
+      // The repository's own picture when it has one, tried in turn (`repoPictures`); the written label stays until
+      // one loads, and for good when none does.
+      const pictures = repoPictures(origin);
+      const next = () => {
+        const picture = pictures.shift();
+        if (!picture) return;
+        shot.dataset.fit = picture.fit;
+        shot.src = picture.src;
+      };
+      shot.alt = origin.name;
+      shot.addEventListener("load", () => { shot.hidden = false; written.hidden = true; }, { signal });
+      shot.addEventListener("error", next, { signal });
+      next();
     } else {
       title.textContent = "Your wish";
       by.textContent = "From an app made with Lamp";
@@ -162,7 +178,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     // Closed, the page is the homepage again: a reload doesn't bring the dialog back.
     dialog.addEventListener("close", () => {
       const url = new URL(location.href);
-      for (const name of ["ask", "starter", "repo", "commit"]) url.searchParams.delete(name);
+      for (const name of ["ask", "starter", "repo", "commit", "from"]) url.searchParams.delete(name);
       history.replaceState(history.state, "", url);
     }, { signal });
     q("[data-close]").addEventListener("click", () => dialog.close(), { signal });
@@ -308,6 +324,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   .remix-label { margin: 0; padding: 1.75rem; background: var(--color-tape); color: #fff; }
   @media (min-width: 48rem) { .remix-label { padding: 2.25rem; } }
   .remix-label img { display: block; width: 100%; height: auto; border: 2px solid var(--color-paper); }
+  /* A repository's icon rather than a screenshot: whole and centered on the label's paper. */
+  .remix-label img[data-fit="contain"] { aspect-ratio: 3 / 2; object-fit: contain; padding: 2rem; background: #fbf8ee; box-sizing: border-box; }
   .remix-about { margin-top: 1.25rem; font-size: 1.0625rem; line-height: 1.5; color: #fff; }
   .remix-written {
     display: grid; place-items: center; aspect-ratio: 3 / 2; margin: 0; padding: 1rem; background: #fbf8ee; color: #b8264f;

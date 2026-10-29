@@ -217,7 +217,7 @@ enum Publish {
             a.addEventListener('input',function(){g.disabled=!a.value.trim();});
             g.addEventListener('click',function(){var ask=a.value.trim().slice(0,\(RemixLink.askLimit));if(!ask)return;
               var f=t.origin&&typeof t.origin==='object'?t.origin:null,u=new URL(f?'https://lamp.dev/':(t.link||'https://lamp.dev/'));
-              if(f)for(var k in f)u.searchParams.set(k,String(f[k]));
+              if(f)for(var k in f)u.searchParams.set(k,String(f[k]));u.searchParams.set('from','page');
               u.searchParams.set('ask',f||t.link?ask:String(t.request||'{ask}').replace('{ask}',ask));window.open(u.href,'_blank','noopener');});})();
             </script>
             """

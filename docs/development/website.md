@@ -23,15 +23,17 @@ fill in the sleeve's colors. Apps and games get the same weight on it, and
 every example is a real starter (`Resources/Starters`), with the pictures and changes it ships with; the devices it
 lists are only those a kind of app or a shipped device integration really reaches. Its Download buttons, and the
 menu bar's, are the paper's ink with paper-colored words (the last section's is the stripes' yellow with ink).
-A link from a Remix panel (`?ask=`, with `starter=` or `repo=` and `commit=` when the page names what it's a copy of)
-opens the homepage's remix dialog (`RemixDialog.astro`, "Remixing a published page" in the wishes guide), as does the
+A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
+what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`, "Remixing a published page" in the wishes guide), as does the
 hero sleeve's "Remix me" (`lamp:remix`). It's a slab in 3D with real thickness that rises in from the bottom and
 leans toward the pointer (the tapes behind it hold still while it's open), with the stripes up its left edge, the
-starter's picture and description on the dark on its left (or a blank label with the name in marker), its title as
+starter's picture and description on the dark on its left (a repository's own picture, its preview or else its icon,
+from raw.githubusercontent.com, `repoPictures`; or a blank label with the name in marker), its title as
 "Remix" in marker over the name and its maker, the request in the page's sans-serif in its box, and the page's
 buttons (Open in Lamp in ink, on a Mac; Download for Mac in the stripes' yellow). A page can't ask whether Lamp is
 installed, so Open in Lamp watches whether Lamp answered: if the browser keeps its focus for two seconds, the
-dialog turns to getting Lamp, with Download first, and turns back should Lamp open late. The ideas page keeps its own card
+dialog turns to getting Lamp, with Download first, and turns back should Lamp open late. Closed, it takes its
+parameters out of the address, so a reload doesn't bring it back. The ideas page keeps its own card
 (`WishDialog.astro`). The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
 lamp's bright orange with white words, about 3:1 at their lightest, a faint shadow under the words. That trade-off
 was weighed and accepted: the brightness is the point of the button, and the label is large, bold and the same
