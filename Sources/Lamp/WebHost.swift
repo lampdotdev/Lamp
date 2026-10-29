@@ -1,4 +1,5 @@
 import Foundation
+import LampRelayKit
 
 /// Lamp's web host for the Xbox: one prebuilt program (`Resources/WebHost`, built from `lamp_web_host.cpp` by
 /// `scripts/build-web-host.sh`) that shows a web app's pages full screen in WebView2, the console's Chromium, in place
@@ -28,13 +29,18 @@ enum WebHost {
         return !(Edition.isDev && UserDefaults.standard.string(forKey: "xboxWebHost") == "edgehtml")
     }
 
-    /// The package's files: the host and WebView2's library at the top, the app's under Web/.
-    static func payload(_ files: [(path: String, data: Data)]) throws -> [(path: String, data: Data)] {
+    /// Where a game's phone page goes in the package, beside Web/, which the host serves to phones itself.
+    static let phoneFolder = "Phone"
+
+    /// The package's files: the host and WebView2's library at the top, the app's under Web/, and a game's phone page
+    /// under Phone/.
+    static func payload(_ files: [(path: String, data: Data)], phone: ControllerSnapshot? = nil) throws -> [(path: String, data: Data)] {
         guard let resources,
               let host = try? Data(contentsOf: resources.appendingPathComponent(program)),
               let core = try? Data(contentsOf: resources.appendingPathComponent(library)) else {
             throw MSIX.Failure(message: "Lamp's web host for the Xbox is missing from Lamp itself.")
         }
         return [(program, host), (library, core)] + files.map { (folder + "/" + $0.path, $0.data) }
+            + (phone?.files ?? []).map { (phoneFolder + "/" + $0.path, $0.data) }
     }
 }

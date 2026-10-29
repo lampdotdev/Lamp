@@ -20,6 +20,13 @@
 // Chromium's web view never shakes the controller, so lamp.js sends a page's vibrationActuator calls here (`rumble`
 // messages), and the host plays them with Windows.Gaming.Input, as a native game's lamp_rumble does.
 //
+// A game's phones play it with no Lamp (lamp_controllers.h): as Lamp.controllers starts, the host serves the game's phone
+// page from the package's Phone folder and runs the relay its phones join, each on a port the system gives it, with a
+// key made for that session and kept only in memory. The page asks the host for its session (`controllers` messages,
+// never Lamp), and its own link to the relay is carried over the host's pipe straight into the relay, never over the
+// network, so only the page can be the game's host. Stopping, the console setting the app aside, and the page going
+// away end the session: listeners close, players are let go and the key is forgotten; the page's next ask opens a new one.
+//
 // The page is laid out at 1920x1080 CSS pixels, as in Lamp's preview on the Mac and as the rules say: the console's
 // web view would otherwise lay it out at 1280x720 and scale it up, so the host zooms it out to match.
 //
@@ -47,6 +54,7 @@
 #include <winrt/Windows.Networking.Sockets.h>
 #include <winrt/Windows.Networking.Connectivity.h>
 #include <winrt/Windows.Security.Cryptography.h>
+#include <winrt/Windows.Security.Cryptography.Core.h>
 #include <winrt/Microsoft.Web.WebView2.Core.h>
 #include <algorithm>
 #include <atomic>
@@ -56,6 +64,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include "lamp_controllers.h"
 
 using namespace winrt;
 using namespace Windows::ApplicationModel::Core;
@@ -116,6 +125,103 @@ static void say_line(std::wstring_view text) {
     fflush(g_log);
 }
 
+// MARK: Phones as controllers: the console's side of lamp_controllers.h
+
+namespace lampc::platform {
+using Windows::Security::Cryptography::CryptographicBuffer;
+
+static Windows::Storage::Streams::IBuffer buffer_of(std::string_view data) {
+    return CryptographicBuffer::CreateFromByteArray({ reinterpret_cast<uint8_t const*>(data.data()), reinterpret_cast<uint8_t const*>(data.data()) + data.size() });
+}
+
+void random_bytes(uint8_t* out, size_t count) {
+    auto random = CryptographicBuffer::GenerateRandom((uint32_t)count);
+    memcpy(out, random.data(), count);
+}
+
+std::array<uint8_t, 32> hmac_sha256(std::string_view key, std::string_view data) {
+    using namespace Windows::Security::Cryptography::Core;
+    static auto provider = MacAlgorithmProvider::OpenAlgorithm(MacAlgorithmNames::HmacSha256());
+    auto signature = CryptographicEngine::Sign(provider.CreateKey(buffer_of(key)), buffer_of(data));
+    std::array<uint8_t, 32> out{};
+    memcpy(out.data(), signature.data(), std::min<size_t>(out.size(), signature.Length()));
+    return out;
+}
+
+std::array<uint8_t, 20> sha1(std::string_view data) {
+    using namespace Windows::Security::Cryptography::Core;
+    static auto provider = HashAlgorithmProvider::OpenAlgorithm(HashAlgorithmNames::Sha1());
+    auto digest = provider.HashData(buffer_of(data));
+    std::array<uint8_t, 20> out{};
+    memcpy(out.data(), digest.data(), std::min<size_t>(out.size(), digest.Length()));
+    return out;
+}
+}
+
+// Where a phone's page goes: the page-only link the host carries into its relay (`pipe`), never dialed.
+static const wchar_t* g_relay_link = L"ws://lamp-controllers.invalid/";
+
+// The console's address a phone's link carries: one on the home network, the one the console reaches the internet by
+// when it has several; nil on none, so a phone is never given a link to itself.
+static std::optional<std::wstring> link_host() {
+    using namespace Windows::Networking::Connectivity;
+    std::optional<std::wstring> any, internet;
+    try {
+        hstring adapter;
+        if (auto profile = NetworkInformation::GetInternetConnectionProfile(); profile && profile.NetworkAdapter())
+            adapter = to_hstring(profile.NetworkAdapter().NetworkAdapterId());
+        for (auto const& name : NetworkInformation::GetHostNames()) {
+            if (name.Type() != Windows::Networking::HostNameType::Ipv4 || !is_private_v4(name.CanonicalName())) continue;
+            std::wstring address(name.CanonicalName());
+            if (!any) any = address;
+            auto info = name.IPInformation();
+            if (!internet && info && info.NetworkAdapter() && !adapter.empty() && to_hstring(info.NetworkAdapter().NetworkAdapterId()) == adapter) internet = address;
+        }
+    } catch (...) {}
+    return internet ? internet : any;
+}
+
+// The console's names and addresses, lowercased: the only ones a phone's page is served as.
+static std::set<std::string> host_names() {
+    std::set<std::string> names;
+    try {
+        for (auto const& name : Windows::Networking::Connectivity::NetworkInformation::GetHostNames()) {
+            std::string text = lampc::lower(to_string(name.CanonicalName()));
+            if (auto zone = text.find('%'); zone != std::string::npos) text = text.substr(0, zone);
+            if (!text.empty()) names.insert(text);
+        }
+    } catch (...) {}
+    return names;
+}
+
+// Which phone a connection is from, for the limits on how many it may hold (`lampc::source_of`).
+static std::string remote_of(Windows::Networking::Sockets::StreamSocket const& socket) {
+    try { return lampc::source_of(to_string(socket.Information().RemoteAddress().CanonicalName())); }
+    catch (...) { return "?"; }
+}
+
+// A StreamSocket under one of lampc's WebSockets: each write handed to the network, and `done` on the window's thread.
+struct StreamTransport : lampc::Transport {
+    Windows::Networking::Sockets::StreamSocket socket;
+    Windows::Storage::Streams::DataWriter writer;
+    CoreDispatcher dispatcher;
+    StreamTransport(Windows::Networking::Sockets::StreamSocket s, Windows::Storage::Streams::DataWriter w, CoreDispatcher d)
+        : socket(std::move(s)), writer(std::move(w)), dispatcher(std::move(d)) {}
+    void write(std::string bytes, std::function<void(bool)> done) override { send(writer, dispatcher, std::move(bytes), std::move(done)); }
+    void shutdown() override { try { socket.Close(); } catch (...) {} }
+
+    // Touches nothing of the transport after it waits, which may be gone by then.
+    static fire_and_forget send(Windows::Storage::Streams::DataWriter writer, CoreDispatcher dispatcher, std::string bytes, std::function<void(bool)> done) {
+        bool ok = true;
+        try {
+            writer.WriteBytes({ reinterpret_cast<uint8_t const*>(bytes.data()), reinterpret_cast<uint8_t const*>(bytes.data()) + bytes.size() });
+            co_await writer.StoreAsync();
+        } catch (...) { ok = false; }
+        co_await resume_foreground(dispatcher);
+        done(ok);
+    }
+};
+
 struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     CoreWindow window{ nullptr };
     CoreWebView2Controller controller{ nullptr };
@@ -140,6 +246,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     std::mutex shaking;
     // Counts the page's top-level navigations, so an answer to a page that has since gone is dropped.
     uint64_t page = 0;
+    struct PagePeer;
     // The page's links to the wish's other apps, by the page's number for each; touched only on the window's thread.
     struct Pipe {
         Windows::Networking::Sockets::MessageWebSocket socket{ nullptr };
@@ -148,6 +255,8 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         std::deque<std::pair<bool, hstring>> queue;
         bool open = false, writing = false, over = false;
         uint64_t page = 0;
+        // The page's link to the game's own relay, carried in the host rather than dialed.
+        std::shared_ptr<PagePeer> local;
     };
     std::map<double, std::shared_ptr<Pipe>> pipes;
 
@@ -155,9 +264,16 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
 
     void Initialize(CoreApplicationView const&) {
         installed = std::wstring(Windows::ApplicationModel::Package::Current().InstalledLocation().Path());
-        CoreApplication::Suspending([this](auto const&, auto const&) {
+        CoreApplication::Suspending([this](auto const&, Windows::ApplicationModel::SuspendingEventArgs const& args) {
             say_line(L"Lamp: the console set the app aside.");
             for (int i = 0; i < 4; i++) still(i);
+            // Phones' session ends with it: nothing listens while the app is set aside, and coming back opens a new one.
+            if (!window) return;
+            auto deferral = args.SuspendingOperation().GetDeferral();
+            window.Dispatcher().RunAsync(CoreDispatcherPriority::High, [this, deferral] {
+                phones_close(L"the console set the app aside");
+                deferral.Complete();
+            });
         });
         CoreApplication::Resuming([this](auto const&, auto const&) {
             say_line(L"Lamp: the app came back.");
@@ -248,6 +364,11 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
                     if (is_app_page(args.Source())) pipe(message);
                     return;
                 }
+                if (message && message.GetNamedString(L"lamp", L"") == L"controllers") {
+                    if (is_app_page(args.Source()))
+                        phone_ask({ message.GetNamedString(L"op", L"") == L"stop", message.GetNamedNumber(L"id", 0), page });
+                    return;
+                }
                 try { say_line(std::wstring(L"page: ") + std::wstring(args.TryGetWebMessageAsString())); }
                 catch (...) { say_line(std::wstring(L"page: ") + std::wstring(args.WebMessageAsJson()).substr(0, 2000)); }
             });
@@ -263,7 +384,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             // is ever where the app's answers go.
             web.NavigationStarting([this](auto const&, CoreWebView2NavigationStartingEventArgs const& args) {
                 std::wstring uri(args.Uri());
-                if (is_app_page(uri) || uri == L"about:blank") { page++; end_pipes(0); return; }
+                if (is_app_page(uri) || uri == L"about:blank") { page++; end_pipes(0); phones_close(L"the page went away"); return; }
                 args.Cancel(true);
                 elsewhere(uri);
             });
@@ -367,6 +488,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         double id = m.GetNamedNumber(L"id", 0);
         if (op == L"here") return here();
         if (op == L"open") {
+            if (m.GetNamedString(L"url", L"") == g_relay_link) return open_local(id);
             std::shared_ptr<Pipe> p;
             try {
                 Windows::Foundation::Uri url(m.GetNamedString(L"url", L""));
@@ -393,6 +515,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         // Held to what a file's piece takes, sealed, in base64, and to a queue the page's own flow keeps short.
         auto payload = binary ? m.GetNamedString(L"data", L"") : m.GetNamedString(L"text", L"");
         if (payload.size() > 128 * 1024 || p->queue.size() >= 256) return end_pipe(id, p, 1009, true);
+        if (p->local) return to_local(id, p, binary, payload);
         p->queue.emplace_back(binary, payload);
         pump(id, p);
     }
@@ -481,6 +604,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         p->over = true;
         auto found = pipes.find(id);
         if (found != pipes.end() && found->second == p) pipes.erase(found);
+        if (auto local = p->local) { p->local = nullptr; local->lost(); }
         try { if (p->socket) p->socket.Close(1000, L""); } catch (...) {}
         p->socket = nullptr;
         p->writer = nullptr;
@@ -517,6 +641,356 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         out.SetNamedValue(L"lamp", JsonValue::CreateStringValue(L"ws"));
         out.SetNamedValue(L"ev", JsonValue::CreateStringValue(L"here"));
         out.SetNamedValue(L"addresses", list);
+        web.PostWebMessageAsJson(out.Stringify());
+    }
+
+    // MARK: Phones as controllers
+
+    // The page's own link to the relay, over the pipe: what the relay says goes to the page as the link's messages.
+    struct PagePeer : lampc::Peer {
+        View* view = nullptr;
+        double id = 0;
+        uint64_t page = 0;
+        bool open = true;
+        bool is_open() const override { return open; }
+        size_t pending_text() const override { return 0; }
+        void send_text(std::string const& text) override { if (open) view->tell_link(id, page, &text, nullptr); }
+        bool send_piece(std::string piece) override {
+            if (!open) return false;
+            view->tell_link(id, page, nullptr, &piece);
+            return true;
+        }
+        void close(int code) override {
+            if (!open) return;
+            open = false;
+            view->end_local(id, code);
+            on_close();
+        }
+        // The page closed it, or went away.
+        void lost() {
+            if (!open) return;
+            open = false;
+            on_close();
+        }
+    };
+
+    // A connection to the page or the relay: its request's head until it's answered, then the WebSocket it became.
+    struct Conn {
+        Windows::Networking::Sockets::StreamSocket socket{ nullptr };
+        Windows::Storage::Streams::DataWriter writer{ nullptr };
+        std::string from, buffer;
+        int64_t since = lampc::wall_ms();
+        bool relay = false, answered = false;
+        std::shared_ptr<lampc::SocketPeer> peer;
+    };
+    // How long an answered page request may take to go: a phone on a slow network gets the page, one that stops reading
+    // doesn't keep its connection (and the file held for it) for good.
+    static constexpr int64_t phone_send_deadline_ms = 60000;
+
+    struct PhoneAsk {
+        bool stop = false;
+        double id = 0;
+        uint64_t page = 0;
+    };
+
+    // All of it touched only on the window's thread. A session is the key, the relay and both listeners; its number
+    // changes as it closes, so what an earlier one had started is dropped.
+    std::unique_ptr<lampc::Relay> phones;
+    std::string phone_key, phone_app;
+    std::set<std::string> phone_hosts;
+    Windows::Networking::Sockets::StreamSocketListener relay_listener{ nullptr }, page_listener{ nullptr };
+    std::optional<uint16_t> relay_port, page_port;
+    std::vector<std::shared_ptr<Conn>> conns;
+    Windows::System::Threading::ThreadPoolTimer phone_ticks{ nullptr };
+    uint64_t phone_session = 0;
+    // The page's asks, one at a time, so a stop and the start after it happen in the order they were asked.
+    std::deque<PhoneAsk> phone_asks;
+    bool phone_busy = false;
+
+    void phone_ask(PhoneAsk ask) {
+        phone_asks.push_back(ask);
+        if (!phone_busy) phone_run();
+    }
+
+    fire_and_forget phone_run() {
+        auto lifetime = get_strong();
+        phone_busy = true;
+        while (!phone_asks.empty()) {
+            auto ask = phone_asks.front();
+            phone_asks.pop_front();
+            if (ask.stop) {
+                phones_close(L"the game stopped its controllers");
+                answer_phones(ask, 200, JsonObject());
+            } else {
+                co_await phones_open(ask);
+                co_await resume_foreground(window.Dispatcher());
+            }
+        }
+        phone_busy = false;
+    }
+
+    void answer_phones(PhoneAsk const& ask, int status, JsonObject const& body) {
+        if (!web || ask.page != page || !is_app_page(web.Source())) return;
+        JsonObject out;
+        out.SetNamedValue(L"lamp", JsonValue::CreateStringValue(L"controllers"));
+        out.SetNamedValue(L"id", JsonValue::CreateNumberValue(ask.id));
+        out.SetNamedValue(L"status", JsonValue::CreateNumberValue(status));
+        out.SetNamedValue(L"body", body);
+        web.PostWebMessageAsJson(out.Stringify());
+    }
+
+    void refuse_phones(PhoneAsk const& ask, int status, const wchar_t* error) {
+        JsonObject body;
+        body.SetNamedValue(L"error", JsonValue::CreateStringValue(error));
+        answer_phones(ask, status, body);
+    }
+
+    // The game's session, opened if it isn't: where its page's link goes, with a host's credential. Asked as
+    // Lamp.controllers starts and every few seconds after, which also tells the relay where the page is now.
+    Windows::Foundation::IAsyncAction phones_open(PhoneAsk ask) {
+        auto lifetime = get_strong();
+        auto dispatcher = window.Dispatcher();
+        WIN32_FILE_ATTRIBUTE_DATA index{};
+        if (!GetFileAttributesExW((installed + L"\\Phone\\index.html").c_str(), GetFileExInfoStandard, &index)) {
+            refuse_phones(ask, 409, L"The game has no phone page yet: put one in Phone/index.html.");
+            co_return;
+        }
+        // Never a link to the console itself: a phone opening it would reach itself.
+        auto link = link_host();
+        if (!link) {
+            phones_close(L"the console isn't on a network");
+            refuse_phones(ask, 503, L"This console isn't on a network phones can join. Join one, and phones can play again.");
+            co_return;
+        }
+        uint64_t session = phone_session;
+        if (!phones) {
+            if (phone_app.empty()) phone_app = to_string(Windows::ApplicationModel::Package::Current().Id().Name());
+            phone_key = lampc::random_text(32);
+            phones = std::make_unique<lampc::Relay>(phone_app, phone_key);
+            say_line(L"Lamp: phones' session opened.");
+        }
+        for (bool relay : { true, false }) {
+            auto& listener = relay ? relay_listener : page_listener;
+            if (listener) continue;
+            Windows::Networking::Sockets::StreamSocketListener made;
+            made.ConnectionReceived([this, relay, session, dispatcher](auto const&, Windows::Networking::Sockets::StreamSocketListenerConnectionReceivedEventArgs const& args) {
+                auto socket = args.Socket();
+                dispatcher.RunAsync(CoreDispatcherPriority::Normal, [this, socket, relay, session] { phone_connected(socket, relay, session); });
+            });
+            bool bound = true;
+            try { co_await made.BindServiceNameAsync(L""); } catch (hresult_error const& e) {
+                say(L"Lamp: the %ls for phones couldn't listen (0x%08x).", relay ? L"relay" : L"page", (unsigned)e.code());
+                bound = false;
+            }
+            co_await resume_foreground(dispatcher);
+            if (session != phone_session || !bound) {
+                try { made.Close(); } catch (...) {}
+                if (session == phone_session) phones_close(L"a listener couldn't open");
+                refuse_phones(ask, 503, relay ? L"The link for phones couldn't open on this console." : L"The phone page couldn't open on this console.");
+                co_return;
+            }
+            uint16_t port = (uint16_t)_wtoi(made.Information().LocalPort().c_str());
+            (relay ? relay_port : page_port) = port;
+            listener = made;
+            say(L"Lamp: the %ls for phones listens at port %u.", relay ? L"relay" : L"page", (unsigned)port);
+        }
+        if (!phone_ticks) {
+            phone_ticks = Windows::System::Threading::ThreadPoolTimer::CreatePeriodicTimer([this, session, dispatcher](auto const&) {
+                dispatcher.RunAsync(CoreDispatcherPriority::Normal, [this, session] { phone_tick(session); });
+            }, std::chrono::seconds(1));
+        }
+        phone_hosts = host_names();
+        std::string address = "http://" + to_string(*link) + ":" + std::to_string(*page_port) + "/";
+        phones->configure(address, page_port, phone_hosts);
+        JsonObject relay;
+        relay.SetNamedValue(L"kind", JsonValue::CreateStringValue(L"relay"));
+        relay.SetNamedValue(L"socket", JsonValue::CreateStringValue(g_relay_link));
+        relay.SetNamedValue(L"app", JsonValue::CreateStringValue(to_hstring(phone_app)));
+        relay.SetNamedValue(L"credential", JsonValue::CreateStringValue(to_hstring(phones->host_credential())));
+        Windows::Data::Json::JsonArray links;
+        links.Append(relay);
+        JsonObject body;
+        body.SetNamedValue(L"links", links);
+        body.SetNamedValue(L"renew", JsonValue::CreateNumberValue(15));
+        answer_phones(ask, 200, body);
+    }
+
+    // Ends the session: every phone and the page's link let go, both listeners closed and the key forgotten.
+    void phones_close(const wchar_t* why) {
+        bool was = phones != nullptr;
+        phone_session++;
+        if (phone_ticks) { phone_ticks.Cancel(); phone_ticks = nullptr; }
+        if (phones) { phones->stop(); phones.reset(); }
+        for (auto* listener : { &relay_listener, &page_listener }) {
+            if (*listener) { try { listener->Close(); } catch (...) {} *listener = nullptr; }
+        }
+        relay_port.reset();
+        page_port.reset();
+        std::fill(phone_key.begin(), phone_key.end(), '\0');
+        phone_key.clear();
+        // A phone's socket saying why it closes gets a moment for it to go; everything else goes now.
+        auto left = std::move(conns);
+        conns.clear();
+        std::vector<Windows::Networking::Sockets::StreamSocket> closing;
+        for (auto& conn : left) {
+            if (conn->peer && conn->peer->transport) closing.push_back(conn->socket);
+            else try { conn->socket.Close(); } catch (...) {}
+        }
+        if (!closing.empty()) Windows::System::Threading::ThreadPoolTimer::CreateTimer([closing](auto const&) {
+            for (auto const& socket : closing) try { socket.Close(); } catch (...) {}
+        }, std::chrono::seconds(2));
+        if (was) say(L"Lamp: phones' session ended: %ls.", why);
+    }
+
+    void phone_tick(uint64_t session) {
+        if (session != phone_session || !phones) return;
+        phones->tick();
+        int64_t now = lampc::wall_ms();
+        for (auto const& conn : std::vector<std::shared_ptr<Conn>>(conns)) {
+            if (conn->peer) conn->peer->tick(now);
+            // A request never finished, or an answer never taken, is let go before it can use up what the game needs for phones.
+            else if (now - conn->since > (conn->answered ? phone_send_deadline_ms : lampc::page::head_deadline_ms)) { try { conn->socket.Close(); } catch (...) {} }
+        }
+    }
+
+    void phone_connected(Windows::Networking::Sockets::StreamSocket const& socket, bool relay, uint64_t session) {
+        if (session != phone_session || !phones) { try { socket.Close(); } catch (...) {} return; }
+        auto conn = std::make_shared<Conn>();
+        conn->socket = socket;
+        conn->writer = Windows::Storage::Streams::DataWriter(socket.OutputStream());
+        conn->from = remote_of(socket);
+        conn->relay = relay;
+        size_t mine = std::count_if(conns.begin(), conns.end(), [&](auto const& c) { return c->from == conn->from; });
+        if (conns.size() >= lampc::page::connection_limit_all || mine >= lampc::page::connection_limit_each) { try { socket.Close(); } catch (...) {} return; }
+        conns.push_back(conn);
+        phone_read(conn, session);
+    }
+
+    fire_and_forget phone_read(std::shared_ptr<Conn> conn, uint64_t session) {
+        auto lifetime = get_strong();
+        auto dispatcher = window.Dispatcher();
+        Windows::Storage::Streams::Buffer buffer(16384);
+        try {
+            for (;;) {
+                auto got = co_await conn->socket.InputStream().ReadAsync(buffer, buffer.Capacity(), Windows::Storage::Streams::InputStreamOptions::Partial);
+                co_await resume_foreground(dispatcher);
+                if (got.Length() == 0) break;
+                phone_heard(conn, std::string_view(reinterpret_cast<const char*>(got.data()), got.Length()), session);
+            }
+        } catch (...) {}
+        co_await resume_foreground(dispatcher);
+        conns.erase(std::remove(conns.begin(), conns.end(), conn), conns.end());
+        if (conn->peer) conn->peer->lost();
+    }
+
+    void phone_write_then_close(std::shared_ptr<Conn> const& conn, std::string bytes) {
+        StreamTransport::send(conn->writer, window.Dispatcher(), std::move(bytes), [conn](bool) { try { conn->socket.Close(); } catch (...) {} });
+    }
+
+    void phone_heard(std::shared_ptr<Conn> const& conn, std::string_view bytes, uint64_t session) {
+        if (conn->peer) return conn->peer->received(bytes);
+        if (conn->answered) return;
+        conn->buffer.append(bytes.data(), bytes.size());
+        auto end = conn->buffer.find("\r\n\r\n");
+        if (end == std::string::npos) {
+            if (conn->buffer.size() > lampc::page::head_limit) { try { conn->socket.Close(); } catch (...) {} }
+            return;
+        }
+        std::string head = conn->buffer.substr(0, end), rest = conn->buffer.substr(end + 4);
+        conn->buffer.clear();
+        conn->answered = true;
+        if (session != phone_session || !phones) { try { conn->socket.Close(); } catch (...) {} return; }
+        if (!conn->relay) {
+            auto answer = lampc::page::answer(head, phone_hosts, relay_port, phone_app, [this](auto const& steps) { return phone_file(steps); });
+            return phone_write_then_close(conn, lampc::page::response(answer));
+        }
+        auto upgrade = lampc::ws::upgrade(head);
+        if (!upgrade) return phone_write_then_close(conn, lampc::ws::refused(400));
+        if (!phones->admits(upgrade->origin)) return phone_write_then_close(conn, lampc::ws::refused(403));
+        auto peer = std::make_shared<lampc::SocketPeer>(std::make_unique<StreamTransport>(conn->socket, conn->writer, window.Dispatcher()));
+        if (!phones->accept(peer, conn->from, false)) { try { conn->socket.Close(); } catch (...) {} return; }
+        conn->peer = peer;
+        peer->queue_text(lampc::ws::accepted(upgrade->key));
+        if (!rest.empty()) peer->received(rest);
+    }
+
+    // A file of the phone page in the package, by its checked steps: a plain file, reached through no link.
+    std::optional<std::string> phone_file(std::vector<std::string> const& steps) {
+        std::wstring path = installed + L"\\Phone";
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        for (auto const& step : steps) {
+            path += L"\\" + std::wstring(to_hstring(step));
+            if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)
+                || (data.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) return std::nullopt;
+        }
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return std::nullopt;
+        uint64_t size = (uint64_t)data.nFileSizeHigh << 32 | data.nFileSizeLow;
+        if (size > lampc::page::file_limit) return std::nullopt;
+        FILE* file = _wfopen(path.c_str(), L"rb");
+        if (!file) return std::nullopt;
+        std::string out((size_t)size, '\0');
+        size_t read = size ? fread(out.data(), 1, out.size(), file) : 0;
+        fclose(file);
+        if (read != out.size()) return std::nullopt;
+        return out;
+    }
+
+    // The page opening its link to the relay: the link goes into the relay here, as the one peer that may be the game's host.
+    void open_local(double id) {
+        if (pipes.count(id) || pipes.size() >= 64 || !phones) return tell(id, page, L"close", 1006);
+        auto p = std::make_shared<Pipe>();
+        p->page = page;
+        p->open = true;
+        auto peer = std::make_shared<PagePeer>();
+        peer->view = this;
+        peer->id = id;
+        peer->page = page;
+        p->local = peer;
+        pipes[id] = p;
+        if (!phones->accept(peer, "page", true)) {
+            pipes.erase(id);
+            return tell(id, page, L"close", 1006);
+        }
+        tell(id, page, L"open", 0);
+    }
+
+    // What the page sent on its link to the relay.
+    void to_local(double id, std::shared_ptr<Pipe> const& p, bool binary, hstring const& payload) {
+        auto peer = p->local;
+        if (!peer->open) return;
+        peer->heard = lampc::wall_ms();
+        if (binary) {
+            std::string bytes;
+            try {
+                auto decoded = Windows::Security::Cryptography::CryptographicBuffer::DecodeFromBase64String(payload);
+                bytes.assign(reinterpret_cast<const char*>(decoded.data()), decoded.Length());
+            } catch (...) { return end_pipe(id, p, 1007, true); }
+            peer->on_binary(bytes);
+        } else {
+            std::string text = to_string(payload);
+            if (text.size() > lampc::wire::message) return peer->close(1009);
+            peer->on_text(text);
+        }
+        tell(id, p->page, L"sent", 0);
+    }
+
+    // The relay closing the page's link: the page is told, with the relay's reason.
+    void end_local(double id, int code) {
+        auto found = pipes.find(id);
+        if (found == pipes.end() || !found->second->local) return;
+        auto p = found->second;
+        p->local = nullptr;
+        end_pipe(id, p, code, true);
+    }
+
+    void tell_link(double id, uint64_t asked, std::string const* text, std::string const* piece) {
+        if (!web || asked != page || !is_app_page(web.Source())) return;
+        JsonObject out;
+        out.SetNamedValue(L"lamp", JsonValue::CreateStringValue(L"ws"));
+        out.SetNamedValue(L"id", JsonValue::CreateNumberValue(id));
+        out.SetNamedValue(L"ev", JsonValue::CreateStringValue(L"message"));
+        if (text) out.SetNamedValue(L"text", JsonValue::CreateStringValue(to_hstring(*text)));
+        else out.SetNamedValue(L"data", JsonValue::CreateStringValue(to_hstring(lampc::base64(*piece, false))));
         web.PostWebMessageAsJson(out.Stringify());
     }
 

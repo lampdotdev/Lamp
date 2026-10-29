@@ -533,7 +533,7 @@ enum GameKit {
             // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host);
             // elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page. Either way
             // lamp.js is the game's own on top: the game's code is the same everywhere, so it finds `Lamp.controllers`
-            // (over the host's pipe on the Xbox, and saying it can't start where phones aren't hosted) and `Lamp.wish` on the Xbox too, where the page is
+            // (from the game's own host on the Xbox, and saying it can't start where phones aren't hosted) and `Lamp.wish` on the Xbox too, where the page is
             // the wish's peer itself and the host opens its links.
             if project.integration != nil { try DeviceSupport.writeDeclared(for: project) }
             try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)

@@ -11397,7 +11397,9 @@ final class Store: ObservableObject {
     }
 
     /// A game set to open on the person's Xbox (its integration's device: the one chosen under Try On, else theirs),
-    /// which Lamp can't watch either: the host there opens the page's link to the relay for it.
+    /// which Lamp can't watch either. A package Lamp makes now runs its phones in the console's host and never asks
+    /// here (lamp_controllers.h); Lamp serves only a package made by an earlier Lamp, whose host opens the page's link
+    /// to Lamp's relay for it.
     static func onDevice(_ project: LampProject) -> Bool {
         project.platform.target.takesPhones && project.onDevice
     }

@@ -588,8 +588,9 @@ extension TVTemplate {
         """#
 
     /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks where its relay is
-    /// (`/app/controller`: Lamp, for a TV app's page, the preview and the Xbox; the game itself on the Mac,
-    /// `ControllerRuntime`), as it opens and every few seconds after, and opens its own socket there, where phones' pages
+    /// (`/app/controller`: Lamp, for a TV app's page and the preview; the game itself on the Mac, `ControllerRuntime`;
+    /// on the Xbox the game's own host, `controllers` messages over its pipe, lamp_controllers.h), as it opens and every
+    /// few seconds after, and opens its own socket there, where phones' pages
     /// join; stopping says so, which closes a game's own relay and page. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
     /// block joins here (`_attach`), so they go on playing with Lamp closed. The page numbers the players itself, whichever
     /// way they came. What a player holds down is let go when it leaves or its link drops, and movement that arrives late
@@ -798,11 +799,29 @@ extension TVTemplate {
             if (code === 4003 || code === 4005) return ask(1000);
             l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
           }
+          // Where the game's session is: on the Xbox the game's own host runs its phones and answers (`controllers`
+          // messages), never Lamp; elsewhere Lamp, or the app around the page, answers /app/controller.
+          var sessionAsks = {}, sessionAskId = 0;
+          if (pipe) pipe.addEventListener('message', function (e) {
+            var m = e.data, waiting = m && m.lamp === 'controllers' && sessionAsks[m.id];
+            if (!waiting) return;
+            delete sessionAsks[m.id];
+            if (m.status === 200) waiting.resolve(m.body || {});
+            else waiting.reject(new Error((m.body && m.body.error) || 'Phones could not join the game.'));
+          });
+          function session(stop) {
+            if (!pipe) return LampAI._post('/app/controller', stop ? { stop: true } : {}, 20000);
+            return new Promise(function (resolve, reject) {
+              var id = ++sessionAskId;
+              sessionAsks[id] = { resolve: resolve, reject: reject };
+              pipe.postMessage({ lamp: 'controllers', op: stop ? 'stop' : 'start', id: id });
+            });
+          }
           function ask(after) {
             clearTimeout(askTimer);
             askTimer = setTimeout(function () {
               if (!started) return;
-              LampAI._post('/app/controller', {}, 20000).then(function (answer) {
+              session(false).then(function (answer) {
                 if (!started) return;
                 var list = answer.links || [];
                 for (var i = 0; i < list.length; i++) {
@@ -846,7 +865,7 @@ extension TVTemplate {
               return Promise.resolve();
             },
             stop: function () {
-              if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', { stop: true }, 20000).then(function () {}, function () {});
+              if (started && (pipe || (window.LampAI && LampAI._post))) session(true).then(function () {}, function () {});
               started = false;
               clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
               for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }
