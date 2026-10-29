@@ -486,10 +486,17 @@ there and opens it, the player is back where they were.
 
 **Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
 has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,
-shared with the game (`GameFiles`) and copied with a starter. Lamp serves it while the game is open on this Mac (the
-copy asks `/app/controller` through `LampPageGateway`, whose page Lamp's relay lets in by its `lamp-game://app`
-origin; `Store.servesPhonePage` goes by `openOnMac`, and the phone page is staged at each build, `TVs.stagePhone`), in
-the TV preview and on a Samsung or LG TV (staged with the rest, `TVs.stage`), and ends the session as the game closes.
+shared with the game (`GameFiles`) and copied with a starter. On this Mac the game runs its own phones, so they go on
+playing, and new ones join, whether Lamp is open or not: the phone page is staged at each build (`TVs.stagePhone`) and
+put in the game's bundle as it's installed (`GamePhones`, in `Contents/Resources/Phone`, with lamp-controller.js), and
+the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) from `ControllerRuntime`, LampRelayKit's
+Swift built into the player and every compiled game as one file (`GameKit.controllerKit`, which build.sh writes). As
+`Lamp.controllers` starts, it serves the page (`PhonePageServer`) and runs a `Relay` in the game's process, each on a
+port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
+the game quitting close both. A change of the phone page can't go into the open game as it's played, so it goes in
+with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
+told to update. Lamp serves the page itself in the TV preview and on a Samsung or LG TV (staged with the rest,
+`TVs.stage`).
 On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
 relay's plain link itself: `Lamp.controllers` opens it through the WebView2 host's pipe (`TVTemplate.linksJS`, shared
 with `Lamp.wish`), and Lamp serves the game's phones while it's set to open on the Xbox (`Store.onDevice`), which Lamp

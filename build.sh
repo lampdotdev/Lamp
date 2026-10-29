@@ -199,6 +199,10 @@ rm -rf "$APP/Contents/Resources/Starters" && rsync -a --exclude '.git' Resources
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as three.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what a game is written against, and its hosts (GameKit.swift)
+# The controller kit a game on the Mac runs its own phones with (GameKit.controllerKit): Lamp's relay and phone-page
+# server, the same Swift as LampRelayKit, as one file the player and every compiled game build into themselves, so a
+# game's phones never need Lamp.
+scripts/controller-kit.sh "$APP/Contents/Resources/GameKit/apple/LampControllerKit.swift"
 rm -rf "$APP/Contents/Resources/WebHost" && cp -R Resources/WebHost "$APP/Contents/Resources/WebHost"   # the program that shows an Xbox web app in WebView2 (WebHost.swift)
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi

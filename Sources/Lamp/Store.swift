@@ -1,3 +1,4 @@
+import LampRelayKit
 import SwiftUI
 import LampSidebarKit
 import CryptoKit
@@ -606,10 +607,7 @@ final class Store: ObservableObject {
     @Published var openApps: Set<String> = []
     /// The apps open on this Mac, and those open in a simulator or on a phone: an app for both can be in
     /// both at once, and its Play and Stop are for the place Try On points at (`isOpen`).
-    @Published private(set) var openOnMac: Set<String> = [] { didSet { Self.openOnMacNow = openOnMac } }
-    /// The same, for what's asked of every app without the store at hand (`servesPhonePage`, which runs while the
-    /// store is still being made).
-    private(set) static var openOnMacNow: Set<String> = []
+    @Published private(set) var openOnMac: Set<String> = []
     @Published private(set) var openOnIOS: Set<String> = []
     /// A choice in the chat's Try On waiting to open the app where it points (`Store.tryOn`), by app.
     var openingChosen: [String: UUID] = [:]
@@ -8317,6 +8315,9 @@ final class Store: ObservableObject {
     /// installed as usual (a change of its Swift, a copy Lamp isn't hearing from, a page that didn't answer).
     private func pageInPlace(_ project: LampProject, at place: PageLive.Place, owner: Turn?, inFront: Bool) async -> Bool {
         guard PageLive.takes(project), PageLive.shared.isOpen(project, at: place) else { return false }
+        // The game on the Mac serves its phone page from its bundle: a change to the page goes in with the game installed
+        // again, so the open game, its phones and any that join have the same page.
+        if place == .mac, GamePhones.changed(project) { return false }
         note("Updating \(project.name) in place…", for: project)
         let outcome = await PageLive.shared.put(project, at: place)
         switch outcome {
@@ -10355,6 +10356,10 @@ final class Store: ObservableObject {
                 try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
             }
         }
+        // A game's phone page, which the game serves itself (`GamePhones`), signed with it.
+        do { try GamePhones.bundle(project, into: app) } catch {
+            throw TVs.Failure(message: "Lamp couldn't put the game's phone page in it: \(error)")
+        }
         // What the agent declared in capabilities.json, as the simulator's bundle gets its own (finishSimulatorBundle).
         let capabilities = Template.Capabilities.load(project)
         capabilities.apply(to: app, for: project)
@@ -11211,12 +11216,7 @@ final class Store: ObservableObject {
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + Array(deviceRuns.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
         let closedOnMac = openOnMac.subtracting(onMac)
-        if Set(onMac) != openOnMac {
-            let changed = openOnMac.symmetricDifference(onMac)
-            openOnMac = Set(onMac)
-            // A game's phone page is served while it's open here, and its players let go once it closes.
-            if projects.contains(where: { changed.contains($0.id) && $0.platform.target.takesPhones && Self.takesPlayers($0) }) { syncLocalNetwork() }
-        }
+        if Set(onMac) != openOnMac { openOnMac = Set(onMac) }
         if Set(onIOS) != openOnIOS { openOnIOS = Set(onIOS) }
         let ids = onMac + onIOS
         let closed = openApps.subtracting(ids).union(closedOnMac)
@@ -11377,12 +11377,12 @@ final class Store: ObservableObject {
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
-    /// can't watch, for as long as it's the TV the app opens on; and a game's while its copy is open on this Mac too.
-    /// Lamp serves it so the agent never has to start a server of its own, which would outlive the app.
+    /// can't watch, for as long as it's the TV the app opens on; and a game's on a TV or the Xbox. Lamp serves it so the
+    /// agent never has to start a server of its own, which would outlive the app. A game's copy on this Mac serves its
+    /// own (`ControllerRuntime`, from the page Lamp puts in its bundle), whether Lamp is open or not.
     static func servesPhonePage(_ project: LampProject) -> Bool {
         guard project.holdsApp, takesPlayers(project) else { return false }
-        let onMac = project.platform.target.takesPhones && project.hasMac && openOnMacNow.contains(project.id)
-        return onTV(project) || onDevice(project) || onMac
+        return onTV(project) || onDevice(project)
     }
 
     /// The app is set to open on one of the person's TVs, which Lamp can't watch, or shown in its TV preview.
@@ -11433,27 +11433,8 @@ final class Store: ObservableObject {
         return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: data)
     }
 
-    nonisolated static func pageType(_ ext: String) -> String {
-        switch ext.lowercased() {
-        case "html", "htm": "text/html; charset=utf-8"
-        case "js", "mjs": "text/javascript; charset=utf-8"
-        case "css": "text/css; charset=utf-8"
-        case "json", "webmanifest": "application/json"
-        case "svg": "image/svg+xml"
-        case "png": "image/png"
-        case "jpg", "jpeg": "image/jpeg"
-        case "gif": "image/gif"
-        case "webp": "image/webp"
-        case "ico": "image/x-icon"
-        case "woff2": "font/woff2"
-        case "woff": "font/woff"
-        case "mp3": "audio/mpeg"
-        case "wav": "audio/wav"
-        case "mp4": "video/mp4"
-        case "txt": "text/plain; charset=utf-8"
-        default: "application/octet-stream"
-        }
-    }
+    /// The type a page's file is served as: the list a game's own phone page is served by too (`PhonePageServer`).
+    nonisolated static func pageType(_ ext: String) -> String { PhonePageServer.type(for: ext) }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
@@ -11573,12 +11554,17 @@ final class Store: ObservableObject {
         guard project.hasTV || project.platform.target.takesPhones else {
             return (409, ["error": "This app was built by an earlier Lamp: open it from Lamp on your Mac to update it, and it joins the TV app's game again."])
         }
+        // The page stopping its controllers: Lamp's sessions end with what they're for (the preview closing, the app no
+        // longer set to open on a TV), not with this; a game on the Mac answers it itself.
+        if ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any])?["stop"] as? Bool == true { return (200, [:]) }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
-        // A game's copy on this Mac asking is open, though Lamp may not have seen it open yet.
-        if !request.fromPreview { refreshOpenApps() }
+        // A game's copy on this Mac runs its own phones; one that asks here was built by an earlier Lamp.
+        if !request.fromPreview, !request.fromNetwork, project.platform.target.takesPhones {
+            return (409, ["error": "This game was built by an earlier Lamp: open it from Lamp to update it, and phones join it again."])
+        }
         syncLocalNetwork()
         guard Self.servesPhonePage(project) else {
-            return (409, ["error": project.hasTV ? "The app isn't open in the TV preview or set to open on a TV." : "The game isn't open on this Mac."])
+            return (409, ["error": project.hasTV ? "The app isn't open in the TV preview or set to open on a TV." : "The game isn't set to open on a TV or the Xbox."])
         }
         // A game's copy on this Mac asks from this Mac; from the network only a TV or an Xbox it's set to open on does.
         // Anywhere else (a phone, Android) has no host's side of phones, even while the Mac's copy takes players.

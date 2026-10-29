@@ -30,8 +30,9 @@ A phone's browser, joined by a QR code, needs a phone page (`Phone/index.html` i
 `Web/`: the phone-pages skill says where) and a page on the screen that uses lamp.js's `Lamp.controllers`. Two kinds
 of app have both:
 
-- a game on Lamp's game runtime (`make_app_for` with `kind` "game"): Lamp serves its phone page and runs the relay
-  while the game is open on this Mac, in the TV preview, or set to open on a Samsung or LG TV or the person's Xbox;
+- a game on Lamp's game runtime (`make_app_for` with `kind` "game"): on the Mac the game serves its phone page and
+  runs the relay itself while it's open, with Lamp open or closed; Lamp does it for the game in the TV preview, or
+  set to open on a Samsung or LG TV or the person's Xbox;
 - a TV app's page: while it's open on such a TV or in its TV preview on this Mac.
 
 An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
@@ -62,7 +63,8 @@ choice.
 
 ## Away from home
 
-Phones reach the phone page on the same Wi‑Fi, with Lamp open on this Mac, which runs the relay. Friends in other
+Phones reach the phone page on the same Wi‑Fi: a game on the Mac runs the relay itself, and everywhere else Lamp runs
+it, open on this Mac. Friends in other
 homes can't join through it: say so if that's what they want. Apps of the wish's that talk through `LampWish` work
 by its own rules (the wish-links skill).
 

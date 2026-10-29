@@ -93,18 +93,50 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
               let url = URL(string: lampGateway + path) else {
             return replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
         }
+        // A game's phones are its own on the Mac: it serves their page and runs their relay itself (`LampControllers`),
+        // so they go on playing, and new ones join, whether Lamp is open or not.
+        #if os(macOS)
+        if path == "/app/controller" {
+            let body = (call["body"] as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any] ?? [:]
+            return LampControllers.answer(stop: body["stop"] as? Bool == true) { status, answer in
+                let text = (try? JSONSerialization.data(withJSONObject: answer)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                DispatchQueue.main.async { replyHandler(["status": status, "body": text], nil) }
+            }
+        }
+        #endif
+        Self.ask(url, body: call["body"] as? String) { status, body in replyHandler(["status": status, "body": body], nil) }
+    }
+
+    private static func ask(_ url: URL, body: String?, done: @escaping @MainActor @Sendable (Int, String) -> Void) {
         var request = URLRequest(url: url, timeoutInterval: 240)
         request.httpMethod = "POST"
         request.setValue("Bearer " + LampInstall.token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data((call["body"] as? String ?? "{}").utf8)
+        request.httpBody = Data((body ?? "{}").utf8)
         URLSession.shared.dataTask(with: request) { data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 502
             let body = data.map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Couldn't reach Lamp on your Mac. Open Lamp and try again."}"#
-            DispatchQueue.main.async { replyHandler(["status": status, "body": body], nil) }
+            DispatchQueue.main.async { done(status, body) }
         }.resume()
     }
 }
+
+#if os(macOS)
+/// The game's phones as controllers (`ControllerRuntime`, in LampControllerKit.swift): its phone page from the copy Lamp
+/// put in the bundle (Resources/Phone) and the relay its phones join, in this process, opened as the page's
+/// `Lamp.controllers` starts and closed as it stops or the game quits.
+enum LampControllers {
+    private static let runtime = ControllerRuntime(app: LampInstall.slug.isEmpty ? (Bundle.main.bundleIdentifier ?? "game") : LampInstall.slug,
+                                                   page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"))
+
+    static func answer(stop: Bool, _ done: @escaping @Sendable (Int, [String: Any]) -> Void) {
+        // Both on the runtime's own queue, in the order the page asked: a stop then a start for the next round opens a
+        // fresh session, never one the stop then closes.
+        if stop { return runtime.stop { done(200, [:]) } }
+        runtime.start(done)
+    }
+}
+#endif
 
 /// The page's `LampVoice` (Web/lamp.js): what the person says, recorded by this device's microphone as 16 kHz mono
 /// 16-bit PCM in a WAV, for the page to have transcribed (`LampAI.hear`); and what the page says back, read out. Asking

@@ -209,6 +209,10 @@ enum GameKit {
     /// when the app has none yet.
     static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first
     static let native: (path: String, text: String)? = read([("Sources/Native.swift", "apple/Native.swift")]).first
+    /// The controller kit a game on the Mac runs its own phones with (`ControllerRuntime`: its phone page and relay, in
+    /// its own process): LampRelayKit's Swift as one file, which build.sh writes into Lamp's bundle. In the player, and
+    /// beside LampPage.swift in a game that's compiled.
+    static let controllerKit: (path: String, text: String)? = read([("Sources/LampControllerKit.swift", "apple/LampControllerKit.swift")]).first
 
     /// Lamp's common app around a page (apple/LampWebApp.swift), for a page served at `scheme`://app/, which is where
     /// what it saves is kept, laid out at `canvas` and zoomed to the window, or at the window's own size without one.
@@ -250,7 +254,7 @@ enum GameKit {
     /// left to main.swift, which picks one as the copy opens.
     static var playerSources: [(path: String, text: String)]? {
         let host = read([("", "apple/LampWebApp.swift"), ("", "apple/LampPlayer.swift")])
-        guard let game = webFiles.first(where: { $0.path == "Sources/LampGame.swift" }), let page, let native, host.count == 2 else { return nil }
+        guard let game = webFiles.first(where: { $0.path == "Sources/LampGame.swift" }), let page, let native, let controllerKit, host.count == 2 else { return nil }
         func filled(_ text: String) -> String {
             text.replacingOccurrences(of: "@main\n", with: "")
                 .replacingOccurrences(of: "\"{{NAME}}\"", with: "LampPlayer.name")
@@ -259,6 +263,7 @@ enum GameKit {
         }
         return [("Sources/main.swift", host[1].text), ("Sources/LampGame.swift", filled(game.text)), ("Sources/LampWebApp.swift", filled(host[0].text)),
                 ("Sources/LampPage.swift", page.text), ("Sources/Native.swift", native.text), ("Sources/LampSupport.swift", Template.lampSupportSwift),
+                (controllerKit.path, controllerKit.text),
                 ("Package.swift", webPackageSwift.replacingOccurrences(of: "{{EXE}}", with: playerExe))]
     }
 
@@ -305,7 +310,7 @@ enum GameKit {
     }
 
     /// Lamp's own Swift in a page's app: the player has all of it. `Native.swift` too while it's still Lamp's.
-    private static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift",
+    private static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
                                                      ScreenKit.screenPage.swift, ScreenKit.webAppPage.swift].map { String($0.dropFirst("Sources/".count)) })
 
     /// Swift of the app's own beside Lamp's, in Sources/ (what its Package.swift compiles): a `Native.swift` that answers
@@ -352,8 +357,9 @@ enum GameKit {
 
     /// Writes the page's bridge, and the app's `Native` when it has none.
     static func writePage(for project: LampProject) throws {
-        guard let page, let native else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
+        guard let page, let native, let controllerKit else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
         try Template.write(pageText(page.text, for: project), to: page.path, for: project)
+        try Template.write(controllerKit.text, to: controllerKit.path, for: project)
         if !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(native.path).path) {
             try Template.write(native.text, to: native.path, for: project)
         }
@@ -474,7 +480,7 @@ enum GameKit {
         var hasher = SHA256()
         for file in files { hasher.update(data: Data(file.name.utf8)); hasher.update(data: file.data) }
         // And the app around it on Apple's devices, which a new Lamp may change while the kit stays as it was.
-        for file in webFiles + [page, native].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
+        for file in webFiles + [page, native, controllerKit].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
         hasher.update(data: Data((webBuildSh + webPackageSwift + Controllers.pageJS).utf8))
         // And Lamp's Android app around it, with the Kotlin blocks a game of several apps carries there, so a game on
         // Android built by an earlier Lamp is built again rather than shown to its wish's other apps as out of date.
@@ -487,7 +493,7 @@ enum GameKit {
         let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
         // A C++ game made before three.js games is the kit's alone, played on the Xbox and in the preview.
         guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp", marker] }
-        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
+        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", controllerKit?.path ?? "Sources/LampControllerKit.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
             + DeviceSupport.rapierFiles.map { "\(rapierFolder)/\($0.name)" }
             + DeviceSupport.phaserFiles.map { "\(phaserFolder)/\($0.name)" } + common
             + GameAndroid.paths(for: project)

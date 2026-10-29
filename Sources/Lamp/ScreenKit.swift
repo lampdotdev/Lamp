@@ -122,7 +122,7 @@ enum ScreenKit {
     /// Every path Lamp owns in a screen or a web app.
     static func paths(for project: LampProject) -> [String] {
         let page = page(for: project.platform)
-        return [TVTemplate.supportFile, page.swift, "Sources/LampPage.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", page.marker]
+        return [TVTemplate.supportFile, page.swift, "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", page.marker]
             + GameAndroid.paths(for: project)
     }
 
@@ -216,7 +216,7 @@ enum ScreenKit {
         let hosts: String = [screenPage, webAppPage].map { page in
             (GameKit.webApp(scheme: page.scheme, canvas: nil) ?? "") + (GameKit.webApp(scheme: page.scheme, canvas: (1920, 1080)) ?? "")
         }.joined()
-        let rest: String = (GameKit.page?.text ?? "") + buildSh + packageSwift
+        let rest: String = (GameKit.page?.text ?? "") + (GameKit.controllerKit?.text ?? "") + buildSh + packageSwift
         return hosts + rest + TVTemplate.lampJS + GameAndroid.stamp
     }
 }
