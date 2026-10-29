@@ -201,13 +201,8 @@ cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public c
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what a game is written against, and its hosts (GameKit.swift)
 # The controller kit a game on the Mac runs its own phones with (GameKit.controllerKit): Lamp's relay and phone-page
 # server, the same Swift as LampRelayKit, as one file the player and every compiled game build into themselves, so a
-# game's phones never need Lamp. The Mac's only: an iPhone copy of a game has no host's side of phones.
-{
-  echo "// Lamp's controller kit (Sources/LampRelayKit in Lamp's source, as one file). Written by Lamp before every build; don't edit."
-  echo "#if os(macOS)"
-  for f in Sources/LampRelayKit/*.swift(on); do cat "$f"; echo; done
-  echo "#endif"
-} > "$APP/Contents/Resources/GameKit/apple/LampControllerKit.swift"
+# game's phones never need Lamp.
+scripts/controller-kit.sh "$APP/Contents/Resources/GameKit/apple/LampControllerKit.swift"
 rm -rf "$APP/Contents/Resources/WebHost" && cp -R Resources/WebHost "$APP/Contents/Resources/WebHost"   # the program that shows an Xbox web app in WebView2 (WebHost.swift)
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi

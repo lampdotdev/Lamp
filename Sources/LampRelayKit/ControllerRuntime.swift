@@ -45,7 +45,13 @@ public final class ControllerRuntime: @unchecked Sendable {
     /// The same, waiting for it: for tests.
     public func startNow() -> (status: Int, answer: [String: Any]) { queue.sync { open() } }
 
-    /// Closes the page and the relay: every phone and the page's own socket are let go, and the key is forgotten.
+    /// Closes the page and the relay: every phone and the page's own socket are let go, and the key is forgotten. On the
+    /// same queue as `start`, so a stop and the start after it (a game's next round) happen in the order they were asked.
+    public func stop(_ done: @escaping @Sendable () -> Void) {
+        queue.async { self.close(); done() }
+    }
+
+    /// The same, waiting for it: for tests.
     public func stop() { queue.sync { close() } }
 
     public var pagePort: UInt16? { queue.sync { site?.port } }

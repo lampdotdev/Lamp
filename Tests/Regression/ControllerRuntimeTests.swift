@@ -106,6 +106,26 @@ final class ControllerRuntimeTests: XCTestCase {
         XCTAssertEqual(stale.closeCode.rawValue, 4003)
     }
 
+    /// A game that stops its controllers and starts them again for its next round, at once, as the page's calls arrive:
+    /// they happen in that order, so the round gets a session that stays open and a credential that gets in.
+    func testAStopThenAStartHappenInTheOrderTheyWereAsked() async throws {
+        let runtime = try runtime()
+        defer { runtime.stop() }
+        XCTAssertEqual(runtime.startNow().status, 200)
+        let answer: (Int, [String: Any]) = await withCheckedContinuation { done in
+            runtime.stop {}
+            runtime.start { status, answer in done.resume(returning: (status, answer)) }
+        }
+        XCTAssertEqual(answer.0, 200)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(runtime.isRunning, "the stop asked first never closes the session the start asked after it opened")
+        let link = try XCTUnwrap((answer.1["links"] as? [[String: Any]])?.first)
+        let port = try XCTUnwrap(URL(string: link["socket"] as? String ?? "")?.port)
+        let host = try await socket(port, hello: ["t": "hello", "app": game, "credential": link["credential"] as Any])
+        let welcome = try await Self.text(host)
+        XCTAssertEqual(welcome["role"] as? String, "host")
+    }
+
     func testAGameWithoutAPhonePageOpensNothing() throws {
         let runtime = ControllerRuntime(app: game, page: folder.appendingPathComponent("Phone"))
         XCTAssertEqual(runtime.startNow().status, 409)

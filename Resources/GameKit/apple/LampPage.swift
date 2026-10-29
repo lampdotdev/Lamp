@@ -130,10 +130,9 @@ enum LampControllers {
                                                    page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"))
 
     static func answer(stop: Bool, _ done: @escaping @Sendable (Int, [String: Any]) -> Void) {
-        if stop {
-            DispatchQueue.global().async { runtime.stop(); done(200, [:]) }
-            return
-        }
+        // Both on the runtime's own queue, in the order the page asked: a stop then a start for the next round opens a
+        // fresh session, never one the stop then closes.
+        if stop { return runtime.stop { done(200, [:]) } }
         runtime.start(done)
     }
 }
