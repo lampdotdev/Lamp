@@ -294,12 +294,13 @@ enum Agent {
     private static let setupRules = """
 
     - Never put AI into an app the person didn't ask for. It's one thing to keep in mind, not the point: most apps \
-    need none, and exact rules, dates, timing and anything that must be right stay code. Build what they asked \
-    without it. Where AI would really add something to this app (understanding what they type or say, reading what \
-    they hand it, drafting), end that turn with one `ask`: what you made and what AI would do in it, in their words \
-    ("I made your recipe box. Want AI to turn a pasted recipe into a card and find recipes by what's in your \
-    fridge?"), answered Yes or No thanks. Build it only after a yes. After a no, note it in APP.md and don't offer \
-    it again unless they bring it up; don't offer it for small changes either. It's asked for only when the request \
+    need none, and exact rules, dates, timing and anything that must be right stay code. Where AI would really \
+    add something to a new app (understanding what they type or say, reading what they hand it, drafting), ask \
+    before writing any of it, with one `ask`: what they're making and what AI would do in it, in their words \
+    ("I see you're making a recipe box. Want AI to turn a pasted recipe into a card and find recipes by what's \
+    in your fridge?"), answered No thanks or Yes, in that order. Then build: with that AI after a yes, without it \
+    otherwise. Where it wouldn't, build without it and say nothing about AI. After a no, note it in APP.md and \
+    don't offer it again unless they bring it up; don't offer it for small changes either. It's asked for only when the request \
     itself is for what AI does (summarize these, understand what I say): then build it. Where AI changes things, \
     it goes through the app's own checked reads and writes, never a plan the app runs unchecked. The app-ai skill \
     (or web-app for a page) says how.
@@ -610,10 +611,10 @@ enum Agent {
 
         /// Said with `make_app_for`'s answer when it makes a new app, which is read just before the app is built: the
         /// AI rule (`setupRules`) at the moment it decides what goes in, so it isn't lost among the setup rules.
-        static let newAppAI = "Build it without AI unless the request asked for what AI does. When it works, if AI would really add "
-            + "something to this app (understanding what they type or say, reading what they hand it, drafting), end the turn with "
-            + "one `ask` saying what AI would do in it (\"Want AI to…?\", Yes or No thanks), and build that only after a yes. "
-            + "If it wouldn't, say nothing about AI."
+        static let newAppAI = "Before writing it: no AI goes in unless the request asked for what AI does. If AI would really add "
+            + "something to this app (understanding what they type or say, reading what they hand it, drafting), first ask with one "
+            + "`ask` (\"I see you're making… Want AI to…?\", No thanks or Yes) and write nothing until the answer comes; build "
+            + "that AI only after a yes. If it wouldn't, build without it and say nothing about AI."
 
         static let edit = """
         - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.
@@ -1043,10 +1044,6 @@ enum Agent {
         clearly make this app better, and the user hasn't asked for it or turned it down, you may add to the \
         ending one short suggestion in plain words (no framework names), e.g. "Want it to read the text out of pasted screenshots? \
         Your Mac can do that on its own, offline." At most one suggestion, not every turn, and never build it unasked.
-        - When a new app is done, think once whether AI would really add something to it (the rule "Never put AI into an app…"): \
-        understanding what they type or say, reading what they hand it, drafting. If it would, and they haven't \
-        turned it down, end with your one sentence and then that one `ask` ("Want AI to…?", Yes or No thanks) in \
-        place of any other suggestion; if not, say nothing about AI.
         """
     }
 
