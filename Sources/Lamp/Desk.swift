@@ -1203,25 +1203,35 @@ extension Store {
 
     /// The version a starter's copy, or a wish opened from GitHub or a shared file, last arrived as ("From Lamp", or what
     /// an update brought), when the wish has changed since: what Start Again from the Original goes back to. Nil for a
-    /// wish unchanged since, one remixed here, and one with no such version. Lamp's own files, rewritten by each Lamp,
-    /// aren't a change.
+    /// wish unchanged since, one remixed here, and one with no such version. What's on disk counts, saved or not; Lamp's
+    /// own files, rewritten by each Lamp, aren't a change, nor are files attached to requests.
     func original(toStartAgain project: LampProject) async -> AppVersion? {
         guard !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(Self.remixedHereMark).path),
               let arrival = await Versions.list(project).first(where: { Self.arrivalMessages.contains($0.message) }) else { return nil }
-        if await Versions.hasUnsavedChanges(project) { return arrival }
         let owned = Set(GitHubRepo.ownedPaths(in: project))
         var changed = false
-        _ = await Versions.git("git diff --name-only \"$LAMP_VERSION\" HEAD -- . ':!.lamp'", cwd: project.dir,
-                               env: ["LAMP_VERSION": arrival.id], onLine: { line in
-            if !line.trimmed.isEmpty, !owned.contains(line.trimmed) { changed = true }
-        })
+        let paths = "-- . ':!.lamp' ':!\(Attachments.folder)'"
+        func look(_ line: String) { if !line.trimmed.isEmpty, !owned.contains(line.trimmed) { changed = true } }
+        // The arrival against the files as they are, then files git doesn't know yet.
+        _ = await Versions.git("git diff --name-only \"$LAMP_VERSION\" \(paths)", cwd: project.dir,
+                               env: ["LAMP_VERSION": arrival.id], onLine: look)
+        if !changed { _ = await Versions.git("git ls-files --others --exclude-standard \(paths)", cwd: project.dir, onLine: look) }
         return changed ? arrival : nil
     }
 
     /// Start Again from the Original: the wish's files go back to the version it arrived as, as a new version (so this
     /// too is undone with Undo), and it opens with its chat, which says so (`opening`; from the chat it's open already).
     func startAgain(_ project: LampProject, opening: Bool = true) async {
-        guard let arrival = await original(toStartAgain: project) else { return }
+        guard !busy.contains(project.id), let arrival = await original(toStartAgain: project) else { return }
+        // What a stopped or failed turn left unsaved is kept as a version first, so Undo brings that back too; a restore
+        // would otherwise overwrite it for good.
+        if await Versions.hasUnsavedChanges(project) {
+            guard !busy.contains(project.id),
+                  await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": "Unfinished change"]) == .saved else {
+                log(project, .error, "Lamp couldn't save the unfinished change, so it didn't start again.")
+                return
+            }
+        }
         // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
         ContributeCards.shared.close(project)
         if opening { open(fromDesk: project) }
