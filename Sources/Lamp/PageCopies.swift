@@ -90,7 +90,9 @@ enum PageCopies {
         var hasher = SHA256()
         for folder in ["Sources", GameAndroid.folder] {
             let dir = project.dir.appendingPathComponent(folder)
-            for name in ((try? FileManager.default.subpathsOfDirectory(atPath: dir.path)) ?? []).sorted() {
+            // What a build leaves there (Gradle's and Kotlin's caches, build/) isn't what the app is made from, and is big.
+            for name in ((try? FileManager.default.subpathsOfDirectory(atPath: dir.path)) ?? []).sorted()
+            where !name.split(separator: "/").contains(where: { $0 == "build" || $0.hasPrefix(".") }) {
                 guard let data = AppFile.read(dir.appendingPathComponent(name), in: project) else { continue }
                 hasher.update(data: Data((folder + "/" + name).utf8))
                 hasher.update(data: data)
