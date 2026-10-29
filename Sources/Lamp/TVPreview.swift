@@ -20,10 +20,11 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     private static let home = URL(string: "\(scheme)://app/index.html")!
 
     private let project: LampProject
-    /// What the preview stands in for, as the person calls it: "TV", or a device app's device ("Xbox"). Back on a TV's
-    /// remote is its own key; on anything else it's Escape, as an Xbox's B button sends.
-    private var device = "TV"
-    private var isTV: Bool { device == "TV" }
+    /// What the preview stands in for, as the person calls it: "TV", a device app's device ("Xbox"), or nil for a page
+    /// that stands in for no device (a web app at home on the Mac), which is just the preview. Back on a TV's remote is
+    /// its own key, as it is on such a page (it has the TV's remote keys); on a device it's Escape, as an Xbox's B button sends.
+    private var device: String? = "TV"
+    private var isTV: Bool { device == nil || device == "TV" }
     private let window: Window
     private let webView: WKWebView
     private let files = StagedFiles()
@@ -67,13 +68,16 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
 
     /// Opens the staged app (again, from the start), in front or behind what the person is doing. Nil once it has loaded.
     @discardableResult
-    static func show(_ project: LampProject, staged: URL, inFront: Bool, device: String = "TV") async -> String? {
+    static func show(_ project: LampProject, staged: URL, inFront: Bool, device: String? = "TV") async -> String? {
         let preview = open[project.id] ?? TVPreview(project: project)
         open[project.id] = preview
         preview.device = device
-        preview.window.title = "\(project.name) on \(device)"
+        preview.window.title = title(of: project.name, device: device)
         return await preview.load(staged: staged, inFront: inFront)
     }
+
+    /// The window's title: the app on its device ("Clock on TV"), or the app's preview when it stands in for none.
+    static func title(of name: String, device: String?) -> String { device.map { "\(name) on \($0)" } ?? "\(name) Preview" }
 
     /// The shape the page is shown at now, in CSS pixels.
     static func shape(of project: LampProject) -> CGSize { open[project.id]?.shape ?? CGSize(width: 1920, height: 1080) }

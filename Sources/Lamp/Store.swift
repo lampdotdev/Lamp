@@ -8766,7 +8766,7 @@ final class Store: ObservableObject {
 
     /// `look_at_app` for a TV app: the preview pictured at half the TV's size and read as text, with what it printed.
     private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool, shape: String? = nil) async -> (Int, [String: Any]) {
-        let device = previewDevice(project)
+        let device = Self.previewDevice(project), preview = Self.previewName(device)
         // A screen that fills any shape is looked at in the one asked for; one laid out at a fixed 1920x1080 only as a TV.
         var size: CGSize?
         if let shape {
@@ -8778,7 +8778,7 @@ final class Store: ObservableObject {
             }
             size = asked
         }
-        var summary = "The app is open in the \(device) preview on this Mac."
+        var summary = "The app is open in \(preview) on this Mac."
         // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
         let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
         if changed || stale || !TVPreview.isOpen(project) || reopen {
@@ -8787,10 +8787,10 @@ final class Store: ObservableObject {
                 ? await openDevicePreview(project, folder: TVTemplate.webFolder)
                 : await install(project, inFront: false, early: true)
             turn.look.installed[project.id] = true
-            if let problem { return (200, ["text": "The app didn't open in the \(device) preview on this Mac.\n\n\(problem)"]) }
-            summary = changed ? "The app was opened again in the \(device) preview on this Mac with your changes." : "The app was opened again in the \(device) preview on this Mac, so it started fresh."
+            if let problem { return (200, ["text": "The app didn't open in \(preview) on this Mac.\n\n\(problem)"]) }
+            summary = changed ? "The app was opened again in \(preview) on this Mac with your changes." : "The app was opened again in \(preview) on this Mac, so it started fresh."
         } else {
-            summary = "The app is open in the \(device) preview on this Mac with your latest code; nothing needed opening again."
+            summary = "The app is open in \(preview) on this Mac with your latest code; nothing needed opening again."
         }
         note("Looking at \(project.name)", for: project)
         if progress[project.id]?.newApp == true, !turn.look.presented {
@@ -8808,28 +8808,36 @@ final class Store: ObservableObject {
             + (ScreenKit.isScreen(project) && ScreenKit.fillsAnyShape(project)
                ? " It shows the page at \(measured) CSS pixels (`shape` shows it at another), pictured with its long side 960 pixels. "
                : " It shows the \(measured) page at half size: a pixel in the picture is two of the page's. ")
-            + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of the \(device) preview follows. Points for use_app are pixels in it." : Privacy.picturesOff)
+            + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of \(preview) follows. Points for use_app are pixels in it." : Privacy.picturesOff)
         if let taken, !screenshots.isEmpty, Privacy.sharesPictures {
             text += " " + TVPreview.takenNote(taken)
             if !taken.moving { text += " " + TVPreview.stillNote }
         }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesPictures { text += "\n\n" + TVPreview.text(await TVPreview.items(project)) }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the \(device) preview's console printed:\n\(tail)" }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat \(preview)'s console printed:\n\(tail)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
     /// Said with every look at a preview: one at a TV's size reads like the TV itself (or the Xbox), and the agent would
     /// tell the person how the app runs on a device it has never seen.
-    static func notTheDevice(_ device: String) -> String {
-        "This is the \(device) preview, a window on this Mac, not the person's \(device): it runs in this Mac's browser, so what it shows, its speed "
+    /// A page that stands in for no device (nil) is still only a preview: not the app as built around it.
+    static func notTheDevice(_ device: String?) -> String {
+        guard let device else {
+            return "This is the preview, a window on this Mac: it runs in this Mac's browser, so what it shows, its speed included, is the preview's."
+        }
+        return "This is the \(device) preview, a window on this Mac, not the person's \(device): it runs in this Mac's browser, so what it shows, its speed "
             + "included, is the preview's" + (device == "TV" ? "." : ", and Play puts the app on the \(device) itself.")
     }
 
+    /// The preview as the agent and the person are told of it: "the TV preview", or just "the preview" for a page that
+    /// stands in for no device.
+    static func previewName(_ device: String?) -> String { device.map { "the \($0) preview" } ?? "the preview" }
+
     /// `use_app` for a TV app: the remote's keys and clicks on the preview, the screen read between them.
     private func useOnTV(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
-        let device = previewDevice(project)
-        guard TVPreview.isOpen(project) else { return (200, ["text": "The app isn't open. Call look_at_app first: it opens the app in the \(device) preview."]) }
+        let device = Self.previewDevice(project), preview = Self.previewName(device)
+        guard TVPreview.isOpen(project) else { return (200, ["text": "The app isn't open. Call look_at_app first: it opens the app in \(preview)."]) }
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         if owner.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let data = json.data(using: .utf8), let decoded = try? JSONDecoder().decode([Simulator.Driver.Action].self, from: data) else {
@@ -8837,7 +8845,7 @@ final class Store: ObservableObject {
         }
         // In plain sight, with Stop and Esc, and the person's own click or key in the preview taking it back.
         // Taking over is remembered for the turn the moment it happens, whatever this call is waiting on then.
-        let trial = Handover(label: "\(Self.lampName) is trying it in the \(device) preview", lampWindow: TVPreview.window(project)) { [weak self] in
+        let trial = Handover(label: "\(Self.lampName) is trying it in \(preview)", lampWindow: TVPreview.window(project)) { [weak self] in
             guard let self, !owner.tookOver else { return }
             owner.tookOver = true
             log(project, .status, Self.stoppedByYou)
@@ -8848,7 +8856,7 @@ final class Store: ObservableObject {
             guard let self else { return false }
             return exists(project) && turns[project.id] === owner && !owner.stopped && !trial.tookOver && TVPreview.isOpen(project)
         }
-        var text = "What happened in the \(device) preview on this Mac, not on the person's \(device):\n\(report)"
+        var text = "What happened in \(preview) on this Mac" + (device.map { ", not on the person's \($0)" } ?? "") + ":\n\(report)"
         if owner.tookOver { return (200, ["text": text + "\n\n" + Self.tookOverNote]) }
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last opened: it doesn't have the changes you've made to the code since. Call look_at_app to open them."
@@ -8859,13 +8867,13 @@ final class Store: ObservableObject {
             text += "\n\n" + TVPreview.text(await TVPreview.items(project))
             let taken = await TVPreview.picture(project)
             if let taken, (try? AppFolder.write(taken.png, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-            text += "\n\nA picture of the \(device) preview follows. Points for the next use_app are pixels in it."
+            text += "\n\nA picture of \(preview) follows. Points for the next use_app are pixels in it."
             if let taken, !screenshots.isEmpty {
                 text += " " + TVPreview.takenNote(taken)
                 if !taken.moving { text += " " + TVPreview.stillNote }
             }
         }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the \(device) preview's console printed:\n" + tail }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat \(preview)'s console printed:\n" + tail }
         // Taken back during the reads above: the agent is told now, not at its next call.
         if owner.tookOver { text += "\n\n" + Self.tookOverNote }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
@@ -8901,12 +8909,12 @@ final class Store: ObservableObject {
     /// app's): what the agent looks at and plays. Its LampAI reaches Lamp through the preview, as a TV app's does.
     private func openDevicePreview(_ project: LampProject, folder: String) async -> String? {
         guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
-        let device = previewDevice(project)
+        let device = Self.previewDevice(project)
         do {
             let built = Runtime.builtFingerprint(project)
             let staged = try await TVs.stage(project, folder: folder)
             previewBuilt[project.id] = built
-            note("Opening \(project.name) in the \(device) preview…", for: project)
+            note("Opening \(project.name) in \(Self.previewName(device))…", for: project)
             let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device)
             refreshOpenApps()
             return problem
@@ -8919,9 +8927,13 @@ final class Store: ObservableObject {
     /// Which build each device app's preview on this Mac was opened from, as `deviceRunBuilt` is for the device.
     private var previewBuilt: [String: String] = [:]
 
-    /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox").
-    private func previewDevice(_ project: LampProject) -> String {
-        project.onTV || project.platform.target.looksInTVPreview ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
+    /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox"). A page
+    /// looked at in the TV preview wherever it's shown (a web app at home on the Mac, a screen on a phone) stands in for a
+    /// TV only while Try On points at one; elsewhere it's nil, just the preview, so a Mac app isn't called a TV app.
+    static func previewDevice(_ project: LampProject) -> String? {
+        if project.onTV { return "TV" }
+        if project.platform.target.looksInTVPreview { return project.destination == .androidTV ? "TV" : nil }
+        return DeviceApps.integration(for: project)?.name ?? "device"
     }
 
     /// Ends every app's run on a device (and this app's anywhere): what replaces it there is something else, so a look
