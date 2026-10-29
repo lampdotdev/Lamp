@@ -11,7 +11,7 @@ places, so the desk shows none of a Mac's icon grid and makes no difference betw
 
 **The list** (`DeskList.swift`) is every wish: those Lamp came with and those the person made, together, with nothing
 set apart for the starters (a starter deleted is gone; a remix of it from the site puts it back). Each row is the wish's
-picture (`Runtime.previewURL`, else the one its starter shipped), its name and its about.json line, who made it, where
+icon (narrower than a picture, and easier to find again down a list), its name and its about.json line, who made it, where
 it runs (each place its apps open, `openPlaces`), when it last changed, and **Open** with **Remix** beside it (`DeskListRow`),
 all read from its files away from the main thread for each change to the wishes and as each turn ends (`DeskEntry`).
 Who made it is "You" for what was made or remixed here, the author of the work a starter is made from (Lamp when it
@@ -36,8 +36,9 @@ front (⌘[).
 
 **Remix** (`Store.remix`, also Remix on the wish's menu and File → Remix) makes a new copy of the wish to change, "<name>
 Remix", with its code, history and icon on another background, and a link back to the original at the end of its chain,
-then builds it with its chat beside it; the original stays as it was. A row picked in the list shows beside it what it
-is (`DeskDetail`): its picture, line, who made it and its license, where it runs and its remixes, Open, and a box to
+then builds it with its chat beside it; the original stays as it was. The row picked (clicked, or moved to with the arrows; the first until then) shows beside it what it is, in a panel
+the toolbar's sidebar button slides away and back (`DeskDetail`): its picture (`Runtime.previewURL`, else the one its
+starter shipped), line, who made it and its license, where it runs and its remixes, Open, and a box to
 remix it with a change, which asks for that change as the copy's first request; a starter's own three changes are there
 to pick from.
 

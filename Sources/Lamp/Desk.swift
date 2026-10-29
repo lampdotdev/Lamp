@@ -21,6 +21,10 @@ struct WishDesk: View {
     /// What's read of each wish for its row, by id (`DeskEntry`).
     @State private var entries: [String: DeskEntry] = [:]
     @State private var picked: LampProject.ID?
+    /// Whether the side panel is showing what the picked wish is, from the toolbar's button.
+    @AppStorage("deskPanelShown") private var panelShown = true
+    /// The list has the keyboard: the arrows move the pick up and down it.
+    @FocusState private var listFocused: Bool
     @AppStorage("deskSort") private var column = DeskList.Column.name
     @AppStorage("deskAscending") private var ascending = true
     @AppStorage("deskOnlyRemixes") private var onlyRemixes = false
@@ -28,6 +32,11 @@ struct WishDesk: View {
     /// each time it's shown (`lookForDevices`).
     @AppStorage(Store.localNetworkAskedKey) private var lookedBefore = false
     @State private var lastLook: Date?
+    /// How the side panel comes and goes.
+    private static let slide = Animation.spring(response: 0.35, dampingFraction: 0.9)
+    /// The line between the side, the list and the panel: ink, from the window's top to its foot, title bar and all.
+    private static var separator: some View { Paper.ink.frame(width: 1).ignoresSafeArea() }
+
     /// Where the side's first line and the bar both start, under the window's title.
     private static let top: CGFloat = 14
 
@@ -49,14 +58,23 @@ struct WishDesk: View {
             }
             .padding(.top, Self.top).padding(.horizontal, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            if let row = rows.first(where: { $0.id == picked }) {
+            if panelShown, let row = rows.first(where: { $0.id == current }) {
                 DeskDetail(row: row, remixes: remixes(of: row))
                     .frame(width: 320)
-                    .overlay(alignment: .leading) { Paper.rule.frame(width: 1) }
+                    .overlay(alignment: .leading) { Self.separator }
+                    .transition(.move(edge: .trailing))
             }
         }
         .background(DeskBackground().ignoresSafeArea())
         .navigationTitle("Lamp")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { withAnimation(Self.slide) { panelShown.toggle() } } label: {
+                    Label(panelShown ? "Hide Details" : "Show Details", systemImage: "sidebar.right")
+                }
+                .help(panelShown ? "Hide what the picked wish is" : "Show what the picked wish is")
+            }
+        }
         .modifier(ClearToolbar())
         // Drawn on Lamp's paper, as in the welcome, whatever the Mac's appearance.
         .environment(\.colorScheme, .light)
@@ -114,7 +132,7 @@ struct WishDesk: View {
         }
         .frame(width: 220)
         .background(Paper.panel)
-        .overlay(alignment: .trailing) { Paper.rule.frame(width: 1) }
+        .overlay(alignment: .trailing) { Self.separator }
     }
 
     private func rows(remixesOnly: Bool) -> Int {
@@ -141,17 +159,47 @@ struct WishDesk: View {
     private var list: some View {
         VStack(spacing: 0) {
             DeskListHeader(column: $column, ascending: $ascending)
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(rows) { row in
-                        DeskListRow(row: row, selected: row.id == picked) { picked = row.id == picked ? nil : row.id }
+            ScrollViewReader { scroller in
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(rows) { row in
+                            DeskListRow(row: row, selected: row.id == current) {
+                                picked = row.id
+                                listFocused = true
+                            }
+                            .id(row.id)
+                        }
+                        ForEach(store.newerWishes) { NewerWishRow(wish: $0) }
                     }
-                    ForEach(store.newerWishes) { NewerWishRow(wish: $0) }
+                    .padding(.top, 6).padding(.bottom, 24)
                 }
-                .padding(.top, 6).padding(.bottom, 24)
+                .scrollContentBackground(.hidden)
+                // Up and down move the pick, the list following it; Return opens it.
+                .focusable()
+                .focusEffectDisabled()
+                .focused($listFocused)
+                .onKeyPress(.upArrow) { step(-1, scroller) }
+                .onKeyPress(.downArrow) { step(1, scroller) }
+                .onKeyPress(.return) {
+                    guard let row = rows.first(where: { $0.id == current }) else { return .ignored }
+                    store.open(fromDesk: row.project)
+                    return .handled
+                }
             }
-            .scrollContentBackground(.hidden)
         }
+    }
+
+    /// The wish picked: the one clicked or moved to, else the first in the list.
+    private var current: LampProject.ID? { rows.contains { $0.id == picked } ? picked : rows.first?.id }
+
+    private func step(_ by: Int, _ scroller: ScrollViewProxy) -> KeyPress.Result {
+        let ids = rows.map(\.id)
+        guard !ids.isEmpty else { return .ignored }
+        let at = current.flatMap(ids.firstIndex(of:)) ?? 0
+        let next = ids[min(max(at + by, 0), ids.count - 1)]
+        picked = next
+        scroller.scrollTo(next)
+        return .handled
     }
 
     /// The remixes made here of the row's wish, for its facts.

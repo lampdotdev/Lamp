@@ -176,10 +176,11 @@ struct DeskListRow: View {
     let row: DeskList.Row
     let selected: Bool
     let select: () -> Void
-    @State private var picture: NSImage?
     @State private var hovered = false
 
-    static let pictureWidth: CGFloat = 64
+    /// The icon that anchors a row: narrower than a picture, and easier to find again down a list. Its picture is in
+    /// the side panel.
+    static let pictureWidth: CGFloat = 36
     static let madeByWidth: CGFloat = 96
     static let placesWidth: CGFloat = 84
     static let changedWidth: CGFloat = 76
@@ -194,7 +195,7 @@ struct DeskListRow: View {
         HStack(spacing: 0) {
             if row.nested { line }
             HStack(spacing: 12) {
-                thumbnail
+                AppIcon(project: project, size: Self.pictureWidth)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(project.title).font(.system(size: 14.5, weight: .bold)).lineLimit(1)
@@ -254,7 +255,6 @@ struct DeskListRow: View {
         .accessibilityLabel(project.title)
         .accessibilityValue(status)
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .task(id: row.entry?.picture) { picture = await Self.load(row.entry?.picture) }
     }
 
     /// What's going on with it, for VoiceOver: on screen the status line and the dot say it.
@@ -277,38 +277,21 @@ struct DeskListRow: View {
         selected ? Paper.card : hovered ? Paper.ink.opacity(0.04) : .clear
     }
 
-    /// The stripes' line from the original down to the remix, turning in to meet it.
+    /// The stripes' line from the original's icon down to the remix, turning in to meet the remix's.
     private var line: some View {
-        ZStack(alignment: .topLeading) {
+        // Under the middle of the original's icon, which starts at the row's padding.
+        let x = 10 + Self.pictureWidth / 2 - 1.5
+        return ZStack(alignment: .topLeading) {
             LinearGradient(gradient: Paper.stripeGradient, startPoint: .top, endPoint: .bottom)
-                .frame(width: 3)
+                .frame(width: 3, height: 32)
                 .clipShape(Capsule())
-                .padding(.bottom, 26)
-                .offset(x: Self.nest + 10 - Self.pictureWidth / 2 - 1)
-            Paper.stripes[5].frame(width: 12, height: 3).clipShape(Capsule())
-                .offset(x: Self.nest + 10 - Self.pictureWidth / 2 - 1, y: 25)
+                .offset(x: x)
+            Paper.stripes[5].frame(width: Self.nest + 10 - x - 2, height: 3).clipShape(Capsule())
+                .offset(x: x, y: 29)
         }
-        .frame(width: Self.nest, height: 52, alignment: .topLeading)
+        .frame(width: Self.nest, height: 32, alignment: .topLeading)
         .padding(.top, -6)
         .accessibilityHidden(true)
-    }
-
-    private var thumbnail: some View {
-        ZStack {
-            Paper.ink
-            if let picture {
-                Image(nsImage: picture).resizable().interpolation(.high).antialiased(true).aspectRatio(contentMode: .fill)
-            } else {
-                AppIcon(project: project, size: 30)
-            }
-        }
-        .frame(width: Self.pictureWidth, height: 40)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-    }
-
-    private static func load(_ url: URL?) async -> NSImage? {
-        guard let url else { return nil }
-        return await Task.detached { NSImage(contentsOf: url) }.value
     }
 }
 
