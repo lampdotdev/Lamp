@@ -624,6 +624,7 @@ enum Agent {
         {{RELAUNCH}}, and if the build fails your next message will contain the compiler errors to fix. If \
         something you need is denied or unavailable, say plainly what you need (for \
         example "attach the files"); a refused command is final, so never say the user will be asked to approve it. \
+        A file you download only to read goes in .lamp/reference/, never in /tmp. \
         Never tell the user to approve prompts or change \
         permission settings anywhere else: Lamp is the only place they can approve anything.
         """
