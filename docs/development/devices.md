@@ -690,7 +690,7 @@ is emptied and filled with it before the page's scripts run (`TVPreview.show`'s 
 preview never joins the wish's room (`TVPreview.isSeeded`, refused at `/app/wish`), so what the agent's `use_app` does
 there never reaches the family's data on any screen. Joining the wish as a copy was ruled out for that reason: the
 preview would push every click of the agent's into the shared collections. A preview with nothing to start from (the
-Mac copy hasn't been open while Lamp ran) says so to the agent; a TV app's preview, which no Mac copy has, keeps its own
+Mac copy hasn't been open while Lamp ran) keeps what it had from its last opening and says so to the agent; a TV app's preview, which no Mac copy has, keeps its own
 store and joins its wish as before.
 
 `make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the request's device line says where

@@ -8925,7 +8925,7 @@ final class Store: ObservableObject {
         if aside {
             text += TVPreview.isSeeded(project)
                 ? " It started from a copy of what the app's window on this Mac saved, the person's own data: what you do here stays here and never reaches it."
-                : " The app's window on this Mac wasn't open while Lamp ran, so the preview has only what it saved itself, not the person's data; open the window (a look without `shape`) and look here again for theirs."
+                : " The app's window on this Mac wasn't open while Lamp ran, so the preview has what it kept from its last opening, which may be older than the person's data or only example content; open the window (a look without `shape`) and look here again for theirs."
         }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesPictures { text += "\n\n" + TVPreview.text(await TVPreview.items(project)) }
@@ -11527,7 +11527,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
