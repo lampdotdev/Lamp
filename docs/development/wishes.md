@@ -293,8 +293,9 @@ badly is refused with an alert, never taken for a plain wish. Everything in it i
 folder name that this Lamp ships and that runs here (`Store.starter(named:)`); a repository only as an https
 github.com address with nothing after its name, and a commit only in full, 40 hex digits (a shallow fetch takes no abbreviation) (`RepoImport.Source` with the
 commit as its ref). A starter opens with its chat, the request written into its box (`writeIn`, `Store.openCopy`): a copy of it on the
-desk that nothing has been asked of (the one Lamp came with, or one an earlier link opened; its first build out of
-sight isn't asking), else a fresh copy, made as Starter wishes' Add makes one (`put(starter:)`, its chain naming the
+desk that nothing has been asked of and whose box is empty (the one Lamp came with, or one an earlier link opened; its
+first build out of sight isn't asking, and the copy the last link opened is taken with that link's request in its box),
+else a fresh copy, made as Starter wishes' Add makes one (`put(starter:)`, its chain naming the
 starter at the commit this Lamp ships). A link without a request opens it with an empty box. A repository
 goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
 box. Nothing is sent or built from the link. During the welcome a starter's remix waits (`Onboarding.keptRemix`, saved
