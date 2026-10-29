@@ -271,14 +271,22 @@ else
   QUIET=/dev/null
 fi
 # Signs one item. codesign's routine chatter stays quiet for local builds, but a failure always says what
-# went wrong, instead of the script stopping silently partway.
+# went wrong, instead of the script stopping silently partway. A release's signature carries a secure timestamp from
+# Apple's server, which now and then doesn't answer in time: that's tried again, a few seconds later, rather than failing
+# a build that's half an hour along.
 sign() {
-  local output
-  if ! output="$("${SIGN[@]}" "$@" 2>&1)"; then
+  local output tries=1
+  while ! output="$("${SIGN[@]}" "$@" 2>&1)"; do
+    if [[ "$output" == *timestamp* && $tries -lt 4 ]]; then
+      echo "Apple's timestamp server didn't answer for ${@[-1]}; trying again (${tries} of 3)." >&2
+      sleep $((tries * 5))
+      tries=$((tries + 1))
+      continue
+    fi
     echo "$output" >&2
     echo "Couldn't sign ${@[-1]} with \"$SIGN_ID\". For an unsigned build to try things out: SIGN_IDENTITY=- ./build.sh" >&2
     return 1
-  fi
+  done
   [[ -n "$output" ]] && echo "$output" >$QUIET
   return 0
 }
