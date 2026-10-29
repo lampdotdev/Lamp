@@ -122,7 +122,12 @@ included, out of an extension's folder, so a socket there can't be made), and La
 after finding which process is on its other end (`Sidebar.app(on:)`, by the connection's port among the processes
 running a sidebar) and checking that it runs the very extension Lamp signed for that app: the hash of what was
 signed is kept in Lamp's own folder (`Sidebar.remember`), and the extension is signed with the hardened runtime so
-nothing can be loaded into it. The extension must start as Apple's own do, through `_NSExtensionMain` (the linker's
+nothing can be loaded into it. Lamp writes each hash it keeps (or why it couldn't), each copy swapped in, and each
+connection it turns away with the check that failed, to the unified log (`Sidebar.log`, category `sidebar`, with the
+same category on the extension's side), so a chat that never came up can be traced. A refused sidebar tries again
+twice a second; once it has gone `ChatWait.patience` without a chat it could show, however often it reconnected, it
+says Lamp couldn't open the chat there and offers Open in Lamp, which shows the wish's chat in Lamp's panel
+(`lamp://chat`, `Store.showChatInLamp`). The extension must start as Apple's own do, through `_NSExtensionMain` (the linker's
 entry point), or it crashes before its code runs. Whatever the app's process can do, its generated code can, so the
 app has no way to speak to the agent that builds it: it only shows the chat, says where its window is, and closes or
 moves the panel when the chat asks (`LampSidebarHost`, the one thing the chat asks of it). The draft

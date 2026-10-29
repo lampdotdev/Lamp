@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import Combine
 import Security
+import os
 import LampSidebarKit
 
 /// The chat inside a Mac app's own window. The app shows it beside its content when its 🪄 is clicked
@@ -101,27 +102,88 @@ enum Sidebar {
 
     // MARK: Which extension is the real one
 
+    /// What Lamp does to tell a sidebar it signed from anything else, as it happens: each hash kept and why one
+    /// couldn't be, and each connection turned away with the check it failed. A chat that never comes up beside its
+    /// app is a connection refused over and over, and only these lines say which check refused it. Read with
+    /// `log show --predicate 'subsystem == "<Lamp's bundle id>" AND category == "sidebar"'`.
+    static let log = Logger(subsystem: Edition.bundleID, category: "sidebar")
+
+    /// How many hashes are kept for each app: a running copy may be from a build or two before.
+    static let keptHashes = 4
+
     /// The code hashes of the extensions Lamp signed for each app, newest last: the extension in a running copy
     /// may be from the build before. Kept in Lamp's own folder, never the app's, which the app could change.
     private static var hashesURL: URL { Edition.supportFolder.appendingPathComponent("sidebar-hashes.json") }
     private static var hashes: [String: [String]] = {
-        (try? JSONDecoder().decode([String: [String]].self, from: Data(contentsOf: hashesURL))) ?? [:]
+        guard FileManager.default.fileExists(atPath: hashesURL.path) else { return [:] }
+        do {
+            let read = try JSONDecoder().decode([String: [String]].self, from: Data(contentsOf: hashesURL))
+            log.notice("hashes read: \(read.count, privacy: .public) apps from \(hashesURL.path, privacy: .public)")
+            return read
+        } catch {
+            log.error("hashes unreadable, starting empty: \(String(describing: error), privacy: .public)")
+            return [:]
+        }
     }()
+
+    /// The hash macOS gives a signature (its cdhash), as the hex a requirement names it by.
+    private static func hex(of info: CFDictionary?) -> String? {
+        ((info as? [String: Any])?[kSecCodeInfoUnique as String] as? Data).map { $0.map { String(format: "%02x", $0) }.joined() }
+    }
 
     /// After signing: the hash of what was signed, the one thing a process can't fake about what it runs.
     static func remember(_ project: LampProject, signed app: URL) {
         let appex = extensionURL(in: app)
+        guard FileManager.default.fileExists(atPath: appex.path) else {
+            log.notice("remember \(project.id, privacy: .public): no extension in \(app.path, privacy: .public)")
+            return
+        }
         var code: SecStaticCode?
+        let created = SecStaticCodeCreateWithPath(appex as CFURL, [], &code)
+        guard created == errSecSuccess, let code else {
+            log.error("remember \(project.id, privacy: .public): SecStaticCodeCreateWithPath \(created, privacy: .public) for \(appex.path, privacy: .public)")
+            return
+        }
         var info: CFDictionary?
-        guard FileManager.default.fileExists(atPath: appex.path),
-              SecStaticCodeCreateWithPath(appex as CFURL, [], &code) == errSecSuccess, let code,
-              SecCodeCopySigningInformation(code, [], &info) == errSecSuccess,
-              let hash = (info as? [String: Any])?[kSecCodeInfoUnique as String] as? Data else { return }
-        let hex = hash.map { String(format: "%02x", $0) }.joined()
+        let read = SecCodeCopySigningInformation(code, [], &info)
+        guard read == errSecSuccess, let hex = hex(of: info) else {
+            log.error("remember \(project.id, privacy: .public): SecCodeCopySigningInformation \(read, privacy: .public), no hash, for \(appex.path, privacy: .public)")
+            return
+        }
         var list = (hashes[project.id] ?? []).filter { $0 != hex }
         list.append(hex)
-        hashes[project.id] = Array(list.suffix(4))
-        try? JSONEncoder().encode(hashes).write(to: hashesURL)
+        let dropped = list.dropLast(keptHashes)
+        hashes[project.id] = Array(list.suffix(keptHashes))
+        log.notice("""
+            remember \(project.id, privacy: .public): \(hex, privacy: .public) from \(appex.path, privacy: .public), \
+            kept \(hashes[project.id] ?? [], privacy: .public), dropped \(Array(dropped), privacy: .public)
+            """)
+        do {
+            try JSONEncoder().encode(hashes).write(to: hashesURL)
+        } catch {
+            log.error("remember \(project.id, privacy: .public): couldn't save hashes: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Why each sidebar process was last turned away, and how often since, so one refused twice a second is
+    /// described once and then counted rather than written down each time.
+    @MainActor private static var refusals: [pid_t: (reason: String, count: Int)] = [:]
+
+    @MainActor private static func refuse(_ pid: pid_t, _ reason: String) {
+        let last = refusals[pid]
+        let count = last?.reason == reason ? last!.count + 1 : 1
+        refusals[pid] = (reason, count)
+        if count == 1 || count % 20 == 0 {
+            log.error("refused sidebar pid \(pid, privacy: .public) (\(count, privacy: .public) times): \(reason, privacy: .public)")
+        }
+    }
+
+    /// When a process started, to set beside when its app was swapped in and opened.
+    private static func started(_ pid: pid_t) -> String {
+        var info = proc_bsdinfo()
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { return "?" }
+        let date = Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000)
+        return ISO8601DateFormatter.string(from: date, timeZone: .current, formatOptions: [.withInternetDateTime, .withFractionalSeconds])
     }
 
     /// The app whose extension, as Lamp signed it, is on the other end of a connection; nil for anything else.
@@ -131,18 +193,59 @@ enum Sidebar {
         var peer = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
         guard withUnsafeMutablePointer(to: &peer, { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(socket, $0, &length) } }) == 0,
-              peer.sin_addr.s_addr == inet_addr("127.0.0.1"),
-              let pid = PeerProcess.find(connectedFrom: UInt16(bigEndian: peer.sin_port), to: Edition.sidebarPort,
-                                         path: { $0.hasSuffix("/LampSidebar.appex/Contents/MacOS/LampSidebar") }) else { return nil }
+              peer.sin_addr.s_addr == inet_addr("127.0.0.1") else {
+            log.error("refused a connection: not from this Mac's own address (errno \(errno, privacy: .public))")
+            return nil
+        }
+        let port = UInt16(bigEndian: peer.sin_port)
+        guard let pid = PeerProcess.find(connectedFrom: port, to: Edition.sidebarPort,
+                                         path: { $0.hasSuffix("/LampSidebar.appex/Contents/MacOS/LampSidebar") }) else {
+            log.error("refused a connection from port \(port, privacy: .public): no sidebar process holds it")
+            return nil
+        }
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let path = proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : "?"
+        let seen = "\(path), started \(started(pid))"
         var code: SecCode?
-        guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: pid] as CFDictionary, [], &code) == errSecSuccess, let code else { return nil }
-        return Store.shared.projects.first { project in
+        let guest = SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: pid] as CFDictionary, [], &code)
+        guard guest == errSecSuccess, let code else {
+            refuse(pid, "SecCodeCopyGuestWithAttributes \(guest) for \(seen)")
+            return nil
+        }
+        // The hash the process runs, for the log: what it's checked against is the kernel's, through the requirement.
+        var running: String?
+        var staticCode: SecStaticCode?
+        if SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode {
+            var info: CFDictionary?
+            if SecCodeCopySigningInformation(staticCode, [], &info) == errSecSuccess { running = hex(of: info) }
+        }
+        var statuses: [String] = []
+        let found = Store.shared.projects.first { project in
             (hashes[project.id] ?? []).contains { hex in
                 var requirement: SecRequirement?
-                return SecRequirementCreateWithString("cdhash H\"\(hex)\"" as CFString, [], &requirement) == errSecSuccess
-                    && SecCodeCheckValidity(code, [], requirement) == errSecSuccess
+                guard SecRequirementCreateWithString("cdhash H\"\(hex)\"" as CFString, [], &requirement) == errSecSuccess else { return false }
+                let status = SecCodeCheckValidity(code, [], requirement)
+                // Only a hash the process could be running says much when it fails: the rest fail by design.
+                if status != errSecSuccess, hex == running || status != errSecCSReqFailed {
+                    statuses.append("\(project.id) \(hex): SecCodeCheckValidity \(status)")
+                }
+                return status == errSecSuccess
             }
         }
+        guard let found else {
+            // The apps whose extension is the one this process runs from, with the hashes kept for them.
+            let owners = Store.shared.projects.filter { project in
+                path.hasPrefix(extensionURL(in: project.installedURL).resolvingSymlinksInPath().path)
+                    || path.hasPrefix(extensionURL(in: project.installedURL).path)
+            }
+            let allowed = owners.map { "\($0.id) [\((hashes[$0.id] ?? []).joined(separator: ", "))]" }.joined(separator: "; ")
+            let checks = statuses.isEmpty ? "" : "; " + statuses.joined(separator: "; ")
+            refuse(pid, "\(seen) runs \(running ?? "an unreadable hash"), not one kept; kept for its app: \(allowed.isEmpty ? "none" : allowed)\(checks)")
+            return nil
+        }
+        refusals[pid] = nil
+        log.notice("accepted sidebar pid \(pid, privacy: .public) as \(found.id, privacy: .public): \(seen, privacy: .public) runs \(running ?? "?", privacy: .public)")
+        return found
     }
 }
 
@@ -1398,7 +1501,10 @@ final class SidebarServer {
 
         @MainActor func push(force: Bool) {
             guard !outbox.isHolding else { waiting = true; return }
-            guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
+            guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else {
+                Sidebar.log.error("nothing sent to the sidebar of \(self.appID, privacy: .public): no wish \(self.projectID, privacy: .public)")
+                return
+            }
             var state = server.state(for: project)
             // A sidebar from before first builds were drawn as their parts, and before Agent Details' output, can read
             // neither, and would drop the whole chat: it gets each part's lines as lines, as it showed them.
@@ -1458,12 +1564,17 @@ final class SidebarServer {
                 sentDraft = state.draft
                 sentDraftVersion = state.draftVersion
             }
-            guard let data = SidebarWire.encode(state), force || data != last else { return }
+            guard let data = SidebarWire.encode(state) else {
+                Sidebar.log.error("nothing sent to the sidebar of \(self.appID, privacy: .public): its chat couldn't be encoded")
+                return
+            }
+            guard force || data != last else { return }
             last = data
             outbox.send(data)
         }
 
         @MainActor private func end() {
+            Sidebar.log.notice("sidebar of \(self.appID, privacy: .public) closed its connection")
             outbox.close()
             source?.cancel()
             source = nil
