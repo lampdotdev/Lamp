@@ -128,7 +128,7 @@ example content they can clear. After changing LampSupport.swift, `scripts/check
 
 Each starter is made in a public repository in the Lamp team's account (github.com/lampdotdev/<folder>, the
 account `Starters.account` names), laid out as Put on GitHub lays a wish out: the app's code and files with Lamp's own
-around them (so `./build.sh` builds it there too), an MIT license, a README and, among its pictures (`.github/`), the
+around them (so `zsh build.sh` builds it there too), an MIT license, a README and, among its pictures (`.github/`), the
 drawn icon and the desk's preview. Lamp's repository holds only what names each one: `Resources/Starters/<folder>/
 starter.md`, with the starter's line and three changes, where it lives (`repository:`) and the commit this Lamp ships
 (`commit:`). The tree at that commit is fetched beside it (`scripts/fetch-starters.sh`, into `tree/`, never
@@ -226,7 +226,8 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
 4. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --new <folder> <the wish's folder>`, signed in
    with `gh` to an account that can make repositories in lampdotdev. It makes the public repository (and a game's
    page) from the wish as Put on GitHub would (GitHub's API can't mark a new file executable, so in a new
-   repository `build.sh` isn't; Lamp writes it afresh, executable, before building a copy), gives the account's starters team push access to it (the team whose
+   repository `build.sh` isn't, which is why the README says `zsh build.sh`; Lamp writes it afresh, executable, before
+   building a copy), gives the account's starters team push access to it (the team whose
    members make and change starters), and fills in the starter's `repository:` and `commit:`, fetching the tree. Then its pictures: take `preview.png` as above, and paint and draw the icon into the tree with
    `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1 OPENROUTER_API_KEY=… swift test --filter
    StarterIconsTests`, look at the artwork it picked, and run `scripts/publish-starters.sh <folder>` again to put them

@@ -119,15 +119,12 @@ for tree in "$WORK"/trees/*(N/); do
   cp -R "$tree"/. "$clone"/
   cd "$clone"
   "$GIT" add -A
-  sha="$("$GIT" rev-parse HEAD)"
-  if "$GIT" diff --cached --quiet; then
-    echo "$repo: unchanged"
-  else
-    # GitHub makes the commit, so it shows as Verified (scripts/commit-on-github.py says why).
-    sha="$(/usr/bin/python3 -I "$ROOT/scripts/commit-on-github.py" "$repo" main "$(sed -n 's/^name: *//p' "$ROOT/$starter" | head -1) from Lamp")" \
-      || { echo "$repo: main moved since it was staged, or GitHub turned the commit down; publish again" >&2; exit 1; }
-    echo "$repo: ${sha:0:7}"
-  fi
+  # GitHub makes the commit, so it shows as Verified, and makes none when only modes differ
+  # (scripts/commit-on-github.py says why).
+  base="$("$GIT" rev-parse HEAD)"
+  sha="$(/usr/bin/python3 -I "$ROOT/scripts/commit-on-github.py" "$repo" main "$(sed -n 's/^name: *//p' "$ROOT/$starter" | head -1) from Lamp")" \
+    || { echo "$repo: main moved since it was staged, or GitHub's commit isn't what was staged; publish again" >&2; exit 1; }
+  [[ "$sha" == "$base" ]] && echo "$repo: unchanged" || echo "$repo: ${sha:0:7}"
   cd "$OLDPWD"
   # What it is, in its own words (the manifest's description), as the repository's description.
   about="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("description",""))' "$tree/lamp-app.json" 2>/dev/null || true)"
@@ -149,13 +146,10 @@ for tree in "$WORK"/trees/*(N/); do
       find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
       cp -R "$WORK/pages/$folder"/. .
       "$GIT" add -A
-      if "$GIT" diff --cached --quiet; then
-        echo "$repo page: unchanged"
-      else
-        page_sha="$(/usr/bin/python3 -I "$ROOT/scripts/commit-on-github.py" "$repo" gh-pages "The page to play")" \
-          || { echo "$repo page: gh-pages moved, or GitHub turned the commit down; publish again" >&2; exit 1; }
-        echo "$repo page: ${page_sha:0:7}"
-      fi
+      page_base="$("$GIT" rev-parse HEAD)"
+      page_sha="$(/usr/bin/python3 -I "$ROOT/scripts/commit-on-github.py" "$repo" gh-pages "The page to play")" \
+        || { echo "$repo page: gh-pages moved, or GitHub's commit isn't what was staged; publish again" >&2; exit 1; }
+      [[ "$page_sha" == "$page_base" ]] && echo "$repo page: unchanged" || echo "$repo page: ${page_sha:0:7}"
     )
     page="https://${ACCOUNT:l}.github.io/$folder/"
     # Pushing gh-pages may turn Pages on by itself; turned on already is fine.
