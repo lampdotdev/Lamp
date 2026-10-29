@@ -4853,7 +4853,8 @@ final class Store: ObservableObject {
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     /// `sendsRequest`: this run carries the turn's own request, not a repair Lamp asks for after it (a build's
     /// errors, a crash), which an engine switched to meanwhile needs the turn's messages for (`CatchUp`).
-    private func runAgent(_ prompt: String, files: [String] = [], sendsRequest: Bool = false, on project: LampProject) async -> Bool {
+    private func runAgent(_ request: String, files: [String] = [], sendsRequest: Bool = false, on project: LampProject) async -> Bool {
+        var prompt = request
         // A turn started at launch (one waiting from before) may come before the look for the person's own
         // Claude Code or Codex has finished: it waits for it rather than finding no copy.
         if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
@@ -4898,6 +4899,14 @@ final class Store: ObservableObject {
         // Every app of the wish: the agent may read or change any of them.
         try? await writeOwnFiles(project, all: false)
         for part in parts(of: project) { try? await writeOwnFiles(part, all: false) }
+        // A device app whose code is built with packages has them installed before the agent reads or writes it, and one
+        // made the way its kind was made before gets the scaffold its kind has now, to be written again in.
+        for app in [project] + parts(of: project) where app.platform == .device {
+            if sendsRequest, let rewrite = DeviceApps.startRewrite(app) { prompt += rewrite }
+            if let problem = await DeviceApps.prepare(app, starting: { self.log(project, .status, "Getting what the app is built with…") }) {
+                log(project, .status, "Lamp couldn't install what the app is built with yet:\n" + problem)
+            }
+        }
         // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.
@@ -8906,11 +8915,17 @@ final class Store: ObservableObject {
         var text = summary + " " + (await deviceAppPicture(project, run: run))
         if let answer = run.installAnswer, !answer.isEmpty { text += "\n\nWhat the \(name) answered when the app was put on it:\n\(answer)" }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        var logged: String?
         if Privacy.sharesLog, let kept = try? await DeviceApps.log(project, on: run.device) {
             // The app's own log, read from the device: what a game logged, and how it kept to its frames.
             let tail = kept.split(separator: "\n", omittingEmptySubsequences: false).suffix(60).joined(separator: "\n").trimmed
+            logged = kept
             text += tail.isEmpty ? "\n\nIt has logged nothing yet." : "\n\nWhat it logged on the \(name):\n\(tail)"
-        } else if Privacy.sharesLog, let tail = Runtime.logTail(project, lines: 60) { text += "\n\nWhat it printed (the device's log):\n\(tail)" }
+        } else if Privacy.sharesLog, let tail = Runtime.logTail(project, lines: 60) {
+            logged = tail
+            text += "\n\nWhat it printed (the device's log):\n\(tail)"
+        }
+        text += await RokuSDK.notes(for: project, on: run.device, log: logged)
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
     }
@@ -8988,7 +9003,9 @@ final class Store: ObservableObject {
         }
         guard deviceRuns[project.id] === run else { return (200, ["text": text + "\n\nThe \(name) shows another app now. Call look_at_app to put this one back."]) }
         text += "\n\n" + (await deviceAppPicture(project, run: run))
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
+        let tail = Privacy.sharesLog ? Runtime.logTail(project) : nil
+        if let tail { text += "\n\nWhat it printed:\n" + tail }
+        text += await RokuSDK.notes(for: project, on: run.device, log: tail)
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
     }

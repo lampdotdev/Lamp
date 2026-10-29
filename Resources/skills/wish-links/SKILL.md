@@ -51,7 +51,7 @@ own comment there before using it.
 - A game in Lamp's own preview can't reach the others: there `Lamp.wish` is `away`, with a reason saying so. Write the
   sharing the same way for every place, and keep the game or screen whole without it.
 - A Roku app (an app for a device through its integration) can't reach the others yet, nor they it: it's not in the
-  room's list, so the others don't see it at all, and its own `LampWish` (LampWish.brs) is always `away`. Don't write
+  room's list, so the others don't see it at all, and its own `LampWish` (in its building blocks) is always `away`. Don't write
   the others to wait for it or send it anything; each keeps what it shows its own. An app on the Mac or an iPhone can
   still steer it as a remote with `LampRoku` (keys, opening it by launching "dev"), which needs no link.
 - `LampWishStatus()` (SwiftUI, Compose) and `Lamp.wish.statusView()` (lamp.js) show all of that ready-made, a line

@@ -469,15 +469,13 @@ A device's app made through its integration (a Roku's) doesn't join the room yet
 it's left out of the room's list (`WishRooms.described`), so the others never wait for it or show it as closed, it isn't
 counted among the apps that give an app `LampWish` (`Template.talksToOtherApps`: an iPhone app beside only a Roku app
 has none), and the builder's note says it can't reach the others (`WishNote`). Its own building blocks carry
-`LampWish.brs` while its wish has other apps (`Template.hasOtherApps`, `DeviceSupport.wishFile`): `LampWish_status()`
-always `away` with the reason, the peers empty, and `LampWish_send` and `LampWish_set` sending nothing, the shape the
+`LampWish` (`src/lamp/wish.ts`) while its wish has other apps (`Template.hasOtherApps`, `DeviceSupport.wishFile`): `status()`
+always `away` with the reason, the peers empty, and `send` and `set` sending nothing, the shape the
 link will have, and the rules say to keep each app whole without it (`Agent.Rules.deviceAmongApps`, the `wish-links`
-skill), with `LampRoku` for steering it from a Mac or iPhone app meanwhile. What the link needs on a Roku: it has no
-WebSocket before Roku OS 16 (`roWebSocket`), so it would speak through Lamp's proxy routes as an Android app does
-(`/app/wish/open`, `send`, `poll`); HMAC-SHA256 is native (`roHMAC`), but `roEVPCipher`'s GCM is AES-128 only (Roku OS
-15.2 and later) where the room seals with AES-256-GCM, so the seal would be AES-256 in ECB (native) for the counter blocks
-with GHASH in BrightScript; and the key's claim seals to an X25519 key pair, which BrightScript lacks, so X25519 would be
-written in BrightScript (as lamp.js has it in ES5), in a Task node, held to CryptoKit by `WishChannelTests` like the others.
+skill), with `LampRoku` for steering it from a Mac or iPhone app meanwhile. What the link needs on a Roku: a Roku app is TypeScript on Roku's SDK, whose `fetch` takes one request and gives its
+whole answer, so it would speak through Lamp's proxy routes as an Android app does (`/app/wish/open`, `send`, `poll`);
+the SDK's crypto has HMAC-SHA256 and digests but no AES-GCM or X25519, so the room's AES-256-GCM seal and the claim's
+X25519 would be written in TypeScript (as lamp.js has them in ES5), held to CryptoKit by `WishChannelTests` like the others.
 The other way, Lamp holding the seal for the Roku over its token, would leave what the Roku says in clear on the network.
 
 Lamp's room is one way between a wish's apps; the other is straight between them (**direct links**), so they go on

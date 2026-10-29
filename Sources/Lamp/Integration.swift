@@ -26,7 +26,7 @@ struct Integration: Codable, Hashable {
     /// What the device can run, of "web" (a page in a host) and "native" (the device's own code): its row in the table of
     /// devices (`Places`). Unsaid, it's what `app` declares. Each one named must be one its `app` or `kinds` has files for.
     var supports: [String]?
-    /// What the device runs, in a plain sentence the person would follow ("Roku channels written in BrightScript…"),
+    /// What the device runs, in a plain sentence the person would follow ("Roku apps written in TypeScript on Roku's own SDK…"),
     /// which Lamp gives as the reason when something it can't run is asked of it (`Places.row`), in place of its own.
     var runs: String?
     /// Lamp's skills for designing what the device shows, offered to every app on it as a built-in row offers its own
@@ -151,6 +151,8 @@ struct Integration: Codable, Hashable {
         var xml: String?
         var equals: String?
         var contains: String?
+        /// The value read is a version ("15.3.4") at least this one ("15.1"), compared number by number.
+        var atLeast: String?
         /// A TCP port on the device that accepts a connection.
         var tcp: Int?
         /// A field the person has typed and Lamp keeps.
@@ -228,7 +230,7 @@ struct Integration: Codable, Hashable {
             /// What shows a wrapped web app's pages: "webview2", Lamp's own WebView2 host (`WebHost`), or, unsaid, the
             /// system's own host for a package that names a start page (EdgeHTML on the Xbox).
             var host: String?
-            /// Lamp's building blocks the app takes, by library ("web", "brightscript") to where they go in its folder:
+            /// Lamp's building blocks the app takes, by library ("web", "typescript") to where they go in its folder:
             /// Lamp's own files there, written afresh before every turn and build (`DeviceSupport`).
             var support: [String: String]?
             /// A web app's folder, whose index.html Lamp opens at 1920×1080 in a preview on this Mac for the agent's looks and
@@ -238,7 +240,37 @@ struct Integration: Codable, Hashable {
             /// "336x210"): Lamp draws the icon it made for the app at each, before every turn and build (`DeviceSupport`),
             /// for the files the device's manifest names. The agent never draws one.
             var icons: [String: String]?
+            /// Lamp's own command over the app's folder before every turn and build, run in its sandbox while what it
+            /// reads has changed (`DeviceApps.prepare`): installing what the app's code depends on, so the builder reads it
+            /// and the package step finds it.
+            var prepare: String?
+            /// What the prepare and package steps run with that Lamp fetches itself, first on their path: "node" is
+            /// Node.js and pnpm (`NodeTools`).
+            var tools: [String]?
+            /// A way Lamp knows to look inside the app as it runs on the device, beside the bridge's picture: "roku-sdk",
+            /// the screen's nodes and decoded crashes from Roku's SDK (`RokuSDK`).
+            var inspect: String?
+            /// The folders at the top of the app's folder that its tools install or make ("node_modules", "dist-dev"):
+            /// kept out of versions (.gitignore), out of what the app is built from and out of Lamp's copy for the package step.
+            var ignore: [String]?
         }
+    }
+
+    /// A version as its numbers ("15.3.4" is [15, 3, 4]); nil for anything else.
+    static func version(_ text: String) -> [Int]? {
+        let parts = text.trimmingCharacters(in: .whitespaces).split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+        guard !parts.isEmpty, parts.allSatisfy({ $0 != nil }) else { return nil }
+        return parts.compactMap { $0 }
+    }
+
+    /// Whether `value` is a version at least `minimum`, a missing number counting as 0 ("15" is "15.0").
+    static func isVersion(_ value: String, atLeast minimum: String) -> Bool {
+        guard let have = version(value), let need = version(minimum) else { return false }
+        for index in 0..<max(have.count, need.count) {
+            let (a, b) = (index < have.count ? have[index] : 0, index < need.count ? need[index] : 0)
+            if a != b { return a > b }
+        }
+        return true
     }
 }
 
@@ -488,7 +520,7 @@ enum IntegrationCheck {
             "tool": .object(["name": .leaf, "download": .leaf, "sha256": .leaf, "arguments": .array(.leaf), "explanation": .leaf]),
             "vendorSignIn": .object(["page": .leaf]), "wait": .leaf, "bridge": .leaf,
         ])
-        static let appKind: Shape = .object(["lamp": .leaf, "purpose": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "host": .leaf, "support": .map, "icons": .map, "preview": .leaf])])
+        static let appKind: Shape = .object(["lamp": .leaf, "purpose": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "host": .leaf, "support": .map, "icons": .map, "preview": .leaf, "prepare": .leaf, "tools": .array(.leaf), "inspect": .leaf, "ignore": .array(.leaf)])])
         static let read: Shape = .object(["http": request, "description": .leaf, "json": .leaf, "xml": .leaf, "contains": .leaf])
         static let integration: Shape = .object([
             "id": .leaf, "name": .leaf, "maker": .leaf, "kind": .leaf, "sources": .array(.leaf),
@@ -500,7 +532,7 @@ enum IntegrationCheck {
                 "id": .leaf, "title": .leaf, "lines": .array(.leaf), "show": .array(.object(["label": .leaf, "value": .leaf])),
                 "qr": .leaf, "field": .object(["key": .leaf, "label": .leaf, "secret": .leaf]), "link": .leaf,
                 "accepts": .array(.leaf), "run": .array(action), "wait": .leaf,
-                "check": .array(.object(["http": request, "json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf,
+                "check": .array(.object(["http": request, "json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf, "atLeast": .leaf,
                                          "tcp": .leaf, "field": .leaf, "signedIn": .leaf])), "model": .leaf,
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
@@ -681,6 +713,23 @@ enum IntegrationCheck {
                         say("app.declared.support: \"\(path)\" is Lamp's, so the scaffold's files can't be there.")
                     }
                 }
+                for name in declared.ignore ?? [] where !isIgnorable(name) {
+                    say("app.declared.ignore: \"\(name)\" must be the plain name of a folder at the top of the app's folder.")
+                }
+                // Tools Lamp fetches, a step before every turn and Roku's SDK reading the app run more than a package step
+                // with the system's own tools: only the kinds Lamp ships have them.
+                if submitted, declared.tools != nil || declared.prepare != nil || declared.inspect != nil {
+                    say("app.declared.tools, prepare and inspect are Lamp's own and only in the integrations Lamp ships; leave them out.")
+                }
+                for tool in declared.tools ?? [] where tool != "node" {
+                    say("app.declared.tools: \"\(tool)\" isn't one Lamp fetches: \"node\".")
+                }
+                if let inspect = declared.inspect, inspect != RokuSDK.inspector {
+                    say("app.declared.inspect must be one Lamp has: \"\(RokuSDK.inspector)\".")
+                } else if declared.inspect != nil, declared.tools?.contains("node") != true {
+                    say("app.declared.inspect \"\(RokuSDK.inspector)\" runs Roku's SDK from the app's packages, so app.declared.tools must have \"node\".")
+                }
+                if let prepare = declared.prepare, prepare.trimmed.isEmpty { say("app.declared.prepare is empty: leave it out instead.") }
                 if let preview = declared.preview, !isAppPath(preview) {
                     say("app.declared.preview: \"\(preview)\" must be a plain path to a folder inside the app's folder, not in .lamp.")
                 }
@@ -772,7 +821,9 @@ enum IntegrationCheck {
                 var rooted = false
                 for prefix in ["pkg:/", "/"] where path.hasPrefix(prefix) { path.removeFirst(prefix.count); rooted = true }
                 if path.hasPrefix("./") { path.removeFirst(2) }
-                let candidates = rooted || folder.isEmpty ? [path] : [(folder as NSString).appendingPathComponent(path), path]
+                // On Roku's SDK the package's root is the app's pkg/ folder.
+                let candidates = (rooted || folder.isEmpty ? [path] : [(folder as NSString).appendingPathComponent(path), path])
+                    + (text[..<range.lowerBound].hasSuffix("pkg:") ? ["pkg/" + path] : [])
                 let valid = candidates.filter(isAppPath)
                 if !valid.isEmpty, !valid.contains(where: { drawn.contains($0) || written.contains($0) }) { missing.insert(valid[0]) }
             }
@@ -858,13 +909,14 @@ enum IntegrationCheck {
             problems += requestProblems(request, at: "\(at).http", fields: fields, steps: steps)
             // A check asks; it changes nothing it would have to put back, and runs again and again while it waits.
             if request.restore != nil { problems.append("\(at).http.restore is for a bridge's or a step's sequence: a check only asks.") }
-            if (condition.equals != nil || condition.contains != nil), condition.json == nil, condition.xml == nil {
+            if (condition.equals != nil || condition.contains != nil || condition.atLeast != nil), condition.json == nil, condition.xml == nil {
                 problems.append("\(at) compares a value, so it must read it with json or xml.")
             }
             if condition.json != nil, condition.xml != nil { problems.append("\(at) reads with json or xml, not both.") }
-        } else if condition.json != nil || condition.xml != nil || condition.equals != nil || condition.contains != nil {
-            problems.append("\(at): json, xml, equals and contains go with http.")
+        } else if condition.json != nil || condition.xml != nil || condition.equals != nil || condition.contains != nil || condition.atLeast != nil {
+            problems.append("\(at): json, xml, equals, contains and atLeast go with http.")
         }
+        if let atLeast = condition.atLeast, Integration.version(atLeast) == nil { problems.append("\(at).atLeast is a version made of numbers and dots (\"15.1\").") }
         if let port = condition.tcp, !isPort(port) { problems.append("\(at).tcp isn't a port.") }
         if let field = condition.field, !fields.contains(field) { problems.append("\(at).field names no field a step asks for.") }
         return problems
@@ -951,6 +1003,11 @@ enum IntegrationCheck {
     static func isAppPath(_ path: String) -> Bool {
         !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix(".") && !path.contains("..") && !path.contains("\\")
             && !path.split(separator: "/").contains { $0.hasPrefix(".") } && path.count < 200
+    }
+    /// A folder at the top of an app's folder that its tools make: a plain name, hidden or not, never Lamp's or git's.
+    static func isIgnorable(_ name: String) -> Bool {
+        !name.isEmpty && name.count < 100 && !name.contains("/") && !name.contains("\\") && !name.contains("..") && name != "."
+            && ![".lamp", ".git", Attachments.folder].contains(name)
     }
     static func words(_ text: String) -> Int { text.split(whereSeparator: { $0.isWhitespace }).count }
 

@@ -2,34 +2,44 @@
   "app": {
     "declared": {
       "files": {
-        "components/MainScene.brs": "sub init()\n    m.top.setFocus(true)\nend sub\n\nfunction onKeyEvent(key as String, press as Boolean) as Boolean\n    return false\nend function\n",
-        "components/MainScene.xml": "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<component name=\"MainScene\" extends=\"Scene\">\n  <script type=\"text/brightscript\" uri=\"MainScene.brs\" />\n  <children>\n    <Rectangle id=\"bg\" width=\"1920\" height=\"1080\" color=\"0x101418FF\" />\n    <Label id=\"title\" text=\"{{NAME}}\" translation=\"[96,54]\" width=\"1728\" horizAlign=\"center\" />\n  </children>\n</component>\n",
-        "manifest": "title={{NAME}}\nmajor_version=1\nminor_version=0\nbuild_version=1\nui_resolutions=fhd\nmm_icon_focus_hd=pkg:/images/icon_focus_hd.png\nmm_icon_focus_fhd=pkg:/images/icon_focus_fhd.png\nsplash_screen_sd=pkg:/images/splash_sd.png\nsplash_screen_hd=pkg:/images/splash_hd.png\nsplash_screen_fhd=pkg:/images/splash_fhd.png\nsplash_color=#1B1B3A\n",
-        "source/main.brs": "sub Main()\n    screen = CreateObject(\"roSGScreen\")\n    port = CreateObject(\"roMessagePort\")\n    screen.setMessagePort(port)\n    scene = screen.CreateScene(\"MainScene\")\n    screen.show()\n    while true\n        msg = wait(0, port)\n        if type(msg) = \"roSGScreenEvent\" and msg.isScreenClosed() then return\n    end while\nend sub\n"
+        "package.json": "{\n    \"name\": \"roku-app\",\n    \"version\": \"1.0.0\",\n    \"private\": true,\n    \"type\": \"module\",\n    \"main\": \"src/index.ts\",\n    \"dependencies\": {\n        \"@roku-sdk/components\": \"2.18.0\",\n        \"@roku-sdk/interfaces\": \"2.18.0\",\n        \"@roku-sdk/navigation\": \"2.18.0\",\n        \"@roku-sdk/rsg-ts\": \"2.18.0\",\n        \"@roku-sdk/solid\": \"2.18.0\",\n        \"@roku-sdk/tooling\": \"2.18.0\"\n    },\n    \"devDependencies\": {\n        \"typescript\": \"5.9.3\"\n    },\n    \"engines\": {\n        \"node\": \">=24.0.0\"\n    }\n}\n",
+        "pkg/source/Main.brs": "sub Main()\n    screen = CreateObject(\"roSGScreen\")\n    port = CreateObject(\"roMessagePort\")\n    screen.setMessagePort(port)\n    screen.CreateScene(\"AppScene\")\n    screen.show()\n    while true\n        msg = wait(0, port)\n        if type(msg) = \"roSGScreenEvent\" and msg.isScreenClosed() then return\n    end while\nend sub\n",
+        "pnpm-workspace.yaml": "# pnpm 11 installs only once every dependency with an install script is allowed or denied here.\nallowBuilds:\n  \"@roku-sdk/tooling\": true\n  \"@parcel/watcher\": false\n  esbuild: false\n  unrs-resolver: false\n",
+        "roku-config.ts": "import { RokuConfig } from \"@roku-sdk/rsg-ts/roku-config\";\n\nconst configuration: RokuConfig = {\n    app: {\n        entryPoint: \"src/index.ts\",\n        images: {\n            convertToWebp: true,\n            generateHd: true\n        },\n        logger: {\n            baseLogLevel: \"INFO\",\n            currentLogLevel: \"INFO\"\n        },\n        manifestEntries: {\n            title: \"{{NAME}}\",\n            major_version: 1,\n            minor_version: 0,\n            build_version: 1,\n            ui_resolutions: \"fhd\",\n            uri_resolution_autosub: \"*,sd,hd,fhd\",\n            mm_icon_focus_hd: \"pkg:/images/icon_focus_hd.png\",\n            mm_icon_focus_fhd: \"pkg:/images/icon_focus_fhd.png\",\n            splash_screen_sd: \"pkg:/images/splash_sd.png\",\n            splash_screen_hd: \"pkg:/images/splash_hd.png\",\n            splash_screen_fhd: \"pkg:/images/splash_fhd.png\",\n            splash_color: \"#1B1B3A\",\n            splash_min_time: 1,\n            rsg_version: \"2.0\"\n        }\n    }\n};\n\nexport default configuration;\n",
+        "src/compiled-components/AppScene.brs": "sub init()\n    m.top.backgroundColor = \"0x101418FF\"\n    app = m.top.findNode(\"app\")\n    if app <> invalid then app.setFocus(true)\nend sub\n",
+        "src/compiled-components/AppScene.xml": "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<component name=\"AppScene\" extends=\"Scene\" backExitsScene=\"true\">\n    <children>\n        <App id=\"app\" />\n    </children>\n    <script type=\"text/brightscript\" uri=\"AppScene.brs\" />\n</component>\n",
+        "src/components/App.tsx": "import { RootFocusBoundary, useFocusable } from \"@roku-sdk/navigation\";\nimport { type AnchorNodeImplementation, defineAnchorNode, FieldType } from \"@roku-sdk/rsg-ts\";\n\n// The app's one anchor node: the scene holds it, and the remote's keys reach its focus boundary through keyEvent.\n// Keys it doesn't handle go back to the scene, so Back on the first screen leaves the app.\nconst AppDescription = {\n    componentName: \"App\",\n    extends: \"FocusBoundaryBase\" as const,\n    inputFields: {\n        keyEvent: FieldType.Object(),\n        focusActive: FieldType.Boolean(true)\n    },\n    outputFields: {\n        handledKeys: FieldType.Object()\n    }\n};\n\nconst titleId: object = {};\n\nconst Title = () => {\n    const { ref, isFocused } = useFocusable({ focusId: titleId });\n    return (\n        <group ref={ref}>\n            <label\n                text=\"{{NAME}}\"\n                color={isFocused() ? \"0xFFFFFFFF\" : \"0xB0B4BAFF\"}\n                font=\"font:LargeBoldSystemFont\"\n                horizAlign=\"center\"\n                vertAlign=\"center\"\n                width={1920}\n                height={1080}\n            />\n        </group>\n    );\n};\n\nconst App: AnchorNodeImplementation<typeof AppDescription> = (inputs, outputs) => (\n    <RootFocusBoundary\n        keyEvent={inputs.keyEvent as Parameters<typeof RootFocusBoundary>[0][\"keyEvent\"]}\n        focusActive={inputs.focusActive as boolean}\n        setHandledKeys={outputs.handledKeys}\n        initialFocus={titleId}\n    >\n        <rectangle width={1920} height={1080} color=\"0x101418FF\" />\n        <Title />\n    </RootFocusBoundary>\n);\n\nexport default defineAnchorNode(AppDescription, App);\n",
+        "src/index.ts": "import \"./compiled-components/AppScene.xml\";\n\nimport { enableExceptionTagging, main, registerAnchorNode } from \"@roku-sdk/rsg-ts\";\n\nimport App from \"./components/App\";\n\nmain(() => {\n    enableExceptionTagging();\n    registerAnchorNode(App);\n});\n",
+        "tsconfig.json": "{\n    \"extends\": \"@roku-sdk/rsg-ts/tsconfig.json\",\n    \"compilerOptions\": {\n        \"rootDir\": \"src\",\n        \"baseUrl\": \".\"\n    },\n    \"include\": [\n        \"src/**/*\"\n    ]\n}\n"
       },
       "icons": {
-        "images/icon_focus_fhd.png": "540x405",
-        "images/icon_focus_hd.png": "290x218",
-        "images/splash_fhd.png": "1920x1080",
-        "images/splash_hd.png": "1280x720",
-        "images/splash_sd.png": "720x480"
+        "pkg/images/icon_focus_fhd.png": "540x405",
+        "pkg/images/icon_focus_hd.png": "290x218",
+        "pkg/images/splash_fhd.png": "1920x1080",
+        "pkg/images/splash_hd.png": "1280x720",
+        "pkg/images/splash_sd.png": "720x480"
       },
+      "ignore": [
+        "node_modules",
+        "dist-dev",
+        "dist-build",
+        ".roku",
+        ".agents"
+      ],
+      "inspect": "roku-sdk",
       "output": "build/app.zip",
-      "package": "rm -f build/app.zip && mkdir -p build images && zip -qr build/app.zip manifest source components images -x '*.DS_Store'",
-      "rules": "A Roku channel written in BrightScript with SceneGraph. source/main.brs creates an roSGScreen and the MainScene; the UI lives in components/*.xml (SceneGraph nodes: Rectangle, Label, Poster, Group, LayoutGroup, Timer, Video, Audio, etc.) with their logic in .brs files they include via <script uri>. The screen is 1920x1080 (ui_resolutions=fhd); keep content inside a 5% safe margin, text at least 28px, a dark background. Input arrives in the focused component's onKeyEvent(key, press) with key names up, down, left, right, OK, back, play, rewind, fastforward, options, replay; return true when handled; returning false for back on the main scene exits the channel. A Keyboard or MiniKeyboard node takes typed text. Use a Timer node (repeat=true, observe its fire field) for animation or game loops, never a busy loop in a component. The render thread can't reach the network: every request of the app's own (roUrlTransfer for a feed or an API) runs in a Task node, a component of its own that extends Task, with interface fields for what it's asked and what it found, functionName set in init and control = \"RUN\" to start it; the scene observes the result field. A live connection runs in a Task too: on Roku OS 16 and later roWebSocket, and for server-sent events an roStreamSocket on which the Task writes the GET itself and reads the event lines as they arrive (roUrlTransfer answers only once a request is complete); check the version with roDeviceInfo's GetOSVersion() and fall back to asking again on a Timer. Saved data goes through Lamp's LampStore, never roRegistrySection directly: Roku keeps about 32 KB of saved data per channel, shared by every app Lamp puts on that Roku, so keep it small. BrightScript is case-insensitive, has no classes (use associative arrays), arrays are roArray, integer division uses \\, and every component runs in its own scope (share state through m and node fields). print writes to the debug log. Pictures go in images/ and are referenced as pkg:/images/name.png. The manifest names the icon and splash pictures Lamp draws in images/ (mm_icon_focus_hd, mm_icon_focus_fhd, splash_screen_sd, splash_screen_hd, splash_screen_fhd, at icon_focus_hd.png, icon_focus_fhd.png, splash_sd.png, splash_hd.png and splash_fhd.png): keep those lines, add them when they're missing, and never draw or replace those files. A screensaver is an app of its own: its manifest adds screensaver_title={{NAME}} and source/main.brs a sub RunScreenSaver() that shows its scene the way Main does (keep Main, so it can be opened and tried); the person picks it under Settings, Theme, Screensaver. Keep it slow and dark, and move what it shows now and then. Lamp's support library is in components/Lamp and is packaged with the app.",
+      "package": "pnpm install --prefer-offline --reporter=append-only && pnpm exec rk dev --no-sideload && rm -rf build && mkdir -p build && cd dist-dev/pkg-dir && /usr/bin/zip -qr ../../build/app.zip . -x '*.DS_Store'",
+      "prepare": "pnpm install --prefer-offline --reporter=append-only && pnpm exec rk update-ai-context --yes",
+      "rules": "A Roku app written in TypeScript and TSX on Roku's RSG 2.0 SDK, with SolidJS through @roku-sdk/solid (never solid-js, never React). It runs on Roku OS 15.1 and later, in Hermes beside SceneGraph's render thread, and draws SceneGraph nodes: no HTML, CSS, DOM or WebGL. src/index.ts registers the app's one anchor node, App in src/components/App.tsx (defineAnchorNode, extending FocusBoundaryBase), which src/compiled-components/AppScene.xml holds; pkg/ goes into the package as it is (pkg/source/Main.brs starts the scene). Write the app in src/ as plain SolidJS components under that anchor node, with lowercase SceneGraph node tags (rectangle, label, poster, group, layoutGroup, video, audio, timer) or @roku-sdk/components. Before writing, read the SDK's own guides for what you're doing, in .agents/skills/roku-sdk-*/SKILL.md (Lamp installs them with the app's packages): roku-sdk-solid-on-roku and roku-sdk-sdk-components every time, roku-sdk-focus-management for anything the remote moves through, and roku-sdk-screen-navigation, roku-sdk-fetch-and-data-loading, roku-sdk-data-entry-keyboards, roku-sdk-dialogs-and-modals, roku-sdk-flex-grid, roku-sdk-slideshow, roku-sdk-effects or roku-sdk-fonts-and-glyphs when they apply. Their guides to devices, MCP, the CLI and packaging aren't for you: Lamp builds the app and puts it on the Roku. Import SolidJS (createSignal, createEffect, createMemo, onMount, For, Show) from @roku-sdk/solid; iterate with <For>, never .map() in JSX; read props and signals inside JSX, a memo or an effect, and never destructure props. Focus: the remote's keys reach the RootFocusBoundary in App.tsx through keyEvent, and its initialFocus must name something focusable; wrap each region in a FocusBoundary with navigation \"vertical\", \"horizontal\" or \"grid\", make each item useFocusable (attach its ref, draw its focus from isFocused()) and handle OK in its onKey with onPress; leave the arrows to the boundaries. Key names are up, down, left, right, OK, back, play, rewind, fastforward, options, replay. Back that nothing handles leaves the app, so on a screen past the first, handle back to go back. The screen is 1920x1080: keep content inside a 5% safe margin, text at least 28px, a dark background, and focus that's plain from across the room. Network requests use the runtime's fetch with one argument: fetch(url), or fetch(new Request(url, { method, headers, body })) with a string body for anything else; check response.ok, since an error status still resolves. Saved data goes through Lamp's LampStore, never the registry directly: Roku keeps about 32 KB of saved data per channel, shared by every app Lamp puts on that Roku, so keep it small. Pictures the app ships go in src/ and are imported (import { uri } from \"../images/fox.png\"), never named by a pkg:/ path; a timer for animation or a game loop is setInterval or a timer node, never a busy loop. A package the app needs goes in package.json's dependencies at an exact version, @roku-sdk ones at the version the others are on: Lamp installs them before your next turn and every build, so never run pnpm, npm, npx or rk yourself. Lamp builds with Roku's rk, which type-checks first: a type error fails the build and comes back to you to fix. roku-config.ts's manifestEntries name the icon and splash pictures Lamp draws in pkg/images (mm_icon_focus_hd, mm_icon_focus_fhd, splash_screen_sd, splash_screen_hd, splash_screen_fhd, at icon_focus_hd.png, icon_focus_fhd.png, splash_sd.png, splash_hd.png and splash_fhd.png): keep those entries, add them when they're missing, and never draw or replace those files. A screensaver is an app of its own: manifestEntries adds screensaver_title (the app's title) and pkg/source/Main.brs a sub RunScreenSaver() that shows AppScene the way Main does (keep Main, so it can be opened and tried); the person picks it under Settings, Theme, Screensaver. Keep it slow and dark, and move what it shows now and then. console.log writes to the Roku's log. Lamp's support library is in src/lamp and is built with the app.",
       "support": {
-        "brightscript": "components/Lamp"
-      }
+        "typescript": "src/lamp"
+      },
+      "tools": [
+        "node"
+      ]
     },
     "purpose": "a channel: menus and pages, video and music, a simple game, or a screensaver"
   },
-  "supports": [
-    "native"
-  ],
-  "runs": "Only Roku channels, written in Roku's own BrightScript and driven by the remote: no web pages, no WebGL or 3D, and no touch, mouse or game controller.",
-  "skills": [
-    "tv-design"
-  ],
   "bridge": {
     "install": [
       {
@@ -220,12 +230,42 @@
   "kind": "streaming player or TV",
   "maker": "Roku",
   "name": "Roku",
+  "runs": "Only Roku apps, written in TypeScript on Roku's own SDK for Roku OS 15.1 or later and driven by the remote: no web pages, no WebGL or 3D, and no touch, mouse or game controller.",
+  "skills": [
+    "tv-design"
+  ],
   "sources": [
     "https://developer.roku.com/docs/developer-program/debugging/external-control-api.md",
     "https://developer.roku.com/docs/developer-program/getting-started/developer-setup.md",
-    "https://developer.roku.com/docs/developer-program/getting-started/architecture/channel-manifest.md"
+    "https://developer.roku.com/docs/developer-program/getting-started/architecture/channel-manifest.md",
+    "https://gitlab.com/rokudev/rsg-sdk/-/blob/main/documentation/getting-started/first-app.md"
   ],
   "steps": [
+    {
+      "check": [
+        {
+          "atLeast": "15.1",
+          "http": {
+            "path": "/query/device-info",
+            "port": 8060
+          },
+          "xml": "software-version"
+        }
+      ],
+      "id": "roku-os",
+      "known": {
+        "how": "read",
+        "source": "https://gitlab.com/rokudev/rsg-sdk/-/blob/main/documentation/getting-started/first-app.md"
+      },
+      "lines": [
+        "Lamp's Roku apps need Roku OS 15.1 or later",
+        "On the Roku, open Settings, then System, then Software update",
+        "Choose Check now and let it update",
+        "Still older once it's up to date? This Roku is too old for Lamp's Roku apps"
+      ],
+      "title": "Update the Roku",
+      "wait": true
+    },
     {
       "check": [
         {
@@ -397,5 +437,8 @@
       ],
       "title": "Enter your developer password"
     }
+  ],
+  "supports": [
+    "native"
   ]
 }

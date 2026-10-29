@@ -108,23 +108,70 @@ Lamp encodes down to letters and digits; a Roku's `Lit_`) and `wait`. Stop runs 
 app is still open on the device, so Play always puts it there again. Such an app can be one of a wish's apps, in a
 folder named for its device (Roku/, the "Wishes" guide), where all of this works in its folder as it does at a wish's
 root. Such apps aren't shared yet. Lamp ships the Roku's
-integration (`Resources/Devices/roku.json`): a channel in BrightScript with Lamp's building blocks, its icon and splash
-screens, and a bridge whose `remove` is the developer installer's Delete, so deleting a wish takes the channel off the
+integration (`Resources/Devices/roku.json`): an app in TypeScript on Roku's RSG 2.0 SDK (below) with Lamp's building
+blocks, its icon and splash screens, and a bridge whose `remove` is the developer installer's Delete, so deleting a wish takes the channel off the
 Roku (a package that isn't wrapped has no names, so `DeviceApps.removeEverywhere` removes the device's one copy, and only
 while it's still this wish's: `lastOnDevice` notes which app each device took last). Its
 mobile-control step reads `ecp-setting-mode` from device-info, which Roku's ECP page doesn't list but Rokus report, and
 asks only for Enabled, never Permissive. Its developer-mode step's button presses the remote's secret keys over ECP (`run`), which that
 setting allows; the license and the password stay the person's, on the Roku. Its Do It for Me is the `roku-developer-mode` skill, all data: the same keys
 (pressed only while `developer-enabled` isn't true, and never again after a failure part way), then the person's
-installer, license and password while Lamp waits for the Roku's restart, then what the step itself checks.
+installer, license and password while Lamp waits for the Roku's restart, then what the step itself checks. Its first
+step is the Roku's version: Roku's SDK runs on Roku OS 15.1 and later, so the step reads `software-version` from
+device-info and holds until it's at least that (`atLeast`, a version compared number by number, `Integration.isVersion`),
+its lines saying to update the Roku under Settings → System → Software update, and that a Roku still older once it's up
+to date is too old for Lamp's Roku apps. A Roku set up before this has the step as its next one, so nothing is put on it
+until it passes.
+
+**Roku apps on Roku's SDK** (`app.declared` in roku.json; `NodeTools`, `RokuSDK`). A Roku app is TypeScript and TSX with
+SolidJS (`@roku-sdk/solid`), running in Hermes beside SceneGraph's render thread and drawing SceneGraph nodes. The SDK
+is MIT, on npm (`@roku-sdk/*`), in beta, pinned in the scaffold's package.json (2.18.0); its tooling needs Node.js 24 or
+later and pnpm 11, which Lamp fetches itself the first time an app needs them (`declared.tools` "node"): one pinned
+Node and one pinned pnpm, each checked against the SHA-256 Lamp keeps for it, into the developer folder every Lamp shares,
+with pnpm's store, home and caches in the shared caches folder (`NodeTools.shellPrefix`), both of which the sandbox opens
+as builds need. The scaffold is the SDK's minimal app (`rk create`'s), with the anchor node already wired for focus
+(`RootFocusBoundary`), its manifest in roku-config.ts and the icon and splash pictures Lamp draws in `pkg/images`.
+Before every turn, while package.json, the lockfile or the workspace's settings changed (`.lamp/prepared`), the
+declared `prepare` step runs in the app's sandbox (`DeviceApps.prepare`): `pnpm install`, then `rk update-ai-context`,
+which writes the SDK's own guides into `.agents/skills/roku-sdk-*`. The rules name the ones to read, the same for every
+engine, since none of the three loads them by itself. The package step runs on Lamp's copy (leaving behind what
+`declared.ignore` names: node_modules, the SDK's build folders, `.roku`, `.agents`, all also kept out of versions and of
+what the app is built from), installs from the store, and runs `rk dev --no-sideload`, which type-checks (an error comes
+back to the agent like a compiler's), then zips `dist-dev/pkg-dir`; Lamp's install path sideloads that zip as before, with
+the developer password Lamp keeps. That build is plain JavaScript: the token with the `rsg_typescript` claim that Roku's
+documents mention is only checked for Hermes bytecode (`--compile-ts`), which Lamp doesn't build. The agent never runs
+pnpm, npx or rk: a package it needs goes in package.json and the next prepare installs it.
+
+`look_at_app` and `use_app` on a Roku app also give the agent the SDK's view of it (`declared.inspect` "roku-sdk",
+`RokuSDK.notes`): the screen as SceneGraph's tree of nodes, focus included, from ECP's `query/app-ui`, and a crash's stack
+in what the app logged read back to its TypeScript lines with the build's source maps (`decode_stack_trace`). Both come
+from the SDK's MCP server, `rk mcp`, started from the app's packages in Lamp's copy, in the app's sandbox, for one call
+and stopped, at the address of the Roku Lamp put the app on; the tree goes only while pictures are shared with the
+agent and the stack only while the log is. Lamp calls those two reads alone: the server's other tools (sideloading,
+keys, rebooting, signing, the cloud emulator, the debugger) are never offered to the agent, which presses keys with
+`use_app` through Lamp's bridge and its checks, so no engine reaches the Roku any other way. `tools`, `prepare` and
+`inspect` are refused in an integration the builder writes.
+
+A Roku app Lamp made before this is BrightScript (`DeviceApps.isOlderScaffold`: none of the files the scaffold writes now
+is in its folder). Its code stays as it was, and it isn't built: Play says it was made the way Lamp made Roku apps before
+and that any change writes it again. The next request puts the new scaffold beside the old code and tells the agent,
+with the request, to write the whole app again in it from what the old code does, keeping every key it saves under,
+then to delete the old files (`DeviceApps.startRewrite`, in `runAgent`, for every engine). Its saved data stays on the
+Roku: the TypeScript LampStore reads the same registry section, `lamp-store:<app id>`, and the same JSON, and the token
+the same `lamp-install` key.
 
 **Lamp's building blocks on devices** (`DeviceSupport`, DeviceSupport.swift): TVs and declared app kinds get `LampAI`,
 `LampStore` and `LampAssets` as Mac, iPhone and Android apps do, under the same names and with the same advice in their
 comments, so a change to one of those is made to all of them. A declared kind asks for them by library in
-`app.declared.support` (`"web": "Web/lamp.js"`, `"brightscript": "components/Lamp"`); the TV kit always has the web one
-in its `Web/lamp.js`, the Xbox's integration asks for it too. The web library is plain ES5 with Promises
-(`DeviceSupport.webJS`, LampStore on localStorage); the BrightScript one runs each LampAI call in a Task node
-(`LampAITask`), since a Roku refuses network calls on its render thread, and keeps LampStore in the registry. Lamp writes
+`app.declared.support` (`"web": "Web/lamp.js"`, `"typescript": "src/lamp"`, `"brightscript": "components/Lamp"`); the TV kit
+always has the web one in its `Web/lamp.js`, the Xbox's integration asks for it too. The web library is plain ES5 with
+Promises (`DeviceSupport.webJS`, LampStore on localStorage). The TypeScript one is the Roku's (`DeviceSupport.typeScript`,
+`src/lamp/index.ts`, and `wish.ts` for `LampWish`): Promises over the SDK's one-argument `fetch` and LampStore in the
+registry; it has no pictures from AI, since the SDK's runtime can neither write a file nor read one as bytes, so
+`makeImage` fails with a message to show and `isAvailable("pictures")` is false. Its install values replace a string the
+build keeps (`typeScriptMarker`, `"__LAMP_INSTALL__"`) in the app's JavaScript. The BrightScript one, which no shipped
+kind asks for now, runs each LampAI call in a Task node (`LampAITask`), since a Roku refuses network calls on its render
+thread, and keeps LampStore in the registry. Lamp writes
 them before every turn and build (`DeviceSupport.write`, from `Template.writeOwnedFiles` and `writeSupport`), the agent
 can't delete them, and versions leave them out of their names and diffs. How an app reaches the gateway comes in two
 halves, since none of these devices can be written to after an install the way `Adb.tellApp` writes an Android app's

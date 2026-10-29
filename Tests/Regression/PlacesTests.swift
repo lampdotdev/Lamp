@@ -71,7 +71,7 @@ final class PlacesTests: XCTestCase {
         let xbox = Places.refusal(make: .native, devices: ["xbox-one"], in: table) ?? ""
         XCTAssertTrue(xbox.hasPrefix("Lamp can't build a native app for"), xbox)
         let roku = Places.refusal(make: .web, devices: ["roku"], in: table) ?? ""
-        XCTAssertTrue(roku.contains("can't run a web app") && roku.contains("BrightScript"), "a Roku's own limit stays its own: \(roku)")
+        XCTAssertTrue(roku.contains("can't run a web app") && roku.contains("TypeScript on Roku's own SDK"), "a Roku's own limit stays its own: \(roku)")
     }
 
     /// Every stored kind reads back as devices that, asked for again as it's made, plan the same kind: nothing changes.
@@ -151,7 +151,7 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(roku.native?.code, .integration)
         XCTAssertFalse(roku.runs(.web))
         // A page asked of it is refused with what a Roku runs, in the integration's own words, never Lamp's.
-        XCTAssertTrue(roku.noWeb?.contains("BrightScript") == true)
+        XCTAssertTrue(roku.noWeb?.contains("Roku's own SDK") == true)
     }
 
     /// Every row with no web host is one a page can't go to, each said with its own reason, whichever device it is: none
@@ -191,7 +191,7 @@ final class PlacesTests: XCTestCase {
         var json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         json["supports"] = ["native", "web"]
         let problems = IntegrationCheck.problems(try JSONSerialization.data(withJSONObject: json), submitted: false)
-        XCTAssertEqual(problems.filter { $0.hasPrefix("supports") }.count, 1, "web, which its BrightScript app doesn't make")
+        XCTAssertEqual(problems.filter { $0.hasPrefix("supports") }.count, 1, "web, which its Roku app doesn't make")
         json["supports"] = ["game"]
         XCTAssertFalse(IntegrationCheck.problems(try JSONSerialization.data(withJSONObject: json), submitted: false).filter { $0.hasPrefix("supports") }.isEmpty)
     }

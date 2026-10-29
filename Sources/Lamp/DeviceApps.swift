@@ -1,3 +1,4 @@
+import CryptoKit
 import AppKit
 import Foundation
 
@@ -110,10 +111,43 @@ enum DeviceApps {
         for (path, contents) in declared.files.sorted(by: { $0.key < $1.key }) where IntegrationCheck.isAppPath(path) {
             try Template.write(contents, to: path, for: project)
         }
-        let output = declared.output.split(separator: "/").first.map(String.init) ?? declared.output
-        try Template.write(".lamp/\n\(output)\n", to: ".gitignore", for: project)
+        try Template.write(gitignore(declared), to: ".gitignore", for: project)
         try Template.write(appMd(integration), to: "APP.md", for: project)
         try Template.write(integration.id + "\n", to: marker, for: project)
+    }
+
+    // MARK: Made the way Lamp made them before
+
+    /// Whether the app was made from an earlier scaffold of its kind, which Lamp no longer builds: none of the files the
+    /// kind's scaffold writes now is in its folder (a Roku app in BrightScript, from before Roku apps were TypeScript on
+    /// Roku's SDK). Its code stays as it is; the next request has it written again (`startRewrite`), and until then it
+    /// isn't built (`build`).
+    static func isOlderScaffold(_ project: LampProject) -> Bool {
+        guard project.platform == .device, !GameKit.isGame(project), isScaffolded(project.dir),
+              let files = integration(for: project)?.app?.declared?.files.keys, !files.isEmpty else { return false }
+        return files.allSatisfy { !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent($0).path) }
+    }
+
+    /// Puts the kind's scaffold now beside an app made from an earlier one, leaving its own files and APP.md as they
+    /// are, and gives what the agent is told with the request: write the app again in it, from what the old code does.
+    /// Nil when the app isn't one.
+    static func startRewrite(_ project: LampProject) -> String? {
+        guard isOlderScaffold(project), let integration = integration(for: project), let declared = integration.app?.declared else { return nil }
+        do {
+            for (path, contents) in declared.files.sorted(by: { $0.key < $1.key }) where IntegrationCheck.isAppPath(path) {
+                try Template.write(contents, to: path, for: project)
+            }
+            try Template.write(gitignore(declared), to: ".gitignore", for: project)
+            try DeviceSupport.write(for: project)
+        } catch {
+            return nil
+        }
+        let files = declared.files.keys.sorted().joined(separator: ", ")
+        return """
+
+
+        (Lamp: \(project.isPart ? "the \(integration.name) app in \(project.dir.lastPathComponent)/" : "this \(integration.name) app") was made the way Lamp made \(integration.name) apps before, which Lamp no longer builds         or puts on a \(integration.name). Lamp has put the scaffold its apps have now beside the old code (\(files)). Before the         change asked for, write the whole app again in that scaffold, following its rules: read the old files for everything         it does and shows, and keep every key it saves data under, with the same names and shapes, since the person's saved         data on the \(integration.name) stays where it is and LampStore reads the same place. Then delete the old code with         delete_file, Lamp's old building blocks with it, and say in one sentence that the app was written again the new way         and works as before.)
+        """
     }
 
     static func appMd(_ integration: Integration) -> String {
@@ -134,8 +168,21 @@ enum DeviceApps {
     static func sourceRoots(_ project: LampProject) -> [URL] {
         let output = integration(for: project)?.app?.declared?.output.split(separator: "/").first.map(String.init)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: project.dir.path)) ?? []
-        return names.filter { !$0.hasPrefix(".") && $0 != output && $0 != Attachments.folder && $0 != "APP.md" }
+        let left = Set(ignored(project))
+        return names.filter { !$0.hasPrefix(".") && $0 != output && $0 != Attachments.folder && $0 != "APP.md" && !left.contains($0) }
             .sorted().map { project.dir.appendingPathComponent($0) }
+    }
+
+    /// The folders at the top of the app's folder its scaffold's .gitignore keeps out ("node_modules", "dist-dev"): what
+    /// its tools install and make, which the app isn't built from and Lamp's copy for the package step leaves behind.
+    static func ignored(_ project: LampProject) -> [String] {
+        (integration(for: project)?.app?.declared?.ignore ?? []).filter(IntegrationCheck.isIgnorable)
+    }
+
+    /// Lamp's folder, what the package step makes and what the kind's tools install or make: none of it is the app's code.
+    static func gitignore(_ declared: Integration.AppKind.Declared) -> String {
+        let output = declared.output.split(separator: "/").first.map(String.init) ?? declared.output
+        return ([".lamp/", output] + (declared.ignore ?? []).filter(IntegrationCheck.isIgnorable).map { $0 + "/" }).joined(separator: "\n") + "\n"
     }
 
     // MARK: Building
@@ -170,6 +217,12 @@ enum DeviceApps {
             try wrapMSIX(data, for: project, entry: .program("App.exe"))
             return
         }
+        if isOlderScaffold(project) {
+            let name = integration(for: project)?.name ?? "device"
+            throw Failure(message: "This \(name) app was made the way Lamp made \(name) apps before, which Lamp no longer builds. Ask for any "
+                          + "change and Lamp writes it again the new way, keeping what it does and what it saved; until then it can't be put on "
+                          + "the \(name) again.")
+        }
         // The package step runs on Lamp's copy of the app, where a game's page is told the device it's on (`GamePage`).
         // That copy is checked for it after the step, and so is the package where Lamp can read it (a ZIP): a package
         // in any other form is the integration's own, which Lamp doesn't look inside.
@@ -178,7 +231,8 @@ enum DeviceApps {
         if let page { try GamePage.stage(source.appendingPathComponent(GameKit.webFolder), in: source, for: page) }
         let output = freshOutput(declared.output, in: source)
         var printed: [String] = []
-        let status = await Sandbox.run(declared.package, for: project, cwd: source, opening: [source.path], started: started) { printed.append($0) }
+        let status = await Sandbox.run(try await withTools(declared.package, declared), for: project, cwd: source, opening: [source.path],
+                                       started: started) { printed.append($0) }
         guard status == 0 else {
             throw Failure(message: (["The package step failed:"] + printed.suffix(30)).joined(separator: "\n"))
         }
@@ -198,6 +252,50 @@ enum DeviceApps {
         }
     }
 
+    /// A declared command with the tools its kind asks for first on its path, fetched first when they aren't here.
+    static func withTools(_ command: String, _ declared: Integration.AppKind.Declared) async throws -> String {
+        guard declared.tools?.contains("node") == true else { return command }
+        do { try await NodeTools.ensure() } catch {
+            throw Failure(message: "Lamp couldn't get Node.js and pnpm, which this app is built with: \(error.localizedDescription)")
+        }
+        return NodeTools.shellPrefix + command
+    }
+
+    // MARK: Preparing
+
+    /// Runs the declared prepare step over the app's folder (its packages installed, the SDK's guides for the builder
+    /// written), in its sandbox, before a turn or a build, when what it reads has changed since it last passed: the
+    /// files at the top of the app's folder that aren't its code (package.json, the lockfile, the workspace's settings),
+    /// and the step itself. Nil when it passed or had nothing to do; otherwise what it printed last.
+    static func prepare(_ project: LampProject, starting: @MainActor () -> Void = {}) async -> String? {
+        guard let declared = integration(for: project)?.app?.declared, let step = declared.prepare else { return nil }
+        let stamp = project.dir.appendingPathComponent(".lamp/prepared")
+        let key = prepareKey(project, step)
+        // Installed packages someone took away are installed again.
+        let installed = !ignored(project).contains("node_modules")
+            || FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("node_modules").path)
+        if installed, (try? String(contentsOf: stamp, encoding: .utf8)) == key { return nil }
+        await starting()
+        let command: String
+        do { command = try await withTools(step, declared) } catch { return error.localizedDescription }
+        var printed: [String] = []
+        let status = await Sandbox.run(command, for: project) { printed.append($0) }
+        guard status == 0 else { return printed.suffix(20).joined(separator: "\n") }
+        try? FileManager.default.createDirectory(at: stamp.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? key.write(to: stamp, atomically: true, encoding: .utf8)
+        return nil
+    }
+
+    private static func prepareKey(_ project: LampProject, _ step: String) -> String {
+        var hash = SHA256()
+        hash.update(data: Data((step + "\n" + NodeTools.nodeVersion + NodeTools.pnpmVersion).utf8))
+        for name in ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"] {
+            hash.update(data: Data(name.utf8))
+            hash.update(data: AppFile.read(project.dir.appendingPathComponent(name), in: project) ?? Data())
+        }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Where the package step leaves its package in the copy, with what an earlier package left in the app's folder
     /// (and so came along in the copy) taken away: a step that makes nothing mustn't pass on an old one.
     static func freshOutput(_ path: String, in source: URL) -> URL {
@@ -215,7 +313,8 @@ enum DeviceApps {
         let source = (folder ?? buildFolder(for: project)).appendingPathComponent("source")
         try? fm.removeItem(at: source)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
-        let copy = "cd \"$LAMP_FROM\" && /usr/bin/rsync -a --exclude=/.build --exclude=/build --exclude=/.git ./ \"$LAMP_TO/\""
+        let left = (ignored(project) + [".build", "build", ".git"]).map { " --exclude=" + Sandbox.quoted("/" + $0) }.joined()
+        let copy = "cd \"$LAMP_FROM\" && /usr/bin/rsync -a\(left) ./ \"$LAMP_TO/\""
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [source.path]) else {
             throw Failure(message: "Lamp couldn't copy the app's files to package it.")
         }
@@ -665,6 +764,18 @@ extension Agent.Rules {
                     rule += "\(wish) is `LampWish`, the wish's other apps: on this device it always says it's away, so show its reason "
                         + "where the app would show them, and keep the app whole without them. "
                 }
+            case .typescript:
+                rule += "Import them from \(entry.path) (`import { LampAI, LampStore, LampAssets } from \"../lamp\"` in src/components) to use "
+                    + "`LampAI.ask`, `LampAI.isTrue`, `LampAI.choose`, `LampAI.rate`, `LampAI.decide`, `LampAI.decideEach`, `LampStore.load`, "
+                    + "`LampStore.save`, `LampStore.collection` and `LampAssets.url`. Every call gives back a Promise: show that it's working, "
+                    + "and show the error's message when it fails. Lamp on the person's Mac answers while the device is on its Wi‑Fi with Lamp "
+                    + "open. Text from outside the app goes in `options.data`, never into the prompt. Pictures from AI aren't in Roku apps yet "
+                    + "(`makeImage` fails with a message to show). Read \(entry.path)/index.ts's opening comment before using it; never call an AI "
+                    + "service yourself. "
+                if let wish = DeviceSupport.wishFile(for: project) {
+                    rule += "\(wish) is `LampWish`, the wish's other apps: on this device it always says it's away, so show its reason "
+                        + "where the app would show them, and keep the app whole without them. "
+                }
             case .three:
                 let folder = "./" + DeviceSupport.pagePath(entry.path, page: DeviceApps.previewFolder(for: project)) + "/"
                 rule += "\(entry.path) is three.js r\(DeviceSupport.threeRevision) with its addons (controls, loaders, geometries, "
@@ -700,6 +811,11 @@ extension Agent.Rules {
             if integration?.bridge?.type?.isEmpty == false { rule += "`type` with `text` types into a keyboard on its screen once one has focus. " }
         }
         if integration?.bridge?.look == nil { rule += "Its integration has no way to picture its screen, so ask the person what they see. " }
+        if RokuSDK.inspects(project) {
+            return rule + "Both also give you the screen as text: SceneGraph's tree of the app's nodes as the Roku has them (which one has "
+                + "focus, every label's text), and when what it logged holds a crash, its stack read back to the app's TypeScript lines. "
+                + "There is no pointer: try the app the way the person will, with the keys.\n"
+        }
         return rule + "There is no screen as text and no pointer: try the app the way the person will, with the keys.\n"
     }
 }
