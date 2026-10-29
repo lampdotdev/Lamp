@@ -85,8 +85,10 @@ struct WishDesk: View {
             } }
         }
         .modifier(ClearToolbar())
-        // Drawn on Lamp's paper, as in the welcome, whatever the Mac's appearance.
+        // Drawn on Lamp's paper, as in the welcome, whatever the Mac's appearance. The window too, not only the
+        // views in it: its title and buttons follow the Mac's otherwise, and a white title is lost on the paper.
         .environment(\.colorScheme, .light)
+        .preferredColorScheme(.light)
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
