@@ -22,6 +22,7 @@
 # that can push to those repositories (and make one, for --new).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$PWD"
 
 DRY=0
 NEW=""
@@ -54,7 +55,6 @@ trap 'rm -rf "$WORK"' EXIT
 
 if (( ! DRY )); then
   gh auth status >/dev/null 2>&1 || { echo "Sign in to GitHub with gh first (gh auth login)." >&2; exit 1; }
-  LOGIN="$(gh api user --jq .login)"
 fi
 
 # Each repository's latest, cloned, is what the staging works from: the refresh lands on the repository's main, whatever
@@ -100,35 +100,34 @@ for tree in "$WORK"/trees/*(N/); do
   fi
   clone="$WORK/clones/$folder"
   mkdir -p "$clone"
-  if gh repo view "$repo" --json name >/dev/null 2>&1; then
-    "$GIT" "${signed[@]}" clone -q "https://github.com/$repo.git" "$clone"
-    # The commit goes on top of the one the tree was staged from, not on whatever main is by now: someone may have
-    # pushed since, and a commit of the staged tree on their push would quietly undo it. If main moved, the push below
-    # isn't a fast-forward and GitHub turns it down, so nothing of theirs is lost.
-    if base="$("$GIT" -C "$WORK/latest/$folder" rev-parse -q --verify HEAD 2>/dev/null)"; then
-      "$GIT" -C "$clone" reset -q --hard "$base" 2>/dev/null \
-        || { echo "$repo: main no longer has $base, the commit staged from; publish again" >&2; exit 1; }
-    fi
-  else
-    gh repo create "$repo" --public >/dev/null
+  if ! gh repo view "$repo" --json name >/dev/null 2>&1; then
+    # Made with a README, so main has a commit for the starter's to go on (GitHub's commits go on a branch).
+    gh repo create "$repo" --public --add-readme >/dev/null
     gh api -X PUT "orgs/$ACCOUNT/teams/$TEAM/repos/$repo" -f permission=push >/dev/null \
       || echo "$repo: couldn't give the $TEAM team push access; do it on GitHub" >&2
-    (cd "$clone" && "$GIT" init -q -b main)
+  fi
+  "$GIT" "${signed[@]}" clone -q "https://github.com/$repo.git" "$clone"
+  # The commit goes on top of the one the tree was staged from, not on whatever main is by now: someone may have
+  # pushed since, and a commit of the staged tree on their push would quietly undo it. If main moved, GitHub turns
+  # the commit down, so nothing of theirs is lost.
+  if base="$("$GIT" -C "$WORK/latest/$folder" rev-parse -q --verify HEAD 2>/dev/null)"; then
+    "$GIT" -C "$clone" reset -q --hard "$base" 2>/dev/null \
+      || { echo "$repo: main no longer has $base, the commit staged from; publish again" >&2; exit 1; }
   fi
   # The staged tree in place of what's there: one commit of the difference, or none.
   find "$clone" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
   cp -R "$tree"/. "$clone"/
   cd "$clone"
   "$GIT" add -A
-  if "$GIT" rev-parse -q --verify HEAD >/dev/null && "$GIT" diff --cached --quiet; then
+  sha="$("$GIT" rev-parse HEAD)"
+  if "$GIT" diff --cached --quiet; then
     echo "$repo: unchanged"
   else
-    "$GIT" -c user.name="Lamp" -c user.email="$LOGIN@users.noreply.github.com" commit -q -m "$(sed -n 's/^name: *//p' "$OLDPWD/$starter" | head -1) from Lamp"
-    "$GIT" "${signed[@]}" push -q "https://github.com/$repo.git" HEAD:main \
-      || { echo "$repo: main moved since it was staged; nothing published, publish again" >&2; exit 1; }
-    echo "$repo: $("$GIT" rev-parse --short HEAD)"
+    # GitHub makes the commit, so it shows as Verified (scripts/commit-on-github.py says why).
+    sha="$(/usr/bin/python3 -I "$ROOT/scripts/commit-on-github.py" "$repo" main "$(sed -n 's/^name: *//p' "$ROOT/$starter" | head -1) from Lamp")" \
+      || { echo "$repo: main moved since it was staged, or GitHub turned the commit down; publish again" >&2; exit 1; }
+    echo "$repo: ${sha:0:7}"
   fi
-  sha="$("$GIT" rev-parse HEAD)"
   cd "$OLDPWD"
   # What it is, in its own words (the manifest's description), as the repository's description.
   about="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("description",""))' "$tree/lamp-app.json" 2>/dev/null || true)"
@@ -140,23 +139,22 @@ for tree in "$WORK"/trees/*(N/); do
     (
       cd "$site"
       "$GIT" init -q -b gh-pages
-      if "$GIT" "${signed[@]}" fetch -q "https://github.com/$repo.git" gh-pages 2>/dev/null; then
-        "$GIT" reset -q --hard FETCH_HEAD
+      # GitHub's commits go on a branch that's there: a first page starts gh-pages at main's commit, and its commit
+      # puts the page in place of main's files.
+      if ! "$GIT" "${signed[@]}" fetch -q "https://github.com/$repo.git" gh-pages 2>/dev/null; then
+        gh api "repos/$repo/git/refs" -f ref=refs/heads/gh-pages -f sha="$sha" >/dev/null
+        "$GIT" "${signed[@]}" fetch -q "https://github.com/$repo.git" gh-pages
       fi
+      "$GIT" reset -q --hard FETCH_HEAD
       find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
       cp -R "$WORK/pages/$folder"/. .
       "$GIT" add -A
-      if "$GIT" rev-parse -q --verify HEAD >/dev/null && "$GIT" diff --cached --quiet; then
+      if "$GIT" diff --cached --quiet; then
         echo "$repo page: unchanged"
       else
-        "$GIT" -c user.name="Lamp" -c user.email="$LOGIN@users.noreply.github.com" commit -q -m "The page to play"
-        # A push that fails stops the script with what git said; GitHub's chatter about a new branch is left out.
-        if ! said="$("$GIT" "${signed[@]}" push -q "https://github.com/$repo.git" HEAD:gh-pages 2>&1)"; then
-          print -u2 -r -- "$said"
-          exit 1
-        fi
-        print -r -- "$said" | grep -v '^remote:' || true
-        echo "$repo page: $("$GIT" rev-parse --short HEAD)"
+        page_sha="$(/usr/bin/python3 -I "$ROOT/scripts/commit-on-github.py" "$repo" gh-pages "The page to play")" \
+          || { echo "$repo page: gh-pages moved, or GitHub turned the commit down; publish again" >&2; exit 1; }
+        echo "$repo page: ${page_sha:0:7}"
       fi
     )
     page="https://${ACCOUNT:l}.github.io/$folder/"

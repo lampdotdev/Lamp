@@ -150,7 +150,9 @@ wishes guide, on the repository's `gh-pages` branch for GitHub Pages, at lampdot
 links and the repository's website points to; any other starter's website is its remix link on lamp.dev. `scripts/publish-starters.sh` refreshes all of that: it clones each
 repository's latest and stages it with the built Lamp Dev (`--stage-starter-repos … --trees`, as a wish is staged,
 with an identity derived from the starter and a fixed export time, so an unchanged repository makes no commit),
-pushes one commit of what's Lamp's, never the app itself, and moves the pin in starter.md to it, fetching the tree;
+has GitHub make one commit of what's Lamp's, never the app itself (made through GitHub's API, so it shows as
+Verified under the address the account commits with on GitHub, its noreply address when it keeps its email private; a
+commit signed here verifies only under an address the signing key names), and moves the pin in starter.md to it, fetching the tree;
 `--dry-run` only stages. The pictures it puts up are the repository's, except ones changed in the fetched tree since
 its commit (an icon `StarterIconsTests` drew there, a new preview put there), which go over them; a repository it
 can't fetch stops it, so nothing older is ever pushed over a repository's latest. Run it after changing Lamp's own files, before the release that ships the change, and commit
@@ -223,7 +225,8 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
    them.
 4. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --new <folder> <the wish's folder>`, signed in
    with `gh` to an account that can make repositories in lampdotdev. It makes the public repository (and a game's
-   page) from the wish as Put on GitHub would, gives the account's starters team push access to it (the team whose
+   page) from the wish as Put on GitHub would (GitHub's API can't mark a new file executable, so in a new
+   repository `build.sh` isn't; Lamp writes it afresh, executable, before building a copy), gives the account's starters team push access to it (the team whose
    members make and change starters), and fills in the starter's `repository:` and `commit:`, fetching the tree. Then its pictures: take `preview.png` as above, and paint and draw the icon into the tree with
    `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1 OPENROUTER_API_KEY=… swift test --filter
    StarterIconsTests`, look at the artwork it picked, and run `scripts/publish-starters.sh <folder>` again to put them
