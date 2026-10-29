@@ -18,7 +18,9 @@ The tools Lamp has for games:
 - **TypeScript**: a game whose source is TypeScript (one brought in from a Vite project, or when the person asks for
   it) keeps it in `src/` with `src/main.ts` as its entry, and Lamp bundles it into `Web/app/` before every build and
   look (types stripped, not checked): `Web/index.html` loads `app/main.js` (and `app/main.css` when the source imports
-  CSS), and its import map names the bare imports, `three` and `lamp-game` (`./lamp-game.js`) among them. Edit `src/`,
+  CSS), and its import map names the bare imports, `three` and `lamp-game` (`./lamp-game.js`) among them. As in a
+  Vite build, `import.meta.env` reads as a published build's, and a worker is a `src/**/*.worker.ts` file, started with
+  `new URL("./<name>.worker.js", import.meta.url)` (`.js`: every file is bundled flat into `Web/app/`). Edit `src/`,
   never `Web/app/`. A game in plain JavaScript stays as it is, its modules in `Web/`.
 - **Phones as players**: a game on the runtime takes phones on the Wi‑Fi with `Lamp.controllers` (Web/lamp.js) and
   its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview, on a
