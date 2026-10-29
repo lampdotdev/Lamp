@@ -1,0 +1,4 @@
+List of discovered mdns services
+adb-SERIAL0123456-Ab12Cd	_adb-tls-connect._tcp	192.168.1.50:33935
+adb-SERIAL0123456	_adb._tcp	192.168.1.50:5555
+

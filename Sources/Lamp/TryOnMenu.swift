@@ -85,7 +85,7 @@ struct TryOnMenu: Equatable {
         }
         if places.contains(where: \.isAndroid) {
             let tv = !places.contains(.android)
-            sections.append(Section(title: nil, items: [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi")]))
+            sections.append(Section(title: nil, items: Self.foundTVs(store) + [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi")]))
         }
         if places.contains(.tv) {
             var items = [Item(id: "preview", title: "TV Preview", symbol: "tv", checked: project.onTV && project.device == nil)]
@@ -136,6 +136,15 @@ extension TryOnMenu {
     static func item(_ device: Device, id: String, title: String, symbol: String, checked: Bool) -> Item {
         guard !device.isSetUp, !checked else { return Item(id: id, title: title, symbol: symbol, checked: checked) }
         return Item(id: id, title: "Set Up \(device.name)…", symbol: "gearshape")
+    }
+
+    /// Google TVs and Android TVs the last look on the network found that adb doesn't list yet: each offered to set up,
+    /// in the window that connects it.
+    @MainActor static func foundTVs(_ store: Store) -> [Item] {
+        let listed = Set(store.devices.filter { $0.kind == .android }.compactMap(\.address))
+        return AndroidTVs.found(in: store.hosts).filter { !listed.contains($0.host) }.map { tv in
+            Item(id: "wifi:\(tv.host)", title: "Set Up \(tv.name ?? "Android TV")…", symbol: "gearshape")
+        }
     }
 
     /// The chosen one, when it isn't set up (forgotten since it was chosen): its row keeps the tick, and choosing a row
@@ -203,7 +212,7 @@ extension TryOnMenu {
                 items.append(Item(id: prefix + chosen, title: "Chosen device (not connected)", symbol: "smartphone", checked: true))
             }
             sections.append(Section(title: "Android", items: items))
-            sections.append(Section(title: nil, items: [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi"),
+            sections.append(Section(title: nil, items: (tv ? Self.foundTVs(store) : []) + [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi"),
                                                         Item(id: "check:android", title: "Check Android Setup…", symbol: "checklist")]))
         } else {
             if project.platform.choosesPlace, project.hasMac {
@@ -296,7 +305,7 @@ extension Store {
             TVSetup.shared.show(value)
             return
         case "wifi":
-            AndroidWiFi.shared.show()
+            AndroidWiFi.shared.show(host: value == "android" ? nil : value)
             return
         case "check":
             NSApp.activate()

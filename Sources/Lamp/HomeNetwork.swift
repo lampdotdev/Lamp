@@ -81,7 +81,8 @@ struct NetworkHost: Hashable, Identifiable {
 }
 
 /// One Bonjour service on the network: its type, the name it goes by, its host and what its record says that tells
-/// what the device is (model keys only; nothing that identifies the device or the person further).
+/// what the device is (model keys, and a Cast device's own name, which is like the host's names; nothing that
+/// identifies the device or the person further).
 struct BonjourService: Hashable {
     let type: String
     /// The name it goes by. AirPlay's speaker service puts the device's hardware id before it ("F21FB5024962@Kitchen"),
@@ -100,7 +101,7 @@ struct BonjourService: Hashable {
     /// The host's name without ".local.": "Kitchen-Speaker".
     var hostLabel: String { host.components(separatedBy: ".").first ?? host }
 
-    static let modelKeys: Set<String> = ["md", "model", "am", "ty", "usb_MFG", "usb_MDL", "product", "manufacturer"]
+    static let modelKeys: Set<String> = ["md", "model", "am", "ty", "usb_MFG", "usb_MDL", "product", "manufacturer", "fn"]
 }
 
 enum HomeNetwork {
@@ -542,7 +543,7 @@ enum Bonjour {
     static let browseFor: Duration = .seconds(3)
     /// Browsed whether or not the meta-query names them: a device that's asleep often misses that one answer, and
     /// these are the services that say most about what a quiet device is (a Cast device, a printer, a gadget's web page).
-    static let alwaysBrowse = ["_googlecast._tcp", "_ipp._tcp", "_printer._tcp", "_http._tcp", "_esphomelib._tcp"]
+    static let alwaysBrowse = ["_googlecast._tcp", "_androidtvremote2._tcp", "_ipp._tcp", "_printer._tcp", "_http._tcp", "_esphomelib._tcp"]
 
     static func everything() async -> [Found] {
         let types = await browse("_services._dns-sd._udp").map { name, type in
@@ -616,7 +617,8 @@ enum Bonjour {
                 let data = Data(bytes: record, count: Int(length))
                 for (key, value) in NetService.dictionary(fromTXTRecord: data) where BonjourService.modelKeys.contains(key) {
                     // A Cast device's "md" is its model; AirPlay's is the kinds of metadata it takes.
-                    if key == "md", !(fullName.map { String(cString: $0) } ?? "").contains("._googlecast._tcp.") { continue }
+                    // Its "fn" is the name the person gave it ("Living Room TV"), kept as the host's other names are.
+                    if key == "md" || key == "fn", !(fullName.map { String(cString: $0) } ?? "").contains("._googlecast._tcp.") { continue }
                     let text = String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                     if !text.isEmpty, text.count <= 80, !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) { txt[key] = text }
                 }
