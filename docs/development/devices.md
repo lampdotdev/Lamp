@@ -499,8 +499,15 @@ Swift built into the player and every compiled game as one file (`GameKit.contro
 port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
 the game quitting close both. A change of the phone page can't go into the open game as it's played, so it goes in
 with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
-told to update. Lamp serves the page itself in the TV preview and on a Samsung or LG TV (staged with the rest,
-`TVs.stage`).
+told to update. On an iPhone or iPad the game does the same while it's in front: the page goes in its bundle as
+`Phone/` at the top (`GamePhones.write`: the simulator's bundle in `finishSimulatorBundle`, and the copy Xcode builds
+from in `Devices.stage`, with `Template.withPhoneFolder` in the project), the controller kit is built in with
+LampPage.swift (its one Mac-only call, the Mac's Bonjour name, is guarded in `ControllerAddresses`), and the game ends
+its session as it goes into the background, opening a new one at the page's next ask once it's back in front; no
+background mode keeps it alive. `ControllerAddresses` gives a phone only an address on the device's Wi‑Fi or wired
+network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
+the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
+window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
 On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
 relay's plain link itself: `Lamp.controllers` opens it through the WebView2 host's pipe (`TVTemplate.linksJS`, shared
 with `Lamp.wish`), and Lamp serves the game's phones while it's set to open on the Xbox (`Store.onDevice`), which Lamp
