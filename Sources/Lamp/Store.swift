@@ -5801,7 +5801,8 @@ final class Store: ObservableObject {
             if await updateForThisForge(project) { return }
         }
         // Its App Intents or its share extension were left out for want of a team to sign it for, and there is one
-        // now: built again, since the build that left them out has none to put back.
+        // now: built again, since signing for the team is part of the build. Only when the build has them to give
+        // (`intentsCanComeBack`, `shareCanComeBack`), else it would be built again on every open.
         let intentsBack = await Self.intentsCanComeBack(project)
         let shareBack = await Self.shareCanComeBack(project)
         if intentsBack || shareBack, !busy.contains(project.id),
@@ -12684,7 +12685,8 @@ final class Store: ObservableObject {
     /// app it couldn't sign for an Apple team, since macOS lists such an app's intents and never runs them. Read
     /// off the installed copy, so a team that's chosen but couldn't sign (its key refused) is told as well.
     nonisolated static func intentsHint(for project: LampProject) async -> String {
-        guard project.platform == .mac, usesAppIntents(project), !hasIntentsMetadata(project.installedURL) else { return "" }
+        guard project.platform == .mac, usesAppIntents(project), !hasIntentsMetadata(project.installedURL),
+              buildCanGiveIntents(project) else { return "" }
         if await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status != 0 {
             return "\n\nSiri, Shortcuts and Spotlight can't see this app's App Intents: reading them out of the code takes Xcode, which " +
                 "isn't installed. Tell the user they come on once Xcode is installed."
@@ -12716,23 +12718,39 @@ final class Store: ObservableObject {
         FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Resources/Metadata.appintents").path)
     }
 
-    /// A Mac app installed without its App Intents, which a build could now give them: Xcode's tool is here to
-    /// read them, there's a team on this Mac to sign for, and signing for that team hasn't already failed (its
-    /// key refused), so an app whose intents can't come back opens as it is instead of being built every time.
+    /// Whether a build gives the app itself App Intents, read off its last build, which `deploy` copies and so never
+    /// takes them out of: it has them, or there's none yet, or it was made without Xcode's tool (build.sh's `intents`
+    /// leaves its folder in .build/appintents only when it ran). A build that ran the tool and wrote none writes none
+    /// again: the code that imports App Intents declares none in the app, as when they're all the widget's, which
+    /// keeps its own whatever the app is signed with.
+    nonisolated static func buildCanGiveIntents(_ project: LampProject) -> Bool {
+        let fm = FileManager.default
+        return !fm.fileExists(atPath: project.builtURL.path) || hasIntentsMetadata(project.builtURL)
+            || !fm.fileExists(atPath: project.dir.appendingPathComponent(".build/appintents/\(project.exe)").path)
+    }
+
+    /// A Mac app installed without its App Intents, which a build could now give them: its build has some to give
+    /// (`buildCanGiveIntents`), Xcode's tool is here to read them, there's a team on this Mac to sign for, and
+    /// signing for that team hasn't already failed (its key refused), so an app whose intents can't come back
+    /// opens as it is instead of being built every time.
     nonisolated static func intentsCanComeBack(_ project: LampProject) async -> Bool {
         guard project.platform == .mac, usesAppIntents(project),
               FileManager.default.fileExists(atPath: project.installedURL.path), !hasIntentsMetadata(project.installedURL),
+              buildCanGiveIntents(project),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         guard await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status == 0 else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
     }
 
     /// The same for a Mac app's share extension, which `deploy` leaves out of an app it can't sign for a team:
-    /// a team to sign for now, which hasn't already failed, brings it back with a build.
+    /// a team to sign for now, which hasn't already failed, brings it back with a build, when the build makes one
+    /// (its last build has it, or there's none yet).
     nonisolated static func shareCanComeBack(_ project: LampProject) async -> Bool {
         guard project.platform == .mac, Template.hasShare(project),
               FileManager.default.fileExists(atPath: project.installedURL.path),
               !FileManager.default.fileExists(atPath: Template.shareURL(in: project.installedURL, of: project).path),
+              !FileManager.default.fileExists(atPath: project.builtURL.path)
+                || FileManager.default.fileExists(atPath: Template.shareURL(in: project.builtURL, of: project).path),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
     }
