@@ -11196,9 +11196,19 @@ final class Store: ObservableObject {
     /// Lamp serves it so the agent never has to start a server of its own, which would outlive the app.
     static func servesPhonePage(_ project: LampProject) -> Bool {
         guard project.holdsApp, takesPlayers(project) else { return false }
-        let onTV = project.hasTV && (project.device != nil || TVPreview.window(project) != nil)
         let onMac = project.platform.target.takesPhones && project.hasMac && openOnMacNow.contains(project.id)
-        return onTV || onMac
+        return onTV(project) || onDevice(project) || onMac
+    }
+
+    /// The app is set to open on one of the person's TVs, which Lamp can't watch, or shown in its TV preview.
+    static func onTV(_ project: LampProject) -> Bool {
+        project.hasTV && ((project.onTV && project.device != nil) || TVPreview.window(project) != nil)
+    }
+
+    /// A game set to open on the person's Xbox (its integration's device: the one chosen under Try On, else theirs),
+    /// which Lamp can't watch either: the host there opens the page's link to the relay for it.
+    static func onDevice(_ project: LampProject) -> Bool {
+        project.platform.target.takesPhones && project.onDevice
     }
 
     /// A TV app's phone page (`TVTemplate.phoneFolder`, as staged): GET /phone/<app>/<file>, from a phone on the
@@ -11383,11 +11393,10 @@ final class Store: ObservableObject {
         guard Self.servesPhonePage(project) else {
             return (409, ["error": project.hasTV ? "The app isn't open in the TV preview or set to open on a TV." : "The game isn't open on this Mac."])
         }
-        // A game's copy on this Mac asks from this Mac; from the network only a TV it's set to open on does. Anywhere
-        // else (the Xbox, a phone) has no host's side of phones, even while the Mac's copy takes players.
-        let onTV = project.hasTV && (project.device != nil || TVPreview.window(project) != nil)
-        if request.fromNetwork, !request.fromPreview, !onTV {
-            return (409, ["error": "Phones join this game where Lamp hosts them: on this Mac, or on a Samsung or LG TV."])
+        // A game's copy on this Mac asks from this Mac; from the network only a TV or an Xbox it's set to open on does.
+        // Anywhere else (a phone, Android) has no host's side of phones, even while the Mac's copy takes players.
+        if request.fromNetwork, !request.fromPreview, !Self.onTV(project), !Self.onDevice(project) {
+            return (409, ["error": "Phones join this game where Lamp hosts them: on this Mac, a Samsung or LG TV, or the Xbox."])
         }
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
         let relay: [String: Any] = ["kind": "relay", "socket": "ws://\(host):\(port)/", "app": project.id,

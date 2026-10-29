@@ -16,8 +16,8 @@ The tools Lamp has for games:
   for a page, and the same on every one of them. Read lamp-game.js first, all of it (and lamp-phaser.js for 2D): their
   comments are the whole interface. Below, "Web" means this runtime.
 - **Phones as players**: a game on the runtime takes phones on the Wi‑Fi with `Lamp.controllers` (Web/lamp.js) and
-  its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview and on a
-  Samsung or LG TV; elsewhere `Lamp.controllers` says it can't start, so the game stays whole with a controller,
+  its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview, on a
+  Samsung or LG TV and on the Xbox; elsewhere `Lamp.controllers` says it can't start, so the game stays whole with a controller,
   the keys or touch. Lamp's preview of the game has no phones: its scripted pad is the player there.
 - **A TV app's page**: a game made as a Samsung or LG TV app before games took phones (`kind` "app") has no
   lamp-game.js: it follows the TV rules and lamp.js instead, with its own `requestAnimationFrame`. The rest of this
