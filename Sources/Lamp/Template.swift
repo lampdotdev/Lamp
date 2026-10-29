@@ -14196,7 +14196,10 @@ enum Template {
             case .error?, .unreachable?: lines.append(error ?? "The AI couldn't answer.")
             case nil: break
             }
-            if question != nil || done.isEmpty, !reply.isEmpty { lines.append(question ?? reply) }
+            // The AI's words only for its question, or beside "Nothing was changed" when nothing was even tried: what it
+            // says it did is never shown as done.
+            if let question { lines.append(question) }
+            else if lines.isEmpty { lines.append(reply.isEmpty ? "Nothing was changed." : "Nothing was changed. \(reply)") }
             return lines.joined(separator: "\n")
         }
     }
@@ -14218,7 +14221,10 @@ enum Template {
 
         /// Stops it: nothing more is asked or changed, and a change already under way is kept in the receipts, since it
         /// can't be taken back. Late answers from the AI run nothing.
-        func cancel() { session?.cancel(generation) }
+        func cancel() {
+            session?.cancel(generation)
+            task?.cancel()
+        }
     }
 
     /// The app's conversation with the AI about doing things: one request at a time, each with any questions back and
@@ -14268,6 +14274,7 @@ enum Template {
         private var generation = 0
         private var cancelled: Set<Int> = []
         private var closed = false
+        private weak var running: LampActTurn?
         private let send: ([String: Any], TimeInterval) async throws -> [String: Any]
 
         /// `send` stands in for Lamp in a test; leave it out.
@@ -14307,10 +14314,16 @@ enum Template {
 
         fileprivate func cancel(_ turn: Int) {
             cancelled.insert(turn)
-            if turn == generation { question = nil; choices = [] }
+            if turn == generation {
+                question = nil
+                choices = []
+                // A request to Lamp still waiting is given up, so the turn ends now rather than when the AI answers.
+                running?.task?.cancel()
+            }
         }
 
         private func start(context: (any Encodable)?, onStep: ((LampActStep) -> Void)?) -> LampActTurn {
+            running?.task?.cancel()
             generation += 1
             let turn = LampActTurn(session: self, generation: generation)
             var json: Any?
@@ -14318,6 +14331,7 @@ enum Template {
             let mine = generation
             // The turn keeps its session while it runs, so `LampAI.act` without a session of the app's own still finishes.
             turn.task = Task { @MainActor in await self.run(mine, context: json, onStep: onStep ?? { _ in }) }
+            running = turn
             return turn
         }
 
@@ -14385,7 +14399,11 @@ enum Template {
                     continue
                 }
                 out.reply = answer["reply"] as? String ?? ""
-                if answer["ask"] as? Bool == true {
+                if answer["ask"] as? Bool == true, op.answers.count >= Self.maxQuestions {
+                    out.reply = ""
+                    out.stopped = .limit
+                    out.error = "That took more questions than one request can. Start again, saying which ones."
+                } else if answer["ask"] as? Bool == true {
                     out.question = out.reply
                     let offered = answer["choices"] as? [Any] ?? []
                     let fit = offered.count >= 2 && offered.count <= 4 && offered.allSatisfy { item in
@@ -14410,7 +14428,8 @@ enum Template {
                               over: () -> LampActResult.Stop?, onStep: (LampActStep) -> Void) async -> [String: [String: Any]] {
             var results: [String: [String: Any]] = [:]
             func tool(_ call: [String: Any]) -> LampActTool? { tools.first { $0.name == call["name"] as? String } }
-            func args(_ call: [String: Any]) -> [String: Any] { call["args"] as? [String: Any] ?? [:] }
+            // A null is an argument left out: the same change either way, to the key and to the tool.
+            func args(_ call: [String: Any]) -> [String: Any] { (call["args"] as? [String: Any] ?? [:]).filter { !($0.value is NSNull) } }
             func callInfo(_ call: [String: Any], key: String) -> LampActCall {
                 LampActCall(key: key, id: call["id"] as! String, request: op.request, deadline: deadline)
             }
@@ -14440,8 +14459,16 @@ enum Template {
                 if let stopped { miss(stopped, skipped: true); continue }
                 if let bad = tool.problem(given) { miss(bad); continue }
                 let key = Self.prefix(op) + Self.hash(tool.name + "|" + Self.canonical(given))
-                // The same change asked again in this request gets its first result, and doesn't run again.
-                if let kept = ran[key] { results[id] = ["id": id, "ok": true, "repeat": true, "value": kept]; continue }
+                // The same change asked again in this request gets its first result, and doesn't run again: one that
+                // failed while it ran may have done part of it, so it isn't tried again by itself either.
+                if let kept = ran[key] {
+                    if let failed = kept as? [String: Any], let reason = failed["failedWhileRunning"] as? String {
+                        miss("Already tried in this request, and it didn't go through: \(reason)")
+                    } else {
+                        results[id] = ["id": id, "ok": true, "repeat": true, "value": kept]
+                    }
+                    continue
+                }
                 if op.writes >= Self.maxWrites { miss("Over this request's limit of \(Self.maxWrites) changes."); out.stopped = .limit; out.error = "That's more changes than one request can make. Ask for the rest separately."; return results }
                 if receipts.count >= Self.maxReceipts { miss("This conversation has made as many changes as it can keep track of."); out.stopped = .limit; out.error = "Close this and start again to make more changes."; return results }
                 let info = callInfo(call, key: key)
@@ -14464,6 +14491,7 @@ enum Template {
                     results[id] = ["id": id, "ok": true, "value": value]
                     onStep(.changed(done))
                 } catch {
+                    ran[key] = ["failedWhileRunning": Self.words(error)]
                     miss(Self.words(error))
                 }
             }

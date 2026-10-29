@@ -517,8 +517,18 @@ enum AppAct {
     @MainActor static func firstRoute(appModel: String?) -> Result<AppAI.TextRoute, Failure> {
         let saved = appModel ?? UserDefaults.standard.string(forKey: "appModel")
         let piLocal = Builder.engine == .pi && Builder.piProvider == Builder.localProvider ? "local:\(Builder.piModel)" : nil
-        let wanted = (saved ?? piLocal).map(AppAI.canonicalRoute).flatMap { id in AppAI.allTextRoutes.first { $0.id == id } }
-        return choose(wanted: wanted, resolved: AppAI.route(for: appModel))
+        return choose(wanted: wanted((saved ?? piLocal).map(AppAI.canonicalRoute), among: AppAI.allTextRoutes), resolved: AppAI.route(for: appModel))
+    }
+
+    /// The route chosen by id, as it stands. A model on this Mac that's been removed is in no list of routes, so it's
+    /// made up here as one that can't answer, so that it's still known to be a model on this Mac.
+    static func wanted(_ id: String?, among routes: [AppAI.TextRoute]) -> AppAI.TextRoute? {
+        guard let id else { return nil }
+        if let route = routes.first(where: { $0.id == id }) { return route }
+        guard id.hasPrefix("local:") else { return nil }
+        let model = String(id.dropFirst("local:".count))
+        return AppAI.TextRoute(id: id, label: model, group: "Native Mac AI", name: model,
+                               kind: .localModel(provider: "local", model: model), available: false)
     }
 
     static func choose(wanted: AppAI.TextRoute?, resolved: AppAI.TextRoute) -> Result<AppAI.TextRoute, Failure> {

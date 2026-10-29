@@ -117,10 +117,13 @@ final class AppActRoutesTests: XCTestCase {
         let claude = route(.engine(.claude, model: "sonnet")), local = route(.localModel(provider: "local", model: "qwen3.5-4b"))
         guard case .success = AppAct.choose(wanted: nil, resolved: claude) else { return XCTFail("a sign-in alone should answer") }
         guard case .success = AppAct.choose(wanted: local, resolved: local) else { return XCTFail("the chosen local model should answer") }
-        guard case .failure(let refused) = AppAct.choose(wanted: route(.localModel(provider: "local", model: "qwen3.5-4b"), false), resolved: claude) else {
+        // The model was removed: the routes Lamp lists no longer have it at all.
+        let removed = AppAct.wanted("local:qwen3.5-4b", among: [claude])
+        guard case .failure(let refused) = AppAct.choose(wanted: removed, resolved: claude) else {
             return XCTFail("actions went to Claude Code though a model on this Mac was chosen")
         }
-        XCTAssertTrue(refused.message.contains("Qwen on this Mac"))
+        XCTAssertTrue(refused.message.contains("qwen3.5-4b on this Mac"))
+        XCTAssertNil(AppAct.wanted("engine:claude:sonnet", among: []), "a cloud choice that's gone is no choice to keep to")
         guard case .success = AppAct.choose(wanted: route(.openRouter(model: "m"), false), resolved: claude) else {
             return XCTFail("a cloud choice standing in for another cloud route should answer")
         }

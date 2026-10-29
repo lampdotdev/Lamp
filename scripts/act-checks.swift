@@ -25,6 +25,8 @@ final class Lamp {
 }
 
 struct Add: Decodable { let name: String }
+struct Count: Decodable { let n: Int }
+struct Press: Decodable { let key: String; let times: Int? }
 
 @MainActor
 final class Groceries {
@@ -198,6 +200,52 @@ struct Checks {
             let session = LampActSession(tools: app.tools, send: { _, _ in throw LampAI.Failure(message: "Couldn't reach Lamp. Open Lamp and try again.") })
             let result = await session.ask("add milk").result
             expect(result.stopped == .unreachable, "Lamp out of reach stops as unreachable")
+        }
+
+        // A change that ran and failed isn't run again when the AI asks for it again: its outcome is uncertain.
+        do {
+            let lamp = Lamp(), app = Groceries()
+            var tries = 0
+            let flaky = LampActTool.write("send", "Sends.", args: ["n": .whole("How many")], as: Count.self,
+                                          check: { _, _ in nil },
+                                          run: { _, _ in tries += 1; throw LampAI.Failure(message: "Only 3 of 5 went.") })
+            lamp.answers = [["calls": [call("c1", "send", ["n": 5])]], ["calls": [call("c2", "send", ["n": 5])]], ["reply": "Sorry."]]
+            let result = await LampActSession(tools: app.tools + [flaky], send: lamp.send).ask("volume up five").result
+            expect(tries == 1, "a change that ran and failed isn't run again in the same request")
+            expect(result.failed.count >= 1, "its failure is reported")
+        }
+
+        // The same change spelled with a null for an optional argument is still the same change.
+        do {
+            let lamp = Lamp(), app = Groceries()
+            var runs = 0
+            let press = LampActTool.write("press", "Presses.", args: ["key": .text("Key"), "times": .whole("Times", optional: true)], as: Press.self,
+                                          check: { _, _ in nil }, run: { p, _ in runs += 1; return LampActReceipt("Pressed \(p.key)") })
+            lamp.answers = [["calls": [call("c1", "press", ["key": "up", "times": NSNull()])]], ["calls": [call("c2", "press", ["key": "up"])]], ["reply": "Done."]]
+            _ = await LampActSession(tools: app.tools + [press], send: lamp.send).ask("up").result
+            expect(runs == 1, "a null optional argument doesn't make a different change")
+        }
+
+        // With nothing changed, the AI's own claim isn't shown as if it happened.
+        do {
+            let lamp = Lamp(), app = Groceries()
+            lamp.answers = [["reply": "I added milk to your list."]]
+            let result = await LampActSession(tools: app.tools, send: lamp.send).ask("add milk").result
+            expect(result.summary.hasPrefix("Nothing was changed."), "a reply with nothing done says nothing was changed")
+            lamp.answers = [["calls": [call("c1", "add", ["name": "gone"])]], ["reply": "Done, it's on the list."]]
+            let failed = await LampActSession(tools: app.tools, send: lamp.send).ask("add the old one").result
+            expect(!failed.summary.contains("on the list"), "a failed change isn't followed by the AI saying it's done")
+        }
+
+        // At most three questions back: a fourth isn't asked, and the request stops with the limit.
+        do {
+            let lamp = Lamp(), app = Groceries()
+            lamp.answers = (1...4).map { ["reply": "Which one, \($0)?", "ask": true] }
+            let session = LampActSession(tools: app.tools, send: lamp.send)
+            var asked = 0
+            var result = await session.ask("add it").result
+            while result.question != nil, let next = session.answer("that") { asked += 1; result = await next.result }
+            expect(asked == 3 && result.question == nil && result.stopped == .limit, "the fourth question back is refused, not asked")
         }
 
         print(failures == 0 ? "All act checks passed." : "\(failures) act check(s) failed.")
