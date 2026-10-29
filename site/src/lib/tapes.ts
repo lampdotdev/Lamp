@@ -293,7 +293,7 @@ function sleeveBack(sleeve: Sleeve) {
   });
   ctx.fillStyle = INK;
   font(ctx, "italic 800", 40, SANS);
-  ctx.fillText("Remix it with Lamp. No code.", 58, 1120);
+  ctx.fillText("Remix it with Lamp. No code.", 58, 1196);
   bands(ctx, WARM, 0, 1240, 800, 208);
   return canvas;
 }
