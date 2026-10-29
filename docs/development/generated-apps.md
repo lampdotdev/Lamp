@@ -39,8 +39,9 @@ reason was added are rebuilt when next opened.
 `use_app` on a Mac app is carried out by the app itself (`LampDriver`, reached by a distributed notification
 signed with the app's token, `Store.use`), so no Accessibility permission is needed. With every picture the
 app writes its front window as text (`LampScreen` in LampSupport.swift, `.lamp/runtime/screen.txt`): one line
-per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included),
-with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
+per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included; a web
+view's insides are never walked, so a page in LampPage.swift's host adds its own things through `LampPageItems`, read
+by a script in the page, "Where the agent looks at it" in the devices guide), with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
 return it beside the picture (`Runtime.screenText`), the same lines the iPhone driver writes. An action names
 what it's for by `target` (an id or exact name, `LampScreen.find`): a button, switch, link or choice is asked
 to press itself (`accessibilityPerformPress`), a field takes the text in place of what it held, a slider or

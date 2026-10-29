@@ -269,8 +269,9 @@ enum Runtime {
         guard Privacy.sharesPictures, let built = modified(builtURL(project)),
               let taken = modified(folder(project).appendingPathComponent("screenshot.png")), taken > built
         else { return "" }
-        // A TV app's picture is the last look at the TV preview, and the person's TV is never pictured.
-        if project.onTV {
+        // A TV app's picture is the last look at the TV preview, and the person's TV is never pictured. A page with a window
+        // on this Mac is looked at there too (`Store.pageOnMac`), so it's the generic note's.
+        if project.onTV, !(PageLive.takes(project) && project.hasMac) {
             return """
 
 
