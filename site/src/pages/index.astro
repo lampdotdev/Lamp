@@ -62,8 +62,10 @@ const tapes: Tape[] = [
   ...SHELF.flatMap((id, i): Tape[] => {
     const starter = STARTERS.find((starter) => starter.id === id)!;
     return [
-      { look: "original", stripes: i % 2 ? "cool" : "warm", title: starter.name, caption: `THE ORIGINAL · BY ${starter.by.toUpperCase()}`, side: `A${i + 1}`, shot: shots[id] },
-      { look: "marker", title: starter.remix, caption: `REMIX OF ${starter.name.toUpperCase()}`, side: `B${i + 1}`, ink: inks[i % inks.length], shot: shots[id], treat: starter.treat },
+      { look: "original", stripes: i % 2 ? "cool" : "warm", title: starter.name, caption: `THE ORIGINAL · BY ${starter.by.toUpperCase()}`, side: `A${i + 1}`, shot: shots[id],
+        name: starter.name, by: starter.by, remix: `?starter=${id}` },
+      { look: "marker", title: starter.remix, caption: `REMIX OF ${starter.name.toUpperCase()}`, side: `B${i + 1}`, ink: inks[i % inks.length], shot: shots[id], treat: starter.treat,
+        name: starter.name, by: starter.by, remix: `?starter=${id}&ask=${encodeURIComponent(starter.remix)}` },
     ];
   }),
   { look: "blank", title: "your idea here…", caption: "" },
@@ -143,22 +145,26 @@ const devices = [
     </section>
 
     <!-- From the shelf: a stack of tapes, in 3D once lib/tapes.ts has drawn it, each original with its screenshot on
-         its spine and a remix of it under it. A tape that's clicked flies out and shows the screenshot on its label.
-         Without WebGL, and for screen readers, the same tapes as a list, as tall as it needs; a keyboard reaches a
-         button for each tape that flies it out as a click does. -->
+         its spine and a remix of it under it. A tape that's clicked flies out laid out as the hero's sleeve, its "Remix me" opening the remix dialog.
+         Without WebGL, and for screen readers, the same tapes as a list, as tall as it needs, each linking to its remix;
+         a keyboard reaches a button for each tape that opens the remix dialog for it, as its "Remix me" does. -->
     <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
       <div class="tape-host order-last min-h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:min-h-[40rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
         <ul class="tape-fallback flex h-full flex-col justify-center gap-2">
           {
             tapes.map((tape) => (
               <li class:list={["flex min-h-14 flex-col justify-center px-4 py-2", tape.look === "marker" ? "bg-[#f7f2e3] ring-1 ring-tape/20" : "bg-[#26241f] text-paper"]}>
-                <span class:list={[tape.look === "original" ? "text-lg font-black" : "font-marker text-lg", tape.look === "marker" && "text-[#b8264f]"]}>{tape.title}</span>
+                {tape.remix ? (
+                  <a href={`/${tape.remix}`} data-remix-link class:list={["underline-offset-4 hover:underline", tape.look === "original" ? "text-lg font-black" : "font-marker text-lg", tape.look === "marker" && "text-[#b8264f]"]}>{tape.title}</a>
+                ) : (
+                  <span class="font-marker text-lg">{tape.title}</span>
+                )}
                 {tape.caption && <span class="text-[11px] font-bold tracking-wider">{tape.caption}</span>}
               </li>
             ))
           }
         </ul>
-        {tapes.map((tape, i) => tape.shot && <button type="button" class="tape-control" data-tape={i}>Show what's on {tape.title}</button>)}
+        {tapes.map((tape, i) => tape.remix && <button type="button" class="tape-control" data-tape={i}>Remix {tape.look === "marker" ? `${tape.name}: ${tape.title}` : tape.title}</button>)}
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
         <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>
@@ -203,10 +209,13 @@ const devices = [
   const sleeve = document.querySelector<HTMLElement>("[data-tape-sleeve]");
   const stack = document.querySelector<HTMLElement>("[data-tape-stack]");
   if (sleeve) mountSleeve(sleeve);
-  // The sleeve's link (for a keyboard, or without WebGL) opens the remix dialog in place, as its printed button does.
-  document.querySelector<HTMLAnchorElement>("[data-remix-sleeve]")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    document.dispatchEvent(new CustomEvent("lamp:remix", { detail: new URL(event.currentTarget!.href).search }));
+  // The sleeve's link and the flat shelf's (for a keyboard, or without WebGL) open the remix dialog in place, as the
+  // printed "Remix me" buttons do.
+  document.querySelectorAll<HTMLAnchorElement>("[data-remix-sleeve], [data-remix-link]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      document.dispatchEvent(new CustomEvent("lamp:remix", { detail: new URL(link.href).search }));
+    });
   });
   if (stack) mountStack(stack);
 </script>

@@ -67,31 +67,41 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   type Known = Record<string, { name: string; by: string; about: string; shot: string }>;
   const dialog = document.querySelector<HTMLDialogElement>("[data-remix]")!;
   const starters = JSON.parse(dialog.dataset.starters ?? "{}") as Known;
-  // The query the dialog was set up for, once it has been: the same one again reopens it as it was left.
+  const q = <T extends HTMLElement>(selector: string) => dialog.querySelector<T>(selector)!;
+  const title = q("[data-title]"), by = q("[data-by]"), from = q("[data-from]"), status = q("[data-status]");
+  const shot = q<HTMLImageElement>("[data-shot]"), written = q("[data-written]"), about = q("[data-about]");
+  const text = q<HTMLTextAreaElement>("[data-text]"), ask = q("[data-ask]");
+  const openLink = q<HTMLButtonElement>("[data-open]"), download = q<HTMLAnchorElement>("[data-download]");
+  // The dialog's words as they first are, put back each time it's set up for another remix.
+  const first = { status: status.textContent, ask: ask.textContent, download: download.textContent };
+  // The query the dialog is set up for, and what undoes that setup's listeners when it's set up for another.
   let shown: string | undefined;
+  let setup: AbortController | undefined;
 
   // Opens the dialog for a link's query (`?ask=`, `starter=`, `repo=`), when it names a request or something to
-  // remix: from the page's own address when it arrives, or from the page itself (the hero sleeve's Remix me sends
-  // `lamp:remix` with the query a link would carry). Another remix once one's been set up goes there as a link would.
+  // remix: from the page's own address when it arrives, or from the page itself (the hero sleeve's and the shelf's
+  // Remix me send `lamp:remix` with the query a link would carry). The same query again reopens it as it was left;
+  // another sets it up afresh.
   function present(search: string) {
-    if (shown !== undefined) {
-      if (search === shown) dialog.showModal();
-      else location.assign(`/${search}`);
-      return;
-    }
+    if (setup && search === shown) return dialog.showModal();
     const asked = askFrom(search);
     const named = remixFrom(search);
     // Only a starter this site knows by its id; the request alone otherwise. Lamp checks the link again.
     const starter = named?.starter ? starters[named.starter] : undefined;
     const origin = named?.starter ? (starter ? named : null) : named;
     if (!asked && !origin) return;
+    setup?.abort();
+    setup = new AbortController();
+    const { signal } = setup;
     shown = search;
-
-    const q = <T extends HTMLElement>(selector: string) => dialog.querySelector<T>(selector)!;
-    const title = q("[data-title]"), by = q("[data-by]"), from = q("[data-from]"), status = q("[data-status]");
-    const shot = q<HTMLImageElement>("[data-shot]"), written = q("[data-written]"), about = q("[data-about]");
-    const text = q<HTMLTextAreaElement>("[data-text]");
-    const openLink = q<HTMLButtonElement>("[data-open]"), download = q<HTMLAnchorElement>("[data-download]");
+    shot.hidden = written.hidden = about.hidden = true;
+    by.textContent = from.textContent = "";
+    ask.textContent = first.ask;
+    status.textContent = first.status;
+    download.textContent = first.download;
+    openLink.textContent = "Open in Lamp";
+    dialog.removeAttribute("data-missing");
+    dialog.setAttribute("aria-describedby", "remix-from");
     const idea = starter?.name ?? origin?.name ?? "your wish";
 
     // "Remix", written in by hand, before the name printed on the original and who made it.
@@ -123,7 +133,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       by.textContent = "From an app made with Lamp";
       from.textContent = "Lamp makes it for you, starting with these words.";
       written.textContent = "your idea here…";
-      q("[data-ask]").textContent = "YOUR WISH";
+      ask.textContent = "YOUR WISH";
       written.hidden = false;
     }
     text.value = asked ?? "";
@@ -141,22 +151,22 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
         const x = (event.clientX / innerWidth) * 2 - 1, y = (event.clientY / innerHeight) * 2 - 1;
         slab.style.setProperty("--lean-x", `${(y * 7).toFixed(2)}deg`);
         slab.style.setProperty("--lean-y", `${(x * 9).toFixed(2)}deg`);
-      }, { passive: true });
+      }, { passive: true, signal });
     }
 
     // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
     openLink.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
     const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
-    text.addEventListener("input", fit);
+    text.addEventListener("input", fit, { signal });
 
     // Closed, the page is the homepage again: a reload doesn't bring the dialog back.
     dialog.addEventListener("close", () => {
       const url = new URL(location.href);
       for (const name of ["ask", "starter", "repo", "commit"]) url.searchParams.delete(name);
       history.replaceState(history.state, "", url);
-    });
-    q("[data-close]").addEventListener("click", () => dialog.close());
-    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+    }, { signal });
+    q("[data-close]").addEventListener("click", () => dialog.close(), { signal });
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); }, { signal });
 
     // A page can't ask whether Lamp is installed, but it can tell whether Lamp answered: opening it takes the browser's
     // focus away (or hides the page). If nothing has after a moment, Lamp isn't on this Mac, and the dialog turns to
@@ -172,9 +182,10 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       openLink.textContent = "Open in Lamp";
       status.textContent = "Opened in Lamp. Your change is waiting in its chat.";
     };
-    addEventListener("blur", opened);
-    document.addEventListener("visibilitychange", () => { if (document.hidden) opened(); });
-    addEventListener("pagehide", opened);
+    addEventListener("blur", opened, { signal });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) opened(); }, { signal });
+    addEventListener("pagehide", opened, { signal });
+    signal.addEventListener("abort", () => clearTimeout(trying));
 
     openLink.addEventListener("click", () => {
       let link = origin ? remixLink(origin, text.value) : wishLink(text.value);
@@ -192,7 +203,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
         track("idea_missing", { idea, place: "remix" });
       }, 2000);
       location.href = link;
-    });
+    }, { signal });
 
     download.addEventListener("click", () => {
       track("idea_download", { idea, place: "remix" });
@@ -204,12 +215,12 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
           : copied === "plain" ? "Your change is copied. Paste it into Lamp when it's ready."
           : text.value.trim() ? "Copy your change, and paste it into Lamp when it's ready." : "Open Lamp when it's ready.";
       });
-    });
+    }, { signal });
 
     dialog.showModal();
     fit();
     requestAnimationFrame(fit);
-    addEventListener("load", fit, { once: true });
+    addEventListener("load", fit, { once: true, signal });
     // Ready to change, with the cursor at the end, where there's a pointer and a keyboard; on a touch screen the
     // keyboard would cover the dialog before it's been read.
     if (matchMedia("(hover: hover) and (pointer: fine)").matches) {

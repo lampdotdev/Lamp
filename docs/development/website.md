@@ -14,7 +14,8 @@ opens the remix dialog for it on the front, the changes it suggests on the back)
 (a few of the starters in `src/lib/starters.ts`, each original with its screenshot on its spine and a remix of it
 under it) are three.js (`src/lib/tapes.ts`), drawn
 from canvases in the page's fonts: they're lit with soft shadows, lean toward the pointer and turn over or fly out
-to show a screenshot when clicked, on a canvas that runs past its box (so nothing is cropped) and lets the pointer through, over a flat HTML
+when clicked (a chosen tape laid out as the sleeve is, its "Remix me" opening the remix dialog for that starter, with
+a remix's change already in its box), on a canvas that runs past its box (so nothing is cropped) and lets the pointer through, over a flat HTML
 version kept for screen readers and browsers without WebGL. The device icons are Phosphor's duotone set, with the
 fill in the sleeve's colors. Apps and games get the same weight on it, and
 every example is a real starter (`Resources/Starters`), with the pictures and changes it ships with; the devices it

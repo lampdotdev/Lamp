@@ -29,6 +29,11 @@ export type Tape = {
   /** Its screenshot, and what the remix did to it. */
   shot?: string;
   treat?: "snow" | "frame";
+  /** The starter it is, or is a remix of, and who made that. */
+  name?: string;
+  by?: string;
+  /** The query its "Remix me" opens the remix dialog with (`lamp:remix`): the starter, and a remix's change. */
+  remix?: string;
 };
 
 /** The hero's sleeve: its screenshot and where it plays on the front, the changes it suggests on the back, and the
@@ -340,57 +345,92 @@ function tapeSpine(tape: Tape, img?: HTMLImageElement) {
   return canvas;
 }
 
-function tapeTop(tape: Tape, img: HTMLImageElement | undefined) {
+/** A chosen tape's "Remix me" button, in its top's units: also where a click on the tape opens the remix dialog. */
+const TAPE_BUTTON = { x: 840, y: 660, w: 590, h: 110 };
+
+/** Words broken into lines no wider than `width`, as many as `most`, the last cut short with an ellipsis. */
+function lines(ctx: CanvasRenderingContext2D, text: string, width: number, most: number) {
+  const out: string[] = [];
+  for (const word of text.split(/\s+/)) {
+    const line = out.length ? `${out[out.length - 1]} ${word}` : word;
+    if (out.length && ctx.measureText(line).width <= width) out[out.length - 1] = line;
+    else out.push(word);
+  }
+  if (out.length > most) out.splice(most - 1, out.length, `${out.slice(most - 1).join(" ").slice(0, 18)}…`);
+  return out;
+}
+
+// The top of a chosen tape, at 1480 by 826, laid out as the hero's sleeve is, on its side: the screenshot (as the
+// remix changed it), what it is and who made it, the sleeve's stripes, and a "Remix me" button that opens the remix
+// dialog, outlined while it's pointed at. A blank tape is a lined label waiting for an idea.
+function tapeTop(tape: Tape, img: HTMLImageElement | undefined, pointed = false) {
   const { canvas, ctx } = sheet(1480, 826);
-  ctx.fillStyle = PLASTIC;
-  ctx.fillRect(0, 0, 1480, 826);
-  // The plastic's ribs.
-  ctx.fillStyle = "rgb(255 255 255 / 0.04)";
-  for (let y = 0; y < 826; y += 14) ctx.fillRect(0, y, 1480, 6);
   ctx.fillStyle = LABEL;
-  ctx.fillRect(40, 40, 1020, 746);
+  ctx.fillRect(0, 0, 1480, 826);
   if (tape.look === "blank") {
-    ctx.strokeStyle = "rgb(42 111 176 / 0.35)";
+    ctx.strokeStyle = "rgb(42 111 176 / 0.3)";
     ctx.lineWidth = 3;
-    for (let y = 120; y < 780; y += 60) {
+    for (let y = 120; y < 826; y += 70) {
       ctx.beginPath();
-      ctx.moveTo(40, y);
-      ctx.lineTo(1060, y);
+      ctx.moveTo(0, y);
+      ctx.lineTo(1480, y);
       ctx.stroke();
     }
     ctx.fillStyle = "#6f6857";
     ctx.save();
-    ctx.translate(90, 440);
+    ctx.translate(120, 470);
     ctx.rotate(-0.04);
-    font(ctx, "", 110, MARKER);
+    font(ctx, "", 140, MARKER);
     ctx.fillText(tape.title, 0, 0);
     ctx.restore();
+    return canvas;
+  }
+  ctx.fillStyle = INK;
+  ctx.fillRect(50, 50, 740, 416);
+  shot(ctx, img, 58, 58, 724, 400, tape.treat, 0.06);
+  // What it is: an original's name, or a remix's change in marker under what it's a remix of.
+  ctx.fillStyle = INK;
+  if (tape.look === "marker") {
+    font(ctx, "italic 800", 40, SANS, `A remix of ${tape.name ?? ""}`, 590);
+    ctx.fillText(`A remix of ${tape.name ?? ""}`, 840, 110);
+    ctx.fillStyle = tape.ink ?? MAGENTA;
+    font(ctx, "", 66, MARKER);
+    lines(ctx, tape.title, 590, 4).forEach((line, i) => ctx.fillText(line, 840, 200 + i * 78));
   } else {
-    shot(ctx, img, 70, 70, 960, 540, tape.treat);
-    ctx.fillStyle = tape.look === "marker" ? (tape.ink ?? MAGENTA) : INK;
-    if (tape.look === "marker") font(ctx, "", 64, MARKER, tape.title, 940);
-    else font(ctx, "900", 70, SANS, tape.title, 940);
-    ctx.fillText(tape.title, 72, 692);
-    ctx.fillStyle = INK;
-    font(ctx, "700", 30, SANS, tape.caption, 940);
-    ctx.fillText(tape.caption, 74, 748);
+    font(ctx, "italic 800", 40, SANS, `Made by ${tape.by ?? ""}`, 590);
+    ctx.fillText(`Made by ${tape.by ?? ""}`, 840, 110);
+    font(ctx, "900", 116, SANS);
+    lines(ctx, tape.title, 590, 3).forEach((line, i) => ctx.fillText(line, 836, 230 + i * 110));
   }
-  // The tape's window, with its two reels.
-  ctx.fillStyle = "#0f0e0c";
-  ctx.fillRect(1110, 300, 330, 230);
-  ctx.strokeStyle = "#5c574a";
-  ctx.lineWidth = 6;
-  for (const x of [1190, 1360]) {
+  bands(ctx, WARM, 0, 510, 1480, 100);
+  ctx.fillStyle = INK;
+  ctx.beginPath();
+  ctx.moveTo(1480, 480);
+  ctx.lineTo(1480, 640);
+  ctx.lineTo(1350, 560);
+  ctx.fill();
+  ctx.fillStyle = RED;
+  font(ctx, "700", 28, MONO, tape.caption, 720);
+  ctx.fillText(tape.caption, 58, 728);
+  if (tape.remix) {
+    const b = TAPE_BUTTON;
+    if (pointed) {
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.roundRect(b.x - 9, b.y - 9, b.w + 18, b.h + 18, 24);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#c23a20";
     ctx.beginPath();
-    ctx.arc(x, 415, 56, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.roundRect(b.x, b.y, b.w, b.h, 18);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    font(ctx, "900", 54, SANS);
+    ctx.fillText("Remix me →", b.x + b.w / 2, b.y + 73);
+    ctx.textAlign = "left";
   }
-  ctx.fillStyle = PAPER;
-  font(ctx, "900", 84, SANS);
-  ctx.fillText("VHS", 1150, 200);
-  ctx.fillStyle = "#a39c88";
-  font(ctx, "500", 28, MONO);
-  ctx.fillText(tape.side ? `SIDE ${tape.side}` : "T‑120", 1152, 640);
   return canvas;
 }
 
@@ -608,8 +648,8 @@ export async function mountSleeve(host: HTMLElement) {
 const STACK_BLEED = { x: 0.12, y: 0.3 };
 
 // The shelf: a stack of a few starters' tapes, each original with its remix under it, a little untidy, as a real
-// stack is. The originals' spines carry their screenshots, so those are loaded up front; a tape's top, with the
-// screenshot on its label, is drawn the first time it's chosen.
+// stack is. The originals' spines carry their screenshots, so those are loaded up front; a tape's top, laid out as the
+// hero's sleeve with its screenshot and a "Remix me" that opens the remix dialog, is drawn the first time it's chosen.
 export async function mountStack(host: HTMLElement) {
   const tapes = JSON.parse(host.dataset.tapes!) as Tape[];
   const [THREE, spineShots] = await Promise.all([
@@ -637,7 +677,7 @@ export async function mountStack(host: HTMLElement) {
     // back by the stack's own lean holds it square to the viewer.
     mesh.rotation.order = "YXZ";
     mesh.position.set(home.x, home.y, home.z);
-    return { tape, mesh, home, now: { ...home }, spins: 0, drawn: false };
+    return { tape, mesh, home, now: { ...home }, spins: 0, drawn: false, tops: undefined as ThreeTypes.Material[] | undefined };
   });
 
   let chosen = -1;
@@ -653,27 +693,44 @@ export async function mountStack(host: HTMLElement) {
     if (!tape.drawn) {
       tape.drawn = true;
       const shot = tape.tape.shot;
+      // Its top twice: as it is, and with its "Remix me" outlined, for while the pointer is over the button.
       (shot ? image(shot) : Promise.resolve(undefined)).then((img) => {
-        (tape.mesh.material as ThreeTypes.Material[])[2] = s.texture(tapeTop(tape.tape, img));
+        tape.tops = [s.texture(tapeTop(tape.tape, img)), s.texture(tapeTop(tape.tape, img, true))];
+        (tape.mesh.material as ThreeTypes.Material[])[2] = tape.tops[0];
       });
     }
   };
-  const which = (event: MouseEvent) => {
-    const object = s.hit(event, meshes.map(({ mesh }) => mesh))?.object;
-    return meshes.findIndex(({ mesh }) => mesh === object);
+  const remix = (i: number) => {
+    const query = meshes[i]?.tape.remix;
+    if (query) document.dispatchEvent(new CustomEvent("lamp:remix", { detail: query }));
+  };
+  /** The tape under the pointer, and whether it's on the chosen tape's "Remix me". */
+  const pointedAt = (event: MouseEvent) => {
+    const found = s.hit(event, meshes.map(({ mesh }) => mesh));
+    const i = meshes.findIndex(({ mesh }) => mesh === found?.object);
+    const b = TAPE_BUTTON;
+    const [x, y] = found?.uv ? [found.uv.x * 1480, (1 - found.uv.y) * 826] : [-1, -1];
+    const onButton = i >= 0 && i === chosen && !!meshes[i].tape.remix && found?.face?.materialIndex === 2
+      && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+    return { i, onButton };
   };
   s.on("click", (event) => {
-    const i = which(event);
-    if (i >= 0) choose(i);
+    const { i, onButton } = pointedAt(event);
+    if (onButton) remix(i);
+    else if (i >= 0) choose(i);
     else chosen = -1;
   });
   s.on("pointermove", (event) => {
-    hovered = which(event);
-    s.hand(hovered >= 0);
+    const { i, onButton } = pointedAt(event);
+    hovered = i;
+    s.hand(i >= 0);
+    meshes.forEach((tape, j) => {
+      if (tape.tops) (tape.mesh.material as ThreeTypes.Material[])[2] = tape.tops[onButton && j === i ? 1 : 0];
+    });
   });
-  // For a keyboard, a button for each tape with a picture does what a click on the tape does.
+  // For a keyboard, a button for each tape that can be remixed opens the remix dialog for it, as its "Remix me" does.
   host.querySelectorAll<HTMLButtonElement>("[data-tape]").forEach((button) => {
-    button.addEventListener("click", () => choose(Number(button.dataset.tape)));
+    button.addEventListener("click", () => remix(Number(button.dataset.tape)));
   });
 
   let tilt = { x: 0, y: 0 };
