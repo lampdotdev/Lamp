@@ -232,7 +232,7 @@ file's format isn't raised for it.
 Assets the `assets` tool brings in are credited by Lamp, not the agent: each a source with `adapted: false` and the
 `files` of it in the wish (one entry for a pack of CC0 work, one for each CC-BY asset, which needs its own credit), so
 they show under "Uses" wherever credit is shown and never as what the wish is based on. Only CC0 and CC-BY are in the
-index ("3D scenes and games"), both open licences to `ShareCheck`, so a wish using them is shared and published as any
+index ("3D scenes and games"), both open licenses to `ShareCheck`, so a wish using them is shared and published as any
 other.
 
 Pictures `make_art` paints are marked as made with AI twice: in the PNG itself (IPTC's digital source type

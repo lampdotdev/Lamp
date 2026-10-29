@@ -1,11 +1,11 @@
 #!/usr/bin/env python3 -I
-"""Writes Resources/asset-catalogue.json: Lamp's index of free models, sprites, tiles, icons and textures the agent can
-bring into an app with the `assets` tool (`AssetCatalogue` in Sources/Lamp). Lamp ships the index, never the assets: each
+"""Writes Resources/asset-catalog.json: Lamp's index of free models, sprites, tiles, icons and textures the agent can
+bring into an app with the `assets` tool (`AssetCatalog` in Sources/Lamp). Lamp ships the index, never the assets: each
 entry says where its file is, and Lamp fetches it into the app when the agent chooses it.
 
 Only work anyone may use without asking is listed: CC0, or CC-BY, whose credit Lamp records in the app's credits.json.
-Every licence is read from where the file is published (each model's own page on Poly Pizza, each pack's page on
-OpenGameArt, ambientCG's API and licence page); anything that says another licence (non-commercial, no derivatives,
+Every license is read from where the file is published (each model's own page on Poly Pizza, each pack's page on
+OpenGameArt, ambientCG's API and license page); anything that says another license (non-commercial, no derivatives,
 share-alike, "personal use", none) is left out, and the run says what it left out and why. Every file is downloaded and
 pinned by its SHA-256, so Lamp fetches exactly what was checked here; a file changed at its source since is refused until
 this is run again. Models are read for what the agent needs to choose and place one: triangles, its box in meters (y up,
@@ -17,16 +17,16 @@ or a new temporary folder), so a second run after a small change is quick. Needs
 """
 import concurrent.futures, hashlib, io, json, math, os, re, struct, subprocess, sys, tempfile, time, urllib.parse, zipfile
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Resources", "asset-catalogue.json")
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Resources", "asset-catalog.json")
 AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
-# The licences Lamp lists, as each source writes them, by SPDX id. Anything else is left out.
-LICENCES = {"CC0 1.0": "CC0-1.0", "CC0": "CC0-1.0", "CC-BY 3.0": "CC-BY-3.0", "CC-BY 4.0": "CC-BY-4.0",
+# The licenses Lamp lists, as each source writes them, by SPDX id. Anything else is left out.
+LICENSES = {"CC0 1.0": "CC0-1.0", "CC0": "CC0-1.0", "CC-BY 3.0": "CC-BY-3.0", "CC-BY 4.0": "CC-BY-4.0",
             "CC-BY 3.0 Unported": "CC-BY-3.0", "CC-BY 4.0 International": "CC-BY-4.0"}
 
 # MARK: What's listed
 
-# Poly Pizza bundles: whole packs by one author, each model's licence read from its own page.
+# Poly Pizza bundles: whole packs by one author, each model's license read from its own page.
 # (bundle id on poly.pizza, pack id, name, author's own page, kind, style)
 POLY_BUNDLES = [
     ("City-Kit-0CkvGrBJ0u", "kenney-city", "City Kit", "https://kenney.nl/assets/city-kit-commercial", "building",
@@ -235,11 +235,11 @@ def slug(text):
 left_out = []
 
 def poly_entry(listed, kind, cache):
-    """A model as Poly Pizza lists it (in a bundle or a search), with its licence as Poly Pizza states it for that model."""
+    """A model as Poly Pizza lists it (in a bundle or a search), with its license as Poly Pizza states it for that model."""
     title, author = listed["title"].strip(), listed["creator"]["username"]
-    licence = LICENCES.get(listed.get("licence") or "")
-    if not licence:
-        left_out.append(f"{title} by {author}: {listed.get('licence') or 'no licence'}"); return None
+    license = LICENSES.get(listed.get("license") or "")
+    if not license:
+        left_out.append(f"{title} by {author}: {listed.get('license') or 'no license'}"); return None
     resource = re.fullmatch(r"https://static\.poly\.pizza/([0-9a-f-]{36})\.webp", listed["previewUrl"])
     if not resource:
         left_out.append(f"{title} by {author}: no file"); return None
@@ -258,7 +258,7 @@ def poly_entry(listed, kind, cache):
         left_out.append(f"{title} by {author}: {round(size)} units across, {round(center)} from its origin"); return None
     # Its picture is beside its file on Poly Pizza (the same name, .webp), so it isn't written again.
     return {"name": title, "kind": classify(title, kind), "file": url, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
-            "page": f"https://poly.pizza{listed['url']}", "author": author, "license": licence,
+            "page": f"https://poly.pizza{listed['url']}", "author": author, "license": license,
             **{k: v for k, v in facts.items() if v}}
 
 def classify(title, kind):
@@ -301,19 +301,19 @@ def oga_packs(cache):
     packs = []
     for page, pack, name, kind, style, sheets, singles in OGA_PACKS:
         html = get(f"https://opengameart.org/content/{page}", cache).decode("utf-8", "replace")
-        licences = re.findall(r"<div class='license-name'>([^<]+)</div>", html)
-        if [LICENCES.get(l) for l in licences] != ["CC0-1.0"]:
-            left_out.append(f"{name}: {licences or 'no licence'}"); continue
+        licenses = re.findall(r"<div class='license-name'>([^<]+)</div>", html)
+        if [LICENSES.get(l) for l in licenses] != ["CC0-1.0"]:
+            left_out.append(f"{name}: {licenses or 'no license'}"); continue
         author = re.search(r'field-name-author-submitter.*?<a href="/users/([^"]+)"', html, re.S).group(1)
         archive = sorted(set(re.findall(r'https://opengameart.org/sites/default/files/[^"]+\.zip', html)))[0]
         preview = next(iter(re.findall(r'https://opengameart.org/sites/default/files/(?:styles/medium/public/)?[^"]*[Pp]review[^"]*\.png', html)), None)
         data = get(archive, cache)
         members = zipfile.ZipFile(io.BytesIO(data))
         sizes = {i.filename: i.file_size for i in members.infolist()}
-        # The pack's own licence file says CC0 too.
-        licence_file = next((n for n in sizes if re.fullmatch(r"(?i)licen[cs]e\.txt", os.path.basename(n))), None)
-        if not licence_file or "CC0" not in members.read(licence_file).decode("utf-8", "replace"):
-            left_out.append(f"{name}: its own licence file doesn't say CC0"); continue
+        # The pack's own license file says CC0 too.
+        license_file = next((n for n in sizes if re.fullmatch(r"(?i)licen[cs]e\.txt", os.path.basename(n))), None)
+        if not license_file or "CC0" not in members.read(license_file).decode("utf-8", "replace"):
+            left_out.append(f"{name}: its own license file doesn't say CC0"); continue
         assets = []
         for title, asset_kind, files, notes in sheets:
             for f in files:
@@ -338,8 +338,8 @@ def oga_packs(cache):
     return packs
 
 def ambientcg_pack(cache):
-    licence = get("https://docs.ambientcg.com/license/", cache).decode("utf-8", "replace")
-    if "CC0" not in licence: left_out.append("ambientCG: its licence page no longer says CC0"); return None
+    license = get("https://docs.ambientcg.com/license/", cache).decode("utf-8", "replace")
+    if "CC0" not in license: left_out.append("ambientCG: its license page no longer says CC0"); return None
     assets = []
     for asset_id in AMBIENTCG:
         info = json.loads(get(f"https://ambientcg.com/api/v2/full_json?id={asset_id}&include=downloadData,imageData,displayData", cache))
@@ -380,18 +380,18 @@ def main():
     packs = poly_packs(cache) + oga_packs(cache)
     textures = ambientcg_pack(cache)
     if textures: packs.append(textures)
-    # A pack's licence is its assets' when they share one; otherwise each asset keeps its own.
+    # A pack's license is its assets' when they share one; otherwise each asset keeps its own.
     for pack in packs:
-        licences = {a.get("license", pack.get("license")) for a in pack["assets"]}
-        if len(licences) == 1:
-            pack["license"] = licences.pop()
+        licenses = {a.get("license", pack.get("license")) for a in pack["assets"]}
+        if len(licenses) == 1:
+            pack["license"] = licenses.pop()
             for a in pack["assets"]: a.pop("license", None)
         authors = {a.get("author", pack["author"]) for a in pack["assets"]}
         if authors == {pack["author"]}:
             for a in pack["assets"]: a.pop("author", None)
-    catalogue = {"version": 1, "refreshed": time.strftime("%Y-%m-%d"), "licenses": sorted(set(LICENCES.values())), "packs": packs}
+    catalog = {"version": 1, "refreshed": time.strftime("%Y-%m-%d"), "licenses": sorted(set(LICENSES.values())), "packs": packs}
     # One line per asset, so a refresh reads as a diff of what changed.
-    lines = ["{", f'  "version": 1, "refreshed": {json.dumps(catalogue["refreshed"])},', f'  "licenses": {json.dumps(catalogue["licenses"])},', '  "packs": [']
+    lines = ["{", f'  "version": 1, "refreshed": {json.dumps(catalog["refreshed"])},', f'  "licenses": {json.dumps(catalog["licenses"])},', '  "packs": [']
     for i, pack in enumerate(packs):
         head = {k: v for k, v in pack.items() if k != "assets"}
         lines.append("    " + json.dumps(head, ensure_ascii=False)[:-1] + ', "assets": [')

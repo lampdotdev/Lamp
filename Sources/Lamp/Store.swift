@@ -6886,7 +6886,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// `assets`: ready-made models, sprites, tiles, icons and textures from Lamp's index of free work (`AssetCatalogue`).
+    /// `assets`: ready-made models, sprites, tiles, icons and textures from Lamp's index of free work (`AssetCatalog`).
     /// With `find` (and `kind`) it lists what fits, within what the slowest place the app is shown can draw, and with
     /// `show` their pictures in one sheet; with `fetch` it brings the chosen ones into the app's page folder
     /// (Web/assets/, for a game or another page) or Assets/, checked against the index, and credits each in credits.json.
@@ -6897,7 +6897,7 @@ final class Store: ObservableObject {
         func stillAsked() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such app."]) }
-        let budget = AssetCatalogue.budget(for: app)
+        let budget = AssetCatalog.budget(for: app)
         let ids = (arguments["fetch"] as? [String] ?? []).map(\.trimmed).filter { !$0.isEmpty }
         guard !ids.isEmpty else {
             let words = (arguments["find"] as? String)?.trimmed ?? ""
@@ -6905,7 +6905,7 @@ final class Store: ObservableObject {
             guard !words.isEmpty || kind?.isEmpty == false else {
                 return (400, ["error": "Say what to look for in `find` (and `kind`), or the ids to bring in with `fetch`."])
             }
-            let found = AssetCatalogue.search(words, kind: kind)
+            let found = AssetCatalog.search(words, kind: kind)
             let fitting = found.filter { ($0.triangles ?? 0) <= budget.triangles }
             let shown = Array(fitting.prefix(min(max(arguments["limit"] as? Int ?? 12, 1), 30)))
             guard !shown.isEmpty else {
@@ -6913,13 +6913,13 @@ final class Store: ObservableObject {
                 return (200, ["text": "Nothing in Lamp's free assets fits that\(heavy). Try other words or a broader kind, or make it in code or with make_art."])
             }
             var text = "Free assets that fit, best first, with their size in the file's own units (y up). Bring one in with `fetch` and its id:\n"
-                + shown.map { AssetCatalogue.line($0, budget: budget) }.joined(separator: "\n")
+                + shown.map { AssetCatalog.line($0, budget: budget) }.joined(separator: "\n")
             if found.count > fitting.count {
                 text += "\n\(found.count - fitting.count) more were left out as too heavy for \(budget.place), the slowest place it's shown."
             }
             if fitting.count > shown.count { text += "\n\(fitting.count - shown.count) more fit: narrow the words, or ask for more with `limit`." }
             var pictures: [String] = []
-            if arguments["show"] as? Bool == true, let sheet = await AssetCatalogue.sheet(of: shown), stillAsked(),
+            if arguments["show"] as? Bool == true, let sheet = await AssetCatalog.sheet(of: shown), stillAsked(),
                let url = Previews.destination(for: "assets-found.jpg", under: ".lamp/runtime/previews", in: project),
                (try? sheet.write(to: url, options: .atomic)) != nil {
                 pictures = [url.path]
@@ -6928,7 +6928,7 @@ final class Store: ObservableObject {
             return (200, ["text": text, "screenshots": pictures])
         }
         guard ids.count <= 40 else { return (400, ["error": "Bring in at most 40 at a time."]) }
-        let byID = Dictionary(AssetCatalogue.all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let byID = Dictionary(AssetCatalog.all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let unknown = ids.filter { byID[$0] == nil }
         guard unknown.isEmpty else {
             return (400, ["error": "Lamp's free assets have no \(unknown.joined(separator: ", ")): use the ids `find` lists."])
@@ -6939,12 +6939,12 @@ final class Store: ObservableObject {
         let page = FileManager.default.fileExists(atPath: app.dir.appendingPathComponent("Web").path, isDirectory: &isFolder) && isFolder.boolValue
         let base = page ? "Web/assets/" : "Assets/"
         let wishPrefix = app.isPart ? app.dir.lastPathComponent + "/" : ""
-        var fetched: [(item: AssetCatalogue.Item, files: [String])] = []
+        var fetched: [(item: AssetCatalog.Item, files: [String])] = []
         var said: [String] = [], problems: [String] = []
         for id in Array(NSOrderedSet(array: ids)) as? [String] ?? ids {
             guard let item = byID[id] else { continue }
             do {
-                let files = try await AssetCatalogue.files(of: item, budget: budget)
+                let files = try await AssetCatalog.files(of: item, budget: budget)
                 guard stillAsked() else { return (409, ["error": "The request was stopped, so nothing more was brought in."]) }
                 var paths: [String] = []
                 for file in files {
@@ -6960,13 +6960,13 @@ final class Store: ObservableObject {
                 if !item.animations.isEmpty { line += "; animations: " + item.animations.prefix(12).joined(separator: ", ") }
                 if let notes = item.notes { line += "; \(notes)" }
                 if let note = files.compactMap(\.note).first { line += "; \(note)" }
-                if AssetCatalogue.needsCredit(item.licence) { line += "; \(item.licence): credit \"\(item.name) by \(item.author)\" where the app shows its credits" }
+                if AssetCatalog.needsCredit(item.license) { line += "; \(item.license): credit \"\(item.name) by \(item.author)\" where the app shows its credits" }
                 said.append(line)
             } catch {
                 problems.append("- \(item.id) wasn't brought in: \(error.localizedDescription).")
             }
         }
-        if !fetched.isEmpty { try? Credits.add(AssetCatalogue.credits(for: fetched), to: project) }
+        if !fetched.isEmpty { try? Credits.add(AssetCatalog.credits(for: fetched), to: project) }
         var text = ""
         if !said.isEmpty {
             text = "Brought in, under \(base) (paths below are \(page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`" : "inside Assets/, as `LampAssets.url(\"…\")` takes them")), and credited in credits.json:\n"

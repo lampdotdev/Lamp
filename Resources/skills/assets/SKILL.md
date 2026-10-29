@@ -40,7 +40,7 @@ with smooth vector art.
 ## Bringing them in
 
 1. `assets` with `find` ("taxi", "low-poly tree", "platformer player") and `kind`, and `show: true`. Each line has an
-   id, its triangles, its box in its own units, its animations, its size, its pack, author, licence and style.
+   id, its triangles, its box in its own units, its animations, its size, its pack, author, license and style.
 2. `assets` with `fetch` and the ids. They land in Web/assets/<pack>/ for a game or another page, or Assets/<pack>/ for
    a Swift app, and the answer gives each file's path as the app loads it.
 3. Load each through the runtime (below), then `look_at_app`: a model's size and the way it faces are only certain once
@@ -131,7 +131,7 @@ RealityKit scene is turned into USD as the scene-3d skill says.
 
 ## Credit
 
-Lamp writes each fetched asset into credits.json (its pack, author, licence and files), which the app's info, its About
+Lamp writes each fetched asset into credits.json (its pack, author, license and files), which the app's info, its About
 window, a shared copy, a published page and its repository's README all show: never take an entry out. CC-BY work asks
 for more: name it where the game or app shows its credits too (a Credits line in the pause menu or the About screen:
 "Taxi by Poly by Google, CC BY 3.0"), which the fetch answer reminds you of. CC0 needs nothing, though a line thanking

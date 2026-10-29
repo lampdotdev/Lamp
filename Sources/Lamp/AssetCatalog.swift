@@ -7,20 +7,20 @@ import UniformTypeIdentifiers
 
 /// Ready-made models, sprites, tiles, icons and textures the agent can bring into an app with the `assets` tool: free
 /// work by people who publish it for anyone to use (Kenney, Quaternius, KayKit, ambientCG, Google's Poly). Lamp ships
-/// only the index (Resources/asset-catalogue.json, written by scripts/update-assets.py, which reads every licence from
+/// only the index (Resources/asset-catalog.json, written by scripts/update-assets.py, which reads every license from
 /// where the work is published and pins every file by its SHA-256), never the files: one is fetched into the app's
 /// folder when the agent chooses it, checked against its hash, and credited in the wish's credits.json, so sharing,
 /// publishing and Put on GitHub carry its credit as they carry any other.
 ///
 /// Lamp itself fetches and writes the files, as data: nothing fetched is run, opened or made executable, and only the
 /// files the index names (a .glb, a picture, an atlas's XML) are taken out of an archive, by Lamp's own reading of it.
-enum AssetCatalogue {
-    /// The licences an asset may have to be offered: work anyone may use, change and share without asking. CC-BY asks for
-    /// credit, which Lamp writes. Anything else in the index (a licence it was refreshed with by mistake) is never offered.
-    static let licences: Set<String> = ["CC0-1.0", "CC-BY-3.0", "CC-BY-4.0"]
+enum AssetCatalog {
+    /// The licenses an asset may have to be offered: work anyone may use, change and share without asking. CC-BY asks for
+    /// credit, which Lamp writes. Anything else in the index (a license it was refreshed with by mistake) is never offered.
+    static let licenses: Set<String> = ["CC0-1.0", "CC-BY-3.0", "CC-BY-4.0"]
 
-    static func isUsable(_ licence: String?) -> Bool { licence.map(licences.contains) ?? false }
-    static func needsCredit(_ licence: String) -> Bool { licence.hasPrefix("CC-BY") }
+    static func isUsable(_ license: String?) -> Bool { license.map(licenses.contains) ?? false }
+    static func needsCredit(_ license: String) -> Bool { license.hasPrefix("CC-BY") }
 
     // MARK: The index
 
@@ -32,7 +32,7 @@ enum AssetCatalogue {
         var pack: String
         var packName: String
         var author: String
-        var licence: String
+        var license: String
         var style: String
         /// Credited as its pack ("City Kit by Kenney") or as itself ("Taxi by Poly by Google"): a CC-BY asset always as itself.
         var creditAsPack: Bool
@@ -106,10 +106,10 @@ enum AssetCatalogue {
 
     /// The index in Lamp's bundle.
     static let all: [Item] = Bundle.main.resourceURL
-        .flatMap { try? Data(contentsOf: $0.appendingPathComponent("asset-catalogue.json")) }
+        .flatMap { try? Data(contentsOf: $0.appendingPathComponent("asset-catalog.json")) }
         .map(items) ?? []
 
-    /// The assets in an index that may be offered: a licence Lamp allows, an https address, a hash to check it by, and
+    /// The assets in an index that may be offered: a license Lamp allows, an https address, a hash to check it by, and
     /// file paths that stay inside where they're put. One that fails any of these is left out, not repaired.
     static func items(from data: Data) -> [Item] {
         guard let index = try? JSONDecoder().decode(Index.self, from: data) else { return [] }
@@ -117,8 +117,8 @@ enum AssetCatalogue {
         for pack in index.packs {
             guard isID(pack.id) else { continue }
             for asset in pack.assets {
-                let licence = asset.license ?? pack.license
-                guard isUsable(licence), let licence, asset.id.hasPrefix(pack.id + "/"), isID(String(asset.id.dropFirst(pack.id.count + 1))) else { continue }
+                let license = asset.license ?? pack.license
+                guard isUsable(license), let license, asset.id.hasPrefix(pack.id + "/"), isID(String(asset.id.dropFirst(pack.id.count + 1))) else { continue }
                 let file = asset.file.flatMap(https)
                 let archive = asset.archive ?? pack.archive
                 let members = asset.files ?? []
@@ -131,8 +131,8 @@ enum AssetCatalogue {
                 let page = (asset.page.flatMap(https) ?? https(pack.source))?.absoluteString ?? ""
                 result.append(Item(
                     id: asset.id, name: asset.name, kind: asset.kind, pack: pack.id, packName: pack.name,
-                    author: asset.author ?? pack.author, licence: licence, style: pack.style,
-                    creditAsPack: pack.credit != "asset" && !needsCredit(licence), page: page,
+                    author: asset.author ?? pack.author, license: license, style: pack.style,
+                    creditAsPack: pack.credit != "asset" && !needsCredit(license), page: page,
                     packSource: https(pack.source)?.absoluteString ?? page,
                     file: file, sha256: file == nil ? nil : asset.sha256, archive: file == nil ? archive : nil,
                     members: file == nil ? members : [], bytes: asset.bytes, triangles: asset.tris, box: asset.box,
@@ -242,7 +242,7 @@ enum AssetCatalogue {
         facts.append(size(item.bytes))
         if let budget, let triangles = item.triangles, triangles > budget.triangles { facts.append("too heavy for \(budget.place)") }
         let notes = item.notes.map { ": \($0)" } ?? ""
-        return "- \(item.id): \(item.name)\(notes) (\(facts.joined(separator: ", "))). \(item.packName) by \(item.author), \(item.licence); \(item.style)."
+        return "- \(item.id): \(item.name)\(notes) (\(facts.joined(separator: ", "))). \(item.packName) by \(item.author), \(item.license); \(item.style)."
     }
 
     static func size(_ bytes: Int) -> String {
@@ -322,10 +322,10 @@ enum AssetCatalogue {
         for (item, files) in fetched {
             let name = item.creditAsPack ? item.packName : item.name
             let url = item.creditAsPack ? item.packSource : item.page
-            if let index = sources.firstIndex(where: { $0.name == name && $0.url == url && $0.license == item.licence }) {
+            if let index = sources.firstIndex(where: { $0.name == name && $0.url == url && $0.license == item.license }) {
                 sources[index].files = (sources[index].files ?? []) + files.filter { !(sources[index].files ?? []).contains($0) }
             } else {
-                sources.append(Credits.Source(name: name, author: item.author, url: url, license: item.licence, adapted: false, files: files))
+                sources.append(Credits.Source(name: name, author: item.author, url: url, license: item.license, adapted: false, files: files))
             }
         }
         return Credits(upstream: sources)
