@@ -429,7 +429,8 @@ game brought in from one stays as its authors wrote it. Before every build and e
 itself (`BUN_BE_BUN=1`), in the game's sandbox, from a copy of `src/` in a scratch folder (Bun reads every folder above
 the one it builds in, which the sandbox closes in the person's own folders): nothing installed, nothing fetched, types stripped and not checked, bare
 imports left for the page's import map. Every place then plays plain JavaScript, and a change of `src/` is a change of
-the page like any other. `src/` is shared with the game and `Web/app/` never is (`GameFiles`).
+the page like any other. `src/` is shared with the game, and so is `Web/app/`, which a Lamp from before `src/` plays as it is and a newer one
+builds again (`GameFiles`).
 
 A game made before three.js games is C++ on Lamp's kit (a device app of "xbox-one:game" then). It reads as a game whose
 engine is `native` and whose one place is the Xbox (`GameKit.migrated`, in `Store.readWish`; its folder's old

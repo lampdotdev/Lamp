@@ -409,6 +409,19 @@ enum GameKit {
     static let sourceFolder = "src"
     static let compiledFolder = "\(webFolder)/app"
 
+    /// What src/ holds, to tell when it changed while it was being bundled. Nil for a game without it.
+    static func sourceStamp(_ project: LampProject) -> String? {
+        guard compilesSource(project) else { return nil }
+        let root = project.dir.appendingPathComponent(sourceFolder)
+        var hasher = SHA256()
+        let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
+        for file in files.sorted(by: { $0.path < $1.path }) {
+            hasher.update(data: Data(file.path.utf8))
+            if let data = try? Data(contentsOf: file) { hasher.update(data: data) }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     static func compilesSource(_ project: LampProject) -> Bool {
         FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("\(sourceFolder)/main.ts").path)
     }
