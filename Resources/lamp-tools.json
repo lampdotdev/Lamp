@@ -506,40 +506,27 @@
     }
   },
   {
-    "name": "github_project",
-    "label": "GitHub project",
-    "description": "Someone's project on GitHub, when the request needs its contents (read the github-projects skill first). fetch gets it, one commit deep, into a read-only reference folder and answers with a handle (owner/name@commit), its license files and whether it's a Lamp wish; it fetches only when you call it, and the person's GitHub sign-in reaches their private projects. build_from records that exact snapshot in the wish's credits (its commit, its license and notice files, kept in Licenses/) before you use any of its code or assets: adapted true for the project the app is made from, whose updates the app follows, false for a library or assets it uses. open_wish hands a Lamp wish on GitHub to Lamp's import review with the person's request. check makes the wish as a Lamp repository would hold it (lamp-app.json, credits, licenses, icon) and opens it again as Lamp's importer does, putting nothing anywhere.",
+    "name": "lampify",
+    "label": "Lampify",
+    "description": "Gives an app made from someone's project on GitHub what a Lamp app has that the project doesn't (read the github-projects skill first): Lamp gets its own untouched copy of the project at one commit (with the person's GitHub sign-in for a private one), credits that commit in credits.json, keeps every license and notice file in Licenses/, makes the manifest (lamp-app.json) as sharing makes it, opens the result again as Lamp's importer does, and answers with what's still missing. Call it before copying any of the project's code or assets, and again when the app is done. It never moves on to a newer commit by itself: pass the commit it pinned on every later call.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "action"
+        "url"
       ],
       "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "fetch",
-            "build_from",
-            "open_wish",
-            "check"
-          ]
-        },
         "url": {
           "type": "string",
-          "description": "For fetch: the repository's address, https://github.com/owner/name, with /tree/<branch, tag or commit> for one that isn't its default branch"
+          "description": "The project's address on GitHub: https://github.com/owner/name, with /tree/<branch, tag or commit> for one that isn't its default branch"
         },
-        "handle": {
+        "commit": {
           "type": "string",
-          "description": "For build_from and open_wish: the handle fetch gave, owner/name@commit"
+          "description": "The full commit your clone is at (`git rev-parse HEAD`), or the one lampify pinned; left out only the first time, when Lamp pins the address's commit"
         },
         "adapted": {
           "type": "boolean",
-          "description": "For build_from: true (the default) for the project the app is made from, false for a library or assets it uses"
-        },
-        "request": {
-          "type": "string",
-          "description": "For open_wish: what the person asked, for the wish's box once it's opened"
+          "description": "true (the default) for the project the app is made from, whose updates it follows; false for a library or assets it uses"
         },
         "doing": {
           "type": "string",

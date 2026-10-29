@@ -1,21 +1,22 @@
 import XCTest
 @testable import Lamp
 
-/// `github_project` (`Store.githubProject`), as every engine calls it: a fetch that credits nothing, a snapshot named by
-/// owner, name and commit, the credit and every license and notice file written by Lamp, the project the wish is made
-/// from told apart from what it uses, and the wish checked as a Lamp repository would hold it. The license texts in
-/// Tests/Fixtures/licenses are the projects' own files, fetched from GitHub on 2026-10-28 (WebGL-Fluid-Simulation at
-/// a2d2929, d3-celestial at 7e720a3, git at 8d1b215). GitHub itself is stood in for by a local repository with a real
-/// commit, so the tests run offline.
+/// `lampify` (`Store.lampify`), as every engine calls it: a commit pinned once and never moved on by itself, Lamp's own
+/// untouched copy at that commit, the credit and every license and notice file written by Lamp, the project the wish is
+/// made from told apart from what it uses, and the shape of a Lamp app checked as sharing and the importer see it, with
+/// what's missing said rather than thrown. The license texts in Tests/Fixtures/licenses are the projects' own files,
+/// fetched from GitHub on 2026-10-28 (WebGL-Fluid-Simulation at a2d2929, d3-celestial at 7e720a3, git at 8d1b215).
+/// GitHub itself is stood in for by a local repository whose commit depends only on what it holds, so the same files
+/// give the same commit, and the tests run offline.
 @MainActor
 final class GitHubProjectsTests: XCTestCase {
     private var roots: [URL] = []
     private let licenses = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("Fixtures/licenses")
+    private let fluid = "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation"
 
     override func tearDown() {
         GitHubProjects.fetcher = GitHubProjects.fetchAnyway
-        GitHubProjects.openImport = nil
         unsetenv("GIT_CONFIG_GLOBAL")
         for root in roots { try? FileManager.default.removeItem(at: root) }
     }
@@ -30,132 +31,178 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertNil(RepoLicenses.id(of: "All rights reserved."))
     }
 
-    func testEachLicenseAndNoticeIsKeptAsItsOwnFile() throws {
+    func testLicensesAndNoticesAnywhereInTheProjectAreKeptAsTheyCame() throws {
         let tree = try newRoot().appendingPathComponent("tree")
         let wish = try newRoot()
-        try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
-        try text("webgl-fluid-simulation-LICENSE").write(to: tree.appendingPathComponent("LICENSE-MIT"), atomically: true, encoding: .utf8)
-        try text("d3-celestial-LICENSE").write(to: tree.appendingPathComponent("LICENSE-BSD"), atomically: true, encoding: .utf8)
-        try "Includes work by others.\n".write(to: tree.appendingPathComponent("NOTICE"), atomically: true, encoding: .utf8)
+        try write([
+            "LICENSE": text("webgl-fluid-simulation-LICENSE"),
+            "NOTICE": "Includes work by others.\n",
+            "vendor/howler/LICENSE.md": text("d3-celestial-LICENSE"),
+            "node_modules/left-pad/LICENSE": "A tool's, not shipped.\n",
+        ], in: tree)
         try FileManager.default.createSymbolicLink(at: tree.appendingPathComponent("COPYING"), withDestinationURL: URL(fileURLWithPath: "/etc/hosts"))
 
-        let kept = try RepoLicenses.keep(from: tree, place: "Licenses/someone-pair", in: wish)
-        XCTAssertEqual(kept.license, "LicenseRef-someone-pair", "two licenses may be a choice or both: the texts are the terms")
-        XCTAssertEqual(kept.licenseFile, "Licenses/someone-pair/LICENSE-BSD")
-        XCTAssertEqual(kept.notices, ["Licenses/someone-pair/LICENSE-MIT", "Licenses/someone-pair/NOTICE"])
-        let names = try FileManager.default.contentsOfDirectory(atPath: wish.appendingPathComponent("Licenses/someone-pair").path).sorted()
-        XCTAssertEqual(names, ["LICENSE-BSD", "LICENSE-MIT", "NOTICE"], "a link brings nothing in")
+        let kept = try RepoLicenses.keep(from: tree, place: "Licenses/someone-game", in: wish)
+        XCTAssertEqual(kept.license, "MIT", "the project's own license is the one at its top")
+        XCTAssertEqual(kept.licenseFile, "Licenses/someone-game/LICENSE")
+        XCTAssertEqual(kept.notices, ["Licenses/someone-game/NOTICE", "Licenses/someone-game/vendor/howler/LICENSE.md"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wish.appendingPathComponent("Licenses/someone-game/vendor/howler/LICENSE.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: wish.appendingPathComponent("Licenses/someone-game/COPYING").path), "a link brings nothing in")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: wish.appendingPathComponent("Licenses/someone-game/node_modules").path))
+
+        // Two licenses at its top may be a choice or both: the texts are the terms.
+        try text("d3-celestial-LICENSE").write(to: tree.appendingPathComponent("LICENSE-BSD"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(try RepoLicenses.keep(from: tree, place: "Licenses/someone-game", in: wish).license, "LicenseRef-someone-game")
     }
 
-    // MARK: The tool
+    // MARK: The pinned commit
 
-    func testFetchingCreditsNothingAndNamesOwnerNameAndCommit() async throws {
+    func testTheFirstCallPinsTheCommitCreditsItAndSaysTheStructureIsMissing() async throws {
         let (store, wish) = try makeWish()
         GitHubProjects.fetcher = fake(["LICENSE": text("webgl-fluid-simulation-LICENSE"), "index.html": "<canvas></canvas>\n"])
-        let answer = try await call(store, ["action": "fetch", "url": "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation"], on: wish)
-        let handle = try XCTUnwrap(answer.split(separator: "\n").first { $0.hasPrefix("Handle: ") }).dropFirst(8)
-        let commit = String(handle.split(separator: "@")[1])
+        let answer = try await call(store, ["url": fluid], on: wish)
+        let source = try XCTUnwrap(Credits.read(wish.dir.appendingPathComponent(Credits.file))?.upstream.first)
+        let commit = try XCTUnwrap(source.commit)
         XCTAssertEqual(commit.count, 40)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent(".lamp/reference/PavelDoGreat/WebGL-Fluid-Simulation@\(commit)/index.html").path))
-        XCTAssertTrue(answer.contains("Terms: LICENSE (MIT)"), answer)
-        XCTAssertNil(Credits.read(wish.dir.appendingPathComponent(Credits.file)), "a fetch to read it credits nothing")
-
-        // Another owner's project of the same name is another snapshot, never this one.
-        GitHubProjects.fetcher = fake(["README.md": "A fork.\n"])
-        let fork = try await call(store, ["action": "fetch", "url": "https://github.com/someone/WebGL-Fluid-Simulation"], on: wish)
-        XCTAssertTrue(fork.contains("Handle: someone/WebGL-Fluid-Simulation@"), fork)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent(".lamp/reference/PavelDoGreat/WebGL-Fluid-Simulation@\(commit)/index.html").path))
-        let wrongOwner = try await call(store, ["action": "build_from", "handle": "someone/WebGL-Fluid-Simulation@\(commit)"], on: wish, failing: true)
-        XCTAssertTrue(wrongOwner.contains("isn't fetched in this wish"), wrongOwner)
-    }
-
-    func testBuildFromCreditsThatSnapshotWithEveryTermsFileAndFollowsTheAdaptedProject() async throws {
-        let (store, wish) = try makeWish()
-        // A library credited first, as an agent may bring one in before the project it adapts.
-        GitHubProjects.fetcher = fake(["LICENSE": text("d3-celestial-LICENSE"), "lib.js": "// lib\n"])
-        let library = try handle(try await call(store, ["action": "fetch", "url": "https://github.com/ofrohn/d3-celestial"], on: wish))
-        _ = try await call(store, ["action": "build_from", "handle": library, "adapted": false], on: wish)
-
-        GitHubProjects.fetcher = fake(["LICENSE": text("webgl-fluid-simulation-LICENSE"), "NOTICE": "Fonts by others.\n", "script.js": "// fluid\n"])
-        let project = try handle(try await call(store, ["action": "fetch", "url": "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation"], on: wish))
-        let answer = try await call(store, ["action": "build_from", "handle": project], on: wish)
-        XCTAssertTrue(answer.contains("as the project this wish is made from"), answer)
-
-        let credits = try XCTUnwrap(Credits.read(wish.dir.appendingPathComponent(Credits.file)))
-        let source = try XCTUnwrap(credits.upstream.first { $0.name == "WebGL-Fluid-Simulation" })
-        XCTAssertEqual(source.url, "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation")
+        XCTAssertEqual(source.url, fluid)
         XCTAssertEqual(source.author, "PavelDoGreat")
-        XCTAssertEqual(source.commit, String(project.split(separator: "@")[1]))
         XCTAssertEqual(source.license, "MIT")
         XCTAssertEqual(source.licenseFile, "Licenses/PavelDoGreat-WebGL-Fluid-Simulation/LICENSE")
-        XCTAssertEqual(source.noticeFiles, ["Licenses/PavelDoGreat-WebGL-Fluid-Simulation/NOTICE"])
         XCTAssertEqual(source.adapted, true)
         XCTAssertNotNil(Credits.read(wish.dir.appendingPathComponent(Credits.arrivedPath)), "Lamp's own record has it too")
-        XCTAssertEqual(credits.upstream.first?.name, "d3-celestial", "listed first, but a library")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent(".lamp/lampify/PavelDoGreat/WebGL-Fluid-Simulation@\(commit)/index.html").path))
+        XCTAssertTrue(answer.contains("Lamp pinned that commit"), answer)
+        XCTAssertTrue(answer.contains("Still missing:\n- Its structure: give the wish its app with make_app_for"), answer)
+    }
 
-        // The updates follow the project it's made from, not the library listed before it.
+    func testALaterCallNeverMovesOnByItself() async throws {
+        let (store, wish) = try makeWish()
+        let files = ["LICENSE": text("webgl-fluid-simulation-LICENSE"), "index.html": "<canvas></canvas>\n"]
+        GitHubProjects.fetcher = fake(files)
+        _ = try await call(store, ["url": fluid], on: wish)
+        let pinned = try XCTUnwrap(Credits.read(wish.dir.appendingPathComponent(Credits.file))?.upstream.first?.commit)
+
+        // The project moved on upstream: a call with no commit stays where the wish was made from, without fetching.
+        var asked: [String?] = []
+        let moved = fake(["LICENSE": text("webgl-fluid-simulation-LICENSE"), "index.html": "<canvas id=new></canvas>\n"])
+        GitHubProjects.fetcher = { source, folder in asked.append(source.ref); return try await moved(source, folder) }
+        _ = try await call(store, ["url": fluid], on: wish)
+        XCTAssertEqual(Credits.read(wish.dir.appendingPathComponent(Credits.file))?.upstream.first?.commit, pinned)
+        XCTAssertTrue(asked.isEmpty, "Lamp's copy at the pinned commit is used as it is")
+
+        // Another commit is an update's to bring in, not lampify's.
+        let refused = try await call(store, ["url": fluid, "commit": String(repeating: "a", count: 40)], on: wish, failing: true)
+        XCTAssertTrue(refused.contains("made from PavelDoGreat/WebGL-Fluid-Simulation at \(pinned)"), refused)
+
+        // Its copy gone, the pinned commit itself is fetched again: never the branch.
+        try FileManager.default.removeItem(at: wish.dir.appendingPathComponent(".lamp/lampify"))
+        GitHubProjects.fetcher = { source, folder in asked.append(source.ref); return try await self.fake(files)(source, folder) }
+        _ = try await call(store, ["url": fluid, "commit": pinned], on: wish)
+        XCTAssertEqual(asked, [pinned])
+    }
+
+    func testTheCommitGivenIsTheOneReadAndCredited() async throws {
+        let files = ["LICENSE": text("webgl-fluid-simulation-LICENSE"), "script.js": "// fluid\n"]
+        let (scratch, scratchWish) = try makeWish()
+        GitHubProjects.fetcher = fake(files)
+        _ = try await call(scratch, ["url": fluid], on: scratchWish)
+        let commit = try XCTUnwrap(Credits.read(scratchWish.dir.appendingPathComponent(Credits.file))?.upstream.first?.commit)
+
+        let (store, wish) = try makeWish()
+        var asked: [String?] = []
+        GitHubProjects.fetcher = { source, folder in asked.append(source.ref); return try await self.fake(files)(source, folder) }
+        let answer = try await call(store, ["url": fluid, "commit": commit], on: wish)
+        XCTAssertEqual(asked, [commit], "Lamp fetches the commit the agent's clone is at")
+        XCTAssertFalse(answer.contains("Lamp pinned that commit"))
+        XCTAssertEqual(Credits.read(wish.dir.appendingPathComponent(Credits.file))?.upstream.first?.commit, commit)
+
+        // A commit GitHub doesn't give for that repository is never credited.
+        let (other, otherWish) = try makeWish()
+        let wrong = try await call(other, ["url": fluid, "commit": String(repeating: "b", count: 40)], on: otherWish, failing: true)
+        XCTAssertTrue(wrong.contains("GitHub gave"), wrong)
+        XCTAssertNil(Credits.read(otherWish.dir.appendingPathComponent(Credits.file)))
+    }
+
+    // MARK: Credits and updates
+
+    func testUpdatesFollowTheAdaptedProjectAndAWishIsMadeFromOne() async throws {
+        let (store, wish) = try makeWish()
+        // A library lampified first, as an agent may bring one in before the project it adapts.
+        GitHubProjects.fetcher = fake(["LICENSE": text("d3-celestial-LICENSE"), "lib.js": "// lib\n"])
+        _ = try await call(store, ["url": "https://github.com/ofrohn/d3-celestial", "adapted": false], on: wish)
+        GitHubProjects.fetcher = fake(["LICENSE": text("webgl-fluid-simulation-LICENSE"), "NOTICE": "Fonts by others.\n"])
+        _ = try await call(store, ["url": fluid], on: wish)
+
+        let credits = try XCTUnwrap(Credits.read(wish.dir.appendingPathComponent(Credits.file)))
+        XCTAssertEqual(credits.upstream.first?.name, "d3-celestial", "listed first, but a library")
+        XCTAssertNil(credits.upstream.first?.adapted)
         guard case .adapted(let followed)? = AppUpdates.route(of: try XCTUnwrap(store.projects.first { $0.id == wish.id })) else {
             return XCTFail("no update route")
         }
-        XCTAssertEqual(followed.url, "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation")
+        XCTAssertEqual(followed.url, fluid)
         XCTAssertEqual(credits.basedOn, "Based on WebGL-Fluid-Simulation by PavelDoGreat")
+        XCTAssertEqual(credits.upstream.last?.noticeFiles, ["Licenses/PavelDoGreat-WebGL-Fluid-Simulation/NOTICE"])
 
-        // A wish is made from one project.
         GitHubProjects.fetcher = fake(["README.md": "Other.\n"])
-        let other = try handle(try await call(store, ["action": "fetch", "url": "https://github.com/remvze/moodist"], on: wish))
-        let refused = try await call(store, ["action": "build_from", "handle": other], on: wish, failing: true)
+        let refused = try await call(store, ["url": "https://github.com/remvze/moodist"], on: wish, failing: true)
         XCTAssertTrue(refused.contains("already made from WebGL-Fluid-Simulation"), refused)
     }
 
     func testEveryLicenseAndNoticeFileGoesWithTheSharedFileAndComesBack() async throws {
         let (store, wish) = try makeApp()
-        GitHubProjects.fetcher = fake(["LICENSE": text("webgl-fluid-simulation-LICENSE"), "NOTICE": "Fonts by others.\n"])
-        let project = try handle(try await call(store, ["action": "fetch", "url": "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation"], on: wish))
-        _ = try await call(store, ["action": "build_from", "handle": project], on: wish)
+        GitHubProjects.fetcher = fake(["LICENSE": text("webgl-fluid-simulation-LICENSE"), "NOTICE": "Fonts by others.\n",
+                                       "lib/howler/LICENSE.md": text("d3-celestial-LICENSE")])
+        _ = try await call(store, ["url": fluid], on: wish)
 
         let file = try Sharing.export(wish)
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let package = try Sharing.open(file)
         defer { try? FileManager.default.removeItem(at: package.folder) }
-        XCTAssertEqual(package.licences.map(\.lastPathComponent).sorted(), ["LICENSE", "NOTICE"])
-        let source = try XCTUnwrap(package.credits?.upstream.first)
-        XCTAssertEqual(source.noticeFiles, ["Licenses/PavelDoGreat-WebGL-Fluid-Simulation/NOTICE"])
-        XCTAssertEqual(source.adapted, true)
+        XCTAssertEqual(package.licences.map { Sharing.relativePath(of: $0, in: package.folder) }.sorted(), [
+            "Licenses/PavelDoGreat-WebGL-Fluid-Simulation/LICENSE", "Licenses/PavelDoGreat-WebGL-Fluid-Simulation/NOTICE",
+            "Licenses/PavelDoGreat-WebGL-Fluid-Simulation/lib/howler/LICENSE.md",
+        ])
+        XCTAssertEqual(package.credits?.upstream.first?.adapted, true)
     }
 
-    func testCheckMakesTheWishAsALampRepositoryAndOpensItAgain() async throws {
+    // MARK: The shape
+
+    func testTheShapeIsCheckedAsSharingAndTheImporterSeeItUntilNothingIsMissing() async throws {
         let (store, wish) = try makeApp()
         GitHubProjects.fetcher = fake(["LICENSE": text("webgl-fluid-simulation-LICENSE"), "NOTICE": "Fonts by others.\n"])
-        let project = try handle(try await call(store, ["action": "fetch", "url": "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation"], on: wish))
-        _ = try await call(store, ["action": "build_from", "handle": project], on: wish)
+        let first = try await call(store, ["url": fluid], on: wish)
+        XCTAssertTrue(first.contains("\"format\""), first)
+        XCTAssertTrue(first.contains("Updates follow \(fluid)"), first)
+        XCTAssertTrue(first.contains("- Its line: one plain sentence saying what it is, in about.json."), first)
+        XCTAssertTrue(first.contains("- APP.md saying what it is and that it's based on WebGL-Fluid-Simulation by PavelDoGreat."), first)
 
-        let answer = try await call(store, ["action": "check"], on: wish)
-        XCTAssertTrue(answer.contains("\"format\""), answer)
-        XCTAssertTrue(answer.contains("Updates follow https://github.com/PavelDoGreat/WebGL-Fluid-Simulation"), answer)
-        XCTAssertTrue(answer.contains("Every license and notice file is there"), answer)
+        try #"{"description": "A living fluid artwork."}"#.write(to: wish.dir.appendingPathComponent(AppDescription.file), atomically: true, encoding: .utf8)
+        try "# Fluid\n\nBased on WebGL-Fluid-Simulation by PavelDoGreat (MIT).\n".write(to: wish.dir.appendingPathComponent("APP.md"), atomically: true, encoding: .utf8)
+        let commit = try XCTUnwrap(Credits.read(wish.dir.appendingPathComponent(Credits.file))?.upstream.first?.commit)
+        let done = try await call(store, ["url": fluid, "commit": commit], on: wish)
+        XCTAssertTrue(done.contains("Nothing missing"), done)
+        XCTAssertTrue(done.contains("\"description\" : \"A living fluid artwork.\""), done)
         let kept = wish.dir.appendingPathComponent(".lamp/repository")
         for path in ["lamp-app.json", Credits.file, "Licenses/PavelDoGreat-WebGL-Fluid-Simulation/LICENSE",
-                     "Licenses/PavelDoGreat-WebGL-Fluid-Simulation/NOTICE", "Package.swift", "build.sh"] {
+                     "Licenses/PavelDoGreat-WebGL-Fluid-Simulation/NOTICE", "Package.swift", "build.sh", "README.md"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: kept.appendingPathComponent(path).path), path)
         }
         XCTAssertNil(GitHubRepo.kept(for: wish), "nothing was put on GitHub")
     }
 
-    func testALampWishOnGitHubGoesToTheReviewWithTheRequest() async throws {
-        let (store, wish) = try makeWish()
-        var opened: URL?
-        GitHubProjects.openImport = { opened = $0 }
-        GitHubProjects.fetcher = fake(["lamp-app.json": "{\"name\": \"Hot Shelf\", \"format\": 1}\n", "Sources/App.swift": "// app\n"])
-        let answer = try await call(store, ["action": "fetch", "url": "https://github.com/someone/hot-shelf"], on: wish)
-        XCTAssertTrue(answer.contains("It's a Lamp wish"), answer)
-        let refused = try await call(store, ["action": "build_from", "handle": try handle(answer)], on: wish, failing: true)
-        XCTAssertTrue(refused.contains("open_wish"), refused)
+    func testWhatSharingRefusesIsSaidAsMissingNotThrown() async throws {
+        let (store, wish) = try makeApp()
+        GitHubProjects.fetcher = fake(["index.html": "<canvas></canvas>\n"])
+        let answer = try await call(store, ["url": "https://github.com/someone/unlicensed-game"], on: wish)
+        XCTAssertTrue(answer.contains("It came with no license of its own"), answer)
+        XCTAssertTrue(answer.contains("can't be shared. It uses unlicensed-game"), answer)
+    }
 
-        _ = try await call(store, ["action": "open_wish", "handle": try handle(answer), "request": "add a 10+ filter"], on: wish)
-        let tree = try XCTUnwrap(opened)
-        defer { try? FileManager.default.removeItem(at: tree.deletingLastPathComponent()) }
-        XCTAssertEqual(Store.fetchedRequest(beside: tree), "add a 10+ filter", "the request waits for the new wish's box")
-        XCTAssertTrue(RepoImport.holdsWish(tree))
+    func testALampWishOnGitHubIsSentToOpenFromGitHub() async throws {
+        let (store, wish) = try makeWish()
+        GitHubProjects.fetcher = fake(["lamp-app.json": "{\"name\": \"Hot Shelf\", \"format\": 1}\n", "Sources/App.swift": "// app\n"])
+        let refused = try await call(store, ["url": "https://github.com/someone/hot-shelf"], on: wish, failing: true)
+        XCTAssertTrue(refused.contains("File → Open from GitHub…"), refused)
         XCTAssertNil(Credits.read(wish.dir.appendingPathComponent(Credits.file)))
     }
 
@@ -184,7 +231,8 @@ final class GitHubProjectsTests: XCTestCase {
         for request in ["make this into a game https://github.com/gabrielecirulli/2048",
                         "explain this repo https://github.com/ofrohn/d3-celestial",
                         "<https://github.com/remvze/moodist>"] {
-            XCTAssertTrue(GitHubProjects.note(for: request).contains("github-projects skill"), request)
+            let note = GitHubProjects.note(for: request)
+            XCTAssertTrue(note.contains("github-projects skill") && note.contains("git clone") && note.contains("`lampify`"), request)
         }
         XCTAssertEqual(GitHubProjects.note(for: "make me a 2048 game"), "")
         XCTAssertEqual(GitHubProjects.note(for: "see github.com for ideas"), "")
@@ -193,7 +241,7 @@ final class GitHubProjectsTests: XCTestCase {
     // MARK: Helpers
 
     private func call(_ store: Store, _ arguments: [String: Any], on wish: LampProject, failing: Bool = false) async throws -> String {
-        let (status, answer) = await store.githubProject(arguments, for: wish)
+        let (status, answer) = await store.lampify(arguments, for: wish)
         if failing {
             XCTAssertNotEqual(status, 200)
             return answer["error"] as? String ?? ""
@@ -202,31 +250,34 @@ final class GitHubProjectsTests: XCTestCase {
         return answer["text"] as? String ?? ""
     }
 
-    private func handle(_ answer: String) throws -> String {
-        String(try XCTUnwrap(answer.split(separator: "\n").first { $0.hasPrefix("Handle: ") }).dropFirst(8))
-    }
-
-    /// A fetch that makes the repository GitHub would give: one commit, its remote the project's address.
+    /// A fetch that makes the repository GitHub would give: one commit, its remote the project's address, its author and
+    /// time fixed so the same files always make the same commit. Asked for a commit, it gives whatever its files make.
     private func fake(_ files: [String: String]) -> GitHubProjects.Fetch {
         { source, folder in
             let tree = folder.appendingPathComponent(source.name)
-            for (path, contents) in files {
-                let file = tree.appendingPathComponent(path)
-                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try contents.write(to: file, atomically: true, encoding: .utf8)
-            }
-            for arguments in [["init", "-q"], ["remote", "add", "origin", source.url + ".git"], ["add", "-A"],
-                              ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "Project \(UUID().uuidString)"]] {
+            try self.write(files, in: tree)
+            let fixed = ["GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com", "GIT_AUTHOR_DATE": "2026-10-28T12:00:00Z",
+                         "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com", "GIT_COMMITTER_DATE": "2026-10-28T12:00:00Z"]
+            for arguments in [["init", "-q"], ["remote", "add", "origin", source.url + ".git"], ["add", "-A"], ["commit", "-q", "-m", "Project"]] {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
                 process.arguments = arguments
                 process.currentDirectoryURL = tree
+                process.environment = ProcessInfo.processInfo.environment.merging(fixed) { $1 }
                 process.standardOutput = FileHandle.nullDevice
                 try process.run()
                 process.waitUntilExit()
                 guard process.terminationStatus == 0 else { throw GitHubProjects.Failure(message: "git \(arguments[0]) failed") }
             }
             return tree
+        }
+    }
+
+    private func write(_ files: [String: String], in tree: URL) throws {
+        for (path, contents) in files {
+            let file = tree.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try contents.write(to: file, atomically: true, encoding: .utf8)
         }
     }
 
@@ -250,7 +301,7 @@ final class GitHubProjectsTests: XCTestCase {
         return (store, try XCTUnwrap(store.projects.first { $0.id == draft.id }))
     }
 
-    /// A Mac app with its scaffold, saved as a version, as a wish is once make_app_for has given it its structure.
+    /// A Mac app with its scaffold, as a wish is once make_app_for has given it its structure.
     private func makeApp() throws -> (Store, LampProject) {
         let root = try newRoot()
         let made = try Template.scaffold(name: "Fluid \(UUID().uuidString.prefix(6))", platform: .mac, in: root)

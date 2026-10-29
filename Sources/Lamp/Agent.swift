@@ -57,7 +57,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,remove_app,connectors,github_project,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,remove_app,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -86,7 +86,8 @@ enum Agent {
     kind of file (`opens` in capabilities.json), whatever its code does. So "not found" or a failed open \
     there can mean "closed to you" or "not declared": never read it as a fault in the app's code. To \
     read a file elsewhere, use your file tools, which ask the user. `gh` can't see its sign-in there: \
-    a project on GitHub comes in through `github_project`, which uses the person's sign-in itself.
+    clone public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`; `lampify` \
+    reaches a private one with the person's sign-in.
     """
 
     private static let lookRules = """
@@ -301,9 +302,9 @@ enum Agent {
     private static let githubRules = """
 
     - When a request names a project on GitHub, open the github-projects skill with `read_skill` and do what the request \
-    asks: fetch the project with `github_project` only when you need its contents, never with git, gh or a download of \
-    your own, and credit it with build_from before using any of it. A project the person names is that project, with \
-    its author's credit: never rewrite it from memory in its place.
+    asks. To make an app from it, read it in a git clone as the skill says and call `lampify` before using any of its \
+    code or assets, and again when the app is done. A project the person names is that project, with its author's \
+    credit: never rewrite it from memory in its place.
     """
 
     private static let connectorRules = """
@@ -885,8 +886,8 @@ enum Agent {
         `{"name": "Slop New York", "author": "Mr.doob", "url": "https://github.com/mrdoob/slop-newyork", "commit": \
         "<full commit hash>", "license": "MIT", "licenseFile": "Web/LICENSE-slop-newyork"}`, with the license as its SPDX id \
         (left out when it has none) and its license text kept in the app beside the work. A project on GitHub is credited \
-        by `github_project`'s build_from, which writes its entry, its commit and its license files itself, and marks the \
-        project the app is made from (`"adapted": true`): Lamp brings the person its updates from there. Never take anything out of \
+        by `lampify`, which writes its entry at the commit it pinned and its license files itself, and marks the project \
+        the app is made from (`"adapted": true`): Lamp brings the person its updates from there. Never take anything out of \
         \(Credits.file), never remove or change a license or a notice of someone else's, and never take an author's \
         name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license can be used here but \
         not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \

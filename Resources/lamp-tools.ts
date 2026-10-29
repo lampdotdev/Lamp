@@ -24,8 +24,8 @@
  * - `remove_app`: takes one of the wish's apps away, by its folder; its versions keep it.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
- * - `github_project`: fetches someone's project on GitHub into the wish's reference folder, credits a fetched snapshot,
- *   hands a Lamp wish on GitHub to the import review, or checks the wish as a Lamp repository would hold it.
+ * - `lampify`: gives an app made from someone's project on GitHub its credit at one pinned commit, the project's
+ *   license and notice files and its manifest, and answers with what the Lamp app still lacks.
  * - `network_devices`: lists the devices on the person's home network as Lamp's own look finds them now, with what
  *   Lamp already has for each.
  * - `device_integration`: hands Lamp a device's integration as data; Lamp checks it and answers with what's wrong,
@@ -614,11 +614,11 @@ const connectors = defineTool({
 	},
 });
 
-const githubProject = defineTool({
-	...spec("github_project"),
+const lampify = defineTool({
+	...spec("lampify"),
 	async execute(_toolCallId, params, signal) {
-		const url = process.env.LAMP_GITHUB_URL;
-		if (!url) throw new Error("Lamp isn't available to fetch that.");
+		const url = process.env.LAMP_LAMPIFY_URL;
+		if (!url) throw new Error("Lamp isn't available to lampify that.");
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
@@ -723,7 +723,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(makeAppFor);
 	pi.registerTool(removeApp);
 	pi.registerTool(connectors);
-	pi.registerTool(githubProject);
+	pi.registerTool(lampify);
 	pi.registerTool(networkDevices);
 	pi.registerTool(deviceIntegration);
 	for (const name of ["ask", "progress", "write_wish", "device_permission"]) pi.registerTool(talkTool(name));
