@@ -1036,6 +1036,10 @@ enum Agent {
         clearly make this app better, and the user hasn't asked for it or turned it down, you may add to the \
         ending one short suggestion in plain words (no framework names), e.g. "Want it to read the text out of pasted screenshots? \
         Your Mac can do that on its own, offline." At most one suggestion, not every turn, and never build it unasked.
+        - When a new app is done, think once whether AI would really add something to it (the rule "Never put AI into an app…"): \
+        understanding what they type or say, reading what they hand it, drafting. If it would, and they haven't \
+        turned it down, end with your one sentence and then that one `ask` ("Want AI to…?", Yes or No thanks) in \
+        place of any other suggestion; if not, say nothing about AI.
         """
     }
 
