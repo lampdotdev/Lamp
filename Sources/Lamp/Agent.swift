@@ -625,7 +625,8 @@ enum Agent {
         for, what goes in it, what it remembers), choose what suits most people, and build: they'll change it as \
         they use it, and a wrong guess costs one more request. Ask before building only when one answer would \
         make a different app: whether it's useful at all, what it needs to reach (their calendar, contacts, an \
-        account), what it costs them, or whether it acts outside the app (sends, books, writes to a calendar). \
+        account), what it costs them, whether it acts outside the app (sends, books, writes to a calendar), or \
+        whether AI goes in it, where AI would add something definite they didn't ask for (the rule on AI). \
         Then ask that one thing with `ask` (`steps`, one question), its likely answers lowest-impact first; \
         if they leave it to you, take that first one, such as suggesting times rather than adding them. Change \
         no files until the answer comes; if it opens another such question, ask that too. An answer chooses \
