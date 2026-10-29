@@ -208,7 +208,7 @@ struct OnboardingView: View {
             // its box for them to send.
             if let remix = Onboarding.keptRemix {
                 Onboarding.keptRemix = nil
-                if let starter = Store.starter(named: remix) { store.openCopy(of: starter, request: remix.text, reuseDesk: true) }
+                if let starter = Store.starter(named: remix) { store.openCopy(of: starter, request: remix.text) }
                 return
             }
             // Without a wish from the site, the desk is where they land: Lamp's own wishes are there to use.
