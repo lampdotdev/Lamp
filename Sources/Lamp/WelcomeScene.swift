@@ -5,7 +5,8 @@ import LampSidebarKit
 /// The welcome's stage, in 3D behind its words: the site's six stripes coming down a back wall and running along the
 /// floor toward the person, and three of the things Lamp comes with coming down to float over them as thin boxes, each
 /// with its picture on the front and its shadow on the stripes. The stripes come first, then the boxes; the words follow
-/// (`HelloStep`). Going on to setup, the camera moves right, so the stage slides away left as setup comes in.
+/// (`HelloStep`). The boxes lean a little toward the pointer. Going on to setup, the camera moves right, so the stage
+/// slides left as setup comes in, its stripes staying at the frame's left edge.
 struct WelcomeScene: NSViewRepresentable {
     /// Where the welcome is: the hello, with the stage in view, or a later step, with the camera moved past it.
     let atHello: Bool
@@ -20,6 +21,7 @@ struct WelcomeScene: NSViewRepresentable {
         view.antialiasingMode = .multisampling4X
         view.isPlaying = true
         context.coordinator.stage = stage
+        if !reduceMotion { view.pointerMoved = { [weak stage] x, y in stage?.follow(x: x, y: y) } }
         stage.look(atHello: atHello, animated: false)
         // The stripes and the boxes arrive once, as the hello first shows; met again (Back from setup), it's all there.
         if atHello, !reduceMotion, !WelcomeStage.arrived {
@@ -41,9 +43,24 @@ struct WelcomeScene: NSViewRepresentable {
         var stage: WelcomeStage?
     }
 
-    /// Behind the welcome's words and buttons: clicks go to them, never to the scene.
+    /// Behind the welcome's words and buttons: clicks go to them, never to the scene. It still hears the pointer move
+    /// over it, for the boxes to lean toward.
     final class PassThroughSceneView: SCNView {
+        var pointerMoved: ((CGFloat, CGFloat) -> Void)?
+
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            let point = convert(event.locationInWindow, from: nil)
+            guard bounds.width > 0, bounds.height > 0 else { return }
+            pointerMoved?(point.x / bounds.width * 2 - 1, point.y / bounds.height * 2 - 1)
+        }
     }
 }
 
@@ -61,6 +78,8 @@ final class WelcomeStage {
     private var walls: [SCNNode] = []
     private var floors: [SCNNode] = []
     private var boxes: [(node: SCNNode, rest: SCNVector3)] = []
+    /// Inside each box's own node, what turns and shifts it toward the pointer, apart from its arrival and its floating.
+    private var leans: [SCNNode] = []
 
     /// Stripe width, and where the six start across: the right half of the frame, beside the words.
     private static let stripe: CGFloat = 0.55
@@ -68,8 +87,9 @@ final class WelcomeStage {
     private static let wallZ: CGFloat = -5
     private static let wallHeight: CGFloat = 10
     private static let floorLength: CGFloat = 18
-    /// How far right the camera moves for the steps after the hello: far enough that the stage is out of frame.
-    private static let away: CGFloat = 12
+    /// How far right the camera moves for the steps after the hello: the stripes go to the frame's left, a little past
+    /// its edge, and stay there beside setup.
+    private static let away: CGFloat = 9.6
     private static let colors: [UInt32] = [0x1F8A4A, 0x7CBF3A, 0xF6B81C, 0xF08A1C, 0xE2402A, 0xD23778]
 
     init() {
@@ -136,19 +156,19 @@ final class WelcomeStage {
 
         // The boxes, thin, floating over the stripes at heights of their own, a little turned each, their shadows on the
         // stripes below.
-        let placed: [(x: CGFloat, y: CGFloat, z: CGFloat, turn: CGFloat)] = [(1.9, 1.15, 0.9, 0.3), (3.35, 1.75, -1.3, -0.05), (3.2, 0.85, 2.4, -0.26)]
+        let placed: [(x: CGFloat, y: CGFloat, z: CGFloat, turn: CGFloat)] = [(2.05, 1.75, 1.7, 0.3), (3.75, 2.75, -1.2, -0.06), (2.3, 0.85, 3.4, -0.3)]
         for (picture, place) in zip(Self.pictures(), placed) {
-            let box = SCNBox(width: 1.2, height: 0.7, length: 0.07, chamferRadius: 0.02)
-            let side = Self.flat(NSColor(hex: 0xFFFDF6))
-            let front = Self.flat(picture ?? NSColor(hex: 0x1B1A17))
-            // Front, right, back, left, top, bottom.
-            box.materials = [front, side, side, side, side, side]
-            let node = SCNNode(geometry: box)
-            node.castsShadow = true
+            let node = SCNNode()
+            let lean = SCNNode()
+            let slab = SCNNode(geometry: Self.slab(picture))
+            slab.castsShadow = true
+            slab.eulerAngles.y = place.turn
+            lean.addChildNode(slab)
+            node.addChildNode(lean)
             let rest = SCNVector3(place.x, place.y, place.z)
             node.position = rest
-            node.eulerAngles.y = place.turn
             scene.rootNode.addChildNode(node)
+            leans.append(lean)
             boxes.append((node, rest))
         }
     }
@@ -188,12 +208,12 @@ final class WelcomeStage {
 
     /// A box's slow rise and fall where it floats, each out of step with the others.
     private static func bob(_ index: Int) -> SCNAction {
-        let rise = SCNAction.moveBy(x: 0, y: 0.07, z: 0, duration: 1.8 + 0.3 * Double(index))
+        let rise = SCNAction.moveBy(x: 0, y: 0.025, z: 0, duration: 1.8 + 0.3 * Double(index))
         rise.timingMode = .easeInEaseOut
         return .sequence([.wait(duration: 0.4 * Double(index)), .repeatForever(.sequence([rise, rise.reversed()]))])
     }
 
-    /// The camera at the hello, or moved right past the stage for the steps after it.
+    /// The camera at the hello, or moved right for the steps after it, the stripes at the frame's left.
     func look(atHello: Bool, animated: Bool) {
         let x: CGFloat = atHello ? 0 : Self.away
         guard camera.position.x != x else { return }
@@ -201,7 +221,37 @@ final class WelcomeStage {
         SCNTransaction.animationDuration = animated ? 0.9 : 0
         SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         camera.position.x = x
+        // The boxes are the hello's: past it they fade as they go, so none is left cut off at the frame's edge.
+        for lean in leans { lean.opacity = atHello ? 1 : 0 }
         SCNTransaction.commit()
+    }
+
+    /// Leans the boxes a little toward the pointer, `x` and `y` running -1 to 1 across the frame (up is positive): each
+    /// turns to face it and moves a touch its way, easing there.
+    func follow(x: CGFloat, y: CGFloat) {
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.6
+        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
+        for lean in leans {
+            lean.eulerAngles = SCNVector3(-y * 0.14, x * 0.22, 0)
+            lean.position = SCNVector3(x * 0.12, y * 0.07, 0)
+        }
+        SCNTransaction.commit()
+    }
+
+    /// A box as a thin slab rounded every way: its corners in a rounded rectangle, its edges chamfered front and back.
+    /// The picture is on its front, sized to it.
+    private static func slab(_ picture: NSImage?) -> SCNGeometry {
+        let width: CGFloat = 2.0, height: CGFloat = 1.17
+        let path = NSBezierPath(roundedRect: NSRect(x: -width / 2, y: -height / 2, width: width, height: height), xRadius: 0.13, yRadius: 0.13)
+        path.flatness = 0.002
+        let shape = SCNShape(path: path, extrusionDepth: 0.1)
+        shape.chamferRadius = 0.04
+        shape.chamferMode = .both
+        let side = flat(NSColor(hex: 0xFFFDF6))
+        // Front, back, sides, then the chamfers front and back.
+        shape.materials = [flat(picture ?? NSColor(hex: 0x1B1A17)), side, side, side, side]
+        return shape
     }
 
     /// Grows a node's scale along one axis from nothing to whole, easing out.
@@ -219,7 +269,11 @@ final class WelcomeStage {
         let material = SCNMaterial()
         material.lightingModel = .lambert
         material.diffuse.contents = contents
+        // Smooth as a picture shrinks, and across a surface seen at a slant.
+        material.diffuse.minificationFilter = .linear
+        material.diffuse.magnificationFilter = .linear
         material.diffuse.mipFilter = .linear
+        material.diffuse.maxAnisotropy = 16
         return material
     }
 

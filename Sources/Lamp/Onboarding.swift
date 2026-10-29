@@ -247,17 +247,23 @@ private struct HelloStep: View {
         GeometryReader { proxy in
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Remixable software.")
-                        .font(.system(size: 64, weight: .heavy))
-                        .tracking(-2.4)
-                        .foregroundStyle(Palette.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .reveal(shown, delay: 0.1)
+                    // A line each, set tight: lines this large read as one block with their usual spacing halved.
+                    VStack(alignment: .leading, spacing: -22) {
+                        ForEach(["Make", "remixable", "software."], id: \.self) { Text($0) }
+                    }
+                    .font(.system(size: 92, weight: .heavy))
+                    .tracking(-3.6)
+                    .foregroundStyle(Palette.ink)
+                    .fixedSize()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Make remixable software.")
+                    .accessibilityAddTraits(.isHeader)
+                    .reveal(shown, delay: 0.1)
                     Text("Start from scratch or from something someone made. Change it live. Run it on the things you already own.")
                         .font(.system(size: 19))
                         .foregroundStyle(Paper.muted)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 18)
+                        .padding(.top, 22)
                         .reveal(shown, delay: 0.2)
                     BigButton(title: "Get Started", action: next)
                         .keyboardShortcut(.defaultAction)
