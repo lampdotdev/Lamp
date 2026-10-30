@@ -566,10 +566,13 @@ beat, its renewal or its link. A run's own callbacks are the run's (`watchPhones
 kept part's stay with the part): the old run's end as it stops (`holdPhones`), a `stop()` from its `dispose` is
 ignored, the new run's hear nothing of players until it's about to draw (`bringPhones`, in `ranAgain`), which calls
 its `onLeave` and `onJoin` with the difference and the present roster, and held buttons stay in `isHeld` while old
-presses and messages are dropped. The game's snapshot keeps which player has which slot. A change of the phone page goes into the open game with its page (`PageLive.put`): the copy
+presses and messages are dropped. The game's snapshot keeps which player has which slot. While the agent works, a change of the phone page goes out as it's saved through `Store.autoApply`: with a game's page
+for a game open on this Mac (`stepPage`), and after the same pause for phones on a page Lamp serves with no Mac copy open
+(`stepPhones`). Its scripts, inline ones included, are parsed first (`GameKit.codeProblem`), and what's published is held to
+what was checked (`TVs.stagePhone`'s `expecting`). A change of the phone page goes into the open game with its page (`PageLive.put`): the copy
 on the Mac or in the simulator says it can take one (`phone` in its `/app/page/live` ask), Lamp hands it the whole page by
 hash, and `LampPageLive` writes it to a folder of its own and only then swaps it in (`ControllerRuntime.use`), under the
-session that's open. A copy built by an earlier Lamp has the game installed again instead (`pageInPlace`,
+session that's open; a change of the game's page held for Reload stays held. A copy built by an earlier Lamp has the game installed again instead (`pageInPlace`,
 `GamePhones.changed`). A page already open on a phone takes the newer one itself: every page Lamp or the game serves
 starts with its version (`PhonePageServer.marked`, an HTML comment, which also says the host publishes versions), and
 lamp-controller.js reads `lamp-phone.json` every three seconds while it's visible and as it comes back. Once the version

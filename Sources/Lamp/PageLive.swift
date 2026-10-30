@@ -64,6 +64,9 @@ import Foundation
         var waits: Bool? = nil
         /// The phone page, when it differs from the bundle's.
         var phone: Phone? = nil
+        /// Only the phone page is new: the app doesn't tell the game's page, which may be holding the `changed` kept here
+        /// for Reload.
+        var phoneOnly: Bool? = nil
     }
 
     /// Lamp's launch: a copy that asked an earlier Lamp starts counting again.
@@ -200,12 +203,16 @@ import Foundation
             AppFolder.remove(copies.appendingPathComponent(name), in: project.dir)
         }
         let gen = (given[key]?.gen ?? 0) + 1
-        give(Given(gen: gen, files: files, gone: gone, changed: changed, phone: phone), to: key, in: project)
-        held.remove(key)
+        // A change of the phone page while the page holds one of its own for Reload leaves that one waiting.
+        let waiting = changed.isEmpty && held.contains(key)
+        give(Given(gen: gen, files: files, gone: gone, changed: waiting ? lastGiven(project, key)?.changed ?? [] : changed,
+                   waits: waiting ? true : nil, phone: phone, phoneOnly: changed.isEmpty ? true : nil), to: key, in: project)
+        if !waiting { held.remove(key) }
         let said = await answer(key, gen: gen)
         switch said {
         case nil: return .cannot
         case "held": return .held
+        case "phone" where waiting: return .held
         case let state?: return .went(state)
         }
     }
@@ -232,6 +239,7 @@ import Foundation
             guard held.contains(key), var change = given[key] else { continue }
             change.gen += 1
             change.now = true
+            change.phoneOnly = nil
             give(change, to: key, in: project)
             held.remove(key)
             wake(key)
@@ -325,7 +333,7 @@ import Foundation
         // What its page saved is asked for before anything else: a preview waits on it.
         if wanted() { return (200, ["epoch": epoch, "gen": after, "send": "saved"]) }
         guard let change = newer() else { return (200, ["epoch": epoch, "gen": given[key]?.gen ?? 0]) }
-        var answer: [String: Any] = ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.changed, "now": change.now]
+        var answer: [String: Any] = ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.phoneOnly == true ? [] : change.changed, "now": change.now]
         if let phone = change.phone { answer["phone"] = ["version": phone.version, "files": phone.files] }
         return (200, answer)
     }

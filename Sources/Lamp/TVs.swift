@@ -383,8 +383,9 @@ enum TVs {
 
     /// Copies only the app's phone page where it's served, as `stage` does beside a TV app's files: for a game built for
     /// the Mac, which is played from its own copy rather than a staged one, and takes phones while it's open. No Phone/
-    /// takes the published page away.
-    static func stagePhone(_ project: LampProject) async throws {
+    /// takes the published page away. `expecting`: the version that was checked; a copy that isn't it stays unpublished,
+    /// and the answer is false.
+    @discardableResult static func stagePhone(_ project: LampProject, expecting: String? = nil) async throws -> Bool {
         let fm = FileManager.default
         let dir = stagingFolder(for: project)
         let incoming = dir.appendingPathComponent(".phone-" + UUID().uuidString)
@@ -400,7 +401,9 @@ enum TVs {
             .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
         if linked { throw Failure(message: "Some of the phone page's files are shortcuts to other files. Put the files themselves in their place.") }
         let hasPage = fm.fileExists(atPath: incoming.appendingPathComponent("index.html").path)
+        if let expecting, (try? ControllerSnapshot.read(incoming))?.version != expecting { return false }
         try publishPhone(hasPage ? incoming : nil, as: phoneFolder(for: project))
+        return true
     }
 
     /// A file of the published phone page by the names in its path, when it's a plain file there of a size to hand out.

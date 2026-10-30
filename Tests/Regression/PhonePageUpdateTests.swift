@@ -121,22 +121,103 @@ final class PhonePageUpdateTests: XCTestCase {
     }
     private var joined: [Int] = []
 
-    /// A page that moved on while it was checked isn't sent: a copy never gets a file that's half written.
-    func testACopyIsGivenOnlyThePageThatWasChecked() throws {
-        let dir = folder.appendingPathComponent("wish")
-        let web = dir.appendingPathComponent(TVTemplate.webFolder)
-        try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
-        try Data("<script src=\"lamp.js\"></script>".utf8).write(to: web.appendingPathComponent("index.html"))
-        try Data("body { color: red }".utf8).write(to: web.appendingPathComponent("style.css"))
-        var page = LampProject(id: "page-\(UUID().uuidString.prefix(8))", name: "Page", exe: "Page", dir: dir)
-        page.platform = .tv
-        let checked = PageCopies.hashes(of: page)
-        XCTAssertNotNil(PageCopies.change(for: page, at: .tv, shell: "", given: nil, checked: checked))
-        try Data("body { color: bl".utf8).write(to: web.appendingPathComponent("style.css"))
-        XCTAssertNil(PageCopies.change(for: page, at: .tv, shell: "", given: nil, checked: checked))
-    }
-
     private static func json(_ object: [String: Any]) -> String {
         String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+}
+
+/// What Lamp does with a change of a game's phone page: what's published is what was checked, and handing it to an open
+/// game leaves alone a change of the game's own page that waits for Reload.
+@MainActor
+final class PhonePagePublishingTests: XCTestCase {
+    private var work: URL!
+    private var game: LampProject!
+    private var web: URL { game.dir.appendingPathComponent("build/PadGame.app/Contents/Resources/Web") }
+    private var source: URL { game.dir.appendingPathComponent(TVTemplate.phoneFolder) }
+
+    override func setUpWithError() throws {
+        work = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-phone-publish-test-\(UUID().uuidString)")
+        let dir = work.appendingPathComponent("padgame")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try Data("engine: web".utf8).write(to: dir.appendingPathComponent(".lamp-game"))
+        var game = LampProject(id: "padgame-\(UUID().uuidString.prefix(8))", name: "Pad Game", exe: "PadGame", dir: dir)
+        game.platform = .game
+        self.game = game
+        try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try save("first")
+        try TVs.publishPhone(try copyOfSource(), as: TVs.phoneFolder(for: game))
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: work)
+        if let game { try? FileManager.default.removeItem(at: TVs.stagingFolder(for: game)) }
+    }
+
+    private func save(_ name: String) throws {
+        try Data("<title>\(name)</title>".utf8).write(to: source.appendingPathComponent("index.html"))
+    }
+
+    private func copyOfSource() throws -> URL {
+        let copy = work.appendingPathComponent("copy-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: source, to: copy)
+        try FileManager.default.createDirectory(at: TVs.stagingFolder(for: game), withIntermediateDirectories: true)
+        return copy
+    }
+
+    private func checkedVersion() throws -> String { try ControllerSnapshot.read(source).version }
+
+    func testACopyThatIsntWhatWasCheckedStaysUnpublished() async throws {
+        let before = TVs.phoneVersion(of: game)
+        let checked = try checkedVersion()
+        try save("saved after the check")
+        let published = try await TVs.stagePhone(game, expecting: checked)
+        XCTAssertFalse(published)
+        XCTAssertEqual(TVs.phoneVersion(of: game), before)
+        let now = try await TVs.stagePhone(game, expecting: try checkedVersion())
+        XCTAssertTrue(now)
+        XCTAssertEqual(TVs.phoneVersion(of: game), try checkedVersion())
+    }
+
+    /// One answer to the copy's ask, once Lamp has one for it.
+    private func nextChange(after gen: Int) async -> [String: Any] {
+        let (_, answer) = await PageLive.shared.poll(["place": "mac", "phone": true, "after": gen, "epoch": PageLive.shared.epoch], for: game)
+        return answer
+    }
+
+    func testAPhonePageGoesInWithoutLettingGoOfAChangeHeldForReload() async throws {
+        try Data("one".utf8).write(to: web.appendingPathComponent("game.js"))
+        PageLive.shared.installed(game, at: .mac)
+        let asking = Task { await nextChange(after: 0) }
+        try await Task.sleep(for: .milliseconds(50))
+
+        // A change the page holds for Reload.
+        try Data("two".utf8).write(to: web.appendingPathComponent("game.js"))
+        let held = Task { await PageLive.shared.put(game, at: .mac) }
+        let first = await asking.value
+        XCTAssertEqual(first["changed"] as? [String], ["game.js"])
+        _ = PageLive.shared.state(["place": "mac", "state": "held", "gen": first["gen"] as Any], for: game)
+        let heldOutcome = await held.value
+        XCTAssertEqual(heldOutcome, .held)
+
+        // Then only the phone page changes.
+        try save("second")
+        try TVs.publishPhone(try copyOfSource(), as: TVs.phoneFolder(for: game))
+        let phoneAsk = Task { await nextChange(after: first["gen"] as? Int ?? 0) }
+        try await Task.sleep(for: .milliseconds(50))
+        let phone = Task { await PageLive.shared.put(game, at: .mac) }
+        let second = await phoneAsk.value
+        XCTAssertEqual(second["changed"] as? [String], [], "the game's page isn't told of a change of the phone page")
+        XCTAssertNotNil(second["phone"])
+        _ = PageLive.shared.state(["place": "mac", "state": "phone", "gen": second["gen"] as Any], for: game)
+        let phoneOutcome = await phone.value
+        XCTAssertEqual(phoneOutcome, .held, "the Reload stays")
+        XCTAssertTrue(PageLive.shared.holds(game))
+
+        // Reload still puts the page's own change in.
+        XCTAssertTrue(PageLive.shared.putInNow(game))
+        let third = await nextChange(after: second["gen"] as? Int ?? 0)
+        XCTAssertEqual(third["changed"] as? [String], ["game.js"])
+        XCTAssertEqual(third["now"] as? Bool, true)
     }
 }

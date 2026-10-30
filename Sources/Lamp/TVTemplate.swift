@@ -1597,7 +1597,7 @@ extension TVTemplate {
             var tries = 0;
             var tellWhenLinked = function () {
               var wish = window.Lamp && window.Lamp.wish;
-              var linked = wish && wish._linked && wish._linked();
+              var linked = wish && wish.state && wish.state() === 'connected';
               if (linked || ++tries > 20) return tell();
               setTimeout(tellWhenLinked, 1000);
             };
@@ -3566,8 +3566,6 @@ extension TVTemplate {
             };
             store.here = function (name, id) { subscribe(name); return !!here_[name + '\t' + id]; };
           }
-          // Whether a word for Lamp gets there now: a copy alone in its wish's room is linked though it has no one to talk to.
-          api._linked = function () { return !!host || !!(socket && socket.readyState === 1 && sendKey); };
           // A word for Lamp itself (lamp.js's "A change while it's open"): through the app around the page when it's hosted,
           // else sealed into Lamp's room; nothing while Lamp's room isn't reached.
           api._toLamp = function (data) {
@@ -3584,10 +3582,6 @@ extension TVTemplate {
           if (window.Lamp) window.Lamp.wish = api;
           if (window.LampStore) { window.LampStore.shared = shared; window.LampStore.sharedFiles = sharedFiles; }
           if (!host && window.Lamp && window.Lamp.controllers && window.Lamp.controllers._attach) window.Lamp.controllers._attach(padSource);
-          // A copy on a TV or the Xbox is in the room whether its page uses the wish or not: it's how a change of the page
-          // reaches it (`PageCopies`). An app around a page joins when the page first asks, since joining can have the
-          // system ask about the local network, and Lamp's preview takes its changes from Lamp.
-          if (!host && !bridge && !stranded && where) api.start();
         })();
 
         """#
@@ -3898,8 +3892,8 @@ extension Agent.Rules {
     /// it (a screen's, a web app's, a web game's, a TV app's), so it's said once.
     static let pageCopies = """
     - A change of the page goes into every copy of it that's open (its window on this Mac, a simulator, an iPad, a \
-    TV, the Xbox, an Android device) a few seconds after you save it, or as soon as your turn ends at the latest, each \
-    keeping what it saved, without a build or the person doing anything; a copy that can't take it as it is (a change of Sources/, or of a script that runs before \
+    TV, the Xbox, an Android device) as soon as your turn ends, each keeping what it saved, without a build or the \
+    person doing anything; a copy that can't take it as it is (a change of Sources/, or of a script that runs before \
     lamp.js) waits for the person's Reload, which puts it on every device they have the app on. So never say a \
     change reaches only where Try On points.
     """
