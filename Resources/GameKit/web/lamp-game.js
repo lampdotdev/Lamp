@@ -1404,6 +1404,8 @@ const isKept = v => [...kept.values()].some(k => k.made === v);
 
 // Async builds still running, each with the listeners added while it ran.
 const keepsWaiting = new Set();
+// The parts' timer lists a timer's callback runs for, while it runs.
+let timedFor = null;
 function own(made, waiting) {
     const parts = [made, made && made.domElement, made && made.canvas].filter(o => o && typeof o === 'object');
     const of = target => parts.some(p => p === target || (p.contains && target.nodeType && p.contains(target)));
@@ -1696,20 +1698,25 @@ function watch() {
         const list = listenersOf.get(this), capture = captureOf(options);
         if (list) { const i = list.findIndex(l => l.type === type && l.fn === fn && l.capture === capture); if (i >= 0) list.splice(i, 1); }
     };
+    // A timer started while an async part's build waits is recorded against that part, and so is every timer its
+    // callbacks start after (one that schedules its next tick), so the part is built again while any is running.
+    const owners = () => [...[...keepsWaiting].map(waiting => waiting.timers), ...(timedFor || [])];
+    const runFor = (lists, fn) => lists.length ? (...a) => { const was = timedFor; timedFor = lists; try { return fn(...a); } finally { timedFor = was; } } : fn;
     window.setTimeout = function (fn, ms, ...rest) {
         if (keeping || typeof fn !== 'function') return browser.setTimeout.call(window, fn, ms, ...rest);
-        const id = browser.setTimeout.call(window, (...a) => { timeouts.delete(id); fn(...a); }, ms, ...rest);
+        const lists = owners(), run = runFor(lists, fn);
+        const id = browser.setTimeout.call(window, (...a) => { timeouts.delete(id); run(...a); }, ms, ...rest);
         timeouts.add(id);
-        for (const waiting of keepsWaiting) waiting.timers.push(id);
+        for (const list of lists) list.push(id);
         return id;
     };
     window.clearTimeout = id => { timeouts.delete(id); browser.clearTimeout.call(window, id); };
     window.setInterval = function (fn, ms, ...rest) {
-        const id = browser.setInterval.call(window, fn, ms, ...rest);
-        if (!keeping) {
-            intervals.add(id);
-            for (const waiting of keepsWaiting) waiting.timers.push(id);
-        }
+        if (keeping || typeof fn !== 'function') return browser.setInterval.call(window, fn, ms, ...rest);
+        const lists = owners();
+        const id = browser.setInterval.call(window, runFor(lists, fn), ms, ...rest);
+        intervals.add(id);
+        for (const list of lists) list.push(id);
         return id;
     };
     window.clearInterval = id => { intervals.delete(id); browser.clearInterval.call(window, id); };
