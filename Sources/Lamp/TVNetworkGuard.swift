@@ -76,8 +76,9 @@ enum TVNetworkGuard {
         policy.lampHosts.flatMap { ["http://\($0):\(policy.gatewayPort)", "ws://\($0):*"] } + ["ws://127.0.0.1:*"]
     }
 
-    /// The TV page's policy. Its own files are 'self' and file: (a TV opens the package from its disk), pictures and
-    /// sounds may be data and blobs it makes, and scripts may be inline and eval'd: this rule is about where the page
+    /// The TV page's policy. Its own files are 'self' and file: (a TV opens the package from its disk), pictures,
+    /// sounds, styles and fonts may be data or blobs it makes, scripts may be blobs (a change taken while the page is
+    /// open comes as blobs: `TVTemplate.pageChangeJS`), inline or eval'd: this rule is about where the page
     /// connects, not what code it runs. Frames and workers come only from the app's sites: any of its own files (a script,
     /// a picture) opened as a frame or a worker is a document of its own that no meta tag reaches, and a data or blob one
     /// has no policy in older browsers.
@@ -91,11 +92,11 @@ enum TVNetworkGuard {
         let documents = sites.isEmpty ? "'none'" : list(sites)
         return [
             "default-src " + list(mine),
-            "script-src " + list(mine + ["'unsafe-inline'", "'unsafe-eval'"]),
-            "style-src " + list(mine + ["'unsafe-inline'"]),
+            "script-src " + list(mine + ["'unsafe-inline'", "'unsafe-eval'", "blob:"]),
+            "style-src " + list(mine + ["'unsafe-inline'", "data:", "blob:"]),
             "img-src " + list(mine + ["data:", "blob:"]),
             "media-src " + list(mine + ["data:", "blob:"]),
-            "font-src " + list(mine + ["data:"]),
+            "font-src " + list(mine + ["data:", "blob:"]),
             "connect-src " + list(mine + ["data:", "blob:"] + connect),
             "frame-src " + documents,
             "child-src " + documents,

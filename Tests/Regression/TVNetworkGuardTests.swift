@@ -50,6 +50,9 @@ final class TVNetworkGuardTests: XCTestCase {
         // Any character but HTML's own spaces before the doctype opens the body, where a policy counts for nothing.
         let spaced = String(decoding: TVNetworkGuard.guarded(Data("\u{00A0}<!doctype html><p>x</p>".utf8), policy: csp), as: UTF8.self)
         XCTAssertTrue(spaced.hasPrefix("<meta http-equiv=\"Content-Security-Policy\""), spaced)
+        // A doctype ends at its first `>`, quoted or not, as HTML's tokenizer ends it: the tag then opens the head.
+        let quoted = String(decoding: TVNetworkGuard.guarded(Data("<!DOCTYPE html PUBLIC \"a>b\"><p>x</p>".utf8), policy: csp), as: UTF8.self)
+        XCTAssertTrue(quoted.hasPrefix("<!DOCTYPE html PUBLIC \"a><meta http-equiv=\"Content-Security-Policy\""), quoted)
         XCTAssertTrue(TVNetworkGuard.isPage("a.shtml") && TVNetworkGuard.isPage("b.HTM"))
         XCTAssertFalse(TVNetworkGuard.isPage("c.xhtml"), "an XHTML page can't take an HTML meta tag")
     }
