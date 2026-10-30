@@ -17,7 +17,7 @@ Lamp comes with apps to start from, on its desk under **Starter apps**:
 - **Home HQ** (from Wes Bos's family dashboard): the day, calendar, chores, shopping and photos at a glance, on the
   Mac, a tablet or the TV.
 - **The Little House**: a cozy room on a rainy night, with a fire and a ticking clock to listen to.
-- **Universal Remote**, **Buzzer Beater**, **Fireside**, **Local Crossings**, **Today**, **Hot Shelf**, **Disk Map**,
+- **Universal Remote**, **Buzzer Beater**, **Fireside**, **Local Crossings**, **Today**, **Disk Map**,
   **Hours**, **Wedding Words**, **Transcriber**, **Tidy Up** and **Site-to-App**.
 
 Change one and it's yours; the original stays under Starter apps. Every starter is a repository on GitHub
