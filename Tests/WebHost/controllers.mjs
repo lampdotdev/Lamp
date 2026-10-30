@@ -99,7 +99,14 @@ try {
     assert.equal(r.policy, lg.policy(name, relayPort, reach), name);
   }
   assert.match((await get(pagePort, '/')).policy, new RegExp(`connect-src 'self' ws://127\\.0\\.0\\.1:${relayPort} api\\.example\\.com;`));
-  step('the page\'s rules name only its relay and the sites its reach file names, as the LG service writes them');
+  // An app the person made: no policy at all, as before phone pages had one.
+  const shared = fs.readFileSync(path.join(root, 'lamp-reach.json'));
+  fs.writeFileSync(path.join(root, 'lamp-reach.json'), '{"unrestricted":true}');
+  r = await get(pagePort, '/');
+  assert.equal(r.status, 200);
+  assert.equal(r.policy, undefined, 'an own app\'s phone page has no policy');
+  fs.writeFileSync(path.join(root, 'lamp-reach.json'), shared);
+  step('the page\'s rules name only its relay and the sites its reach file names, as the LG service writes them; an own app\'s page has none');
 
   // A socket from another site's page is refused before it's a WebSocket.
   const refused = await new Promise((resolve) => {

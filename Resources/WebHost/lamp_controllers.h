@@ -500,22 +500,23 @@ inline std::optional<std::string> policy_source(std::string text) {
     return plain_host(host) ? std::optional(scheme + "://" + rest) : std::nullopt;
 }
 
-// The reach file's sites: nullopt for any secure site (an app the person made), else only those named.
+// The reach file's sites: nullopt for an unrestricted page (an app the person made), else only those named.
 inline std::optional<std::vector<std::string>> reach(std::optional<std::string> const& file) {
     std::vector<std::string> only;
     auto json = file ? Json::parse(*file) : std::nullopt;
     if (!json) return only;
-    if (json->is_true("secureSites")) return std::nullopt;
+    if (json->is_true("unrestricted")) return std::nullopt;
     if (auto list = json->get("only"); list && list->type == Json::Type::array)
         for (auto const& item : list->a) if (item.type == Json::Type::string) only.push_back(item.s);
     return only;
 }
 
+// Empty for an unrestricted page, which goes out with no header.
 inline std::string policy(std::optional<std::string> const& host, std::optional<uint16_t> relay_port,
                           std::optional<std::vector<std::string>> const& named) {
+    if (!named) return "";
     std::vector<std::string> sites;
-    if (!named) sites = { "https:" };
-    else for (auto const& site : *named) if (auto source = policy_source(site)) sites.push_back(*source);
+    for (auto const& site : *named) if (auto source = policy_source(site)) sites.push_back(*source);
     std::string connect = "'self'";
     if (host) {
         std::string name = lower(trim(*host));
@@ -524,7 +525,6 @@ inline std::string policy(std::optional<std::string> const& host, std::optional<
             if (plain_host(name) && relay_port) connect += " ws://" + name + ":" + std::to_string(*relay_port);
         }
     }
-    if (!named) connect += " wss:";
     auto list = [&](std::string base) { for (auto const& site : sites) base += " " + site; return base; };
     return "default-src 'none'; script-src " + list("'self' 'unsafe-inline'") + "; style-src " + list("'self' 'unsafe-inline'")
         + "; img-src " + list("'self' data: blob:") + "; media-src " + list("'self' data: blob:") + "; font-src " + list("'self' data:")

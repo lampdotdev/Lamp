@@ -3673,7 +3673,7 @@ extension TVTemplate {
                 // The page's rules name the relay where it was as the page was served: one that has moved since is
                 // refused, so the page is loaded again under rules that name where it is now.
                 trying = address;
-                try { s = new WebSocket(address); } catch (e) { refused(relay.port, credential); return; }
+                try { s = new WebSocket(address); } catch (e) { if (e && e.name === 'SecurityError') { refused(relay.port, credential); return; } throw e; }
                 s.binaryType = 'arraybuffer';
                 socket = s;
                 s.onopen = function () {

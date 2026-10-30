@@ -167,7 +167,7 @@ function policySource(text) {
 function readReachJSON(text) {
   try {
     var object = JSON.parse(text);
-    if (object && object.secureSites === true) return { secureSites: true };
+    if (object && object.unrestricted === true) return { unrestricted: true };
     return { only: Array.isArray(object && object.only) ? object.only.filter(function (s) { return typeof s === 'string'; }) : [] };
   } catch (e) {
     return { only: [] };
@@ -178,15 +178,16 @@ function readReach(root) {
   try { return readReachJSON(fs.readFileSync(path.join(root, REACH_FILE), 'utf8')); } catch (e) { return { only: [] }; }
 }
 
+// Null for an unrestricted page (an app the person made), which goes out with no header.
 function policy(host, relayPort, reach) {
-  var sites = reach.secureSites ? ['https:'] : reach.only.map(policySource).filter(Boolean);
+  if (reach.unrestricted) return null;
+  var sites = reach.only.map(policySource).filter(Boolean);
   var connect = ["'self'"];
   var name = String(host || '').trim().toLowerCase();
   if (name && name.charAt(0) !== '[') {
     if (name.indexOf(':') >= 0) name = name.slice(0, name.indexOf(':'));
     if (plainHost(name) && relayPort) connect.push('ws://' + name + ':' + relayPort);
   }
-  if (reach.secureSites) connect.push('wss:');
   var list = function (base) { return base.concat(sites).join(' '); };
   return [
     "default-src 'none'",
@@ -749,11 +750,13 @@ Session.prototype.makePageServer = function () {
     var game = self.game;
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { 'Content-Type': TYPES.txt }); return res.end('Not allowed'); }
     var page = answer(self.root, req.url, req.headers.host, game ? game.hosts : [], game ? { port: self.relayPort, app: self.app } : null);
-    res.writeHead(page.status, {
+    var headers = {
       'Content-Type': page.type, 'Content-Length': page.file ? page.size : page.body.length, 'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Connection': 'close',
-      'Content-Security-Policy': policy(req.headers.host, game ? self.relayPort : null, readReach(self.root))
-    });
+      'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Connection': 'close'
+    };
+    var rules = policy(req.headers.host, game ? self.relayPort : null, readReach(self.root));
+    if (rules) headers['Content-Security-Policy'] = rules;
+    res.writeHead(page.status, headers);
     if (req.method === 'HEAD') return res.end();
     if (!page.file) return res.end(page.body);
     // The file lasts as long as its answer does: a phone that goes away partway (a reload, Wi-Fi lost) lets the file go

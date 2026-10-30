@@ -48,8 +48,8 @@ final class PhonePagePolicyTests: XCTestCase {
     func testASharedAppsPhonePageReachesOnlyItsPolicysSites() async throws {
         let shared = NetworkPolicy(origins: ["https://geocoding-api.open-meteo.com"], mayConnect: true, ownSwift: true)
         XCTAssertEqual(PhonePageReach.reach(shared), .only(["https://geocoding-api.open-meteo.com"]))
-        XCTAssertEqual(PhonePageReach.reach(nil), .secureSites)
-        XCTAssertEqual(PhonePageReach.reach(NetworkPolicy(origins: [], unrestricted: true)), .secureSites)
+        XCTAssertEqual(PhonePageReach.reach(nil), .unrestricted)
+        XCTAssertEqual(PhonePageReach.reach(NetworkPolicy(origins: [], unrestricted: true)), .unrestricted)
 
         let page = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<title>Pad</title>".utf8)),
                                               .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.json(PhonePageReach.reach(shared)))])
@@ -67,8 +67,25 @@ final class PhonePagePolicyTests: XCTestCase {
         XCTAssertFalse(policy.contains("https:;") || policy.contains("https: ") || policy.contains("wss:"), "no site beyond the policy's: \(policy)")
     }
 
+    /// An app the person made (or a starter) has no shared policy, and its phone page is served as it was before phone
+    /// pages had rules: no policy header at all, from a game's own server as from Lamp's.
+    func testAnOwnAppsPhonePageGetsNoPolicy() async throws {
+        let page = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<title>Pad</title>".utf8)),
+                                              .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.json(PhonePageReach.reach(nil)))])
+        try page.write(to: folder)
+        let runtime = ControllerRuntime(app: "mygame", page: folder)
+        runtime.hosts = { ["127.0.0.1"] }
+        runtime.linkHost = { "127.0.0.1" }
+        defer { runtime.stop() }
+        XCTAssertEqual(runtime.startNow().status, 200)
+        let (_, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(try XCTUnwrap(runtime.pagePort))/")!)
+        let http = try XCTUnwrap(response as? HTTPURLResponse)
+        XCTAssertEqual(http.statusCode, 200)
+        XCTAssertNil(http.value(forHTTPHeaderField: "Content-Security-Policy"), "an own app's phone page is served with no policy")
+    }
+
     func testAPageWithNoReachFileReachesNoSites() {
-        let policy = PhonePagePolicy.header(host: "192.168.1.20:52000", relayPort: 52001, reach: PhonePagePolicy.reach(json: nil))
+        let policy = PhonePagePolicy.header(host: "192.168.1.20:52000", relayPort: 52001, reach: PhonePagePolicy.reach(json: nil)) ?? ""
         XCTAssertTrue(policy.contains("connect-src 'self' ws://192.168.1.20:52001;"), policy)
         XCTAssertFalse(policy.contains("https:"), policy)
     }
@@ -81,11 +98,11 @@ final class PhonePagePolicyTests: XCTestCase {
         let relay = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Resources/LGPhones/relay.js")
         let cases: [(String?, UInt16?, PhonePagePolicy.Reach)] = [
-            ("192.168.1.20:52000", 52001, .only(Self.hostile)), ("Mac.local", 60000, .secureSites), ("[fe80::1]:5000", 5001, .only([])),
-            (nil, 5001, .only(["a.test"])), ("localhost:9", nil, .secureSites),
+            ("192.168.1.20:52000", 52001, .only(Self.hostile)), ("Mac.local", 60000, .unrestricted), ("[fe80::1]:5000", 5001, .only([])),
+            (nil, 5001, .only(["a.test"])), ("localhost:9", nil, .unrestricted),
         ]
         for (host, port, reach) in cases {
-            let script = "var r = require(process.argv[1]); process.stdout.write(r.policy(JSON.parse(process.argv[2]), JSON.parse(process.argv[3]), r.readReachJSON(process.argv[4])))"
+            let script = "var r = require(process.argv[1]); process.stdout.write(r.policy(JSON.parse(process.argv[2]), JSON.parse(process.argv[3]), r.readReachJSON(process.argv[4])) || '')"
             let process = Process()
             process.executableURL = URL(fileURLWithPath: node)
             let hostJSON = host.map { "\"\($0)\"" } ?? "null"
@@ -95,7 +112,7 @@ final class PhonePagePolicyTests: XCTestCase {
             try process.run()
             process.waitUntilExit()
             let js = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            XCTAssertEqual(js, PhonePagePolicy.header(host: host, relayPort: port, reach: reach), "\(host ?? "nil")")
+            XCTAssertEqual(js, PhonePagePolicy.header(host: host, relayPort: port, reach: reach) ?? "", "\(host ?? "nil")")
         }
     }
 }

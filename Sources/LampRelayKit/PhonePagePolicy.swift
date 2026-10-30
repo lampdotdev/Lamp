@@ -1,16 +1,17 @@
 import Foundation
 
-/// The rules a phone's browser holds a phone page to (its Content-Security-Policy), sent with every answer by each server
-/// of one: Lamp's (`Store.phonePage`), a game's own (`PhonePageServer`), an LG TV's (relay.js) and the Xbox host's
-/// (lamp_controllers.h), which write the same words. Nothing is allowed unless it's named: the page's own files; the
+/// The rules a phone's browser holds a shared app's phone page to (its Content-Security-Policy), sent with every answer by
+/// each server of one: Lamp's (`Store.phonePage`), a game's own (`PhonePageServer`), an LG TV's (relay.js) and the Xbox
+/// host's (lamp_controllers.h), which write the same words. An app the person made has none (`Reach.unrestricted`), and its
+/// page is served as it always was. For a shared one nothing is allowed unless it's named: the page's own files; the
 /// game's relay, on the machine the page came from (by the name the phone used) at the port it listens on as the page is
 /// served, and nowhere else on the network; and the sites the app may reach (`Reach`). A relay that moved after the page
 /// loaded is outside the page's rules, so lamp-controller.js loads the page again when its socket is refused.
 public enum PhonePagePolicy {
     /// Sites beyond the page's own files and its relay.
     public enum Reach: Equatable, Sendable {
-        /// Any https site, and secure sockets to any site: an app the person made here, whose page reaches what they asked for.
-        case secureSites
+        /// No rules at all: an app the person made here (or a starter), or one they let reach every site.
+        case unrestricted
         /// Only these: an app shared with the person, held to the sites its safety review named. Each is a host name
         /// ("api.example.com") or an origin ("https://api.example.com:8443"); anything else is dropped.
         case only([String])
@@ -23,7 +24,7 @@ public enum PhonePagePolicy {
     public static func json(_ reach: Reach) -> Data {
         let object: [String: Any]
         switch reach {
-        case .secureSites: object = ["secureSites": true]
+        case .unrestricted: object = ["unrestricted": true]
         case .only(let sites): object = ["only": sites]
         }
         return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
@@ -32,20 +33,17 @@ public enum PhonePagePolicy {
     /// A reach file's `Reach`: no sites when it's missing or unreadable.
     public static func reach(json data: Data?) -> Reach {
         guard let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return .only([]) }
-        if object["secureSites"] as? Bool == true { return .secureSites }
+        if object["unrestricted"] as? Bool == true { return .unrestricted }
         return .only((object["only"] as? [Any])?.compactMap { $0 as? String } ?? [])
     }
 
-    /// The header's value for a page asked for by `host` (the request's Host header), with the relay at `relayPort`.
-    public static func header(host: String?, relayPort: UInt16?, reach: Reach) -> String {
-        let sites: [String]
-        switch reach {
-        case .secureSites: sites = ["https:"]
-        case .only(let named): sites = named.compactMap(source)
-        }
+    /// The header's value for a page asked for by `host` (the request's Host header), with the relay at `relayPort`; nil
+    /// for an unrestricted page, which is sent with no header.
+    public static func header(host: String?, relayPort: UInt16?, reach: Reach) -> String? {
+        guard case .only(let named) = reach else { return nil }
+        let sites = named.compactMap(source)
         var connect = ["'self'"]
         if let name = relayHost(host), let relayPort { connect.append("ws://\(name):\(relayPort)") }
-        if reach == .secureSites { connect.append("wss:") }
         func list(_ base: [String]) -> String { (base + sites).joined(separator: " ") }
         return [
             "default-src 'none'",

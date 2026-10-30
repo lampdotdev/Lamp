@@ -93,6 +93,13 @@ function run() {
     // names: an entry that isn't a site is dropped, never written into the header.
     assert.ok(pages[1].policy.indexOf("connect-src 'self' ws://192.168.1.40:" + relayPort + ' api.example.com;') >= 0, pages[1].policy);
     assert.ok(pages[0].policy.indexOf("default-src 'none';") === 0 && pages[0].policy.indexOf('x.test') < 0, pages[0].policy);
+    // An app the person made: Lamp's reach file says so, and its page goes out with no policy, as before phone pages had one.
+    fs.writeFileSync(path.join(root, 'lamp-reach.json'), JSON.stringify({ unrestricted: true }));
+    return get(pagePort, '/');
+  }).then(function (own) {
+    assert.strictEqual(own.status, 200);
+    assert.strictEqual(own.policy, undefined, 'an own app\'s phone page has no policy');
+    fs.writeFileSync(path.join(root, 'lamp-reach.json'), JSON.stringify({ only: ['api.example.com', 'x.test; script-src *'] }));
 
     // The game's page: no origin it could prove, so its credential lets it in.
     host = client(answer.links[0].socket, 'file://');
