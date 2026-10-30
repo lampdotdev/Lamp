@@ -116,13 +116,29 @@ final class LocalModels: ObservableObject {
         }
     }
 
-    /// The server's fetch, reporting into `progress[id]` over its first `share`, for a model downloaded with it.
+    /// The server's fetch, reporting into `progress[id]` over its first `share`, for a model downloaded with it. One
+    /// fetch at a time, which every caller (a pick, a model's download, a request) waits on, each seeing its progress:
+    /// two at once would put the same folder in place over each other.
     private func installServer(as id: String, share: Double = 1) async throws {
-        try await LlamaInstall.install { [weak self] fraction in
-            Task { @MainActor in self?.progress[id] = fraction * share }
+        serverWatchers[id] = share
+        defer { serverWatchers[id] = nil }
+        let install = serverInstall ?? Task { [weak self] in
+            try await LlamaInstall.install { fraction in
+                Task { @MainActor in
+                    guard let self else { return }
+                    for (id, share) in self.serverWatchers { self.progress[id] = fraction * share }
+                }
+            }
         }
+        serverInstall = install
+        // Done with either way, so a try after a failure fetches afresh.
+        defer { if serverInstall == install { serverInstall = nil } }
+        try await install.value
         serverInstalled = LlamaInstall.isInstalled
     }
+    private var serverInstall: Task<Void, Error>?
+    /// Who waits on the server's fetch, with the share of their progress it fills.
+    private var serverWatchers: [String: Double] = [:]
 
     // MARK: Finding models
 

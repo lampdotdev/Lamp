@@ -54,6 +54,8 @@ enum LlamaInstall {
         // The zip holds one folder, llama-<build>, with the server and its libraries.
         let built = unpacked.appendingPathComponent("llama-\(pin.build)")
         guard ditto.terminationStatus == 0, verified(built) else { throw Downloads.Failure(Downloads.refused) }
+        // The same build put in place meanwhile (another Lamp of this edition) stays: it may be running.
+        if isInstalled, verified(folder) { return }
         try? fm.removeItem(at: folder)
         try fm.moveItem(at: built, to: folder)
         for old in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
