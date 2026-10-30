@@ -1,5 +1,6 @@
 import XCTest
 @testable import Lamp
+import LampRelayKit
 
 /// What Lamp ships for devices, and the Windows packages it makes for one, held to what the device was seen to take.
 final class DeviceAppPackageTests: XCTestCase {
@@ -59,6 +60,31 @@ final class DeviceAppPackageTests: XCTestCase {
         XCTAssertFalse(manifest.contains("StartPage="))
         XCTAssertTrue(manifest.contains("<Path>Microsoft.Web.WebView2.Core.dll</Path>"))
         for name in WebHost.activatableClasses { XCTAssertTrue(manifest.contains("ActivatableClassId=\"\(name)\""), name) }
+    }
+
+    /// A shared app's Xbox package carries its sites beside the host, outside Web/, where the host reads them with Lamp
+    /// closed (lamp_web_guard.h, which scripts/check-web-host-guard.sh runs): the policy Lamp kept at import, exact,
+    /// with Lamp's own addresses for the page's calls to it. A file of the app's own by that name stays the app's, in Web/.
+    func testASharedAppsXboxPackageCarriesItsSites() throws {
+        let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Resources/WebHost")
+        let kept = NetworkPolicy(origins: ["https://API.Open-Meteo.com/v1/forecast", "wss://relay.example:8443/"], mayConnect: true)
+        let policy = WebHost.policy(from: kept, lamp: ["http://Test-Mac.local:7777", "http://192.168.1.5:7777"])
+        let own = Data(#"{"format":1,"origins":["https://evil.example"]}"#.utf8)
+        let files = try WebHost.payload([("index.html", Data("<p>".utf8)), (WebHost.policyFile, own)], policy: policy, from: resources)
+        let written = try XCTUnwrap(files.first { $0.path == WebHost.policyFile }?.data)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: written) as? [String: Any])
+        XCTAssertEqual(json["format"] as? Int, 1)
+        XCTAssertEqual(json["origins"] as? [String], ["https://api.open-meteo.com", "wss://relay.example:8443"])
+        XCTAssertEqual(json["lamp"] as? [String], ["http://192.168.1.5:7777", "http://test-mac.local:7777"])
+        XCTAssertEqual(files.filter { $0.path == WebHost.policyFile }.count, 1)
+        XCTAssertEqual(files.first { $0.path == "Web/" + WebHost.policyFile }?.data, own)
+        // Nothing listed is nothing reached, not everything.
+        XCTAssertEqual(WebHost.policy(from: NetworkPolicy(), lamp: [])?.origins, [])
+        // The person's own app, and a shared one they let reach every site, carry none.
+        XCTAssertNil(WebHost.policy(from: nil, lamp: []))
+        XCTAssertNil(WebHost.policy(from: NetworkPolicy(origins: ["https://a.example"], unrestricted: true), lamp: []))
+        XCTAssertFalse(try WebHost.payload([], from: resources).contains { $0.path == WebHost.policyFile })
     }
 
     /// The import map the rules give names the library where the page finds it, nested folders included.

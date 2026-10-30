@@ -203,6 +203,9 @@ async function run(mode) {
   assert.equal((await ask({ op: 'navigate', url: listed + '/' })).where, 'browser');
   assert.equal((await ask({ op: 'navigate', url: 'https://evil.example/?d=1' })).where, 'refuse');
   assert.equal((await ask({ op: 'frame', url: 'https://evil.example/' })).ok, false);
+  // A site the page may fetch from is never a frame of it (NetworkPolicy.allowsFrame).
+  assert.equal((await ask({ op: 'frame', url: listed + '/' })).ok, false);
+  assert.equal((await ask({ op: 'frame', url: own + '/menu.html' })).ok, true);
   assert.equal((await ask({ op: 'http', url: 'http://127.0.0.1:9/ai/chat' })).ok, true, "Lamp's own address");
   assert.equal((await ask({ op: 'http', url: 'http://127.0.0.1:10/ai/chat' })).ok, false);
   // A relay is reachable over the ws bridge once Lamp's own answer names it (phones Lamp holds, a wish's room).

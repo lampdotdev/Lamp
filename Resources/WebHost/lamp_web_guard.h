@@ -135,11 +135,13 @@ inline Navigation navigation(Policy const& policy, std::string_view url) {
     return !policy.guarded || policy.listed(url) ? Navigation::browser : Navigation::refuse;
 }
 
-// Whether a frame in the page may open this: its own pages, a listed site, or what never leaves the page.
+// Whether a frame in the page may open this: its own pages, and what it makes for itself (blob:, about:), as
+// NetworkPolicy.allowsFrame has it. A site the page may fetch from is never a frame of it: a page from there would run
+// with none of these rules.
 inline bool frame_may_open(Policy const& policy, std::string_view url) {
     if (!policy.guarded) return true;
-    if (url == "about:blank" || url == "about:srcdoc" || scheme_is(url, "data") || scheme_is(url, "blob")) return true;
-    return policy.is_own(url) || policy.listed(url);
+    if (url == "about:blank" || url == "about:srcdoc" || scheme_is(url, "blob")) return true;
+    return policy.is_own(url);
 }
 
 // MARK: The bridges
@@ -183,8 +185,8 @@ inline std::string csp(Policy const& policy) {
     for (auto const& origin : policy.origins) sites += " " + origin;
     return "default-src " + sites + "; script-src " + sites + " 'unsafe-inline' 'unsafe-eval' blob:; style-src " + sites
         + " 'unsafe-inline'; img-src " + sites + " data: blob:; media-src " + sites + " data: blob:; font-src " + sites
-        + " data:; connect-src " + sites + " data: blob:; worker-src 'self' blob:; frame-src " + sites
-        + " data: blob:; object-src 'none'; base-uri 'self'; form-action " + sites + "; manifest-src 'self'";
+        + " data:; connect-src " + sites + " data: blob:; worker-src 'self' blob:; frame-src 'self' blob:; child-src 'self' blob:;"
+        + " object-src 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'";
 }
 
 // What the web view itself is started with for a guarded app, under the policy and the host's look at each request:

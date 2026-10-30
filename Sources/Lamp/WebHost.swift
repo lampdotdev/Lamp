@@ -20,7 +20,7 @@ enum WebHost {
         "Microsoft.Web.WebView2.Core.CoreWebView2CustomSchemeRegistration",
     ]
 
-    private static var resources: URL? { Bundle.main.resourceURL?.appendingPathComponent("WebHost") }
+    static var resources: URL? { Bundle.main.resourceURL?.appendingPathComponent("WebHost") }
 
     /// Whether a declared kind's apps run in this host. Lamp Dev can be sent back to the EdgeHTML host with
     /// `defaults write <bundle id> xboxWebHost edgehtml`, to compare the two on the same console; a shared app never is,
@@ -31,7 +31,8 @@ enum WebHost {
     }
 
     /// What a shared app's page may reach on the console, which the host keeps to with or without Lamp
-    /// (`lamp_web_guard.h`): the sites it was shared with, and Lamp's own addresses for the page's calls to Lamp.
+    /// (`lamp_web_guard.h`): the sites it was shared with (`NetworkPolicy.origins`), and Lamp's own addresses for the
+    /// page's calls to Lamp.
     /// Written beside the host as `policyFile`, outside Web/, where nothing of the app's own can reach it.
     struct Policy: Codable, Equatable {
         /// The host's `lampg::policy_format`: a host that doesn't know it guards the app with nothing listed.
@@ -41,12 +42,17 @@ enum WebHost {
     }
     static let policyFile = "network-policy.json"
 
-    /// The policy for an app shared with the person; nil for one of their own, which the host leaves as it is.
+    /// The policy for an app shared with the person, from what Lamp keeps for it (`SharedNetwork`); nil for one of their
+    /// own, or one they let reach every site, which the host leaves as it is.
     static func policy(for project: LampProject) -> Policy? {
-        guard let origins = SharedReach.allowedOrigins(for: project) else { return nil }
-        let routes = DeviceSupport.installValues(for: project)["routes"] as? [String] ?? []
-        return Policy(origins: Array(Set(origins.compactMap(SharedReach.canonical))).sorted(),
-                      lamp: Array(Set(routes.compactMap(SharedReach.canonical))).sorted())
+        policy(from: SharedNetwork.policy(for: project), lamp: DeviceSupport.installValues(for: project)["routes"] as? [String] ?? [])
+    }
+
+    /// The host has no bar to ask the person about a site Lamp couldn't name (`mayConnect`), and runs no Swift of the
+    /// app's own (`ownSwift`): on the console a shared page reaches its listed sites and nothing else.
+    static func policy(from shared: NetworkPolicy?, lamp routes: [String]) -> Policy? {
+        guard let shared, shared.restricts else { return nil }
+        return Policy(origins: shared.origins, lamp: Array(Set(routes.compactMap(NetworkPolicy.origin))).sorted())
     }
 
     /// Where a game's phone page goes in the package, beside Web/, which the host serves to phones itself.
@@ -54,7 +60,8 @@ enum WebHost {
 
     /// The package's files: the host and WebView2's library at the top, a shared app's policy beside them, the app's
     /// under Web/, and a game's phone page under Phone/.
-    static func payload(_ files: [(path: String, data: Data)], phone: ControllerSnapshot? = nil, policy: Policy? = nil) throws -> [(path: String, data: Data)] {
+    static func payload(_ files: [(path: String, data: Data)], phone: ControllerSnapshot? = nil, policy: Policy? = nil,
+                        from resources: URL? = resources) throws -> [(path: String, data: Data)] {
         guard let resources,
               let host = try? Data(contentsOf: resources.appendingPathComponent(program)),
               let core = try? Data(contentsOf: resources.appendingPathComponent(library)) else {

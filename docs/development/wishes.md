@@ -228,8 +228,9 @@ Content-Security-Policy naming only those sites; the page never leaves its own a
 no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
 "May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
 or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`). A copy of the wish
-(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A host elsewhere (a TV, an Xbox,
-Android, a phone's controller page) holds a shared page only once it reads `SharedNetwork.policy(for:)` and enforces the
+(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). The Xbox's web host reads it from
+its package (the "Devices" guide's shared web app on the Xbox), and holds the page there whatever Swift the app has,
+since none of it runs on the console. A host elsewhere (a TV, Android, a phone's controller page) holds a shared page only once it reads `SharedNetwork.policy(for:)` and enforces the
 same `NetworkPolicy`. Swift of the sender's beside the page (Sources/Native.swift or any other Swift there) runs in the app's
 process, where no page rule reaches, and can turn the page's guard off too (the person's choices are kept in the app's
 defaults): such an app isn't held to its sites at all, its page included. Its Swift isn't switched off, since the page's

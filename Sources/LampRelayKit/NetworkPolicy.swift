@@ -11,8 +11,8 @@ import Foundation
 ///
 /// One rule for every host of a shared page, each reading this type rather than a copy of it: the app around it on the
 /// Mac, the iPhone and the iPad (LampPage.swift, as Content-Security-Policy headers and its navigation) and Lamp's
-/// previews (`StagedFiles`) do; a host elsewhere (a TV, an Xbox, Android, a phone's controller page) holds a shared page
-/// only once it reads it too. It's in LampRelayKit because that's the Swift Lamp and every page's app compile alike
+/// previews (`StagedFiles`) do, and so does the Xbox's web host (`WebHost.policy`, lamp_web_guard.h); a host elsewhere (a
+/// TV, Android, a phone's controller page) holds a shared page only once it reads it too. It's in LampRelayKit because that's the Swift Lamp and every page's app compile alike
 /// (the controller kit).
 public struct NetworkPolicy: Codable, Equatable, Sendable {
     /// Exact origins, as `origin(_:)` writes them: "https://api.open-meteo.com", "wss://relay.example:8443".

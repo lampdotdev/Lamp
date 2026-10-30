@@ -282,22 +282,24 @@ hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and p
 the rest Edge's `Gamepad…` names). A key a page makes can't carry a key code, so the remote's arrows in a TV app or a screen (`Lamp.onKey`, `Lamp.key`) read a key by its name too (`nameOf`), or the controller would move nothing. `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
 console before installs over the earlier EdgeHTML one (same family, newer version), so nothing moves an app across.
 
-**A shared web app on the Xbox** reaches only its own files and the exact sites (scheme, host and port) its safety
-sheet named, with or without Lamp: the rule is in the package, not in Lamp. `WebHost.policy` writes them, with Lamp's
-own gateway addresses, as `network-policy.json` beside the host and outside `Web/`, read through `SharedReach`, and the
-host keeps to it (`Resources/WebHost/lamp_web_guard.h`, plain C++ every decision is made in). For such an app the host
-maps no folder: it serves the app's files itself, each answer carrying the policy as its Content-Security-Policy, and
-puts every request of the page, its frames and its workers to the policy in `WebResourceRequested`, refusing one to a
-site it doesn't list. The policy alone misses a top-level navigation, and the host's look alone misses a WebSocket, so
-it keeps both: navigations and new windows go only to its pages or a listed site. Neither sees a connection opened with
-no request on it (a preconnect, or the warm-up of a navigation the host then refuses), so the web view is started with
-every connection but a listed site's sent to a proxy that isn't there (`lampg::browser_arguments`, loopback included),
-which also leaves WebRTC nothing, and WebRTC is taken out of every frame before the page runs, the `http` bridge goes only to Lamp's addresses, and the `ws` bridge only to a listed site or a
-relay Lamp's own answer named (phones Lamp holds, a wish's room). A game's own phones (`host: 'game'`) are untouched:
-their link never leaves the host. A policy file that's there but can't be read guards the app with nothing listed; an
-app with none runs as before. The EdgeHTML host can't be held to a policy, so a shared app is never put there.
-`scripts/check-web-host-guard.sh` runs the rules on the Mac, and a hostile page in headless Chrome with DevTools
-standing in for WebView2's request event; the host itself only runs on a console.
+**A shared web app on the Xbox** reaches only its own files and the exact sites (scheme, host and port) its safety sheet
+named, with or without Lamp: the rule is in the package, not in Lamp. `WebHost.policy` writes them, with Lamp's own
+gateway addresses, as `network-policy.json` beside the host and outside `Web/`, from what Lamp keeps for the app
+(`SharedNetwork.policy`; one the person let reach every site isn't held), and the host keeps to it
+(`Resources/WebHost/lamp_web_guard.h`, plain C++ every decision is made in). For such an app the host maps no folder: it
+serves the app's files itself, each answer carrying the policy as its Content-Security-Policy, and puts every request of
+the page, its frames and its workers to the policy in `WebResourceRequested`, refusing one to a site it doesn't list.
+The policy alone misses a top-level navigation, and the host's look alone misses a WebSocket, so it keeps both:
+navigations and new windows go only to its pages or a listed site, and a frame only to its own pages, as
+`NetworkPolicy.allowsFrame` has it. Neither sees a connection opened with no request on it (a preconnect, or the warm-up
+of a navigation the host then refuses), so the web view is started with every connection but a listed site's sent to a
+proxy that isn't there (`lampg::browser_arguments`, loopback included), which also leaves WebRTC nothing, and WebRTC is
+taken out of every frame before the page runs. The `http` bridge goes only to Lamp's addresses, and the `ws` bridge only
+to a listed site or a relay Lamp's own answer named (phones Lamp holds, a wish's room). A game's own phones (`host:
+'game'`) are untouched: their link never leaves the host. A policy file that's there but can't be read guards the app
+with nothing listed; an app with none runs as before. The EdgeHTML host can't be held to a policy, so a shared app is
+never put there. `scripts/check-web-host-guard.sh` runs the rules on the Mac, and a hostile page in headless Chrome with
+DevTools standing in for WebView2's request event; the host itself only runs on a console.
 
 **What's on the network, for an app** (`LampNetwork`, in LampSupport.swift): a wish's Mac or iPhone app finds the
 person's devices itself, for the ones Lamp has no block for. `requestAccess()` is the system's Local Network question,
