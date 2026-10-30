@@ -8669,11 +8669,6 @@ final class Store: ObservableObject {
     /// one went in ("Put into New York: Switching the car to rainbow paint"), never its files; the plain line when it
     /// named none.
     private func stepWords(_ project: LampProject, _ turn: Turn) -> String {
-        // A game's step goes in for a progress line: that line is what it was.
-        if let said = progressSinceStep(project, turn) {
-            turn.lastStepAt = Date()
-            return "Put into \(project.name): " + said
-        }
         let since = turn.lastStepAt ?? turn.began
         turn.lastStepAt = Date()
         let lines = logs[wish(of: project).id] ?? []
@@ -8711,6 +8706,8 @@ final class Store: ObservableObject {
         // Nothing the page is made of changed since the last step: nothing to put in, nor to say.
         let page = pageSignature(project)
         guard page != turn.shownPage else { return }
+        // The line this step goes in for, and where it starts: a line the agent posts while it goes in is the next step's.
+        let words = progressSinceStep(project, turn), boundary = Date()
         // Still being written, or broken: tried again once it changes.
         guard await GameKit.codeProblem(project) == nil else { return }
         // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
@@ -8726,8 +8723,9 @@ final class Store: ObservableObject {
         guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
         turn.shownSources = Runtime.fingerprint(current)
         turn.shownPage = page
+        turn.lastStepAt = boundary
         turn.autoApplied += 1
-        log(current, .status, stepWords(current, turn))
+        log(current, .status, words.map { "Put into \(current.name): " + $0 } ?? "Put the change into \(current.name)")
         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
     }
 
