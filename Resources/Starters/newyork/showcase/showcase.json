@@ -1,0 +1,26 @@
+{
+  "window": { "width": 1280, "height": 720 },
+  "steps": [
+    { "wait_for": "Teleport", "timeout": 180 },
+    { "wait": 30 },
+    { "action": "click", "target": "Teleport" },
+    { "wait": 0.8 },
+    { "action": "click", "target": "Times Square 7th Ave · Theater District" },
+    { "wait": 1 },
+    { "action": "key", "key": "w", "amount": 6 },
+    { "wait": 4.5 },
+    { "action": "key", "key": "b" },
+    { "wait": 1.2 },
+    { "action": "click", "target": "Fly 4" },
+    { "wait": 1 },
+    { "action": "key", "key": "space", "amount": 6 },
+    { "action": "key", "key": "w", "amount": 10 },
+    { "wait": 3.5 },
+    { "mark": "cut" },
+    { "wait": 3 },
+    { "mark": "resume" },
+    { "wait": 1 },
+    { "action": "click", "x": 995, "y": 49 },
+    { "wait": 4 }
+  ]
+}

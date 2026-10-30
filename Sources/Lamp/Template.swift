@@ -8661,7 +8661,10 @@ enum Template {
                 return
             }
             try? await Task.sleep(for: .seconds(LampShowcase.script["lead"] as? Double ?? 0.8))
-            for step in LampShowcase.script["steps"] as? [[String: Any]] ?? [] { await playShowcase(step) }
+            let steps = LampShowcase.script["steps"] as? [[String: Any]] ?? []
+            // A key held down (a game's controls) belongs to a batch, which lets it go.
+            _ = Handover.begin(id: "showcase", count: steps.count) { _ in }
+            for step in steps { await playShowcase(step) }
             LampShowcase.note("end")
         }
 
@@ -8715,6 +8718,8 @@ enum Template {
                         return CGRect(x: f.minX / size.width, y: f.minY / size.height, width: f.width / size.width, height: f.height / size.height)
                     }
                 }
+                // A page's things are read in the page, which answers a moment later.
+                LampPageItems.refresh? {}
                 try? await Task.sleep(for: .milliseconds(150))
             }
             LampShowcase.note("missing", target)

@@ -192,7 +192,7 @@ in the starter's repository, then move the pin (below). Look at it before commit
 from the Mac it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured
 with its panel open.
 
-**A starter's reel.** A starter may have a reel: a video of about forty seconds of it being used, with its voices
+**A starter's reel.** A starter may have a reel: a video of at most thirty seconds of it being used, cut to what shows it best, with its voices
 and captions, which its README shows as a silent loop (GitHub plays no video a README holds) linked to the video
 with sound (`GitHubRepo.Showcase.reel`). What happens in it is `Resources/Starters/<folder>/showcase/showcase.json`,
 the storyboard: the window's size, the steps played on it (use_app's actions by target, waits, and where the camera
@@ -201,8 +201,8 @@ a place, captions), with any file it brings beside it (a photo for a camera, `da
 store to start with). `scripts/showcase-starters.sh [<folder>]` records it: it stages the starter with this checkout's
 files as `publish-starters.sh` does, builds it under its own bundle id, opens it with `LAMP_SHOWCASE` ("Showcase
 mode" in the generated-apps guide), records its window while it plays the steps in front, and edits the take
-(`scripts/showcase/edit.py`: a title card, the camera, a cursor, the voices where they were heard, double speed
-while the AI answers, an end card with the starter's changes) into the tree's `.github/showcase/` (reel.mp4,
+(`scripts/showcase/edit.py`: the recording filling the frame with Lamp's logo in its corner, so a storyboard's window is 16:9; the camera, a cursor, the voices where they were heard, double speed
+while the AI answers, a hard cut for each `{"mark": "cut"}` to the next `{"mark": "resume"}` (never over a voice), an end card, Made with Lamp) into the tree's `.github/showcase/` (reel.mp4,
 loop.webp, poster.png), which `publish-starters.sh` puts up with the other pictures. The app comes to the front
 for the minute a take lasts, since a window behind others is drawn with gray controls. Code of a starter's own that
 reads the person's world (its microphone, camera, files) asks `LampShowcase` while it's on, in its repository like
