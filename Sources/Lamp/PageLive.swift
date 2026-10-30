@@ -1,11 +1,12 @@
 import CryptoKit
 import Foundation
 
-/// Putting a change into a game's page while it's played, on the Mac and in the simulator, without the app reopening.
+/// Putting a change into a page while it's open (a game while it's played, a screen, a web app), on the Mac and in the
+/// simulator, without the app reopening.
 /// The app around the page (`LampPageLive` in LampPage.swift) asks Lamp what has changed, a request Lamp holds until
 /// there's a change or a while has passed. When a build changes only the page (Web/: its code, pictures, models,
 /// sounds), Lamp answers with the files that differ from what that copy of the app was installed with, which the app
-/// fetches and serves in place of its own; the page (lamp-game.js) puts new pictures, models and sounds into the running
+/// fetches and serves in place of its own; a page without the game runtime opens itself again; a game's (lamp-game.js) puts new pictures, models and sounds into the running
 /// game, opens itself again for new code keeping the player's place (`snapshot()` and `restore()`), or, while the game
 /// says a match is on (`busy()`), waits for a pause. The app tells Lamp which it did, and the chat says so: a change that
 /// waits shows the chat's Reload, which puts it in at once.
@@ -59,10 +60,16 @@ import Foundation
     private var listening: [Key: [(id: UUID, waiter: CheckedContinuation<Void, Never>)]] = [:]
     private var deciding: [Key: (gen: Int, answer: CheckedContinuation<String?, Never>)] = [:]
     private var held: Set<Key> = []
+    /// Asked of the copy on the Mac: what its page has saved, for a preview to start from (`saved(of:)`).
+    private var asking: [String: CheckedContinuation<[String: String]?, Never>] = [:]
+    /// What each app's copy on the Mac last said it had saved, by app, kept only while Lamp runs.
+    private var lastSaved: [String: [String: String]] = [:]
 
-    /// Whether a project's open copy can take changes this way: a game drawn on Lamp's game runtime.
-    static func takes(_ project: LampProject) -> Bool {
-        GameKit.isGame(project) && GameKit.engine(project) == .web
+    /// Whether a project's open copy can take changes this way: a page in an app of Lamp's own (a game drawn on Lamp's
+    /// game runtime, a screen, a web app). A page without the game runtime is opened again with what it saved, keeping
+    /// its window where the person has it.
+    nonisolated static func takes(_ project: LampProject) -> Bool {
+        GameKit.hostsPage(project)
     }
 
     /// The page as the build that's about to be installed has it.
@@ -205,6 +212,39 @@ import Foundation
         for waiting in listening.removeValue(forKey: key) ?? [] { waiting.waiter.resume() }
     }
 
+    // MARK: What the page saved
+
+    /// What the page open in the app's copy on this Mac has saved (its localStorage, where LampStore keeps it): asked of
+    /// the copy when it's open, else what it said last while Lamp has run; nil when there's neither. Read for a preview
+    /// to start from, one way: nothing goes back.
+    func saved(of project: LampProject) async -> [String: String]? {
+        guard Self.takes(project) else { return nil }
+        guard isOpen(project, at: .mac) else { return lastSaved[project.id] }
+        asking[project.id]?.resume(returning: nil)
+        let key = Key(id: project.id, place: .mac)
+        let fresh = await withCheckedContinuation { (answer: CheckedContinuation<[String: String]?, Never>) in
+            asking[project.id] = answer
+            wake(key)
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(5))
+                self.asking.removeValue(forKey: project.id)?.resume(returning: nil)
+            }
+        }
+        if let fresh { lastSaved[project.id] = fresh }
+        return fresh ?? lastSaved[project.id]
+    }
+
+    /// The copy's answer (`/app/page/saved`).
+    func savedArrived(_ body: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
+        guard let data = body["data"] as? [String: String] else { return (400, ["error": "No data."]) }
+        lastSaved[project.id] = data
+        asking.removeValue(forKey: project.id)?.resume(returning: data)
+        return (200, [:])
+    }
+
+    /// Forgets what an app's copy said it saved: the app is gone.
+    func forgetSaved(_ id: String) { lastSaved[id] = nil }
+
     // MARK: The app's requests
 
     /// The app asking what has changed (`/app/page/live`): answered at once when there's something newer than it has,
@@ -215,7 +255,8 @@ import Foundation
         heard[key] = Date()
         let after = (body["epoch"] as? String) == epoch ? body["after"] as? Int ?? 0 : 0
         func newer() -> Given? { lastGiven(project, key).flatMap { $0.gen > after ? $0 : nil } }
-        if newer() == nil {
+        func wanted() -> Bool { place == .mac && asking[project.id] != nil }
+        if newer() == nil, !wanted() {
             let id = UUID()
             await withCheckedContinuation { (waiter: CheckedContinuation<Void, Never>) in
                 listening[key, default: []].append((id, waiter))
@@ -228,6 +269,8 @@ import Foundation
             }
         }
         heard[key] = Date()
+        // What its page saved is asked for before anything else: a preview waits on it.
+        if wanted() { return (200, ["epoch": epoch, "gen": after, "send": "saved"]) }
         guard let change = newer() else { return (200, ["epoch": epoch, "gen": given[key]?.gen ?? 0]) }
         return (200, ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.changed, "now": change.now])
     }

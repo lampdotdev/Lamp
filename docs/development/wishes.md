@@ -173,7 +173,9 @@ everything it loads, not just the wish's links, and the console's web view may n
 page in Lamp's own preview has no way to Lamp, and a page over https anywhere else no host, so there `Lamp.wish` stays
 `away` with a reason saying it can't reach the others (`stranded`); the agent is told where it works
 (`Rules.gameAmongApps`, `Rules.screenAmongApps`). The TV preview of a screen joins the
-wish only when the screen is shown there (`Store.wishRoom`), so the agent's look never takes the screen's place.
+wish only when the screen is shown there (`Store.wishRoom`), so the agent's look never takes the screen's place, and never
+while it holds a copy of the Mac copy's data (`TVPreview.isSeeded`), so nothing the agent does there reaches the wish's
+shared data.
 Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,
 and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app in its own folder (or, for a wish whose apps are all in folders, one whose folder is
 the one its kind gets, since the app at a file's root comes out named by its kind, `WishRooms.peer`, and every app of a

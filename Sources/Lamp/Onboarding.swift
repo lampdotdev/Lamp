@@ -104,7 +104,6 @@ struct OnboardingView: View {
         .ignoresSafeArea()
         .toolbarBackground(.hidden, for: .windowToolbar)
         .navigationTitle("")
-        .environment(\.colorScheme, .light)
         .tint(Palette.accent)
         .background(WindowReader { window = $0 })
         .onChange(of: window) { if let window { Chrome.hide(window) } }
@@ -823,8 +822,8 @@ private struct Radio<Content: View>: View {
             Button(action: action) {
                 HStack(spacing: 8) {
                     ZStack {
-                        Circle().strokeBorder(selected ? Palette.accent : .black.opacity(0.25), lineWidth: selected ? 5 : 1)
-                            .background(Circle().fill(.white))
+                        Circle().strokeBorder(selected ? Palette.accent : Palette.ink.opacity(0.25), lineWidth: selected ? 5 : 1)
+                            .background(Circle().fill(Palette.card))
                     }
                     .frame(width: 16, height: 16)
                     Text(title).font(.system(size: 13.5, weight: selected ? .semibold : .regular)).foregroundStyle(Palette.ink)
@@ -861,10 +860,10 @@ private struct Option<Logo: View>: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected || hovering ? Color.white : Color.white.opacity(0.6),
+            .background(selected || hovering ? Palette.card : Palette.card.opacity(0.6),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(selected ? Palette.accent : .black.opacity(0.08), lineWidth: selected ? 1.5 : 1))
+                .strokeBorder(selected ? Palette.accent : Palette.ink.opacity(0.08), lineWidth: selected ? 1.5 : 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -903,7 +902,7 @@ private struct Card<Content: View>: View {
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Palette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.black.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.ink.opacity(0.06)))
             .shadow(color: .black.opacity(0.04), radius: 14, y: 6)
     }
 }
@@ -1081,7 +1080,6 @@ private enum Chrome {
         window.titleVisibility = .hidden
         window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
-        window.appearance = NSAppearance(named: .aqua)
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(button)?.isHidden = true
         }
@@ -1113,7 +1111,6 @@ private enum Chrome {
         window.title = saved.name
         window.titlebarSeparatorStyle = .automatic
         window.isMovableByWindowBackground = saved.movable
-        window.appearance = nil
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(button)?.isHidden = false
         }

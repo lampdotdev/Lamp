@@ -108,6 +108,47 @@ final class LocalModels: ObservableObject {
     /// `mlx_lm.server`, if installed (`PythonTools` installs it from Settings).
     nonisolated static var mlxServerPath: String? { ToolLocator.path(named: "mlx_lm.server") }
 
+    /// The tool-call parser mlx-lm picks for the MLX model in this folder, read as mlx-lm 0.30.4 reads it
+    /// (`_infer_tool_parser` in its tokenizer_utils.py): the model's own `tool_parser_type`, else marks in its chat
+    /// template. Nil when it has none. Later versions recognize more templates; a model only they know is asked for
+    /// the JSON plan instead, which every model can give.
+    nonisolated static func mlxToolParser(in folder: URL) -> String? {
+        let config = (try? JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("tokenizer_config.json")))) as? [String: Any] ?? [:]
+        if let named = config["tool_parser_type"] as? String, !named.isEmpty { return named }
+        // Where transformers finds the template: its own file, else tokenizer_config.json, as text or as named
+        // templates of which "default" is the one used.
+        var template = try? String(contentsOf: folder.appendingPathComponent("chat_template.jinja"), encoding: .utf8)
+        if template == nil {
+            if let text = config["chat_template"] as? String { template = text }
+            else if let named = config["chat_template"] as? [[String: Any]] {
+                template = named.first { $0["name"] as? String == "default" }?["template"] as? String
+            }
+        }
+        guard let template else { return nil }
+        if template.contains("<minimax:tool_call>") { return "minimax_m2" }
+        if template.contains("<start_function_call>") { return "function_gemma" }
+        if template.contains("<arg_key>") { return "glm47" }
+        if template.contains("<tool_call>\n<function=") { return "qwen3_coder" }
+        if template.contains("<tool_call>"), template.contains("tool_call.name") { return "json_tools" }
+        return nil
+    }
+
+    /// The mlx-lm version behind `mlx_lm.server`, read off the package in the environment uv installed it into
+    /// (`bin/mlx_lm.server` beside `lib/python3.x/site-packages/mlx_lm-<version>.dist-info`); nil when it can't tell.
+    nonisolated static var mlxVersion: String? {
+        guard let path = mlxServerPath else { return nil }
+        let env = URL(fileURLWithPath: path).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
+        let lib = env.appendingPathComponent("lib")
+        let fm = FileManager.default
+        for python in (try? fm.contentsOfDirectory(atPath: lib.path)) ?? [] where python.hasPrefix("python") {
+            let packages = lib.appendingPathComponent(python).appendingPathComponent("site-packages")
+            for name in (try? fm.contentsOfDirectory(atPath: packages.path)) ?? [] where name.hasPrefix("mlx_lm-") && name.hasSuffix(".dist-info") {
+                return String(name.dropFirst("mlx_lm-".count).dropLast(".dist-info".count))
+            }
+        }
+        return nil
+    }
+
     /// Every runnable model in the Hugging Face cache, Local's folder and Lamp's old folder.
     nonisolated static func scan() -> [InstalledModel] {
         let fm = FileManager.default

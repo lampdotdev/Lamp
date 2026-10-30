@@ -207,8 +207,15 @@ enum GameKit {
     /// Lamp's common host for a page on Apple's devices (a web game's and a screen's: serving and showing it, LampAI
     /// through the app, and `LampNative` calls of the device); and where those calls are answered, the app's own Swift, written only
     /// when the app has none yet.
-    static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first
+    /// The page's host, with the script that reads the page's screen as the preview reads it (`PageScreen`) written in.
+    static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first.map {
+        ($0.path, $0.text.replacingOccurrences(of: "\"{{PAGE_SCREEN_SCRIPT}}\"", with: String(reflecting: PageScreen.script)))
+    }
     static let native: (path: String, text: String)? = read([("Sources/Native.swift", "apple/Native.swift")]).first
+    /// The controller kit a game on the Mac runs its own phones with (`ControllerRuntime`: its phone page and relay, in
+    /// its own process): LampRelayKit's Swift as one file, which build.sh writes into Lamp's bundle. In the player, and
+    /// beside LampPage.swift in a game that's compiled.
+    static let controllerKit: (path: String, text: String)? = read([("Sources/LampControllerKit.swift", "apple/LampControllerKit.swift")]).first
 
     /// Lamp's common app around a page (apple/LampWebApp.swift), for a page served at `scheme`://app/, which is where
     /// what it saves is kept, laid out at `canvas` and zoomed to the window, or at the window's own size without one.
@@ -250,7 +257,7 @@ enum GameKit {
     /// left to main.swift, which picks one as the copy opens.
     static var playerSources: [(path: String, text: String)]? {
         let host = read([("", "apple/LampWebApp.swift"), ("", "apple/LampPlayer.swift")])
-        guard let game = webFiles.first(where: { $0.path == "Sources/LampGame.swift" }), let page, let native, host.count == 2 else { return nil }
+        guard let game = webFiles.first(where: { $0.path == "Sources/LampGame.swift" }), let page, let native, let controllerKit, host.count == 2 else { return nil }
         func filled(_ text: String) -> String {
             text.replacingOccurrences(of: "@main\n", with: "")
                 .replacingOccurrences(of: "\"{{NAME}}\"", with: "LampPlayer.name")
@@ -259,6 +266,7 @@ enum GameKit {
         }
         return [("Sources/main.swift", host[1].text), ("Sources/LampGame.swift", filled(game.text)), ("Sources/LampWebApp.swift", filled(host[0].text)),
                 ("Sources/LampPage.swift", page.text), ("Sources/Native.swift", native.text), ("Sources/LampSupport.swift", Template.lampSupportSwift),
+                (controllerKit.path, controllerKit.text),
                 ("Package.swift", webPackageSwift.replacingOccurrences(of: "{{EXE}}", with: playerExe))]
     }
 
@@ -305,7 +313,7 @@ enum GameKit {
     }
 
     /// Lamp's own Swift in a page's app: the player has all of it. `Native.swift` too while it's still Lamp's.
-    private static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift",
+    private static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
                                                      ScreenKit.screenPage.swift, ScreenKit.webAppPage.swift].map { String($0.dropFirst("Sources/".count)) })
 
     /// Swift of the app's own beside Lamp's, in Sources/ (what its Package.swift compiles): a `Native.swift` that answers
@@ -352,8 +360,9 @@ enum GameKit {
 
     /// Writes the page's bridge, and the app's `Native` when it has none.
     static func writePage(for project: LampProject) throws {
-        guard let page, let native else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
+        guard let page, let native, let controllerKit else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
         try Template.write(pageText(page.text, for: project), to: page.path, for: project)
+        try Template.write(controllerKit.text, to: controllerKit.path, for: project)
         if !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(native.path).path) {
             try Template.write(native.text, to: native.path, for: project)
         }
@@ -438,8 +447,16 @@ enum GameKit {
         let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-ts-\(project.id)-\(UUID().uuidString.prefix(8))")
         defer { try? FileManager.default.removeItem(at: scratch) }
         let command = "/bin/mkdir -p \"$LAMP_SCRATCH\" && /bin/cp -Rp \(Sandbox.quoted(sourceFolder)) \"$LAMP_SCRATCH/src\" "
-            + "&& cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) build src/main.ts --outdir app --target browser --format esm "
-            + "--splitting --packages external --chunk-naming 'chunk-[hash].[ext]' --asset-naming '[name]-[hash].[ext]' "
+            // A worker (src/**/*.worker.ts, started as Vite has it with new URL("./x.worker.js", import.meta.url)) is
+            // bundled on its own, every file flat in app/ so that address finds it from whichever file asks.
+            + "&& cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) build src/main.ts $(/usr/bin/find src -name '*.worker.ts') "
+            + "--outdir app --target browser --format esm --splitting --packages external "
+            + "--entry-naming '[name].[ext]' --chunk-naming 'chunk-[hash].[ext]' --asset-naming '[name]-[hash].[ext]' "
+            // What a Vite project reads of its build (import.meta.env), as a published Vite build has it: the object, for
+            // `const { DEV } = import.meta.env`, and each property, so a direct read is folded to its value.
+            + "--define 'import.meta.env={\"DEV\":false,\"PROD\":true,\"MODE\":\"production\",\"BASE_URL\":\"./\",\"SSR\":false}' "
+            + "--define 'import.meta.env.DEV=false' --define 'import.meta.env.PROD=true' "
+            + "--define 'import.meta.env.MODE=\"production\"' --define 'import.meta.env.BASE_URL=\"./\"' "
             // An agent that greps for a value finds it in the bundle too; the banner sends it back to src/.
             + "--banner '// Lamp builds this from src/ before every build and look: change src/, never this folder.' "
             + "&& cd \"$LAMP_APP\" && /bin/rm -rf \(Sandbox.quoted(compiledFolder)) && /bin/cp -Rp \"$LAMP_SCRATCH/app\" \(Sandbox.quoted(compiledFolder))"
@@ -474,7 +491,7 @@ enum GameKit {
         var hasher = SHA256()
         for file in files { hasher.update(data: Data(file.name.utf8)); hasher.update(data: file.data) }
         // And the app around it on Apple's devices, which a new Lamp may change while the kit stays as it was.
-        for file in webFiles + [page, native].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
+        for file in webFiles + [page, native, controllerKit].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
         hasher.update(data: Data((webBuildSh + webPackageSwift + Controllers.pageJS).utf8))
         // And Lamp's Android app around it, with the Kotlin blocks a game of several apps carries there, so a game on
         // Android built by an earlier Lamp is built again rather than shown to its wish's other apps as out of date.
@@ -487,7 +504,7 @@ enum GameKit {
         let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
         // A C++ game made before three.js games is the kit's alone, played on the Xbox and in the preview.
         guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp", marker] }
-        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
+        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", controllerKit?.path ?? "Sources/LampControllerKit.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
             + DeviceSupport.rapierFiles.map { "\(rapierFolder)/\($0.name)" }
             + DeviceSupport.phaserFiles.map { "\(phaserFolder)/\($0.name)" } + common
             + GameAndroid.paths(for: project)
@@ -527,7 +544,7 @@ enum GameKit {
             // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host);
             // elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page. Either way
             // lamp.js is the game's own on top: the game's code is the same everywhere, so it finds `Lamp.controllers`
-            // (over the host's pipe on the Xbox, and saying it can't start where phones aren't hosted) and `Lamp.wish` on the Xbox too, where the page is
+            // (from the game's own host on the Xbox, and saying it can't start where phones aren't hosted) and `Lamp.wish` on the Xbox too, where the page is
             // the wish's peer itself and the host opens its links.
             if project.integration != nil { try DeviceSupport.writeDeclared(for: project) }
             try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
@@ -995,12 +1012,14 @@ extension Agent.Rules {
     """
 
     static let gameOwnLoopTry = """
-    - `look_at_app` opens the page in the Xbox preview on this Mac, a 1920x1080 window running it in this Mac's browser, and \
-    shows you a picture of it with its screen as text and what its console printed; it's the preview, not the person's \
-    Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys there: the arrows, enter, \
-    back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's move), then shows it again. Try it by \
-    playing it. `look_at_app` with `on_device` opens it where Try On points (its window on this Mac, or the Xbox) and \
-    shows that screen and its log.
+    - `look_at_app` shows you the game in its window on this Mac while that's open, or when Try On points at the Mac \
+    (where it opens it): the window the person sees, a change of the page going in as you save. Otherwise it opens the \
+    page in the Xbox preview on this Mac, a 1920x1080 window running it in this Mac's browser, which starts from a copy of \
+    what the Mac window saved. Either way you get a picture with its screen as text and what its console printed; neither \
+    is the person's Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys where you \
+    last looked: the arrows, enter, back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's \
+    move), then shows it again. Try it by playing it. `look_at_app` with `on_device` opens it where Try On points (its \
+    window on this Mac, or the Xbox) and shows that screen and its log.
 
     """
 
@@ -1029,7 +1048,8 @@ extension Agent.Rules {
     static let screenAmongApps = placesAmongApps("screen", verb: "shown") + """
 
     - The screen reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
-    values and files, wherever it's shown, the Xbox included. Lamp's TV preview, where you look at it, joins them only when the screen is shown there, so what \
+    values and files, wherever it's shown, the Xbox included. Its window on this Mac is one of them; Lamp's preview \
+    never is while it holds a copy of that window's data, and otherwise only when the screen is shown there, so what \
     another app sends shows where the screen is shown. What every place shows (a list, the calendar, photos) goes in \
     `LampStore.shared` and `LampStore.sharedFiles`, kept the same on every copy of the screen (and with `{ wish: true }` \
     in every app of the wish), with a copy that can read the calendar or the album (on the Mac, an iPhone or an iPad, \

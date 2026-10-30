@@ -88,7 +88,10 @@ A capability given to one engine must be given to all of them that can take it, 
   could only stall a save.
   Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
   or live, Lamp copies its LampStore database into its Backups folder, named after the version that wrote it
-  (`DataSnapshots`, beside the app's own once-a-launch copies).
+  (`DataSnapshots`, beside the app's own once-a-launch copies). A page's preview on this Mac starts from a copy of what
+  the page in its Mac copy saved (`PageLive.saved`, asked of the open copy with its own token): held in Lamp's memory
+  only, written nowhere but the preview's own store, and never sent back, so the agent's tries there leave the person's
+  data alone (the devices guide, "The preview holds the person's data, one way").
 - **Files Lamp fetches for an app** (`assets`, "3D scenes and games"): Lamp itself downloads them, unconfined, but only
   from the addresses in its own index, checks each against the hash the index pins, and writes it into the app's folder
   with `AppFolder` (never through a link). They're data: a model, a picture, an atlas's XML; nothing is run, opened or

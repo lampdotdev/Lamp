@@ -26,7 +26,8 @@ Lamp's folder would be shadowed, and those an earlier Lamp wrote are taken away 
 rules; one kept before this was asked is still read, and Lamp's shipped ones pass it (their test). Once a device is set
 up, its setup window offers a test run (`IntegrationProbe`, `DeviceTrialCard`): the integration's own scaffold made in
 Lamp's `Probes/` folder and taken through Lamp's own ways with an app (`DeviceApps.install`, `picture`, `press` on the
-arrows and select only, `type`, `stop`, an install over the open copy, and `DeviceApps.remove`), holding the device as
+arrows and select only, `type`, `stop`, an install over the open copy, each install of a new build as a change is, since an Xbox won't open the same
+version put on again, and `DeviceApps.remove`), holding the device as
 an install does, stopping at the first stage that fails and taking the app off again. Its report goes with the next
 request of the device's setup conversation (`Agent.deviceSetupNote`), whatever the engine, and a run that passes marks
 the bridge (`bridge.known`, Lamp's alone: refused from the builder, kept while the bridge is unchanged, never written
@@ -125,7 +126,10 @@ installer, license and password while Lamp waits for the Roku's restart, then wh
 comments, so a change to one of those is made to all of them. A declared kind asks for them by library in
 `app.declared.support` (`"web": "Web/lamp.js"`, `"brightscript": "components/Lamp"`); the TV kit always has the web one
 in its `Web/lamp.js`, the Xbox's integration asks for it too. The web library is plain ES5 with Promises
-(`DeviceSupport.webJS`, LampStore on localStorage); the BrightScript one runs each LampAI call in a Task node
+(`DeviceSupport.webJS`, LampStore on localStorage), and ends with `LampQR` (`DeviceSupport.qrJS`), which draws the QR
+code a page shows phones: Kazuhiko Arase's QR Code Generator (`Resources/WebLibraries/qrcode`, MIT, put there by
+`scripts/update-qrcode.sh` from one npm release, checked against its SHA-512), inside lamp.js with its license, since a
+join link with its credential is longer than the encoders the agent writes for itself tend to hold; the BrightScript one runs each LampAI call in a Task node
 (`LampAITask`), since a Roku refuses network calls on its render thread, and keeps LampStore in the registry. Lamp writes
 them before every turn and build (`DeviceSupport.write`, from `Template.writeOwnedFiles` and `writeSupport`), the agent
 can't delete them, and versions leave them out of their names and diffs. How an app reaches the gateway comes in two
@@ -229,7 +233,10 @@ else), and an Authenticode signature (the APPX digest blob in an SpcIndirectData
 certificate kept in Lamp's folder (`MSIX.Signer`), which the device installs beside the package (`{certificate}`). The
 bridge launches it by its names (`{packageFullName}`, `{appUserModelID}`, and `{base64:…}` of either). For Xbox's Device
 Portal a request also carries cookies the device set earlier in its sequence (`{cookie:CSRF-Token}`), polls an install
-that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks.
+that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks,
+or asks again until it does (`until`), where a JSON path's `*` is any element of a list and the value may be one of
+Lamp's (`IntegrationRunner.meets`): the Xbox's install ends by waiting until the console lists `{packageFullName}`
+among its packages, since its install state says it's done before the app can be opened.
 Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
 controller-driven web app (arrow focus) wrapped as MSIX and shown in Lamp's own WebView2 host (`"host": "webview2"`, below). Its identity is
 read from wherever the console's SSDP answer points (`Read.description`), since that moves between retail and
@@ -272,7 +279,7 @@ errors and the host's own lines go to `LocalState\log.txt`, which the bridge's `
 `on_device` (which a web kind with a preview now honours) shows how the app really runs. A controller in WebView2
 sends its buttons as key presses named "Unidentified" with Edge's old key codes; lamp.js renames them before the page
 hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and presses what has focus, B is Escape,
-the rest Edge's `Gamepad…` names), and `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
+the rest Edge's `Gamepad…` names). A key a page makes can't carry a key code, so the remote's arrows in a TV app or a screen (`Lamp.onKey`, `Lamp.key`) read a key by its name too (`nameOf`), or the controller would move nothing. `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
 console before installs over the earlier EdgeHTML one (same family, newer version), so nothing moves an app across.
 
 **What's on the network, for an app** (`LampNetwork`, in LampSupport.swift): a wish's Mac or iPhone app finds the
@@ -430,7 +437,10 @@ game brought in from one stays as its authors wrote it. Before every build and e
 `GameKit.stageWeb`) Lamp bundles it into `Web/app/` (`GameKit.compileSource`) with the Bun inside its own pi, run as Bun
 itself (`BUN_BE_BUN=1`), in the game's sandbox, from a copy of `src/` in a scratch folder (Bun reads every folder above
 the one it builds in, which the sandbox closes in the person's own folders): nothing installed, nothing fetched, types stripped and not checked, bare
-imports left for the page's import map. Every place then plays plain JavaScript, and a change of `src/` is a change of
+imports left for the page's import map. Two of Vite's conventions hold so a Vite game needs few changes: `import.meta.env`
+reads as a published build's (`DEV` false, `BASE_URL` "./"), and each `src/**/*.worker.ts` is bundled as an entry of its
+own, every file flat in `Web/app/`, so a worker started at `./<name>.worker.js` beside `import.meta.url` is found. It must
+be a module worker (`{ type: "module" }`, which Vite doesn't require): code it shares with the page is a chunk it imports. Every place then plays plain JavaScript, and a change of `src/` is a change of
 the page like any other. `src/` is shared with the game, and so is `Web/app/`, which a Lamp from before `src/` plays as it is and a newer one
 builds again (`GameFiles`).
 
@@ -448,8 +458,9 @@ where Try On points, with the Xbox one of its places and its console still the o
 as a game and updated as before. Only meta.json changes, and its folder reads as a game in every version
 (`GameKit.isXboxWebGame`, in `isMade`), so a restore keeps it one. An Xbox app of menus and pages says nothing of a game
 and stays the Xbox's, as does a wish whose Xbox app is one of several. Its page runs its own loop, not Lamp's game runtime,
-so until it's moved onto `game()` (`GameKit.ownsLoop`: none of its own files load lamp-game.js) it's looked at and used in
-the page preview it had as the Xbox's web app, as a screen is, and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
+so until it's moved onto `game()` (`GameKit.ownsLoop`: none of its own files load lamp-game.js) it's looked at and used as a
+screen is: in its window on this Mac while that's open or Try On points at the Mac, else in the page preview it had as the
+Xbox's web app ("Where the agent looks at it", under "Screens"), and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
 
 On the Mac and on iOS a web game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
 `GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
@@ -486,14 +497,66 @@ there and opens it, the player is back where they were.
 
 **Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
 has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,
-shared with the game (`GameFiles`) and copied with a starter. Lamp serves it while the game is open on this Mac (the
-copy asks `/app/controller` through `LampPageGateway`, whose page Lamp's relay lets in by its `lamp-game://app`
-origin; `Store.servesPhonePage` goes by `openOnMac`, and the phone page is staged at each build, `TVs.stagePhone`), in
-the TV preview and on a Samsung or LG TV (staged with the rest, `TVs.stage`), and ends the session as the game closes.
-On the Xbox, where its lamp.js is written over the integration's declared one, the page is https and may not open the
-relay's plain link itself: `Lamp.controllers` opens it through the WebView2 host's pipe (`TVTemplate.linksJS`, shared
-with `Lamp.wish`), and Lamp serves the game's phones while it's set to open on the Xbox (`Store.onDevice`), which Lamp
-can't watch, as it does for a TV. On an iPhone or iPad and Android the game has no host's side of phones yet: Lamp turns
+shared with the game (`GameFiles`) and copied with a starter. On this Mac the game runs its own phones, so they go on
+playing, and new ones join, whether Lamp is open or not: the phone page is staged at each build (`TVs.stagePhone`) and
+put in the game's bundle as it's installed (`GamePhones`, in `Contents/Resources/Phone`, with lamp-controller.js), and
+the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) from `ControllerRuntime`, LampRelayKit's
+Swift built into the player and every compiled game as one file (`GameKit.controllerKit`, which build.sh writes). As
+`Lamp.controllers` starts, it serves the page (`PhonePageServer`) and runs a `Relay` in the game's process, each on a
+port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
+the game quitting close both. A change of the phone page can't go into the open game as it's played, so it goes in
+with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
+told to update. On an iPhone or iPad the game does the same while it's in front: the page goes in its bundle as
+`Phone/` at the top (`GamePhones.write`: the simulator's bundle in `finishSimulatorBundle`, and the copy Xcode builds
+from in `Devices.stage`, with `Template.withPhoneFolder` in the project), the controller kit is built in with
+LampPage.swift (its one Mac-only call, the Mac's Bonjour name, is guarded in `ControllerAddresses`), and the game ends
+its session as it goes into the background, opening a new one at the page's next ask once it's back in front; no
+background mode keeps it alive. `ControllerAddresses` gives a phone only an address on the device's Wi‑Fi or wired
+network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
+the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
+window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
+
+**Which host.** The game chooses who hosts its phones as it starts them: `Lamp.controllers.start({ host: 'game' })`
+(the game itself: the Mac's and iPhone's `ControllerRuntime` above, and the LG service and the Xbox's host below) or `start({ host: 'lamp' })`
+(Lamp's relay and Lamp-served page). `start()` with no host keeps where each device ran before (the game itself on the
+Mac, iPhone and iPad, Lamp elsewhere). The host asked for goes with each `/app/controller` ask, and whoever answers
+refuses the one it isn't (LampPage.swift refuses `'lamp'`, Lamp's gateway `'game'`, `Store.controllerSession`; on an LG TV and the Xbox
+`'game'` is asked of the game's own service or host instead), so a
+host that isn't there, or fails, is said in `onError` and tried again, never replaced by the other; an answer to an
+earlier start (`run` in lamp.js) is never taken. `stop()` ends the chosen host's session. The skills give the agent
+both as options with what each needs, not an order.
+
+On an LG TV the game can run its own phones there, with the Mac asleep or gone: Lamp packages a JS service of LG's kind with it (`LGPhones`, from
+`Resources/LGPhones`: `service.js` on the TV's service bus, `relay.js` serving the phone page Lamp published at the
+build and running the relay, the same protocol, credentials and limits as LampRelayKit's, with ws, put there by
+`scripts/update-lg-ws.sh`, for WebSocket framing), and names it in that package's lamp.js only
+(`TVTemplate.lgServiceMarker`). `start({ host: 'game' })` then subscribes to the service's `start`: the
+subscription is the session, its answers are where the relay is and the page's host credential (again whenever the
+relay starts afresh or the TV's address moves), and the page cancelling it (`stop()`, or the game closing) ends the
+session, its sockets and its key, after which LG's service manager ends the service by its own idle rule. Only the game
+the service was packaged with may start it or be given a host credential (the caller's app id, `message.sender`). The
+key is made from Node's crypto for each session and kept only in the service's memory. Whether the service goes in is
+a fact of the package, decided as it's made: a game that takes phones, has a phone page and an app id LG takes as
+the start of a service's name (no minus sign, no period before a digit), on a TV whose webOS release is 5 or later
+(`LGPhones.runs`: webOS TV 5.0's Node, 8.12, is the oldest ws runs on). Any other LG TV, one whose version Lamp hasn't
+read among them, gets no service: its lamp.js names none, and `start({ host: 'game' })` there is refused by Lamp, which
+answers the page's asks.
+`Tests/LGPhones/relay-test.js` runs the service on real sockets under each Node an LG TV has, with LG's
+`webos-service` stood in for.
+On the Xbox a game that chose its own runs its phones in Lamp's WebView2 host (`lamp_web_host.cpp`, with the protocol in
+`Resources/WebHost/lamp_controllers.h`, plain C++ that keeps to LampRelayKit's wire message for message): the page is
+in the package as `Phone/`, beside `Web/` (`GamePhones.xboxPage`, `WebHost.payload`), and the page asks the host for its
+session (`controllers` messages over the host's pipe, not Lamp's `/app/controller`), which opens the page server and
+the relay on ports the system gives (`StreamSocketListener`), with a key made for that session from the system's
+randomness and kept only in the host's memory. The page is https and may not open a plain link itself, so its link to
+the relay goes over the pipe (`TVTemplate.linksJS`, shared with `Lamp.wish`) and the host carries it straight into the
+relay (`ws://lamp-controllers.invalid/`, never dialed): only that link may be the game's host, and a host's credential
+from the network is turned away. Stopping, the console setting the app aside, the page going away and 45 s with no ask from
+the page end the session; coming back, the page's next ask opens a new one, with a new code. `scripts/check-web-host-controllers.sh` runs the
+protocol on the Mac against a real WebSocket client; the host itself only runs on a console. A game on the Xbox that chose
+Lamp (or no host), and a package made by an earlier Lamp, ask Lamp, which serves their phones while the game is set to
+open on the Xbox (`Store.onDevice`).
+On Android the game has no host's side of phones yet: Lamp turns
 down `/app/controller` from anywhere on the network but a TV or an Xbox the game is set to open on, so
 `Lamp.controllers` reports an error and the game plays with controllers and touch. A game's second screen is a phone joined from `onLink`'s address: `Lamp.phonePage`
 is a TV app's page's only.
@@ -572,8 +635,12 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 Xbox. On the Xbox, `on_device`, Play and the end of a turn build for the console and put it there through the
 integration's bridge: `stop` ends
 the copy there first (installing over a running copy can leave the next launch failing with 0x800700BF), then
-`install` and `launch` (asked again after a few seconds when the console refuses a launch just after an update,
-0x80073D00); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
+`install` and `launch` through `IntegrationRunner.open`: a console only just done installing refuses the launch for a
+while (0x8D160120, 0x80073D00 or 0x80070002, longer when the copy it replaced was open) or takes it and shows its own
+"not ready yet", so a refused launch is asked again with growing pauses, and one the bridge's `running` (Device Portal's
+processes listing `{packageFullName}`) doesn't see running within a few seconds is launched again. One that never opens
+is said plainly in the chat ("still finishing installing"), never claimed open, and the activity line says "Finishing
+installing on Xbox…" while Lamp waits (`DeviceApps.install`'s `waiting`); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
 takes its app off every device Lamp put it on (the bridge's `remove`, `DeviceApps.removeEverywhere`), web apps too. The
 package is Lamp's (`MSIX.package` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
 
@@ -609,7 +676,7 @@ game skill's "Fun" and "Playtesting".
 A web app (`Platform.webApp`, `Targets/WebAppTarget.swift`) is what `make_app_for` makes of an app made with web: the
 screen's recipe (`ScreenKit`, with `ScreenKit.webAppPage`: its own mark `.lamp-web-app`, its own page address
 lamp-web-app://app/ and so its own saved data, `Sources/LampWebApp.swift`, its page laid out at the window's size with
-no fixed canvas, and Web Apps/ to install in), going wherever a page goes and looked at in the TV preview. A screen is
+no fixed canvas, and Web Apps/ to install in), going wherever a page goes and looked at as a screen is (below). A screen is
 never made into a web app or back: each keeps its own address and saves.
 
 ## Screens
@@ -635,17 +702,44 @@ to change its viewport first when it's to go somewhere tall. On the person's own
 project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a web
 game.
 
-Wherever it's shown the agent looks at it in the TV preview on the Mac (`Target.looksInTVPreview`,
-`openDevicePreview`), so a change is seen without a build of the Mac app, and at any shape: `look_at_app`'s `shape` (a
-width and height in CSS pixels, "390x844") turns the preview's window to it and lays the page out at that size
-(`TVPreview.reshape`), the picture drawn with its long side 960 pixels and `use_app`'s points measured in it
-(`TVPreview.scale`); the preview keeps that shape for later looks, and starts at a TV's 1920x1080. Pointed at a TV it's
-staged and looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the
-request's device line says where it's shown (`Rules.screenPlaces`). The preview stands in for a TV only while Try On
-points at one; elsewhere it's just "the preview", its window titled "<name> Preview" (`Store.previewDevice`), so a web
-app at home on the Mac is never told it's on a TV; the name follows Try On while the preview stays open
-(`TVPreview.follow`). Before finishing, the agent looks at it in the shapes of the places it's shown and no others
-(`Rules.screenDesign`, `screenShapes`). An app made into one is given its kind before `make_app_for` sets its places,
+**Where the agent looks at it.** The agent looks at it and uses it where the person sees it: its Mac copy, when the page
+has one (`hasMac`) and it's open or Try On points at the Mac, where a look opens it (`Store.pageOnMac`, the same for a
+web app and a game with a loop of its own, `GameKit.ownsLoop`). That copy is looked at as a Mac app is: built (a change
+of the page alone goes into the open window, `PageLive`, which a screen's and a web app's host take as a game's does,
+the page opening again with what it saved), pictured by LampSupport, and used through `LampDriver`. The accessibility
+tree LampSupport reads stops at a web view's edge, so the page lists its own things for the screen as text
+(`LampPageReader` in LampPage.swift, behind LampSupport's `LampPageItems`): the same script the preview reads a page
+with (`PageScreen`, written in by `GameKit.page`), each box turned into pixels of the window's picture, read again
+before each picture and after each action; clicks, keys and typing reach the page at those points as the person's do,
+and a remote's back, OK and enter are sent as Escape and Return. No preview opens then.
+
+The preview on the Mac (`TVPreview`, `openDevicePreview`) is for the rest: a page that nothing on this Mac shows (only on
+a TV or the Xbox, with no Mac place, or one whose Mac copy is closed while Try On points elsewhere), and any other shape.
+`look_at_app`'s `shape` (a width and height in CSS pixels, "390x844") is always the preview's: it turns the preview's
+window to it and lays the page out at that size (`TVPreview.reshape`), the picture drawn with its long side 960 pixels
+and `use_app`'s points measured in it (`TVPreview.scale`); the preview keeps that shape for later looks, and starts at a
+TV's 1920x1080. Turning the person's own window to a phone's or a TV's shape was ruled out: a Mac window has a minimum
+size and the screen's, it's the window the person is using, and putting it back would fight their own resizing. A
+preview opened beside a Mac copy (`asidePreviews`) is where `use_app` acts until the next look without `shape`, which
+closes it, as the turn's end does. Pointed at a TV with no Mac copy it's staged and looked at as a TV app is.
+
+**The preview holds the person's data, one way.** It's a web view with a store of its own (`TVPreview.store(for:)`), so
+it never sees what the Mac copy saved. When a page with a Mac copy opens there, Lamp asks the open copy for its page's
+localStorage (where LampStore keeps everything: `PageLive.saved`, answered over the copy's own `/app/page/live` poll with
+`/app/page/saved`; what it said last is kept in memory while Lamp runs, for a copy since closed) and the preview's store
+is emptied and filled with it before the page's scripts run (`TVPreview.show`'s `seed`). Nothing goes back: a seeded
+preview never joins the wish's room (`TVPreview.isSeeded`, refused at `/app/wish`), so what the agent's `use_app` does
+there never reaches the family's data on any screen. Joining the wish as a copy was ruled out for that reason: the
+preview would push every click of the agent's into the shared collections. A preview with nothing to start from (the
+Mac copy hasn't been open while Lamp ran) keeps what it had from its last opening and says so to the agent; a TV app's preview, which no Mac copy has, keeps its own
+store and joins its wish as before.
+
+`make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the request's device line says where
+it's shown (`Rules.screenPlaces`) and where looks go (`DeviceNote.macWindow`). The preview stands in for a TV only while
+Try On points at one; elsewhere it's just "the preview", its window titled "<name> Preview" (`Store.previewDevice`), so a
+web app at home on the Mac is never told it's on a TV; the name follows Try On while the preview stays open
+(`TVPreview.follow`). Before finishing, the agent looks at it in the places it's shown and no others
+(`Rules.screenDesign`, `screenShapes`): the Mac in its window, without `shape`, and every other place at its shapes. An app made into one is given its kind before `make_app_for` sets its places,
 so its change rules read the shapes off the request's device line, and `make_app_for`'s answer names those of the
 places set (`Rules.screenPlaced`).
 

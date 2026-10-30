@@ -20,7 +20,9 @@ reason to refuse 3D. The rules are `Agent.tvPrompt` (`Rules.tv…`: a
 Web Audio (`Rules.webSound`, also given to every declared kind with the web library, the Xbox's included), with no
 building block of Lamp's: every one of these browsers has it, and the preview on the Mac plays it with no click first
 (WebKit on macOS starts audio without one). The agent tries the app in
-the TV preview (`TVPreview`; the chat is Lamp's panel, attached to it as its child window and moving with it, and on
+the TV preview (a screen, a web app or a game with a loop of its own is looked at in its window on this Mac instead while
+it has one, and in this preview only at another shape or where nothing on this Mac shows it: "Where the agent looks at it"
+in the devices guide; `TVPreview`; the chat is Lamp's panel, attached to it as its child window and moving with it, and on
 its own while the app is on a TV: `ChatPanel`): a window showing it at the TV's size, half scale, from the staged copy, where
 the page is opened at an address of its own (`lamp-tv://app/`, `StagedFiles`) rather than as a file, so it reads its own
 files with fetch and XMLHttpRequest, as text or bytes, as it does on a TV (WebKit refuses both to a file's page), and
@@ -30,7 +32,8 @@ is only the fallback, and the agent is told its picture can't show movement; eac
 after the one before, since the agent's own thinking between two calls is part of the time a movement took) and reads it as text (focusable things and text, with which has focus) and `use_app` presses
 remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
 each app keeps its own saved data there between openings, as a TV does (what it saved when earlier Lamps opened it as a
-file is handed to its new address once, `savedFromFileAddress`). The preview runs in the Mac's browser, so everything
+file is handed to its new address once, `savedFromFileAddress`), except a page with a Mac copy, whose preview starts each
+opening from a copy of what that copy saved (`seed`, "The preview holds the person's data, one way" in the devices guide). The preview runs in the Mac's browser, so everything
 the agent is told of it (each look and use with `Store.notTheTV`, the screen as text, the note on its picture) says it is
 the TV preview on this Mac and not the person's TV. Where the app is otherwise comes with the request, as the device line
 (`DeviceNote.tv`), from Lamp's own state and never a fixed description: whether the preview is open, each of the person's
@@ -73,7 +76,7 @@ and what the game's device can take). The page is one way for phones to steer a 
 phones are another. `Rules.tvPhone`, `make_app_for`'s description and the naming call set them side by side with what each
 suits, and map no request to either: the agent chooses, and when one way can't be built on this Mac (no Xcode, no Android
 tools) `make_app_for`'s answer leaves it free to take another rather than stop. Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's
-staged beside `Web/` the same way (links refused) and never packaged, into a folder nothing serves, and put in place of
+staged beside `Web/` the same way (links refused) and packaged only inside an LG game's own phone service (`LGPhones`), into a folder nothing serves, and put in place of
 the served one in one swap only once it has passed (`TVs.publishPhone`), so a request never reads a copy being made or
 one that failed. A game on Lamp's runtime has one too, served the same way while it's open on the Mac ("Games" in the
 devices guide). It's served by Lamp at a port of the app's own (`PhoneSites`, from `Edition.phonePagePorts`, sixteen
@@ -104,7 +107,9 @@ buttons, sticks, messages and files, and tilt asked for from a tap), asks the pa
 always wins over a credential the page kept from before. The TV page has `Lamp.controllers` in lamp.js
 (`TVTemplate.controllersJS`), the same in the preview and on a TV: it asks Lamp where its relay is (`/app/controller`,
 through the preview's bridge or the gateway, as it opens and every 15 seconds) and opens its own socket there, with a
-host credential. A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
+host credential. A game chooses its host with `start({ host })`: on an LG TV from webOS 5 on, `'game'` asks a service
+packaged with it instead and runs its phones with no Mac ("Phones as players" and "Which host" in the devices guide,
+`LGPhones`). A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
 the wish's apps reach each other (under "Wishes of more than one app"), with nothing from Lamp. The preview's page
 reaches them from WebKit itself, never through an `evaluateJavaScript` or a script message per message. lamp.js numbers
 the players, whichever way they came, and tells each its number (`player`). The credentials are the controllers' own

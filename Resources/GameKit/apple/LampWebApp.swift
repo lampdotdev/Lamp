@@ -2,7 +2,8 @@
 // page in Web/, shown in a web view of its own by LampPage.swift. Lamp writes this file before every build.
 //
 // The page is served at {{PAGE_SCHEME}}://app/, the app's own address for good. A page laid out at a fixed size of its own
-// is zoomed to fill the window or screen; one that isn't is laid out at the window's size, as a browser would.
+// is zoomed to fill the window or screen; one that isn't is laid out at the window's size, as a browser would. A change
+// of the page goes in while the app is open (`LampPageLive`): the page opens again with what it saved.
 import SwiftUI
 import WebKit
 #if os(macOS)
@@ -33,6 +34,7 @@ struct LampWebApp: SwiftUI.App {
 
 @MainActor enum LampWebAppPage {
     static let files = LampPageFiles(scheme: "{{PAGE_SCHEME}}")
+    static func make() -> WKWebView { LampPageView.make(files, live: true) }
     /// The size the page is laid out at, or nil for the window's.
     static let canvas: CGSize? = {{PAGE_CANVAS}}
 }
@@ -51,7 +53,7 @@ struct LampWebAppView: View {
 #if os(macOS)
 struct LampWebAppSurface: NSViewRepresentable {
     let size: CGSize
-    func makeNSView(context: Context) -> WKWebView { LampPageView.make(LampWebAppPage.files) }
+    func makeNSView(context: Context) -> WKWebView { LampWebAppPage.make() }
     func updateNSView(_ view: WKWebView, context: Context) {
         LampPageView.fit(view, in: size, canvas: LampWebAppPage.canvas)
         DispatchQueue.main.async { if view.window?.firstResponder !== view { view.window?.makeFirstResponder(view) } }
@@ -60,7 +62,7 @@ struct LampWebAppSurface: NSViewRepresentable {
 #else
 struct LampWebAppSurface: UIViewRepresentable {
     let size: CGSize
-    func makeUIView(context: Context) -> WKWebView { LampPageView.make(LampWebAppPage.files) }
+    func makeUIView(context: Context) -> WKWebView { LampWebAppPage.make() }
     func updateUIView(_ view: WKWebView, context: Context) { LampPageView.fit(view, in: size, canvas: LampWebAppPage.canvas) }
 }
 #endif

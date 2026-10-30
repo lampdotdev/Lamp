@@ -6,7 +6,8 @@ import Foundation
 /// is paid for, then transcribed by ElevenLabs' Scribe through OpenRouter, with the OpenRouter key Lamp keeps on this
 /// Mac: it never reaches the device. The cost OpenRouter reports is recorded as the app's, as any AI call's is.
 ///
-/// Only OpenRouter transcribes for now: with no key, the answer says so (501, `needs: text`), as act's does.
+/// Only OpenRouter transcribes for now: with no key, the answer says so (501, `needs: text`), and an app's Ask stays
+/// typed, since act answers on every text route.
 enum AppHear {
     static let model = "elevenlabs/scribe-v2"
     static let sampleRate = 16_000

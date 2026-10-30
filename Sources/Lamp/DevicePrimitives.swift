@@ -258,6 +258,27 @@ enum DeviceHTTP {
             else if let array = value as? [Any], let index = Int(part), array.indices.contains(index) { value = array[index] }
             else { return nil }
         }
+        return text(of: value)
+    }
+
+    /// Every value at a JSON path whose `*` stands for each element of a list ("InstalledPackages.*.PackageFullName");
+    /// without one, the one value `json` reads.
+    static func jsonValues(_ path: String, in data: Data) -> [String] {
+        guard path.split(separator: ".").contains("*") else { return json(path, in: data).map { [$0] } ?? [] }
+        guard let root = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return [] }
+        var values: [Any] = [root]
+        for part in path.split(separator: ".").map(String.init) {
+            values = values.flatMap { value -> [Any] in
+                if part == "*" { return value as? [Any] ?? [] }
+                if let object = value as? [String: Any], let next = object[part] { return [next] }
+                if let array = value as? [Any], let index = Int(part), array.indices.contains(index) { return [array[index]] }
+                return []
+            }
+        }
+        return values.compactMap(text(of:))
+    }
+
+    private static func text(of value: Any) -> String? {
         switch value {
         case let text as String: return text
         case let number as NSNumber:

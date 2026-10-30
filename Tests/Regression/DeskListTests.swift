@@ -12,7 +12,7 @@ final class DeskListTests: XCTestCase {
                   changed: Date(timeIntervalSince1970: changed), identity: identity, original: original)
     }
 
-    /// A remix made here comes right after its original, whatever the sort puts between them, and says it's the person's.
+    /// A remix made here comes right after its original, whatever the sort puts between them, says it's the person's.
     func testRemixesSitUnderTheirOriginal() {
         let york = wish("New York"), snowy = wish("Snowy"), buzzer = wish("Buzzer")
         let entries = [york.id: entry(york, identity: "A", starter: true, author: "Mr.doob"),

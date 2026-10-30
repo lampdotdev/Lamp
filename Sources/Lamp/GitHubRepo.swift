@@ -8,7 +8,7 @@ import LampSidebarKit
 ///
 /// What goes up is what a shared file carries (`Sharing.export`: the code, APP.md, the icon, the app's own files,
 /// credits.json and the licenses it names; never the chat, the app's data or a key), unpacked so the code reads on
-/// GitHub, with Lamp's own files beside it (build.sh, Package.swift, LampSupport.swift and the rest, so `./build.sh`
+/// GitHub, with Lamp's own files beside it (build.sh, Package.swift, LampSupport.swift and the rest, so `zsh build.sh`
 /// makes the app on any Mac with Apple's tools and no Lamp), the shared file itself (what Lamp opens today), a README
 /// that says what it is, how to remix it with Lamp and what it's based on, and an MIT license when the person wants one.
 /// The wish's own git history stays on the Mac: it holds every version and the chat's attachments, so each Put on
@@ -309,7 +309,7 @@ enum GitHubRepo {
         }
         if build.alone {
             text += "\n\n## Build it yourself\n\n"
-            text += "With Apple's Command Line Tools installed (`xcode-select --install`):\n\n```bash\n./build.sh\n```\n\n"
+            text += "With Apple's Command Line Tools installed (`xcode-select --install`):\n\n```sh\nzsh build.sh\n```\n\n"
             if build.others { text += "That builds \(build.app); the wish's other apps, in their folders, are built by Lamp.\n\n" }
             text += "The AI inside the app, and anything it does with other apps or devices, goes through Lamp, so those need Lamp open on the same Mac.\n\n"
         } else {

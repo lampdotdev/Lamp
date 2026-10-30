@@ -11,13 +11,14 @@ struct WelcomeScene: NSViewRepresentable {
     /// Where the welcome is: the hello, with the stage in view, or a later step, with the camera moved past it.
     let atHello: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var scheme
 
     func makeNSView(context: Context) -> SCNView {
         let view = PassThroughSceneView()
-        let stage = WelcomeStage()
+        let stage = WelcomeStage(dark: scheme == .dark)
         view.scene = stage.scene
         view.pointOfView = stage.camera
-        view.backgroundColor = WelcomeStage.page
+        view.backgroundColor = WelcomeStage.page(dark: scheme == .dark)
         view.antialiasingMode = .multisampling4X
         view.isPlaying = true
         context.coordinator.stage = stage
@@ -34,6 +35,9 @@ struct WelcomeScene: NSViewRepresentable {
     }
 
     func updateNSView(_ view: SCNView, context: Context) {
+        // SceneKit takes a fixed color, so the page and the boxes' sides are painted again as the Mac's appearance changes.
+        view.backgroundColor = WelcomeStage.page(dark: scheme == .dark)
+        context.coordinator.stage?.paint(dark: scheme == .dark)
         context.coordinator.stage?.look(atHello: atHello, animated: !reduceMotion)
     }
 
@@ -71,7 +75,16 @@ final class WelcomeStage {
     static var arrived = false
     /// When the boxes start down, the stripes in place: the words come in with them (`HelloStep`).
     static let arrival: Double = 0.6
-    static let page = NSColor(hex: 0xF6F1E4)
+    /// Paper's page and card, resolved for SceneKit, which draws a fixed color rather than one that follows the Mac.
+    static func page(dark: Bool) -> NSColor { resolved(Paper.page, dark: dark) }
+    private static func side(dark: Bool) -> NSColor { resolved(Paper.card, dark: dark) }
+    private static func resolved(_ color: Color, dark: Bool) -> NSColor {
+        var fixed = NSColor(color)
+        NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+            fixed = NSColor(color).usingColorSpace(.sRGB) ?? fixed
+        }
+        return fixed
+    }
 
     let scene = SCNScene()
     let camera = SCNNode()
@@ -80,6 +93,7 @@ final class WelcomeStage {
     private var boxes: [(node: SCNNode, rest: SCNVector3)] = []
     /// Inside each box's own node, what turns and shifts it toward the pointer, apart from its arrival and its floating.
     private var leans: [SCNNode] = []
+    private var dark: Bool
 
     /// Stripe width, and where the six start across: the right half of the frame, beside the words.
     private static let stripe: CGFloat = 0.55
@@ -92,8 +106,9 @@ final class WelcomeStage {
     private static let away: CGFloat = 9.6
     private static let colors: [UInt32] = [0x1F8A4A, 0x7CBF3A, 0xF6B81C, 0xF08A1C, 0xE2402A, 0xD23778]
 
-    init() {
-        scene.background.contents = Self.page
+    init(dark: Bool) {
+        self.dark = dark
+        scene.background.contents = Self.page(dark: dark)
 
         let lens = SCNCamera()
         lens.fieldOfView = 38
@@ -160,7 +175,7 @@ final class WelcomeStage {
         for (picture, place) in zip(Self.pictures(), placed) {
             let node = SCNNode()
             let lean = SCNNode()
-            let slab = SCNNode(geometry: Self.slab(picture))
+            let slab = SCNNode(geometry: Self.slab(picture, side: Self.side(dark: dark)))
             slab.castsShadow = true
             slab.eulerAngles.y = place.turn
             lean.addChildNode(slab)
@@ -241,17 +256,30 @@ final class WelcomeStage {
 
     /// A box as a thin slab rounded every way: its corners in a rounded rectangle, its edges chamfered front and back.
     /// The picture is on its front, sized to it.
-    private static func slab(_ picture: NSImage?) -> SCNGeometry {
+    private static func slab(_ picture: NSImage?, side color: NSColor) -> SCNGeometry {
         let width: CGFloat = 2.0, height: CGFloat = 1.17
         let path = NSBezierPath(roundedRect: NSRect(x: -width / 2, y: -height / 2, width: width, height: height), xRadius: 0.13, yRadius: 0.13)
         path.flatness = 0.002
         let shape = SCNShape(path: path, extrusionDepth: 0.1)
         shape.chamferRadius = 0.04
         shape.chamferMode = .both
-        let side = flat(NSColor(hex: 0xFFFDF6))
+        let side = flat(color)
         // Front, back, sides, then the chamfers front and back.
         shape.materials = [flat(picture ?? NSColor(hex: 0x1B1A17)), side, side, side, side]
         return shape
+    }
+
+    /// The page and the boxes' sides in the Mac's appearance, when it changes while the welcome is up.
+    func paint(dark: Bool) {
+        guard dark != self.dark else { return }
+        self.dark = dark
+        scene.background.contents = Self.page(dark: dark)
+        for box in boxes {
+            box.node.enumerateHierarchy { node, _ in
+                guard let materials = node.geometry?.materials, materials.count > 1 else { return }
+                materials.dropFirst().forEach { $0.diffuse.contents = Self.side(dark: dark) }
+            }
+        }
     }
 
     /// Grows a node's scale along one axis from nothing to whole, easing out.

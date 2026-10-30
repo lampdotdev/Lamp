@@ -93,16 +93,79 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
               let url = URL(string: lampGateway + path) else {
             return replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
         }
+        // A game's phones on the Mac, the iPhone and the iPad are hosted here: it serves their page and runs their relay
+        // itself (`LampControllers`), so they go on playing, and new ones join, whether Lamp is open or not. A game that
+        // chose Lamp's host (`start({ host: 'lamp' })`) is told Lamp doesn't host them here, and one that can't open its
+        // own says why: neither is handed the other host in its place.
+        if path == "/app/controller" {
+            let body = (call["body"] as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any] ?? [:]
+            let reply: @Sendable (Int, [String: Any]) -> Void = { status, answer in
+                let text = (try? JSONSerialization.data(withJSONObject: answer)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                DispatchQueue.main.async { replyHandler(["status": status, "body": text], nil) }
+            }
+            let stop = body["stop"] as? Bool == true
+            // A page that chose Lamp as its phones' host hears that this copy is the game itself, never served as if it
+            // were Lamp: the page chose, and only it may choose again.
+            if !stop, body["host"] as? String == "lamp" {
+                return reply(409, ["error": "Lamp doesn't host this game's phones here: the game hosts them itself (start() or start({ host: 'game' }))."])
+            }
+            return LampControllers.answer(stop: stop, reply)
+        }
+        Self.ask(url, body: call["body"] as? String) { status, body in replyHandler(["status": status, "body": body], nil) }
+    }
+
+    private static func ask(_ url: URL, body: String?, done: @escaping @MainActor @Sendable (Int, String) -> Void) {
         var request = URLRequest(url: url, timeoutInterval: 240)
         request.httpMethod = "POST"
         request.setValue("Bearer " + LampInstall.token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data((call["body"] as? String ?? "{}").utf8)
+        request.httpBody = Data((body ?? "{}").utf8)
         URLSession.shared.dataTask(with: request) { data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 502
             let body = data.map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Couldn't reach Lamp on your Mac. Open Lamp and try again."}"#
-            DispatchQueue.main.async { replyHandler(["status": status, "body": body], nil) }
+            DispatchQueue.main.async { done(status, body) }
         }.resume()
+    }
+}
+
+/// The game's phones as controllers (`ControllerRuntime`, in LampControllerKit.swift): its phone page from the copy Lamp
+/// put in the bundle (Phone/, in Resources on the Mac and at the bundle's top on an iPhone or iPad) and the relay its
+/// phones join, in this process, opened as the page's `Lamp.controllers` starts and closed as it stops or the game quits.
+///
+/// On an iPhone or iPad only while the game is in front: a game the person leaves is suspended by the system, which
+/// would leave phones holding buttons on a game that can't hear them, so leaving ends the session (every phone let go,
+/// both listeners closed) and coming back opens a new one at the page's next ask, which phones join by scanning its
+/// code again. A moment away that isn't leaving (a permission's alert, the app switcher pulled half up) ends nothing.
+enum LampControllers {
+    private static let runtime: ControllerRuntime = {
+        let runtime = ControllerRuntime(app: LampInstall.slug.isEmpty ? (Bundle.main.bundleIdentifier ?? "game") : LampInstall.slug,
+                                        page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"))
+        #if os(iOS)
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
+            runtime.stop {}
+        }
+        #endif
+        return runtime
+    }()
+
+    static func answer(stop: Bool, _ done: @escaping @Sendable (Int, [String: Any]) -> Void) {
+        // Both on the runtime's own queue, in the order the page asked: a stop then a start for the next round opens a
+        // fresh session, never one the stop then closes.
+        if stop { return runtime.stop { done(200, [:]) } }
+        guard inFront else { return done(409, ["error": "The game is in the background: phones join again when it's back in front."]) }
+        runtime.start(done)
+    }
+
+    /// Whether the game may host phones now: always on the Mac; on an iPhone or iPad unless it's in the background.
+    private static var inFront: Bool {
+        #if os(iOS)
+        // Asked from the page's bridge, on the main thread, where the app's state is read.
+        let state = Thread.isMainThread ? MainActor.assumeIsolated { UIApplication.shared.applicationState }
+            : DispatchQueue.main.sync { UIApplication.shared.applicationState }
+        return state != .background
+        #else
+        return true
+        #endif
     }
 }
 
@@ -622,6 +685,9 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         view.scrollView.contentInsetAdjustmentBehavior = .never
         #endif
         changes?.start(view)
+        #if os(macOS)
+        LampPageReader.watch(view)
+        #endif
         view.load(URLRequest(url: URL(string: "\(files.scheme)://app/index.html")!))
         return view
     }
@@ -633,6 +699,160 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         if abs(view.pageZoom - zoom) > 0.001 { view.pageZoom = zoom }
     }
 }
+
+#if os(macOS)
+// MARK: - The page as text
+
+/// The page's own things for the screen as text that Lamp's builder reads and acts on (`LampPageItems` in
+/// LampSupport.swift): the accessibility tree LampSupport reads stops at a web view's edge, so the page is read by a
+/// script in it, the same one Lamp's preview reads a page with, and each thing's box is turned into pixels of the window's
+/// picture. Clicks and keys then reach the page as the person's do, at those points.
+@MainActor enum LampPageReader {
+    private static let pages = NSHashTable<WKWebView>.weakObjects()
+    /// What each window's pages held when last read, by the window's number.
+    private static var read: [Int: [LampScreen.Item]] = [:]
+    private static let script = "{{PAGE_SCREEN_SCRIPT}}"
+
+    static func watch(_ view: WKWebView) {
+        pages.add(view)
+        LampPageItems.refresh = refresh
+        LampPageItems.items = { read[$0.windowNumber] ?? [] }
+        LampPageItems.act = act
+    }
+
+    /// The keys an action names, as the page reads them (`e.key`, and the code lamp.js and older pages read).
+    private static let keys: [String: (key: String, code: Int)] = [
+        "left": ("ArrowLeft", 37), "up": ("ArrowUp", 38), "right": ("ArrowRight", 39), "down": ("ArrowDown", 40),
+        "return": ("Enter", 13), "enter": ("Enter", 13), "ok": ("Enter", 13), "escape": ("Escape", 27), "back": ("Escape", 27),
+        "space": (" ", 32), "tab": ("Tab", 9), "delete": ("Backspace", 8),
+        // A remote's media and color keys, by the codes a TV sends and lamp.js names (as the preview presses them).
+        "play": ("MediaPlay", 415), "pause": ("MediaPause", 19), "playpause": ("MediaPlayPause", 10252), "stop": ("MediaStop", 413),
+        "fastforward": ("MediaFastForward", 417), "rewind": ("MediaRewind", 412), "red": ("ColorF0Red", 403),
+        "green": ("ColorF1Green", 404), "yellow": ("ColorF2Yellow", 405), "blue": ("ColorF3Blue", 406),
+        "channelup": ("ChannelUp", 427), "channeldown": ("ChannelDown", 428), "info": ("Info", 457),
+    ]
+
+    /// A click, a key or typing on a page, carried out in the page: the point (in the window's frame view) turned into
+    /// the page's own, or, with none, whatever the page has focused while it holds the window's keyboard.
+    private static func act(_ action: LampDriver.Action, at point: NSPoint?, in window: NSWindow) -> String? {
+        guard let frame = window.contentView?.superview ?? window.contentView else { return nil }
+        let shown = pages.allObjects.filter { $0.window === window }
+        let page: WKWebView, spot: String
+        if let point {
+            guard let hit = shown.first(where: { $0.frame.contains($0.superview?.convert(point, from: frame) ?? .zero) }) else { return nil }
+            let local = hit.convert(point, from: frame), zoom = max(hit.pageZoom, 0.01)
+            let y = hit.isFlipped ? local.y : hit.bounds.height - local.y
+            page = hit
+            spot = "document.elementFromPoint(\(local.x / zoom), \(y / zoom))"
+        } else {
+            guard let focused = shown.first(where: { page in
+                (window.firstResponder as? NSView).map { $0 === page || $0.isDescendant(of: page) } ?? false
+            }) ?? (shown.count == 1 ? shown.first : nil) else { return nil }
+            page = focused
+            spot = "document.activeElement || document.body"
+        }
+        func run(_ source: String) { page.evaluateJavaScript("(function () { var el = \(spot); if (!el) return ''; \(source) return ''; })();") }
+        switch action.action {
+        case "click", "double_click":
+            guard point != nil else { return nil }
+            let clicks = action.action == "click" ? 1 : 2
+            run("""
+                var focusable = el.closest('[data-focus], button, a[href], input, select, textarea, [tabindex]') || el;
+                if (focusable.focus) focusable.focus();
+                for (var i = 0; i < \(clicks); i++) if (focusable.click) focusable.click();
+                if (\(clicks) === 2) focusable.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+                """)
+            return clicks == 1 ? "clicked in the page" : "double-clicked in the page"
+        case "type":
+            let text = action.text ?? ""
+            let quoted = String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data("[\"\"]".utf8), as: UTF8.self)
+            run("""
+                if (!('value' in el)) return '';
+                el.focus();
+                el.value = \(quoted)[0];
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                """)
+            return text.isEmpty ? "cleared it" : "typed \"\(text)\" in the page"
+        case "key":
+            let name = (action.key ?? "").lowercased()
+            let single = name.count == 1 ? name.unicodeScalars.first : nil
+            guard let key = keys[name] ?? single.flatMap({ $0.isASCII && CharacterSet.alphanumerics.contains($0) ? (String($0), Int(String($0).uppercased().unicodeScalars.first!.value)) : nil }) else {
+                return nil   // a shortcut with ⌘ and the like: the app's menus have it
+            }
+            let hold = min(max(action.amount ?? 0, 0), 10)
+            let fire = """
+                function fire(type) {
+                  var e = new KeyboardEvent(type, { bubbles: true, cancelable: true, key: \(String(reflecting: key.key)) });
+                  Object.defineProperty(e, 'keyCode', { get: function () { return \(key.code); } });
+                  Object.defineProperty(e, 'which', { get: function () { return \(key.code); } });
+                  return el.dispatchEvent(e);
+                }
+                """
+            if point != nil { run("if (el.focus) el.focus();") }
+            run(fire + """
+                var allowed = fire('keydown');
+                if (allowed && \(key.code) === 13 && /^(BUTTON|A)$/.test(el.tagName)) el.click();
+                if (\(hold > 0 ? "false" : "true")) fire('keyup');
+                """)
+            // Let go after the hold, or as soon as the person takes the app back or a newer batch begins (`Handover`).
+            if hold > 0 {
+                if let batch = LampDriver.Handover.current { batch.hold(for: hold) { run(fire + "fire('keyup');") } }
+                else { run(fire + "fire('keyup');") }
+            }
+            return hold > 0 ? "held \(name) for \(LampScreen.number(hold)) s in the page" : "pressed \(name) in the page"
+        default:
+            return nil
+        }
+    }
+
+    /// Reads every page on screen again, then calls `done`: once each has answered, or after a second whatever there is.
+    private static func refresh(_ done: @escaping @MainActor () -> Void) {
+        let shown = pages.allObjects.filter { $0.window?.isVisible == true }
+        var waiting = shown.count, called = false
+        func finish() {
+            guard !called else { return }
+            called = true
+            done()
+        }
+        guard waiting > 0 else { read = [:]; return finish() }
+        var fresh: [Int: [LampScreen.Item]] = [:]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MainActor.assumeIsolated { finish() } }
+        for page in shown {
+            page.evaluateJavaScript(script) { result, _ in
+                MainActor.assumeIsolated {
+                    if let window = page.window, let json = result as? String,
+                       let list = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] {
+                        fresh[window.windowNumber, default: []] += items(list, of: page, in: window)
+                    }
+                    waiting -= 1
+                    if waiting == 0 {
+                        read = fresh
+                        finish()
+                    }
+                }
+            }
+        }
+    }
+
+    /// The page's things with their boxes in the window's picture: its pixels from the top left of the window with its
+    /// title bar, as LampSupport pictures it.
+    private static func items(_ list: [[String: Any]], of page: WKWebView, in window: NSWindow) -> [LampScreen.Item] {
+        guard let frame = window.contentView?.superview ?? window.contentView else { return [] }
+        let box = page.convert(page.bounds, to: frame)
+        let top = frame.isFlipped ? box.minY : frame.bounds.height - box.maxY
+        let scale = LampRuntime.scale(of: window), zoom = page.pageZoom
+        return list.compactMap { entry in
+            guard let kind = entry["kind"] as? String else { return nil }
+            func n(_ key: String) -> CGFloat { CGFloat((entry[key] as? NSNumber)?.doubleValue ?? 0) * zoom }
+            let role = ["button": "button", "field": "text field", "choice": "choice", "image": "picture"][kind] ?? "text"
+            return LampScreen.Item(role: role, label: entry["name"] as? String ?? "", value: entry["value"] as? String ?? "",
+                                   frame: CGRect(x: (box.minX + n("x")) * scale, y: (top + n("y")) * scale, width: n("w") * scale, height: n("h") * scale),
+                                   selected: entry["focused"] as? Bool ?? false)
+        }
+    }
+}
+#endif
 
 // MARK: - Changes while it's open
 
@@ -648,7 +868,9 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     private var epoch = "", gen = 0
     private var have: [String: String] = [:]
     private var served: Set<String> = []
-    private static let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("LampPage")
+    /// Under the app's own name: an app that isn't sandboxed shares the caches folder with every other.
+    private static let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent(Bundle.main.bundleIdentifier ?? "LampPage").appendingPathComponent("LampPage")
     private static var manifest: URL { cache.appendingPathComponent("changes.json") }
     /// Where this copy is, for Lamp: a phone's copy takes a change when Lamp installs it again, not this way.
     #if os(macOS)
@@ -697,6 +919,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
                 let answer = try await call("/app/page/live", ["after": gen, "epoch": epoch, "place": Self.place, "bundle": Self.bundle], timeout: 60)
                 pause = 2
                 if let e = answer["epoch"] as? String, e != epoch { epoch = e; gen = 0 }
+                if answer["send"] as? String == "saved" { await sendSaved(); continue }
                 guard let next = answer["gen"] as? Int, next > gen || answer["now"] as? Bool == true else { continue }
                 try await take(answer, gen: next)
             } catch {
@@ -740,6 +963,15 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
             page.reload()
             tell(next, "reloading")
         }
+    }
+
+    /// What the page has saved (its localStorage, where LampStore keeps it), for Lamp's preview of the app to start from:
+    /// Lamp asks for it as a preview opens, and nothing comes back from the preview.
+    private func sendSaved() async {
+        let read = "(function () { var o = {}; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); o[k] = localStorage.getItem(k); } return JSON.stringify(o); })()"
+        guard let page, let json = try? await page.evaluateJavaScript(read, in: nil, contentWorld: .defaultClient) as? String,
+              let data = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String] else { return }
+        _ = try? await call("/app/page/saved", ["place": Self.place, "data": data], timeout: 10)
     }
 
     /// A file's name in the caches, as Lamp names it: the first half of its SHA-256.

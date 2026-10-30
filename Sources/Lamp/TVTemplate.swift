@@ -9,10 +9,13 @@ enum TVTemplate {
     static let webFolder = "Web"
     static let supportFile = "Web/lamp.js"
     /// A page for a phone, as a controller or a companion to the TV app, which Lamp hands out from this Mac while the app
-    /// runs (`Store.phonePage`). It never goes on the TV.
+    /// runs (`Store.phonePage`). It goes on a TV only inside an LG game's own phone service (`LGPhones`).
     static let phoneFolder = "Phone"
     /// Where Lamp writes the phone page's address into the staged copy of lamp.js (`TVs.stage`).
     static let phoneMarker = "/*LAMP_PHONE*/null"
+    /// Where lamp.js names the game's own phone service on an LG TV (`LGPhones`), filled in only in the package that
+    /// carries it.
+    static let lgServiceMarker = "/*LAMP_LG_SERVICE*/null"
 
     /// Whether an app's folder is a TV app, read off what every version keeps: Lamp's script in `Web/`. A device app
     /// whose integration takes the web building blocks may keep them at the same path (an Xbox's), so its own marker
@@ -198,7 +201,7 @@ enum TVTemplate {
          * Lamp.platform   "tizen", "webos" or "browser" (the preview on the Mac)
          * Lamp.phonePage(hash)   the address of the app's Phone/ page for a phone on the Mac's Wi-Fi (for a QR code),
          *   with "#" + hash after it when given; null when the app has no Phone/index.html
-         * Lamp.onPhonePage(fn)   fn() now when there is an address, and again whenever it changes: draw the QR code there
+         * Lamp.onPhonePage(fn)   fn() now when there is an address, and again whenever it changes: draw the QR code there (LampQR)
          * Lamp.controllers   phones on the same Wi-Fi as controllers: see its comment below
          * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below
          *
@@ -213,6 +216,10 @@ enum TVTemplate {
             415: 'play', 19: 'pause', 10252: 'playpause', 413: 'stop', 417: 'fastforward', 412: 'rewind',
             403: 'red', 404: 'green', 405: 'yellow', 406: 'blue', 427: 'channelup', 428: 'channeldown', 457: 'info' };
           for (var d = 0; d <= 9; d++) names[48 + d] = String(d);
+          // A key known only by its name: the Xbox's controller, whose presses Lamp's host gives as keys with a name and no
+          // code (padKeys in Lamp's device support, since a key made by a page can't carry one).
+          var named = { ArrowLeft: 'left', ArrowUp: 'up', ArrowRight: 'right', ArrowDown: 'down', Enter: 'enter', Escape: 'back' };
+          function nameOf(event) { return names[event.keyCode] || named[event.key] || null; }
           if (platform === 'tizen') {
             try {
               tizen.tvinputdevice.registerKeyBatch(['MediaPlay', 'MediaPause', 'MediaPlayPause', 'MediaStop', 'MediaFastForward',
@@ -287,7 +294,7 @@ enum TVTemplate {
           if (phone) { setTimeout(askPhone, 0); setInterval(askPhone, 30000); }
 
           document.addEventListener('keydown', function (event) {
-            var name = names[event.keyCode];
+            var name = nameOf(event);
             // Backspace is Back only where nothing is being typed (the preview's keyboard stands in for the remote).
             if (!name && event.keyCode === 8 && !typing(event.target)) name = 'back';
             if (!name) return;
@@ -318,7 +325,7 @@ enum TVTemplate {
             navigation: true,
             scope: null,
             store: store,
-            key: function (event) { return names[event.keyCode] || null; },
+            key: nameOf,
             onKey: function (handler) {
               keyHandlers.push(handler);
               return function () { var i = keyHandlers.indexOf(handler); if (i >= 0) keyHandlers.splice(i, 1); };
@@ -587,9 +594,14 @@ extension TVTemplate {
           }
         """#
 
-    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks Lamp where its relay is
-    /// (`/app/controller`), as it opens and every few seconds after, and opens its own socket there, where phones' pages
-    /// join. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
+    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks where its relay is, of the host the
+    /// game chose with `start({ host })` (`/app/controller`: Lamp, for a TV app's page, the preview and the Xbox; the game
+    /// itself on the Mac, iPhone and iPad, `ControllerRuntime`; on an LG TV, `'game'` is the service its package carries,
+    /// `LGPhones`, through a subscription that is the session; on the Xbox, `'game'` is the game's WebView2 host, asked
+    /// with `controllers` messages over its pipe, lamp_controllers.h; `start()` with no host asks whoever answers
+    /// `/app/controller` where it runs, as before), as it opens and every few seconds after, and opens its own socket
+    /// there, where phones' pages
+    /// join; stopping says so, which closes a game's own relay and page. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
     /// block joins here (`_attach`), so they go on playing with Lamp closed. The page numbers the players itself, whichever
     /// way they came. What a player holds down is let go when it leaves or its link drops, and movement that arrives late
     /// is dropped.
@@ -599,8 +611,16 @@ extension TVTemplate {
          * Lamp.controllers.start()                    opens a game for phones on this Wi-Fi; Promise. The phones' page is
          *                                              Phone/index.html, loading lamp-controller.js (its own comment says how);
          *                                              the wish's iPhone or Mac app joins with LampController.
-         * Lamp.controllers.onLink(fn(url))             the address phones open (show it as a QR code); it changes every
-         *                                              few minutes, and fn is called each time
+         * Lamp.controllers.start({ host: 'game' })    the game itself serves the phones' page and runs their link, with no
+         *                                              Lamp: on the Mac, an iPhone or iPad, an LG TV whose package
+         *                                              carries the game's service, and the Xbox's own host
+         * Lamp.controllers.start({ host: 'lamp' })    Lamp on the Mac serves the page and runs the link (Lamp open, the Mac
+         *                                              reachable)
+         *     A host that isn't there, or fails, is said in onError and tried again; the other host is never used instead.
+         *     start() with no host keeps where it ran before: the game itself on the Mac, iPhone and iPad, Lamp elsewhere.
+         *     stop() ends the session the chosen host runs; start() again may choose another.
+         * Lamp.controllers.onLink(fn(url))             the address phones open: draw it with LampQR.draw (its comment
+         *                                              says how); it changes every few minutes, and fn is called each time
          * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
          * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go
          * Lamp.controllers.onAxis(fn(player, name, x, y))               a stick, or the phone's tilt ('tilt'), -1 to 1
@@ -635,6 +655,10 @@ extension TVTemplate {
           var relayLinks = lampLinks(pipe);
           // Players that come another way than Lamp's relay: each way's own code joins them here (`_attach`).
           var others = [];
+          // On an LG TV, a game packaged with its own phone service (LGPhones) can run its phones there, with no Mac: the
+          // service is named here in that package's copy only, and `start({ host: 'game' })` uses it. `host` is what this
+          // start chose (null for none); `run` counts starts and stops, so an answer to an earlier one is never taken.
+          var lgService = /*LAMP_LG_SERVICE*/null, lgBridge = null, host = null, run = 0;
         /*LAMP_FILES*/
           var files = lampFiles(function (route, file) {
             var number = byKey[route.key];
@@ -797,27 +821,93 @@ extension TVTemplate {
             if (code === 4003 || code === 4005) return ask(1000);
             l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
           }
+          // Where the relay is and the page's credential for it, from Lamp or the game's own service.
+          function take(answer) {
+            var list = answer.links || [];
+            for (var i = 0; i < list.length; i++) {
+              var info = list[i], id = 'relay';
+              if (info.kind !== 'relay') continue;
+              var l = links[id] || (links[id] = { id: id, kind: info.kind, socket: null, offset: null });
+              l.credential = info.credential;
+              l.app = info.app;
+              if (!l.socket) { l.address = info.socket; connect(l); }
+            }
+          }
           function ask(after) {
             clearTimeout(askTimer);
+            var mine = run;
             askTimer = setTimeout(function () {
-              if (!started) return;
-              LampAI._post('/app/controller', {}, 20000).then(function (answer) {
-                if (!started) return;
-                var list = answer.links || [];
-                for (var i = 0; i < list.length; i++) {
-                  var info = list[i], id = 'relay';
-                  if (info.kind !== 'relay') continue;
-                  var l = links[id] || (links[id] = { id: id, kind: info.kind, socket: null, offset: null });
-                  l.credential = info.credential;
-                  l.app = info.app;
-                  if (!l.socket) { l.address = info.socket; connect(l); }
-                }
+              if (!started || mine !== run) return;
+              if (host === 'game' && lgService) return askService();
+              if (host === 'game' && pipe) return askPipe(mine);
+              // The host asked for goes with the question, so whoever answers says when it isn't that host rather than
+              // serve as the other.
+              LampAI._post('/app/controller', host ? { host: host } : {}, 20000).then(function (answer) {
+                if (!started || mine !== run) return;
+                take(answer);
                 ask((answer.renew || 15) * 1000);
               }, function (error) {
+                if (!started || mine !== run) return;
                 emit('error', [error.message]);
                 ask(5000);
               });
             }, after || 0);
+          }
+          function lgCall(method, params, fn) {
+            var bridge = new PalmServiceBridge();
+            bridge.onservicecallback = function (text) {
+              var answer; try { answer = JSON.parse(text); } catch (e) {}
+              fn(answer && typeof answer === 'object' ? answer : { returnValue: false });
+            };
+            bridge.call('luna://' + lgService + '/' + method, JSON.stringify(params));
+            return bridge;
+          }
+          function lgFailed(answer) {
+            emit('error', [answer.errorText || "The game's phones couldn't start on this TV."]);
+            if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; }
+            ask(5000);
+          }
+          // The subscription is the session: held from start() to stop(), and the service tells it each time the relay
+          // or the TV's address changes. A relay that turned the page away is asked for a fresh credential, and the
+          // answer counts only while the subscription it was asked under is still the page's.
+          // The Xbox's own host (lamp_web_host.cpp), asked over its pipe: it answers as /app/controller does.
+          var pipeAsks = {}, pipeAskId = 0;
+          if (pipe) pipe.addEventListener('message', function (e) {
+            var m = e.data, waiting = m && m.lamp === 'controllers' && pipeAsks[m.id];
+            if (!waiting) return;
+            delete pipeAsks[m.id];
+            waiting(m);
+          });
+          function pipeCall(op, then) {
+            var id = ++pipeAskId;
+            if (then) pipeAsks[id] = then;
+            pipe.postMessage({ lamp: 'controllers', op: op, id: id });
+          }
+          function askPipe(mine) {
+            pipeCall('start', function (m) {
+              if (!started || mine !== run) return;
+              if (m.status === 200) { take(m.body || {}); ask(((m.body && m.body.renew) || 15) * 1000); return; }
+              emit('error', [(m.body && m.body.error) || "The game's phones couldn't start on this console."]);
+              ask(5000);
+            });
+          }
+          function askService() {
+            try {
+              if (lgBridge) {
+                var held = lgBridge;
+                lgCall('session', {}, function (answer) {
+                  if (!started || lgBridge !== held) return;
+                  if (answer.returnValue === false) lgFailed(answer); else take(answer);
+                });
+                return;
+              }
+              var bridge = lgBridge = lgCall('start', { subscribe: true }, function (answer) {
+                if (!started || lgBridge !== bridge) return;
+                if (answer.returnValue === false) lgFailed(answer); else take(answer);
+              });
+            } catch (e) {
+              lgFailed({ errorText: "The game's phones couldn't start on this TV: " + e.message });
+            }
           }
           function askLink() {
             if (links.relay) sendOn(links.relay, { t: 'link' });
@@ -836,16 +926,35 @@ extension TVTemplate {
           }
 
           var api = {
-            start: function () {
-              if (started) return Promise.resolve();
+            start: function (options) {
+              var chosen = options && options.host !== undefined ? options.host : null;
+              if (chosen !== null && chosen !== 'game' && chosen !== 'lamp') {
+                var wrong = new Error("Lamp.controllers.start: host is 'game' or 'lamp', not " + JSON.stringify(chosen) + '.');
+                emit('error', [wrong.message]);
+                return Promise.reject(wrong);
+              }
+              if (started) {
+                if (chosen === host) return Promise.resolve();
+                var busy = new Error('Lamp.controllers.start: phones are already hosted by ' + (host || 'the default host') + '; stop() first.');
+                emit('error', [busy.message]);
+                return Promise.reject(busy);
+              }
               started = true;
+              host = chosen;
+              run++;
               ask(0);
               beatTimer = setInterval(beat, 5000);
               for (var i = 0; i < others.length; i++) others[i].start(hooks());
               return Promise.resolve();
             },
             stop: function () {
+              // The session the chosen host runs, and only it, ends.
+              if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; }
+              else if (started && host === 'game' && pipe) pipeCall('stop', null);
+              else if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', host ? { stop: true, host: host } : { stop: true }, 20000).then(function () {}, function () {});
               started = false;
+              host = null;
+              run++;
               clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
               for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }
               for (var i = 0; i < others.length; i++) others[i].stop();
@@ -3404,9 +3513,9 @@ extension Agent.Rules {
 
     static let tvPhone = """
     - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
-    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
-    the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
-    first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
+    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; who serves it is a \
+    choice made as the app starts its controllers, and the phone-controllers skill says what each choice needs. Open \
+    it first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
     phone's hardware or data the phone keeps.
     """
 

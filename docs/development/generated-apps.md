@@ -39,8 +39,9 @@ reason was added are rebuilt when next opened.
 `use_app` on a Mac app is carried out by the app itself (`LampDriver`, reached by a distributed notification
 signed with the app's token, `Store.use`), so no Accessibility permission is needed. With every picture the
 app writes its front window as text (`LampScreen` in LampSupport.swift, `.lamp/runtime/screen.txt`): one line
-per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included),
-with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
+per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included; a web
+view's insides are never walked, so a page in LampPage.swift's host adds its own things through `LampPageItems`, read
+by a script in the page, "Where the agent looks at it" in the devices guide), with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
 return it beside the picture (`Runtime.screenText`), the same lines the iPhone driver writes. An action names
 what it's for by `target` (an id or exact name, `LampScreen.find`): a button, switch, link or choice is asked
 to press itself (`accessibilityPerformPress`), a field takes the text in place of what it held, a slider or
@@ -247,7 +248,7 @@ credits chain) unpacked, Lamp's own files for each of the wish's apps beside the
 the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`; for a page, the app around it,
 `ScreenKit.paths`), the shared file itself, a
 README, and an MIT license by choice, never offered when
-something the wish is based on is share-alike. The README promises `./build.sh` only for a kind whose script builds
+something the wish is based on is share-alike. The README promises `zsh build.sh` only for a kind whose script builds
 with Apple's tools and nothing of Lamp's (`Recipe.buildsAlone`: the Mac app's; an app for the Mac and the iPhone is
 built by Xcode from a project Lamp keeps, so its README says Lamp builds it). The README leads with trying the wish
 before changing it: in a public repository, an Open in Lamp button (`GitHubRepo.openButton`, drawn into `.github/` by
@@ -432,7 +433,7 @@ declared length and cut off as it comes, `Store.fetch`), keeps the request besid
 opened by hand, and the request is in the wish's box once it's here (`PendingImport.request`, `finishImport`, and `confirmUpdate` for a
 file that's another version of an app already here). The clipboard isn't used: macOS 15.4 asks before a browser's copy is read. A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
 Where the wand would otherwise fall back to Lamp's window (`LampSidebar.fallback`, `openFromMenu`), a Mac without Lamp
-goes to lamp.dev: that's all an app built from its repository with `./build.sh` can do, since the extension is Lamp's
+goes to lamp.dev: that's all an app built from its repository with `zsh build.sh` can do, since the extension is Lamp's
 and goes into an app only as Lamp installs it (`Sidebar.install`). An app with no extension in its bundle goes there at
 once, without the few seconds' wait for a chat that was never put in.
 

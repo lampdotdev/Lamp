@@ -382,7 +382,9 @@ enum Template {
         let plist = ios ? "$bundle/Info.plist" : "$bundle/Contents/Info.plist"
         return """
         # App Intents (Shortcuts, Siri, Spotlight, a widget's buttons): Xcode's tools write what the code declares into the app.
+        # What they did is kept in .build/appintents for this build alone: Lamp reads there whether they ran.
         INTENTS=""
+        rm -rf .build/appintents
         if grep -rqs --include='*.swift' -e 'import AppIntents' Sources Widget; then
           if PROCESSOR="$(xcrun -f appintentsmetadataprocessor 2>/dev/null)"; then
             INTENTS=1
@@ -1994,6 +1996,7 @@ enum Template {
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
         if showsPage(project) { pbxproj = withWebFolder(pbxproj) }
+        if GamePhones.bundlesOnIOS(project) { pbxproj = withPhoneFolder(pbxproj) }
         if watch {
             let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
             let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
@@ -2057,7 +2060,8 @@ enum Template {
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
+            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason
+                ?? (GamePhones.takesOnIOS(project) ? GamePhones.iosNetworkReason : nil)))
                 .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: background)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
@@ -2090,6 +2094,24 @@ enum Template {
                     "A00000000000000000000002 /* Assets */, E00000000000000000000002 /* Web */, A00000000000000000000004 /* Assets.xcassets */,")
         text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
                     "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000001 /* Web in Resources */,")
+        return text
+    }
+
+    /// A game's phone page as a folder of the app's resources (Phone/ at the bundle's top), which the game serves itself
+    /// (`GamePhones`): copied beside the app's files by `Devices.stage`.
+    static func withPhoneFolder(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the device project changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        var text = pbxproj
+        let assetsFile = "A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };"
+        text = swap(text, assetsFile, assetsFile + "\n\t\tE00000000000000000000003 /* Phone in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000004 /* Phone */; };")
+        let assetsRef = "A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = \"<group>\"; };"
+        text = swap(text, assetsRef, assetsRef + "\n\t\tE00000000000000000000004 /* Phone */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Phone; path = ../../\(GamePhones.iosFolder); sourceTree = \"<group>\"; };")
+        text = swap(text, "A00000000000000000000002 /* Assets */, ", "A00000000000000000000002 /* Assets */, E00000000000000000000004 /* Phone */, ")
+        text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
+                    "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000003 /* Phone in Resources */,")
         return text
     }
 
@@ -7178,7 +7200,9 @@ enum Template {
             // ...and stops part way through when the person takes the app back with Lamp's Stop.
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name(LampInstall.note + "useAppStop." + LampInstall.slug), object: nil, queue: .main) { note in
-                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStop"] as? String
+                // Under a key long enough to be kept whole in the binary, which Lamp looks for (a name of 15 bytes or
+                // fewer is compiled into the code itself, so the old key's wasn't always found).
+                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStopSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.Handover.stop(id: id, signature: signature, token: LampInstall.token) }
             }
             // ...and, before it asks the app to quit for a rebuild, whether it still answers, so it can tell the
@@ -7225,6 +7249,13 @@ enum Template {
         /// then calls `done`. An app may picture its own windows without screen recording permission.
         @MainActor
         static func snapshot(then done: (@MainActor () -> Void)? = nil) {
+            // A page's things are read in the page, which answers a moment later.
+            guard let refresh = LampPageItems.refresh else { return snapshotNow(then: done) }
+            refresh { snapshotNow(then: done) }
+        }
+
+        @MainActor
+        private static func snapshotNow(then done: (@MainActor () -> Void)?) {
             LampDriver.keepBarPanel()
             let windows = windowsOnScreen
             guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
@@ -8663,6 +8694,19 @@ enum Template {
         }
     }
 
+    /// A web page in the app (LampPage.swift's): the accessibility tree `LampDriver.elements` reads stops at a web view's
+    /// edge, so a page lists its own things (`LampPageReader`), in the window's picture's pixels. `refresh` reads them
+    /// again and then calls back; `items` are those last read in a window. Nothing in an app without a page.
+    @MainActor
+    enum LampPageItems {
+        static var refresh: ((@escaping @MainActor () -> Void) -> Void)?
+        static var items: (NSWindow) -> [LampScreen.Item] = { _ in [] }
+        /// Carries out an action aimed at a page (`point`, in the window's frame view, on it; or none, with the page
+        /// holding the keyboard) in the page's own script, which takes it whether or not the app is in front, where
+        /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's.
+        static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
+    }
+
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
     /// menus in the front window, from inside the app, so no Accessibility permission is needed. An action names
     /// what it's for by `target`, an id or name from the screen as text (LampScreen, written beside each picture),
@@ -8744,6 +8788,20 @@ enum Template {
                 held.append((up, timer))
             }
 
+            /// A key held down on a page (LampPage.swift), pressed in the page's own script: `release` lets it go after
+            /// `seconds`, or at once if the batch stops or a newer one takes its place, as `hold`'s keys are.
+            func hold(for seconds: Double, release: @escaping @MainActor () -> Void) {
+                let timer = Timer(timeInterval: seconds, repeats: false) { timer in
+                    MainActor.assumeIsolated {
+                        guard let index = self.pageHeld.firstIndex(where: { $0.timer === timer }) else { return }
+                        self.pageHeld.remove(at: index).release()
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                pageHeld.append((release, timer))
+            }
+            private var pageHeld: [(release: @MainActor () -> Void, timer: Timer)] = []
+
             /// Ends the batch where it is: nothing more is done, keys held down are let go, and Lamp is told.
             func stop() {
                 guard carriesOn else { return }
@@ -8758,6 +8816,11 @@ enum Template {
                     NSApp.postEvent(key.up, atStart: true)
                 }
                 held = []
+                for key in pageHeld {
+                    key.timer.invalidate()
+                    key.release()
+                }
+                pageHeld = []
             }
 
             /// Lamp's Stop for batch `id`, signed with the app's token like the request, so no other process can stop it.
@@ -8788,7 +8851,7 @@ enum Template {
 
         /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
         /// builds that check it; notifications reach every process, so the token itself never travels). Builds
-        /// that take Lamp's Stop (`Handover`) have "lampUseAppStop" in them.
+        /// that take Lamp's Stop (`Handover`) have "lampUseAppStopSignature" in them (older ones "lampUseAppStop").
         static func perform(_ json: String?, id: String?, signature: String?) {
             guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
@@ -8889,6 +8952,8 @@ enum Template {
                         last = (line, window, LampRuntime.picture(of: window))
                     }
                     report[line] = run(action)
+                    // A page reads its things again, for the next action's target: ready well within the pause.
+                    LampPageItems.refresh? {}
                     if action.action != "bar_icon" { keepBarPanel() }
                     tellWindow()
                     // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
@@ -9008,7 +9073,7 @@ enum Template {
             // What the action names, found in the window's own accessibility tree: it's acted on where it has
             // an action of its own, and its middle is the point to click otherwise.
             var action = action
-            var named: (item: LampScreen.Item, id: String, element: AXUIElement)?
+            var named: (item: LampScreen.Item, id: String, element: AXUIElement?)?
             if let target = action.target?.trimmingCharacters(in: .whitespacesAndNewlines), !target.isEmpty, !(window is NSSavePanel) {
                 let elements = elements(in: window)
                 let items = elements.map(\.item)
@@ -9043,6 +9108,11 @@ enum Template {
                     return "\(action.action): " + filePanel(panel)
                 }
             }
+            // On a page (LampPage.swift's), the page carries the action out itself.
+            if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
+               let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
+                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
+            }
             if isBarPanel(window), action.action == "key", action.key?.lowercased() == "escape" {
                 releaseBarPanel()
                 return "pressed escape: closed the menu bar icon's panel"
@@ -9054,9 +9124,9 @@ enum Template {
                 // A thing that presses itself (a button, a switch, a link, a row's disclosure) is asked to, the
                 // way VoiceOver asks it, so the click can't miss. A picker's press would open its menu on the
                 // user's screen, and a row's or field's is a click: those go by the point.
-                if let named, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
+                if let named, let element = named.element, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
                     guard !named.item.disabled else { return label + "it's dimmed right now, so nothing happened" }
-                    if AXUIElementPerformAction(named.element, kAXPressAction as CFString) == .success { return label + "pressed" }
+                    if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success { return label + "pressed" }
                 }
                 guard frame.bounds.contains(point) else { return label + "outside the window, whose picture is \(size) pixels" }
                 guard let view = frame.hitTest(point) else { return label + "nothing there" }
@@ -9072,9 +9142,9 @@ enum Template {
                 if let named, let what {
                     // A slider or stepper takes the number; a field takes the keyboard, with the text in place of
                     // what it held, so a value typed over "0.00" isn't "0.00120".
-                    if named.item.role == "slider" || named.item.role == "stepper" {
+                    if let element = named.element, named.item.role == "slider" || named.item.role == "stepper" {
                         guard let value = Double(text) else { return "type into \(what): give it a number" }
-                        guard AXUIElementSetAttributeValue(named.element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
+                        guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
                             return "type into \(what): it didn't take the number"
                         }
                         return "set \(what) to \(LampScreen.number(value))"
@@ -9109,8 +9179,8 @@ enum Template {
                 }
                 if let named, let what {
                     // Up and down step a slider or stepper; anything else goes to the thing once it has focus.
-                    if named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
-                        let stepped = AXUIElementPerformAction(named.element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
+                    if let element = named.element, named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
+                        let stepped = AXUIElementPerformAction(element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
                         return stepped ? "stepped \(what) \(name)" : "key \(name): \(what) didn't take the step"
                     }
                     if let view = frame.hitTest(point) { _ = click(view, at: point, in: window, count: 1) }
@@ -9166,13 +9236,13 @@ enum Template {
         /// accessibility API on this app's own process, which needs no permission: it's the one way to see
         /// SwiftUI's elements, whose bridge to AppKit stays asleep until an accessibility client asks, and
         /// it shows AppKit's and SwiftUI's alike. Frames are in the picture's pixels.
-        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement)] {
+        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement?)] {
             guard let frame = window.contentView?.superview, let root = axWindow(for: window) else { return [] }
             let scale = LampRuntime.scale(of: window)
             // The accessibility API counts from the top left of the main screen, pictures from the window's.
             let origin = CGPoint(x: window.frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - window.frame.maxY)
             let bounds = CGRect(origin: origin, size: frame.bounds.size)
-            var found: [(item: LampScreen.Item, element: AXUIElement)] = []
+            var found: [(item: LampScreen.Item, element: AXUIElement?)] = []
             func string(_ value: CFTypeRef?) -> String {
                 switch value {
                 case let text as String: text
@@ -9253,7 +9323,8 @@ enum Template {
                 for child in read[10] as? [AXUIElement] ?? [] { visit(child, depth: depth + 1, under: under) }
             }
             visit(root, depth: 0, under: [])
-            return found
+            // A page's own things, read in the page (`LampPageItems`): clicked and typed into at their points.
+            return found + LampPageItems.items(window).map { ($0, nil) }
         }
 
         /// This window as the accessibility API has it: the one of this app's windows, or sheets on them, in
