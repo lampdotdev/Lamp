@@ -198,6 +198,11 @@ game is written to keep the player's place through one:
     that's added to the scene at each start, and do everything to it (setting it on the ground, cutting it for
     culling) inside its build, never to a kept part afterwards. The build function in the starting module names the
     module it builds from (`buildTrees`), since that's how Lamp tells which change is its own.
+
+    A big 3D world on three.js's `WebGPURenderer` keeps its scene, camera and lights the same way. For a new one of
+    them it works out how to draw every object again, which holds a big world still for a second at each change. Empty
+    the kept scene at each start (`scene.clear()`), then add back the kept lights and each part's group, so what the
+    last run added doesn't stay.
   - **The HUD and menus are made at each start**, from the page's HTML or built in code, and their elements found
     there (in init, or the function that starts the game), never once at a module's top level: the page they find is
     the one the new HTML put back.
