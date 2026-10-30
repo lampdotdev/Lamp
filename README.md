@@ -10,7 +10,7 @@ it.
 
 Lamp comes with apps to start from, on its desk under **Starter apps**: games, screens for the kitchen tablet or the
 TV, and Mac apps for everyday things. New York is Mr.doob's Slop New York, Home HQ is Wes Bos's family dashboard,
-and the rest are Lamp's own.
+The Little House grew out of remvze's Moodist, and the rest are Lamp's own.
 
 <table>
   <tr>
