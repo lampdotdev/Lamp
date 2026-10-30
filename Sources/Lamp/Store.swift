@@ -8681,7 +8681,12 @@ final class Store: ObservableObject {
             // A swap is on screen at once; a page that runs its code again, or opens again, says when it's showing the
             // change (`shown`, `pageShown`), and the smoke stays over the window until then.
             if outcome == .went("swapped") { AppTransition.land(project) }
-            else if outcome == .went("rerun") || outcome == .went("reloading") { awaitShown(project) }
+            else if outcome == .went("rerun") || outcome == .went("reloading") {
+                awaitShown(project)
+                // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
+                await untilShown(project)
+                try? await Task.sleep(for: .milliseconds(400))
+            }
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.pageReopened = outcome == .went("reloading")
@@ -8965,20 +8970,36 @@ final class Store: ObservableObject {
     /// Games whose page is putting a change in by running its code again or opening again, with the smoke held over
     /// their window until the page says the change is on screen; a page that never says lets it go after a while.
     private var waitingToShow: [String: Task<Void, Never>] = [:]
+    /// Whoever waits for the change to be on screen (`untilShown`), let go by `shown` or by the wait running out.
+    private var shownWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    /// A `shown` that came before Lamp began waiting for it (a run in place quicker than the page's first answer).
+    private var shownEarly: [String: Date] = [:]
     private func awaitShown(_ project: LampProject) {
         waitingToShow[project.id]?.cancel()
         let id = project.id
+        if let early = shownEarly.removeValue(forKey: id), Date().timeIntervalSince(early) < 5 { return AppTransition.land(project) }
         waitingToShow[id] = Task { @MainActor in
             try? await Task.sleep(for: .seconds(20))
-            guard !Task.isCancelled, waitingToShow.removeValue(forKey: id) != nil, let current = projects.first(where: { $0.id == id }) else { return }
-            AppTransition.end(current)
+            guard !Task.isCancelled, waitingToShow.removeValue(forKey: id) != nil else { return }
+            letShownWaitersGo(id)
+            if let current = projects.first(where: { $0.id == id }) { AppTransition.end(current) }
         }
+    }
+
+    private func untilShown(_ project: LampProject) async {
+        guard waitingToShow[project.id] != nil else { return }
+        await withCheckedContinuation { shownWaiters[project.id, default: []].append($0) }
+    }
+
+    private func letShownWaitersGo(_ id: String) {
+        for waiter in shownWaiters.removeValue(forKey: id) ?? [] { waiter.resume() }
     }
 
     /// The page shows the change it was putting in: the light crosses the window, and the smoke goes.
     func pageShown(_ project: LampProject) {
-        guard let waiting = waitingToShow.removeValue(forKey: project.id) else { return }
+        guard let waiting = waitingToShow.removeValue(forKey: project.id) else { shownEarly[project.id] = Date(); return }
         waiting.cancel()
+        letShownWaitersGo(project.id)
         AppTransition.land(project)
     }
 
