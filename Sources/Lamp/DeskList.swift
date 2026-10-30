@@ -298,12 +298,13 @@ struct DeskListHeader: View {
 }
 
 /// One wish in the desk's list: its picture, name and line, who made it, where it runs, when it changed, and Open
-/// with the wish's menu (⋯) beside it. A remix sits under its original, joined to it by the stripes' line. A starter not
-/// on the desk yet is drawn the same, with Open alone: it's copied as it opens.
+/// with the wish's menu (⋯) beside it. A remix sits under its original, joined to it by the stripes' line. A row under
+/// Starter apps has Open alone, whether its copy is on the desk or not: a starter is opened or remixed, and once changed
+/// it's in Yours with the whole menu. One not on the desk yet is copied as it opens.
 struct DeskListRow: View {
     @EnvironmentObject private var store: Store
     let item: DeskList.Item
-    /// An untouched starter's copy standing for its starter under Starter apps: it has no Delete.
+    /// An untouched starter's copy standing for its starter under Starter apps: Open alone, and no Delete by the Trash.
     var kept = false
     let selected: Bool
     /// In a narrow window only the icon, the name and the buttons fit: who made it, where it runs and when it changed
@@ -333,8 +334,8 @@ struct DeskListRow: View {
     var body: some View {
         drawn
             .contextMenu {
-                if let project {
-                    DeskWishMenu(project: project, entry: item.entry, kept: kept, withOpen: true)
+                if let project, !kept {
+                    DeskWishMenu(project: project, entry: item.entry, withOpen: true)
                 } else {
                     Button("Open", action: open)
                 }
@@ -391,7 +392,13 @@ struct DeskListRow: View {
                         .labelStyle(.iconOnly)
                         .buttonStyle(PaperButtonStyle(.ink, square: true))
                         .help("Open \(item.title)")
-                    if let project { DeskWishMore(project: project, entry: item.entry, kept: kept) }
+                    // A starter is opened or remixed, nothing else: once changed it's in Yours, with the whole menu. Its
+                    // place is kept, so Open lines up with every other row's.
+                    if let project, !kept {
+                        DeskWishMore(project: project, entry: item.entry)
+                    } else {
+                        Color.clear.frame(width: 30, height: 1)
+                    }
                 }
                 .frame(width: Self.buttonsWidth, alignment: .trailing)
             }
@@ -512,8 +519,8 @@ struct DeskDetail: View {
                 HStack(spacing: 6) {
                     Button { open("") } label: { Label("Open", systemImage: DeskList.openSymbol) }
                         .buttonStyle(PaperButtonStyle(.outline, height: 34))
-                    if let project {
-                        DeskWishMore(project: project, entry: row.entry, kept: kept, request: change, height: 34) { change = "" }
+                    if let project, !kept {
+                        DeskWishMore(project: project, entry: row.entry, request: change, height: 34) { change = "" }
                     }
                 }
                 Paper.rule.frame(height: 1)
@@ -577,7 +584,6 @@ struct DeskDetail: View {
 struct DeskWishMore: View {
     let project: LampProject
     let entry: DeskEntry?
-    var kept = false
     /// What's in the side panel's box, which a remix asks of the new copy.
     var request = ""
     var height: CGFloat = 30
@@ -585,7 +591,7 @@ struct DeskWishMore: View {
 
     var body: some View {
         Menu {
-            DeskWishMenu(project: project, entry: entry, kept: kept, request: request, sent: sent)
+            DeskWishMenu(project: project, entry: entry, request: request, sent: sent)
         } label: {
             Label("More", systemImage: "ellipsis")
         }
@@ -606,8 +612,6 @@ struct DeskWishMenu: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
     let entry: DeskEntry?
-    /// An untouched starter's copy under Starter apps: collapsing the section tidies it away, so it has no Delete.
-    var kept = false
     var request = ""
     var sent: () -> Void = {}
     var withOpen = false
@@ -643,7 +647,7 @@ struct DeskWishMenu: View {
         Button("Wish Info") { store.showInfo(project) }
             .disabled(project.untitled)
         Divider()
-        AppMenu(project: project, deletable: !kept)
+        AppMenu(project: project)
     }
 }
 
