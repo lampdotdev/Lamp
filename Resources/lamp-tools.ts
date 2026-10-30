@@ -122,15 +122,18 @@ async function pictureReply(response: Response, model: { input: string[] } | und
  * Keeps the pictures in the conversation few enough to send. Every look_at_app, use_app, make_art and assets reply
  * carries one, and the conversation is sent whole with every request: left in, they add up until the provider
  * refuses the request (Anthropic takes 30 MB of images in one; OpenRouter drops the connection at about 5 MB of
- * body, which pi reports as a connection error). So after each turn the older ones are taken out of what the
- * model is sent, with a line in their place, through pi's context edits: the session file keeps them, and the
- * person's chat never showed them anyway. The newest few stay, within a byte budget, so the model can still
- * compare what it just did with the picture before.
+ * body, which pi reports as a connection error). So the older ones are taken out of what the model is sent, with a
+ * line in their place, through pi's context edits: the session file keeps them, and the person's chat never showed
+ * them anyway. The newest few stay, within a byte budget, so the model can still compare what it just did with the
+ * picture before. In a batch, as Lamp does for Claude Code and Codex (`Conversation.keepPicturesFew`): only once more
+ * than LAMP_TRIM_PICTURES are sent, or they pass the budget, do all but the newest LAMP_KEEP_PICTURES go, since each
+ * change to the conversation's earlier part costs its cached copy at the provider.
  *
  * When a request was refused as too big all the same (a conversation from before this ran, or one with
  * pictures from elsewhere), every picture goes and the request is sent once more.
  */
-const keepPictures = 6;
+const keepPictures = Number(process.env.LAMP_KEEP_PICTURES) || 6;
+const trimAbove = Number(process.env.LAMP_TRIM_PICTURES) || 12;
 const pictureBudget = 2_500_000;   // base64 characters, well under what OpenRouter takes
 const droppedPicture = "(The picture that came with this reply was taken out of the conversation to make room. " +
 	"The newest pictures are still here; look_at_app gives a fresh one.)";
@@ -177,7 +180,7 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 		const error = message.stopReason === "error" ? (message.errorMessage ?? "") : "";
 		const total = pictures.reduce((sum, picture) => sum + picture.bytes, 0);
 		// A connection dropped the moment a picture-heavy request went out is the body's size too.
-		const refused = error !== "" && (isRequestTooLarge(error) || (/connection error/i.test(error) && total > pictureBudget));
+		const refused = error !== "" && (isRequestTooLarge(error) || (/connection error|eproto|econnreset|socket hang up/i.test(error) && total > pictureBudget));
 		const entries = [...(event.entries as unknown[])];
 		if (refused && pictures.length > 0 && !retried) {
 			retried = true;
@@ -186,6 +189,8 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 			if (event.messageEntryId) entries.push({ type: "context_edit", targetId: event.messageEntryId, replacement: null });
 			return { entries, continue: true };
 		}
+		// Nothing changes until there are too many, or too many bytes.
+		if (pictures.length <= trimAbove && total <= pictureBudget) return undefined;
 		// Newest first: keep up to the limit and the budget, drop the rest.
 		let kept = 0;
 		let bytes = 0;
@@ -198,6 +203,23 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 			}
 		}
 		return entries.length > (event.entries as unknown[]).length ? { entries } : undefined;
+	});
+}
+
+/** Compacts the conversation at Lamp's size (`Conversation.compactAt`, in LAMP_COMPACT_TOKENS) rather than near the
+ * model's window, as Claude Code and Codex are told to: a model with a million tokens would otherwise carry every
+ * request's history, and its cost, for days. pi's own compaction does the work, and reports it as it does when it
+ * compacts on its own (`compaction_end`). Once per run: the summary it leaves is far under the line. */
+function compactsEarly(pi: ExtensionAPI) {
+	const limit = Number(process.env.LAMP_COMPACT_TOKENS ?? "");
+	if (!Number.isFinite(limit) || limit <= 0) return;
+	let compacted = false;
+	pi.on("turn_end", (_event, ctx) => {
+		const tokens = ctx.getContextUsage()?.tokens;
+		if (compacted || tokens == null || tokens <= limit) return undefined;
+		compacted = true;
+		ctx.compact({});
+		return undefined;
 	});
 }
 
@@ -744,6 +766,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(editWithDoing());
 	pi.registerTool(writeWithDoing());
 	keepsPicturesFew(pi);
+	compactsEarly(pi);
 	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);

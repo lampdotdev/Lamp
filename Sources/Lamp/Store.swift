@@ -4950,7 +4950,9 @@ final class Store: ObservableObject {
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     /// `sendsRequest`: this run carries the turn's own request, not a repair Lamp asks for after it (a build's
     /// errors, a crash), which an engine switched to meanwhile needs the turn's messages for (`CatchUp`).
-    private func runAgent(_ prompt: String, files: [String] = [], sendsRequest: Bool = false, on project: LampProject) async -> Bool {
+    /// `afresh`: this run is the one try again in a fresh conversation after the last couldn't be sent.
+    private func runAgent(_ prompt: String, files: [String] = [], sendsRequest: Bool = false, afresh: Bool = false,
+                          on project: LampProject) async -> Bool {
         // A turn started at launch (one waiting from before) may come before the look for the person's own
         // Claude Code or Codex has finished: it waits for it rather than finding no copy.
         if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
@@ -4999,13 +5001,18 @@ final class Store: ObservableObject {
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.
         await EngineSignIn.refresh()
-        guard turns[project.id] === turn, !turn.stopped, exists(project) else {
-            if turn.stopped, exists(project) {
-                turn.stopped = false
-                log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+        /// Whether the turn still goes on after a wait: Stop pressed meanwhile has no agent to end yet.
+        func goesOn() -> Bool {
+            guard turns[project.id] === turn, !turn.stopped, exists(project) else {
+                if turn.stopped, exists(project) {
+                    turn.stopped = false
+                    log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+                }
+                return false
             }
-            return false
+            return true
         }
+        guard goesOn() else { return false }
         if sendsRequest { followPromptShape(project) }
         // A conversation the copy of the engine Lamp runs can't resume (one kept by the other copy, Lamp's or
         // the person's, not found to bring over) is forgotten, and the request starts a new one rather than failing.
@@ -5018,7 +5025,21 @@ final class Store: ObservableObject {
         // that was ended) goes with the request, so switching engines doesn't lose the conversation.
         let missed = CatchUp.note(for: project, engine: engine, session: session, chat: logs[project.id] ?? [],
                                   turn: turn.requests, sendsRequest: sendsRequest)
-        var run = Agent.run(prompt: prompt + missed, files: files, project: project, offered: offers(in: project),
+        // The conversation as the engine will send it: the older pictures out of Claude Code's and Codex's (pi's
+        // extension takes out its own), and its size in Lamp's log, beside its size after the run.
+        let transcript = session.flatMap { Conversation.transcript(of: engine, session: $0, in: project) }
+        var sizeBefore: Conversation.Size?
+        if let transcript {
+            let (dropped, size) = await Task.detached {
+                (Conversation.keepPicturesFew(in: transcript, engine: engine), Conversation.measure(transcript, engine: engine))
+            }.value
+            sizeBefore = size
+            Conversation.note(project, engine: engine, "before: \(size.described)" + (dropped > 0 ? ", took out \(dropped) older pictures" : ""))
+            guard goesOn() else { return false }
+        }
+        // A conversation that took the place of one set aside is told what the wish is (its APP.md).
+        let fresh = Conversation.freshNote(for: engine, in: project)
+        var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
@@ -5101,12 +5122,8 @@ final class Store: ObservableObject {
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
                 case .compacted:
-                    Memory.compacted(project)
-                    AIStatus.compacted(project)
-                    Skills.compacted(project)
-                    DeviceNote.compacted(project)
-                    WishNote.compacted(project)
-                    Parts.compacted(project)
+                    conversationCompacted(project)
+                    Conversation.note(project, engine: engine, "compacted")
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
@@ -5217,6 +5234,11 @@ final class Store: ObservableObject {
         turn.toolRunning = false
         takeBackHanded(project)
         if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project); DeviceNote.delivered(to: project); WishNote.delivered(to: project); Parts.delivered(to: project) }
+        if answered, !fresh.isEmpty { Conversation.told(engine, in: project) }
+        // The conversation's size after the run, in Lamp's log: what the next request will carry.
+        let sizeAfter = await measureConversation(of: project, engine: engine, session: session, failure: failure)
+        // Codex says nothing when it compacts, so its file says it: the notes are told again, as for the others.
+        if engine == .codex, let after = sizeAfter?.compactions, after > (sizeBefore?.compactions ?? 0) { conversationCompacted(project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -5250,12 +5272,28 @@ final class Store: ObservableObject {
             log(project, .status, "Claude's auto mode isn't available, so Lamp will ask before every command.")
             return await runAgent(prompt, files: files, sendsRequest: sendsRequest, on: project)
         }
-        // A request too big to send, which the engine couldn't shrink (Claude Code and Codex don't in Lamp's
-        // non-interactive runs; pi's extension drops pictures and tries once more before this is reached):
-        // every later request would be too big too, so the conversation ends here and the next request starts
-        // a fresh one. The notes (Memory) and the app's AI status are told again to the new conversation.
-        if Agent.isRequestTooLarge(failure) {
-            Self.forgetConversation(of: project, engine: engine)
+        // A request too big to send, which the engine couldn't shrink (pi's extension drops pictures and tries once
+        // more before this is reached), or a connection cut while sending a conversation that large: every later request
+        // would fail the same way. So the conversation is set aside (never deleted) and the request goes once more in a
+        // fresh one, told the wish's APP.md and the chat so far (`Conversation.freshNote`, `CatchUp`).
+        if Conversation.isTooBigToSend(failure, size: sizeAfter) {
+            Conversation.setAside([engine], of: project, reason: "too-large")
+            conversationCompacted(project)
+            Conversation.note(project, engine: engine, "set aside: \(failure.prefix(160))")
+            if !afresh, exists(project) {
+                log(project, .status, Conversation.startedFresh(for: project.name))
+                // What the person sent while it worked and the model took (Send Now) goes too: the chat note stops at
+                // the turn's request, and the conversation that had them is gone.
+                // Their files and what they pointed at go as `handOver` first sent them.
+                let taken = (logs[project.id] ?? []).filter { turn.midTurn.contains($0.id) }
+                let words = taken.map(\.text).filter { !$0.trimmed.isEmpty }.joined(separator: "\n\n")
+                let names = taken.flatMap { $0.attachments ?? [] }
+                let again = taken.isEmpty ? prompt
+                    : prompt + "\n\n---\nThe person then sent this while you worked, oldest first:\n\n"
+                        + (words.isEmpty ? Self.onlyFiles(names.count) : words)
+                        + Attachments.note(for: names, inlined: false) + PointedAt.note(for: taken.compactMap(\.pointed))
+                return await runAgent(again, files: files, sendsRequest: sendsRequest, afresh: true, on: current(project) ?? project)
+            }
             log(project, .error, Agent.conversationTooLarge)
             return false
         }
@@ -5479,6 +5517,25 @@ final class Store: ObservableObject {
         guard (AppFile.text(file, in: project)?.trimmed ?? "app") != now else { return }
         for engine in Engine.allCases { Self.forgetConversation(of: project, engine: engine) }
         try? now.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    /// The engine's conversation, as it would be sent now, measured off the main thread and noted in Lamp's log.
+    private func measureConversation(of project: LampProject, engine: Engine, session: String?, failure: String?) async -> Conversation.Size? {
+        let id = engine == .pi ? session : Self.savedSession(Self.sessionFile(for: project, engine: engine))
+        guard let id, let file = Conversation.transcript(of: engine, session: id, in: project) else { return nil }
+        let size = await Task.detached { Conversation.measure(file, engine: engine) }.value
+        Conversation.note(project, engine: engine, "after: \(size.described)" + (failure.map { ", failed: \($0.prefix(160))" } ?? ""))
+        return size
+    }
+
+    /// Everything Lamp tells a conversation once is told again: it was summed up, or it's a new one.
+    private func conversationCompacted(_ project: LampProject) {
+        Memory.compacted(project)
+        AIStatus.compacted(project)
+        Skills.compacted(project)
+        DeviceNote.compacted(project)
+        WishNote.compacted(project)
+        Parts.compacted(project)
     }
 
     private static func forgetConversation(of project: LampProject, engine: Engine) {
@@ -7937,6 +7994,15 @@ final class Store: ObservableObject {
         }
         let restored = await takeName(renaming, await followRestored(project))
         Versions.remember(restored, restoredTo: target.label, from: target.date)
+        // Undoing a Start Again from the Original brings back the chat and the conversations it set aside.
+        if let record = Conversation.startedAgain(at: undoing.id, in: restored) {
+            settleChat(restored)
+            if let chat = Conversation.bringBack(record, in: restored) {
+                progress[restored.id] = nil
+                logs[restored.id] = chat
+            }
+            conversationCompacted(restored)
+        }
         log(restored, .status, "Undid “\(undoing.label)”")
         await rebuild(restored, restoredFrom: target)
     }
@@ -7949,7 +8015,8 @@ final class Store: ObservableObject {
     }
 
     /// `restore` for a caller that has begun the wish's work itself (`begin`), and finishes it afterwards.
-    func restoreBegun(_ project: LampProject, to version: AppVersion) async {
+    /// `startingAgain`: Start Again from the Original, which starts the conversation again too (`startAgain`).
+    func restoreBegun(_ project: LampProject, to version: AppVersion, startingAgain: Bool = false) async {
         dropPausedRequest(project)
         let renaming = self.renaming(project, to: version, in: await Versions.list(project))
         guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version), renaming: renaming) else {
@@ -7957,9 +8024,30 @@ final class Store: ObservableObject {
             return
         }
         let restored = await takeName(renaming, await followRestored(project))
-        Versions.remember(restored, restoredTo: version.label, from: version.date)
-        log(restored, .status, Versions.restoredMessage(to: version))
+        if startingAgain {
+            await startConversationAgain(restored)
+        } else {
+            Versions.remember(restored, restoredTo: version.label, from: version.date)
+            log(restored, .status, Versions.restoredMessage(to: version))
+        }
         await rebuild(restored, restoredFrom: version)
+    }
+
+    /// After Start Again from the Original has put back the original's files: every engine's conversation about the
+    /// game that's gone is set aside, and the chat with it, down to one line; the next request starts fresh, told the
+    /// original's APP.md (`Conversation.freshNote`). Both are kept with the version the restore made, so Undo of it
+    /// brings back the code, the chat and the conversations together (`undo`).
+    private func startConversationAgain(_ project: LampProject) async {
+        settleChat(project)
+        let record = Conversation.setAside(Engine.allCases, of: project, reason: "start-again", chat: logs[project.id] ?? [])
+        if let record, var saved = Conversation.record(in: record, of: project), let head = await Versions.head(project) {
+            saved.version = head
+            Conversation.save(saved, in: record, of: project)
+        }
+        conversationCompacted(project)
+        progress[project.id] = nil
+        logs[project.id] = []
+        log(project, .status, Conversation.startedAgain)
     }
 
     /// Goes back to the version a request in the chat made, or to the one before it.

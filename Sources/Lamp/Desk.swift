@@ -1224,6 +1224,7 @@ extension Store {
 
     /// Start Again from the Original: the wish's files go back to the version it arrived as, as a new version (so this
     /// too is undone with Undo), and it opens with its chat, which says so (`opening`; from the chat it's open already).
+    /// The conversation starts again too: the agent's, for every engine, and the chat, down to the line that says so.
     func startAgain(_ project: LampProject, opening: Bool = true) async {
         // The wish's work is held from the first look to the restore, so no request or other restore comes between.
         guard begin(project) != nil else { return }
@@ -1239,7 +1240,7 @@ extension Store {
         // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
         ContributeCards.shared.close(project)
         if opening { open(fromDesk: project) }
-        await restoreBegun(project, to: arrival)
+        await restoreBegun(project, to: arrival, startingAgain: true)
     }
 
     /// Duplicate the Original: a fresh copy of the starter a changed copy came from, as this Lamp ships it, put on the
