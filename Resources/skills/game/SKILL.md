@@ -176,7 +176,7 @@ game is written to keep the player's place through one:
   opens the page again. `hot(import.meta).dispose(data => …)` takes away what a version made at its top level (a
   listener, an element), keeping in `data` what the next version reads as `hot(import.meta).data`. A stylesheet goes
   in by itself. The page opens again from the snapshot for the HTML, the world's module and the one that starts the
-  game, and for a change to a class's constructor or fields, to an exported function or value, or anywhere in a
+  game, and for a change to a class's constructor or fields (or to a class with private `#` members), to an exported function or value, or anywhere in a
   module that doesn't take its changes and that no module above it takes them for; the log says what was swapped
   and, when it wasn't, why. A game bundled from TypeScript is one file, so its code always opens the page again.
 - `busy()` is true while a match, race or round is on: a change that opens the page again then waits for the next

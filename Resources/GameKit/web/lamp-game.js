@@ -785,9 +785,9 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
 //
 // Anything else opens the page again with the new code, keeping the player's place: the HTML, a module nothing above
 // takes changes for (the one that builds the world, as a rule), a module that imports others in a circle, a class whose
-// constructor or fields changed (objects already made have the old fields), an exported function or value that
-// changed (whoever imported it holds the old one), or code a module's exported functions may use, changed outside its
-// classes. The log says which, and why. Just before, `snapshot()` gives what matters of where the game is (the level,
+// constructor or fields changed (objects already made have the old fields) or that has private members (#name), an
+// exported function or value that changed (whoever imported it holds the old one), or code a module's exported
+// functions may use, changed outside its classes. The log says which, and why. Just before, `snapshot()` gives what matters of where the game is (the level,
 // the player's position, the camera, the score, the mode, which menu or overlay is open…) as plain JSON. The new copy
 // starts straight there: `pendingRestore()` gives that state while the game starts (in init, or in a Phaser scene's
 // init or create), so the game builds the place it was in rather than its title or intro, and the runtime calls
@@ -1102,7 +1102,8 @@ async function swapModules(changed) {
     // The new versions, each importing the others' new versions and the rest of the game as it runs: a module none of
     // whose imports changed is loaded from its own address, with a new query; one that imports another that runs again
     // is loaded from its source with those imports pointed at the new versions.
-    const loaded = new Map(), addresses = new Map();
+    // Each new version's exports as it made them, read before any of the game's values are put into them.
+    const loaded = new Map(), addresses = new Map(), made = new Map();
     for (const path of order) {
         const address = `${addressOf(path)}?lamp=${++versionCount}`;
         const deps = imports.get(path) || [];
@@ -1121,6 +1122,9 @@ async function swapModules(changed) {
                 from = URL.createObjectURL(new Blob([written], { type: 'text/javascript' }));
             }
             loaded.set(path, await import(from));
+            // The new version's top level has run (listeners, elements): from here a refusal opens the page again at once.
+            touched = true;
+            made.set(path, versionOf(loaded.get(path)));
             addresses.set(path, from);
         } catch (e) {
             return { why: `${path} didn't load (${e && e.message || e})`, touched: true };
@@ -1136,7 +1140,7 @@ async function swapModules(changed) {
     for (const path of boundaries) {
         const m = modules.get(path), ns = loaded.get(path);
         const changedNames = putIn(m, ns);
-        m.versions.push(versionOf(ns));
+        m.versions.push(made.get(path));
         m.text = texts.get(path);
         if (m.onAccept) {
             try {
@@ -1148,7 +1152,7 @@ async function swapModules(changed) {
     for (const path of order) {
         latest.set(path, addresses.get(path));
         const m = modules.get(path);
-        if (m && !boundaries.has(path)) { m.versions.push(versionOf(loaded.get(path))); m.text = texts.get(path); }
+        if (m && !boundaries.has(path)) { m.versions.push(made.get(path)); m.text = texts.get(path); }
         if (!boundaries.has(path)) said.push(`${path}, run again for the modules that import it`);
     }
     for (const path of changed) texts.delete(path);
@@ -1166,6 +1170,8 @@ function fits(m, ns, text, path, rerun) {
         if (isClass(now) || isClass(was)) {
             if (!isClass(now) || !isClass(was)) return `${name} in ${path} is a class in one version and not the other`;
             if (shell(was) !== shell(now)) return `the constructor or fields of ${name} in ${path} changed`;
+            // An object's private members belong to the class that made it: a method of a new version can't read them.
+            if (PRIVATE.test(source(now))) return `${name} in ${path} has private members (#name), which a new version's methods can't reach`;
         } else if (typeof now === 'function' || typeof was === 'function') {
             if (typeof now !== 'function' || typeof was !== 'function' || source(now) !== source(was)) return `${path} exports the function ${name}, which changed`;
             holdsCode = true;
@@ -1179,6 +1185,9 @@ function fits(m, ns, text, path, rerun) {
     if (holdsCode && outside(m.text, last) !== outside(text, ns)) return `code outside the classes in ${path} changed, which what it exports may use`;
     return null;
 }
+
+// A use of a private member: `this.#speed`, `#speed in other`.
+const PRIVATE = /\.\s*#[A-Za-z_$]|#[A-Za-z_$][\w$]*\s+in\b/;
 
 // A class as it reads without its methods, accessors and static methods: its constructor, fields and what it extends.
 function shell(C) {
@@ -1237,6 +1246,14 @@ function putClass(C, N) {
     const changed = [];
     const code = d => d ? [d.value, d.get, d.set].filter(f => typeof f === 'function').map(source).join('\n') : '';
     for (const [from, to, skip] of [[N.prototype, C.prototype, ['constructor']], [N, C, ['length', 'name', 'prototype', Symbol.hasInstance]]]) {
+        // A method the new version no longer has goes, so an old object falls back to what it inherits, as a new one does.
+        for (const key of Reflect.ownKeys(to)) {
+            if (skip.includes(key) || Object.prototype.hasOwnProperty.call(from, key)) continue;
+            const d = Object.getOwnPropertyDescriptor(to, key);
+            if (!d.get && !d.set && typeof d.value !== 'function') continue;
+            delete to[key];
+            changed.push(String(key));
+        }
         for (const key of Reflect.ownKeys(from)) {
             if (skip.includes(key)) continue;
             const d = Object.getOwnPropertyDescriptor(from, key);

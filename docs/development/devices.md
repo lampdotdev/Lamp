@@ -488,7 +488,8 @@ class gets the new version's methods on its prototype (every version's, so objec
 code with their fields kept; `Symbol.hasInstance` makes one an instance of every version), and each exported plain
 object the values the change changed, told from what the game changed as it ran by the values each version made. Native
 modules can't rebind an importer's bindings, so a change those can't take opens the page again: a class whose
-constructor or fields changed (read off its source without its methods), an exported function or value that changed,
+constructor or fields changed (read off its source without its methods) or that has private members (their brand is
+the old class's), an exported function or value that changed,
 or code outside the classes of a module exporting functions; and the HTML, a module nothing takes changes for (the one
 that builds the world), a circle of imports, or new code throwing in its first second (`swapGuard`), which opens it
 from the snapshot taken before the swap. The game's `accept((next, { changed }) => …)` may build again what a changed
