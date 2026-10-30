@@ -8589,7 +8589,9 @@ final class Store: ObservableObject {
                       !turn.building, !turn.keptOpen, turn.applying == nil,
                       let current = stepped(project), LiveReload.eligible(current) || stepsPage(current) || stepsPhones(current),
                       !turn.look.inProgress || (stepsPage(current) && turn.stopHidden != nil) || stepsPhones(current),
-                      isRunning(current) || stepsPhones(current), !Runtime.waitsForReload(current),
+                      isRunning(current) || stepsPhones(current),
+                      // A change waiting for Reload holds back the rest of the app, not a phone's page (`stepPhones`).
+                      !Runtime.waitsForReload(current) || stepsPage(current) || stepsPhones(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false
                           || turn.carriedSetAside == setAsideChanges[project.id]?.crash else { continue }
@@ -8600,9 +8602,10 @@ final class Store: ObservableObject {
                 // each can hold the picture for a moment, and a run of small ones, seconds apart, reads as stutter.
                 // A game's page takes a change once the agent has said in a progress line what's in it (`progressSinceStep`),
                 // so each change the person sees is one they're told of, and the saving has paused a moment.
-                if stepsPage(current), Date().timeIntervalSince(seenAt) < 3 || progressSinceStep(current, turn) == nil { continue }
-                // Phones on a page Lamp serves take theirs after the same pause: there's no game on screen to narrate.
-                if stepsPhones(current), Date().timeIntervalSince(seenAt) < 3 { continue }
+                let held = Runtime.waitsForReload(current)
+                if stepsPage(current), !held, Date().timeIntervalSince(seenAt) < 3 || progressSinceStep(current, turn) == nil { continue }
+                // Phones take theirs after the same pause: no change of the game is going on screen to narrate.
+                if stepsPhones(current) || held, Date().timeIntervalSince(seenAt) < 3 { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
                 let saved = seenAt
@@ -8611,7 +8614,7 @@ final class Store: ObservableObject {
                     turn.applying = Task { [weak self] in
                         guard let self else { return }
                         defer { turn.applying = nil }
-                        if stepsPage(current) { await stepPage(current, in: turn, saved: saved) }
+                        if stepsPage(current), !held { await stepPage(current, in: turn, saved: saved) }
                         else { await stepPhones(current, saved: saved) }
                     }
                     await turn.applying?.value
@@ -8722,12 +8725,14 @@ final class Store: ObservableObject {
     }
 
     /// The phone page as it's saved, once its scripts parse, published only if what's copied is what was checked: a save
-    /// made meanwhile waits for the next step, so an open phone never reloads into something half written.
+    /// made meanwhile waits for the next step, so an open phone never reloads into something half written. Also how a game
+    /// open on this Mac, with a change of its page waiting for Reload, is handed a new phone page: that change stays held.
     private func stepPhones(_ project: LampProject, saved: Date) async {
         let source = project.dir.appendingPathComponent(TVTemplate.phoneFolder)
         guard let checked = (try? ControllerSnapshot.read(source))?.version, checked != TVs.phoneVersion(of: project),
               await GameKit.codeProblem(project, in: TVTemplate.phoneFolder) == nil,
               (try? await TVs.stagePhone(project, expecting: checked)) == true else { return }
+        if stepsPage(project), PageLive.shared.takesPhonePage(project, at: .mac) { _ = await PageLive.shared.put(project, at: .mac) }
         log(project, .status, "Updated the phone page")
         log(project, .detail, "The phone page was published \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
     }
@@ -8740,12 +8745,13 @@ final class Store: ObservableObject {
         guard page != turn.shownPage else { return }
         // The line this step goes in for, and where it starts: a line the agent posts while it goes in is the next step's.
         let words = progressSinceStep(project, turn), boundary = Date()
+        // Read before it's checked: what's published is that version or nothing (`TVs.stagePhone`).
+        let phone = (try? ControllerSnapshot.read(project.dir.appendingPathComponent(TVTemplate.phoneFolder)))?.version
         // Still being written, or broken: tried again once it changes.
         guard await GameKit.codeProblem(project) == nil, await GameKit.codeProblem(project, in: TVTemplate.phoneFolder) == nil else { return }
         // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
         var mac = project
         mac.chosen = .mac
-        let phone = (try? ControllerSnapshot.read(project.dir.appendingPathComponent(TVTemplate.phoneFolder)))?.version
         guard await build(mac, ownStep: true, phone: phone) == nil, stillOwned(), var current = current(project) else { return }
         current.chosen = .mac
         guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {

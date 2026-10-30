@@ -572,7 +572,7 @@ for a game open on this Mac (`stepPage`), and after the same pause for phones on
 what was checked (`TVs.stagePhone`'s `expecting`). A change of the phone page goes into the open game with its page (`PageLive.put`): the copy
 on the Mac or in the simulator says it can take one (`phone` in its `/app/page/live` ask), Lamp hands it the whole page by
 hash, and `LampPageLive` writes it to a folder of its own and only then swaps it in (`ControllerRuntime.use`), under the
-session that's open; a change of the game's page held for Reload stays held. A copy built by an earlier Lamp has the game installed again instead (`pageInPlace`,
+session that's open; a change of the game's page held for Reload stays held, and the phone page goes on stepping meanwhile. A copy built by an earlier Lamp has the game installed again instead (`pageInPlace`,
 `GamePhones.changed`). A page already open on a phone takes the newer one itself: every page Lamp or the game serves
 starts with its version (`PhonePageServer.marked`, an HTML comment, which also says the host publishes versions), and
 lamp-controller.js reads `lamp-phone.json` every three seconds while it's visible and as it comes back. Once the version
