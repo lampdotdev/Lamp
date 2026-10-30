@@ -282,6 +282,13 @@ hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and p
 the rest Edge's `Gamepad…` names). A key a page makes can't carry a key code, so the remote's arrows in a TV app or a screen (`Lamp.onKey`, `Lamp.key`) read a key by its name too (`nameOf`), or the controller would move nothing. `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
 console before installs over the earlier EdgeHTML one (same family, newer version), so nothing moves an app across.
 
+**A shared app stays off the Xbox** (`SharedNetwork.keptOffXbox`): the host there can't hold a page to the sites its
+safety sheet named, so an app with a policy Lamp keeps (the "Wishes" guide's shared pages) isn't built for the Xbox
+(`DeviceApps.build`), a package made before isn't sent (`DeviceApps.install`), and a copy already on one gets no new
+files (`PageCopies.put`). A policy file that can't be read counts as a policy. Only Lamp's own kept policy letting the
+app reach every site (`unrestricted`) lets it go; what was allowed inside the app on another device doesn't. The
+person's own apps go as before.
+
 **What's on the network, for an app** (`LampNetwork`, in LampSupport.swift): a wish's Mac or iPhone app finds the
 person's devices itself, for the ones Lamp has no block for. `requestAccess()` is the system's Local Network question,
 asked when the app chooses (after saying why, never at launch): a datagram to a neighbor has the system ask, and the

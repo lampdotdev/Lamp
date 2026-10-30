@@ -160,6 +160,7 @@ enum DeviceApps {
     /// Runs the declared package step in the app's sandbox, then copies what it made into Lamp's folder, read the way
     /// Lamp reads anything there (`AppFile`: no link followed, only a plain file).
     static func build(_ project: LampProject, started: (@MainActor (Process) -> Void)? = nil) async throws {
+        if SharedNetwork.keptOffXbox(project) { throw Failure(message: SharedNetwork.xboxRefusal) }
         guard let declared = integration(for: project)?.app?.declared else {
             throw Failure(message: "Lamp no longer has the integration this app is made for, so it can't make its package.")
         }
@@ -322,6 +323,8 @@ enum DeviceApps {
     static func install(_ project: LampProject, on device: Device, log: FileHandle?, opens: Bool = true,
                         stillWanted: @escaping @MainActor () -> Bool = { true },
                         waiting: @escaping @MainActor () -> Void = {}) async throws -> Run {
+        // Before anything opens or goes: a package made before the app was kept off is never sent either.
+        if SharedNetwork.keptOffXbox(project) { throw Failure(message: SharedNetwork.xboxRefusal) }
         guard let integration = integration(for: project), let bridge = integration.bridge, let install = bridge.install else {
             throw Failure(message: "\(device.name)'s integration doesn't say how an app goes on it.")
         }

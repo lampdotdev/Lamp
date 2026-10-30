@@ -25,12 +25,23 @@ enum SharedNetwork {
         return folder.appendingPathComponent(safe + ".json")
     }
 
-    /// The app's policy, or nil for an app the person made (or one whose file can't be read as one: never taken for a
-    /// wider one).
+    /// The app's policy, or nil for an app the person made, which has no file. A file that's there but can't be read, or
+    /// can't be read as one, is a policy with no sites: never taken for a wider one, nor for none.
     static func policy(for project: LampProject) -> NetworkPolicy? {
-        guard let data = try? Data(contentsOf: url(for: project)) else { return nil }
+        let data: Data
+        do { data = try Data(contentsOf: url(for: project)) } catch CocoaError.fileReadNoSuchFile { return nil } catch { return NetworkPolicy() }
         return (try? JSONDecoder().decode(NetworkPolicy.self, from: data)) ?? NetworkPolicy()
     }
+
+    /// Whether a shared app is kept off the Xbox: Lamp can't hold a page to its sites there yet, so one held to them
+    /// doesn't go. An app the person made goes as it always has, and so does a shared one only when Lamp's own kept
+    /// policy lets it reach every site (`unrestricted`); what the person allowed inside the app on another device is
+    /// that app's own, and doesn't count here.
+    static func keptOffXbox(_ project: LampProject) -> Bool {
+        project.deviceIntegration == GameKit.xbox && policy(for: project)?.restricts == true
+    }
+
+    static let xboxRefusal = "Lamp can't yet enforce this shared app's network limits on Xbox, so it can't put it there."
 
     static func save(_ policy: NetworkPolicy, for project: LampProject) throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

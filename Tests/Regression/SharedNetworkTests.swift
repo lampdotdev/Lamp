@@ -93,6 +93,46 @@ final class SharedNetworkTests: XCTestCase {
 
     /// An update undone puts back what its apps reached, and leaves no policy for an app it added: a later app made in
     /// that folder is the same instance, and would take it for its own.
+    /// Lamp can't hold a shared page to its sites on an Xbox yet: such an app is never built for it, sent to it or
+    /// given new files there, and a policy file that can't be read keeps it off too. The person's own apps, and a
+    /// shared one Lamp's kept policy lets reach every site, go as before.
+    func testASharedAppIsKeptOffTheXbox() async throws {
+        let kept = SharedNetwork.folder
+        SharedNetwork.folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-network-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: SharedNetwork.folder); SharedNetwork.folder = kept }
+        func app(_ integration: String) -> LampProject {
+            var project = LampProject(id: "weather", name: "Weather", exe: "Weather", dir: FileManager.default.temporaryDirectory
+                .appendingPathComponent("lamp-no-such-app"), instance: UUID().uuidString)
+            project.integration = integration
+            return project
+        }
+        let own = app("xbox-one")
+        XCTAssertFalse(SharedNetwork.keptOffXbox(own), "an app the person made goes")
+
+        let shared = app("xbox-one"), game = app("xbox-one:game"), elsewhere = app("roku")
+        for project in [shared, game, elsewhere] { try SharedNetwork.save(NetworkPolicy(origins: ["https://api.open-meteo.com"]), for: project) }
+        XCTAssertTrue(SharedNetwork.keptOffXbox(shared))
+        XCTAssertTrue(SharedNetwork.keptOffXbox(game), "the Xbox's game kind is the Xbox too")
+        XCTAssertFalse(SharedNetwork.keptOffXbox(elsewhere), "only the Xbox")
+        do { try await DeviceApps.build(shared); XCTFail("built") } catch { XCTAssertEqual(error.localizedDescription, SharedNetwork.xboxRefusal) }
+        let xbox = Device(id: "xbox", kind: .other, maker: "Microsoft", model: "Xbox One", modelID: "", name: "Xbox", os: "", osVersion: "", reach: .network)
+        do { _ = try await DeviceApps.install(shared, on: xbox, log: nil); XCTFail("installed") }
+        catch { XCTAssertEqual(error.localizedDescription, SharedNetwork.xboxRefusal) }
+
+        let free = app("xbox-one")
+        try SharedNetwork.save(NetworkPolicy(origins: [], unrestricted: true), for: free)
+        XCTAssertFalse(SharedNetwork.keptOffXbox(free), "Lamp's kept policy lets it reach every site")
+
+        // A policy file that can't be read is still a policy, not an app the person made.
+        let locked = app("xbox-one")
+        try SharedNetwork.save(NetworkPolicy(unrestricted: true), for: locked)
+        let file = SharedNetwork.url(for: locked)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+        XCTAssertEqual(SharedNetwork.policy(for: locked), NetworkPolicy())
+        XCTAssertTrue(SharedNetwork.keptOffXbox(locked))
+    }
+
     func testAnUndoneUpdateLeavesTheWishsPoliciesAsTheyWere() throws {
         let kept = SharedNetwork.folder
         SharedNetwork.folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-network-\(UUID().uuidString)")
