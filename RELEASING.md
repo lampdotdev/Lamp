@@ -150,7 +150,8 @@ it beside the Lamp they rely on. It's one rolling pre-release, tagged `nightly`:
 release's `sparkle.json`, title and notes are replaced each time and `Lamp-Nightly-<version>.dmg` is added with the
 assets that version fetches (`dist/assets`, each named by the version), so the
 release is published once and only edited after that, and whatever listens for releases (the Slack subscription) hears
-of it once. The release keeps its newest three DMGs, and their assets, and the feed names the one it signed
+of it once. The release keeps its newest three DMGs, and the assets of its newest twenty versions (an installed nightly
+fetches them for as long as it runs), and the feed names the one it signed
 (`/download/nightly/<file>`): the feed is cached for a quarter of an hour and an update window may stay open longer,
 and the DMG an offer names must still be there to verify. The version is the last release plus the commits since it as `build.sh` names a build from source
 (`0.24.0+37`), and the build number `0.24.0.37`, so Sparkle orders the nightlies among themselves. A push that is a

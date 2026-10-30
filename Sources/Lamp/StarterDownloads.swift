@@ -37,7 +37,9 @@ enum StarterDownloads {
             try await fetchPrebuilt(starter)
         } catch {
             NSLog("Lamp couldn't get the prebuilt %@: %@", starter.name, error.localizedDescription)
-            if needsPrebuilt { throw error }
+            // One no longer there (an old nightly's) isn't coming back: the starter is copied all the same, and built once
+            // Apple's tools are here, as one whose prebuilt app this Mac refused is (`Store.awaitToolsToOpen`).
+            if needsPrebuilt, (error as? Downloads.Failure)?.gone != true { throw error }
         }
     }
 

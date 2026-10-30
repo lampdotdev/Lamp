@@ -42,6 +42,12 @@ enum PrebuiltStarters {
         shipped(project).flatMap(archive(of:)) != nil
     }
 
+    /// Whether this Lamp pins a prebuilt app for the starter that isn't on this Mac (it couldn't be fetched).
+    static func unavailable(_ project: LampProject) -> Bool {
+        guard let starter = shipped(project) else { return false }
+        return StarterDownloads.prebuilt(of: starter) != nil && archive(of: starter) == nil
+    }
+
     /// Where `--prebuild-starters` and `--restamp-starters` leave the starters they build: the folder after the flag.
     private static func output(after flag: String) -> URL {
         let arguments = CommandLine.arguments
