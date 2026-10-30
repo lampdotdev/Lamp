@@ -26,15 +26,14 @@ and the rest are Lamp's own.
   <tr>
     <td align="center"><a href="https://github.com/lampdotdev/localcrossings"><img src=".github/readme/localcrossings.jpg" width="260" alt="Local Crossings"></a><br><b>Local Crossings</b></td>
     <td align="center"><a href="https://github.com/lampdotdev/today"><img src=".github/readme/today.jpg" width="260" alt="Today"></a><br><b>Today</b></td>
-    <td align="center"><img src=".github/readme/hotshelf.jpg" width="260" alt="Hot Shelf"><br><b>Hot Shelf</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/diskmap"><img src=".github/readme/diskmap.jpg" width="260" alt="Disk Map"></a><br><b>Disk Map</b></td>
   </tr>
   <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/diskmap"><img src=".github/readme/diskmap.jpg" width="260" alt="Disk Map"></a><br><b>Disk Map</b></td>
     <td align="center"><a href="https://github.com/lampdotdev/hours"><img src=".github/readme/hours.jpg" width="260" alt="Hours"></a><br><b>Hours</b></td>
     <td align="center"><a href="https://github.com/lampdotdev/weddingwords"><img src=".github/readme/weddingwords.jpg" width="260" alt="Wedding Words"></a><br><b>Wedding Words</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/transcriber"><img src=".github/readme/transcriber.jpg" width="260" alt="Transcriber"></a><br><b>Transcriber</b></td>
   </tr>
   <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/transcriber"><img src=".github/readme/transcriber.jpg" width="260" alt="Transcriber"></a><br><b>Transcriber</b></td>
     <td align="center"><a href="https://github.com/lampdotdev/tidyup"><img src=".github/readme/tidyup.jpg" width="260" alt="Tidy Up"></a><br><b>Tidy Up</b></td>
     <td align="center"><a href="https://github.com/lampdotdev/sitetoapp"><img src=".github/readme/sitetoapp.jpg" width="260" alt="Site-to-App"></a><br><b>Site-to-App</b></td>
   </tr>
