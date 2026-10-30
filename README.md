@@ -14,28 +14,28 @@ The Little House grew out of remvze's Moodist, and the rest are Lamp's own.
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/newyork"><img src=".github/readme/newyork.jpg" width="260" alt="New York"></a><br><b>New York</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/homehq"><img src=".github/readme/homehq.jpg" width="260" alt="Home HQ"></a><br><b>Home HQ</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/thelittlehouse"><img src=".github/readme/thelittlehouse.jpg" width="260" alt="The Little House"></a><br><b>The Little House</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/newyork"><img src="https://raw.githubusercontent.com/lampdotdev/newyork/main/.github/preview.png" width="260" alt="New York"></a><br><b>New York</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/homehq"><img src="https://raw.githubusercontent.com/lampdotdev/homehq/main/.github/preview.png" width="260" alt="Home HQ"></a><br><b>Home HQ</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/thelittlehouse"><img src="https://raw.githubusercontent.com/lampdotdev/thelittlehouse/main/.github/preview.png" width="260" alt="The Little House"></a><br><b>The Little House</b></td>
   </tr>
   <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/buzzerbeater"><img src=".github/readme/buzzerbeater.jpg" width="260" alt="Buzzer Beater"></a><br><b>Buzzer Beater</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/universalremote"><img src=".github/readme/universalremote.jpg" width="260" alt="Universal Remote"></a><br><b>Universal Remote</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/fireside"><img src=".github/readme/fireside.jpg" width="260" alt="Fireside"></a><br><b>Fireside</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/buzzerbeater"><img src="https://raw.githubusercontent.com/lampdotdev/buzzerbeater/main/.github/preview.png" width="260" alt="Buzzer Beater"></a><br><b>Buzzer Beater</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/universalremote"><img src="https://raw.githubusercontent.com/lampdotdev/universalremote/main/.github/preview.png" width="260" alt="Universal Remote"></a><br><b>Universal Remote</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/fireside"><img src="https://raw.githubusercontent.com/lampdotdev/fireside/main/.github/preview.png" width="260" alt="Fireside"></a><br><b>Fireside</b></td>
   </tr>
   <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/localcrossings"><img src=".github/readme/localcrossings.jpg" width="260" alt="Local Crossings"></a><br><b>Local Crossings</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/today"><img src=".github/readme/today.jpg" width="260" alt="Today"></a><br><b>Today</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/diskmap"><img src=".github/readme/diskmap.jpg" width="260" alt="Disk Map"></a><br><b>Disk Map</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/localcrossings"><img src="https://raw.githubusercontent.com/lampdotdev/localcrossings/main/.github/preview.png" width="260" alt="Local Crossings"></a><br><b>Local Crossings</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/today"><img src="https://raw.githubusercontent.com/lampdotdev/today/main/.github/preview.png" width="260" alt="Today"></a><br><b>Today</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/diskmap"><img src="https://raw.githubusercontent.com/lampdotdev/diskmap/main/.github/preview.png" width="260" alt="Disk Map"></a><br><b>Disk Map</b></td>
   </tr>
   <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/hours"><img src=".github/readme/hours.jpg" width="260" alt="Hours"></a><br><b>Hours</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/weddingwords"><img src=".github/readme/weddingwords.jpg" width="260" alt="Wedding Words"></a><br><b>Wedding Words</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/transcriber"><img src=".github/readme/transcriber.jpg" width="260" alt="Transcriber"></a><br><b>Transcriber</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/hours"><img src="https://raw.githubusercontent.com/lampdotdev/hours/main/.github/preview.png" width="260" alt="Hours"></a><br><b>Hours</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/weddingwords"><img src="https://raw.githubusercontent.com/lampdotdev/weddingwords/main/.github/preview.png" width="260" alt="Wedding Words"></a><br><b>Wedding Words</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/transcriber"><img src="https://raw.githubusercontent.com/lampdotdev/transcriber/main/.github/preview.png" width="260" alt="Transcriber"></a><br><b>Transcriber</b></td>
   </tr>
   <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/tidyup"><img src=".github/readme/tidyup.jpg" width="260" alt="Tidy Up"></a><br><b>Tidy Up</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/sitetoapp"><img src=".github/readme/sitetoapp.jpg" width="260" alt="Site-to-App"></a><br><b>Site-to-App</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/tidyup"><img src="https://raw.githubusercontent.com/lampdotdev/tidyup/main/.github/preview.png" width="260" alt="Tidy Up"></a><br><b>Tidy Up</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/sitetoapp"><img src="https://raw.githubusercontent.com/lampdotdev/sitetoapp/main/.github/preview.png" width="260" alt="Site-to-App"></a><br><b>Site-to-App</b></td>
   </tr>
 </table>
 
