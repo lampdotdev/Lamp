@@ -12,7 +12,7 @@ the person asks for its screens to change: don't redesign a game they already li
 
 ## A short brief
 
-Before drawing a screen, settle four things, for yourself; this is no interview:
+Before drawing a screen, settle four things for yourself:
 
 - what the players do, and what counts as winning;
 - who is holding what, and from how far they look: a shared TV across the room, a Mac at a desk, a phone in the hand;
@@ -24,17 +24,19 @@ Before drawing a screen, settle four things, for yourself; this is no interview:
 The usual path, leaving out what the game has no use for:
 
 1. **Title**: the game's name in a scene or strong emblem, one dominant Play or Continue, and a few quieter choices
-   (How to play, Settings). It's the first screen and the main menu at once: no extra "press any button".
+   (How to play, Settings). It's the first screen and the main menu at once: no extra "press any button". No level
+   cards, join code or controls here: those are later screens.
 2. **Joining or setup**: only when the game needs it, and only the choices needed now. Rule tweaks go behind a labeled
    secondary choice. A game played only with phones may start here.
-3. **Level or mode choice**: when the choice means something. A game with one endless mode goes straight to play.
+3. **Level or mode choice**: a screen of its own after Play, when the choice means something. A game with one endless
+   mode goes straight to play.
 4. **Play**, then **Pause** with Resume first, and **Results** that say what happened before any decoration.
 
 Rematch and quick start keep the session's choices: players, level, mode. Settings aren't a step on the way to play.
 Back returns to the previous choice with its state intact, and leaving a lobby, restarting a round and quitting read
 as different things. Confirm only what would throw away progress or break up the party.
 
-Each screen has one job. If a screen answers two questions, it's two screens.
+Each screen has one job. "What is this game?" and "which level?" are two questions, so they're two screens.
 
 ## Theme in the composition
 
@@ -67,7 +69,7 @@ element in its own card.
 - With phones as controllers, the shared screen shows what's public (who's in, whose turn, the score); each phone shows
   its player's current action, and that a choice was received. A join code belongs to the joining screen (the
   phone-pages skill), never on the title.
-- Keep assistance the game can offer, and never carry essential information by sound alone.
+- Never carry essential information by sound alone.
 
 ## Feedback and layout
 
