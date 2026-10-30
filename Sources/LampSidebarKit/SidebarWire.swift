@@ -167,8 +167,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var button: String?
     /// A card's other answer, drawn before its button (Keep Old Copy beside Remove Old Copy), sent as `decline`.
     public var declineButton: String?
-    /// A card's ways to answer it, drawn before its button (Use Claude), each sent as `choose` by its place here.
-    public var choices: [String]?
+    /// A card's ways to answer it, drawn before its button (Use Claude), each sent as `choose` with its id.
+    public var choices: [SidebarChoice]?
     public var disabled: Bool?
     /// An action line's button is the one thing to do next (Reload): drawn in the accent color.
     public var prominent: Bool?
@@ -195,6 +195,17 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
         self.attachments = attachments
         self.growing = growing
         self.questions = questions
+    }
+}
+
+/// A way to answer an offer's card: what its button says, and what Lamp knows it by.
+public struct SidebarChoice: Codable, Equatable, Identifiable {
+    public let id: String
+    public let title: String
+
+    public init(id: String, title: String) {
+        self.id = id
+        self.title = title
     }
 }
 
@@ -572,8 +583,9 @@ public enum SidebarCommand: Codable, Equatable {
     case offer(UUID)
     /// The other answer on an offer's card (`SidebarLine.declineButton`).
     case decline(UUID)
-    /// One of an offer's card's ways to answer it (`SidebarLine.choices`), by its place there.
-    case choose(UUID, Int)
+    /// One of an offer's card's ways to answer it (`SidebarLine.choices`), by its id: what's on the button the person
+    /// clicked, whatever the card has come to offer meanwhile.
+    case choose(UUID, String)
     /// Back to how the app was after the request with this id, or before it.
     case goBack(UUID, before: Bool)
     /// The request with this id into the message box, to change and send again; and back out of it.

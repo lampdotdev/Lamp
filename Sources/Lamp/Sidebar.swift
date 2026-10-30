@@ -919,7 +919,7 @@ final class SidebarServer {
                     var card = SidebarLine(id: line.id, kind: .offer, text: BuilderLine.title, gap: gap)
                     card.symbol = "sparkles"
                     card.status = BuilderLine.status(offered)
-                    card.choices = offered.map(BuilderLine.choice)
+                    card.choices = offered.map { SidebarChoice(id: $0.rawValue, title: BuilderLine.choice($0)) }
                     card.button = offered.isEmpty ? "Set Up…" : BuilderLine.others
                     out.append(card)
                 case .widget:
@@ -1272,11 +1272,9 @@ final class SidebarServer {
             // A card's keys, downloads and sign-ins, and Image Playground: Lamp's own sheet, since the chat beside an
             // app can't hold them (nothing typed there may reach the app), as Share hands over the file it makes.
             SetupSheet.shared.show(project, line: line)
-        case .choose(let id, let place):
-            guard let line = store.logs[project.id]?.first(where: { $0.id == id }), line.kind == .needsBuilder else { return }
-            let offered = BuilderLine.engines(in: line.text)
-            guard offered.indices.contains(place) else { return }
-            store.useSignedIn(offered[place], for: project, line: id)
+        case .choose(let id, let choice):
+            guard let engine = Engine(rawValue: choice) else { return }
+            store.useSignedIn(engine, for: project, line: id)
         case .decline(let id):
             guard store.logs[project.id]?.first(where: { $0.id == id })?.kind == .oldCopy else { return }
             Task { await store.answerOldCopy(project, line: id, remove: false) }
