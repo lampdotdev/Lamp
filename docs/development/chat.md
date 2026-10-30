@@ -17,7 +17,9 @@ A capability given to one engine must be given to all of them that can take it, 
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
   in the chat as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
-  after them. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
+  after them. The Reload line shows while a change waits for it, whether the Mac copy's held build or a page's change
+  that a copy on another device couldn't take in place (`Transcript`, `Store.awaitsReloadElsewhere`), and pressing it
+  puts the change on every place the person has the wish on (`Store.reloadEverywhere`), saying where in one line. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
   `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;
   the steps before that stay where they came, between the messages, each stretch of more than one folded to its one
   line as soon as the agent says something after it (`ChatItem.closing`), as it would be when the turn ends. While the turn goes on the line is open, at
@@ -99,6 +101,10 @@ A capability given to one engine must be given to all of them that can take it, 
   runaway one is (`Store.endIfOver`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
   doesn't ask about layout, colors or names (`Agent.Rules.ask`).
+
+When a conversation starts again, Lamp says so in a line of the chat, as any status: "Started a fresh conversation for
+<wish>: the last one had grown too large to send" when a request couldn't be sent, and, alone in a cleared chat,
+"Started again from the original" (both in `Conversation`; "How big a conversation grows" in the engines guide).
 
 ## The chat's one screen
 

@@ -7,6 +7,9 @@ and `Package.swift` are written afresh before every build (`Template.writeOwnedF
 that fails. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
 Package.swift as a program), so they're replaced rather than checked: nothing the agent's file tools wrote
 into them, with no card, can run. Shared apps never carry them: import writes its own.
+What a shared file says still reaches build.sh: the app's name and its permission reasons. They are never pasted into
+the script's code: `Template.write` sets them in single quotes at the script's top (`Template.shellWords`) and the
+script reads them as variables, so no name runs, ends a heredoc or breaks a quote, and names stay as free as they are.
 Replacing them isn't enough on its own: they sit in the agent's folder, and a command it left running can put
 its own there between Lamp writing them and running them. So the build runs as the agent's commands do, in the
 app's sandbox (`Store.runBuild`, through `Sandbox.run`), and so does everything else Lamp runs over what's in
@@ -39,14 +42,26 @@ reason was added are rebuilt when next opened.
 `use_app` on a Mac app is carried out by the app itself (`LampDriver`, reached by a distributed notification
 signed with the app's token, `Store.use`), so no Accessibility permission is needed. With every picture the
 app writes its front window as text (`LampScreen` in LampSupport.swift, `.lamp/runtime/screen.txt`): one line
-per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included),
-with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
+per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included; a web
+view's insides are never walked, so a page in LampPage.swift's host adds its own things through `LampPageItems`, read
+by a script in the page, "Where the agent looks at it" in the devices guide), with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
 return it beside the picture (`Runtime.screenText`), the same lines the iPhone driver writes. An action names
 what it's for by `target` (an id or exact name, `LampScreen.find`): a button, switch, link or choice is asked
 to press itself (`accessibilityPerformPress`), a field takes the text in place of what it held, a slider or
 stepper takes a number or a step, and what has no action of its own, or isn't listed (a drawing, a canvas),
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
+
+**Showcase mode.** An app opened with `LAMP_SHOWCASE` set to a folder holding a showcase.json is being recorded for
+a reel (`LampShowcase`; "A starter's reel" in the desk guide): it keeps its data in that folder, starting empty
+(LampStore imports any `data/<name>.json` there), LampAI's calls are answered from the script (every route, through
+`LampAI.post`), LampLocation is where the script says, notifications are logged and not sent, and no `LampSchedule`
+runs. Once its window is up, and the recorder has its first frame (it leaves a `recording` file in the folder; with
+none in two minutes it plays nothing and logs why), it plays the script's steps on it with `LampDriver`'s own actions
+(`LampDriver.playShowcase`), so it needs no Accessibility permission, and logs everything to events.tsv with the
+time and the frame of what it acted on, which the reel's edit lines up with the recording. The app's own code for its
+microphone, camera or speech asks the script while it's on (`LampShowcase.hear`, `speak`, `file`, `line`); nothing of
+the person's is read, so the reel shows none of it.
 
 `use_app` happens in plain sight, and the person can take the app back at any moment (`Handover`). While the
 actions run, the window in use glows, Lamp's cursor (a fingertip over the simulator) goes to each spot before

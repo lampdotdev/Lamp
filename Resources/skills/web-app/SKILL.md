@@ -37,13 +37,15 @@ app's tools, the page runs them, the AI sees the results, until it replies (at m
 turn, and 25 seconds over OpenRouter or a minute through Claude Code, Codex or a model on the Mac). It works with
 whichever AI the person set up for apps' text, so don't tie it to voice: typing works wherever `act` does. Its comment in lamp.js has the shapes. This is the one recipe for it:
 
-- Show the feature only where `LampAI.isAvailable('act')` is true, and keep the app's own buttons for everything: it
-  only adds a way in.
+- Show the feature where `LampAI.isAvailable('act')` is true, and keep the app's own buttons for everything: it only
+  adds a way in. Where it's false, keep it visible with a short reason and a way to set it up in Lamp, and keep what
+  was typed; don't send it by itself once setup is done. Whether AI belongs in the app at all, and the contract to
+  write in APP.md, are the app-ai skill's.
 - Tools are small reads and writes over the app's own data, ids in and ids out, never "do anything". A read has
   `reads: true`; everything else is a write. Nothing destructive (a delete, a clear) without an Undo the person sees.
 - Every write has a `check` that looks its item up again by id and says in a sentence why it can't be done (gone,
   already done, in the past, nobody of that name); `run` changes the data the way the app's own button does, and
-  returns the item as it is after.
+  returns the item as it is after. Fencing outside text helps the AI read it, but the checks are what hold the line.
 - Make the ids of what a write adds from `call.key`, or keep the key on the change, so the same request made again
   finds it instead of adding a second.
 - Say what happened from the result's `done`, `failed` and `skipped`, which are what the page ran, never from the AI's

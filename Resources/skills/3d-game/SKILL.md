@@ -45,6 +45,13 @@ lamp-game.js once:
 - `frame(f)` runs about 60 times a second. It reads the controller as `f.pads[0]`, moves things by `f.dt` (and
   `f.time`), and ends with `renderer.render(scene, camera)`.
 - `touch` names the buttons Lamp's touch controls show on a phone or tablet.
+- game.js only puts the parts together, and keeps the renderer and the world's parts with `hot(import.meta).keep`
+  (the game skill, "Changes while it's played", has the recipe). The world is built in parts (the ground, the
+  buildings, the trees and street details, the props, the traffic), each in a module of its own and into a group of
+  its own, so a change to one part builds only that part again; each thing that moves or changes in play (the player,
+  a vehicle, the camera, enemies, the HUD's code) is a class in a module that ends with `hot(import.meta).accept()`,
+  so a change to its methods goes into the running scene with nothing built again. A uniform's value or a material's
+  color set in an `update` swaps; a material made anew compiles its shader again as it's first drawn.
 
 A page laid out at the window's size whose HUD is its own HTML (a strategy game, a page made for phones as well as
 TVs) passes `fill: true` to `game()` and places and sizes its canvas itself, drawing it smaller when frames run slow;

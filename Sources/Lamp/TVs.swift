@@ -242,7 +242,7 @@ enum TVs {
     }
 
     /// Packages the staged app for the Samsung TV, signs it for that TV, installs it and opens it. `say` hears how far it is.
-    static func installSamsung(_ project: LampProject, staged: URL, on record: Record, say: @escaping @Sendable (String) -> Void) async throws {
+    static func installSamsung(_ project: LampProject, staged: URL, on record: Record, opens: Bool = true, say: @escaping @Sendable (String) -> Void) async throws {
         var duid = record.duid
         if duid == nil { duid = (try? await connectSamsung(record))?.duid }
         guard let duid else { throw Failure(message: "Lamp hasn't connected to \(record.name) yet.") }
@@ -250,8 +250,11 @@ enum TVs {
             throw Failure(message: "\(record.name) needs Samsung's permission for this Mac's apps first: sign in to Samsung in its setup.")
         }
         let ids = TVTemplate.tizenIDs(for: project)
+        let guarded = TVNetworkGuard.policy(for: project)
         say("Packaging \(project.name) for \(record.name)…")
-        let package = try await TVPackage.wgt(for: project, staged: staged, duid: duid)
+        // The policy goes in either way, but only a TV whose browser holds a page to it is said to keep the app to its sites.
+        if guarded != nil, !TVNetworkGuard.holds(on: record) { say("\(record.name) is too old to keep \(project.name) to its own sites.") }
+        let package = try await TVPackage.wgt(for: project, staged: staged, duid: duid, guarded: guarded)
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         let data = try Data(contentsOf: package)
         say("Putting \(project.name) on \(record.name)…")
@@ -273,6 +276,8 @@ enum TVs {
                     .filter { !$0.isEmpty && !$0.hasPrefix("installing") }.suffix(3).joined(separator: " · ")
                 throw Failure(message: "\(record.name) didn't install the app: \(reason)")
             }
+            // Put there to wait for next time, without opening over what the TV shows.
+            guard opens else { return }
             say("Opening \(project.name) on \(record.name)…")
             // The install's stream closes before the TV has finished, so it's asked to open the app until it says it has
             // (launched, or resumed when it was open), for half a minute at most.
@@ -290,15 +295,21 @@ enum TVs {
 
     // MARK: LG
 
-    static func installLG(_ project: LampProject, staged: URL, on record: Record, say: @escaping @Sendable (String) -> Void) async throws {
+    static func installLG(_ project: LampProject, staged: URL, on record: Record, opens: Bool = true, say: @escaping @Sendable (String) -> Void) async throws {
         guard FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path) else {
             throw Failure(message: "\(record.name) hasn't let this Mac in yet: enter its Developer Mode passphrase in its setup.")
         }
+        let guarded = TVNetworkGuard.policy(for: project)
         say("Packaging \(project.name) for \(record.name)…")
-        let package = try await TVPackage.ipk(for: project, staged: staged)
+        // The policy goes in either way, but only a TV whose browser holds a page to it is said to keep the app to its sites.
+        if guarded != nil, !TVNetworkGuard.holds(on: record) { say("\(record.name) is too old to keep \(project.name) to its own sites.") }
+        let package = try await TVPackage.ipk(for: project, staged: staged, phones: try LGPhones.service(for: project, on: record),
+                                              guarded: guarded)
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         say("Putting \(project.name) on \(record.name)…")
         try await WebOS.install(package, appID: TVTemplate.webOSID(for: project), on: record)
+        // Put there to wait for next time, without opening over what the TV shows.
+        guard opens else { return }
         say("Opening \(project.name) on \(record.name)…")
         try await WebOS.launch(TVTemplate.webOSID(for: project), on: record)
         await WebOS.extendSession(on: record)
@@ -315,7 +326,7 @@ enum TVs {
     /// Copies the app's web files into Lamp's folder, as Devices.stage does for a phone: by a command under the app's
     /// own sandbox, so it reads only the app's folder, links kept as links, then none allowed. What the preview shows and
     /// what goes on a TV are only the app's own files. Its phone page, if it has one, is copied beside them the same way
-    /// and never goes in a package. Gives back the copy of the web files.
+    /// and goes in a package only inside an LG game's phone service (`LGPhones`). Gives back the copy of the web files.
     static func stage(_ project: LampProject, folder: String = TVTemplate.webFolder) async throws -> URL {
         let fm = FileManager.default
         let dir = stagingFolder(for: project)
@@ -487,13 +498,22 @@ enum TVPackage {
         return try? Data(contentsOf: out)
     }
 
+    /// What a Samsung package holds before its icon and signatures: the app's files with Lamp's filled in and the
+    /// policy in each page, and Lamp's manifest, never one of the app's.
+    static func wgtFiles(for project: LampProject, staged: URL, guarded: TVNetworkGuard.Policy?) throws -> [(path: String, data: Data)] {
+        var files = try DeviceSupport.fill(self.files(in: staged), for: project).filter { $0.path != "config.xml" && !$0.path.hasSuffix("signature.xml") && $0.path != "signature1.xml" }
+        if let guarded { files = TVNetworkGuard.guarded(files, policy: TVNetworkGuard.tvPage(guarded)) }
+        files.append(("config.xml", Data(TVTemplate.tizenConfig(for: project, guarded: guarded).utf8)))
+        return files
+    }
+
     /// A signed Samsung package (`.wgt`): the app's files, Lamp's config and icon, and the two signatures.
-    static func wgt(for project: LampProject, staged: URL, duid: String) async throws -> URL {
+    /// `guarded`: the shared app's network policy, put in every page and the manifest (`TVNetworkGuard`).
+    static func wgt(for project: LampProject, staged: URL, duid: String, guarded: TVNetworkGuard.Policy?) async throws -> URL {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wgt-\(UUID().uuidString)")
         let tree = work.appendingPathComponent("package")
         try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
-        var files = try DeviceSupport.fill(self.files(in: staged), for: project).filter { $0.path != "config.xml" && !$0.path.hasSuffix("signature.xml") && $0.path != "signature1.xml" }
-        files.append(("config.xml", Data(TVTemplate.tizenConfig(for: project).utf8)))
+        var files = try wgtFiles(for: project, staged: staged, guarded: guarded)
         if let icon = await icon(for: project, size: 512, in: work) { files.removeAll { $0.path == "icon.png" }; files.append(("icon.png", icon)) }
         files.sort { $0.path < $1.path }
         let signatures = try TizenSigning.signatures(for: files, duid: duid)
@@ -510,7 +530,10 @@ enum TVPackage {
     }
 
     /// An LG package (`.ipk`): an ar archive of the package's version, its control file and its data, as LG's packager makes it.
-    static func ipk(for project: LampProject, staged: URL) async throws -> URL {
+    /// `phones`: the game's own phone service (`LGPhones`), in the package beside the app, as LG's packager puts an app's
+    /// services, with the game's lamp.js naming it.
+    /// `guarded`: the shared app's network policy, put in every page (`TVNetworkGuard`).
+    static func ipk(for project: LampProject, staged: URL, phones: LGPhones.Service? = nil, guarded: TVNetworkGuard.Policy? = nil) async throws -> URL {
         let fm = FileManager.default
         let id = TVTemplate.webOSID(for: project)
         let work = fm.temporaryDirectory.appendingPathComponent("lamp-ipk-\(UUID().uuidString)")
@@ -520,16 +543,33 @@ enum TVPackage {
         try fm.createDirectory(at: info, withIntermediateDirectories: true)
         try fm.createDirectory(at: work.appendingPathComponent("control"), withIntermediateDirectories: true)
         var size = 0
-        for (path, data) in DeviceSupport.fill(try files(in: staged), for: project) where path != "appinfo.json" {
+        var filled = DeviceSupport.fill(try files(in: staged), for: project)
+        if let guarded { filled = TVNetworkGuard.guarded(filled, policy: TVNetworkGuard.tvPage(guarded)) }
+        // A game whose lamp.js comes from before the service (built by an earlier Lamp, not built since) asks Lamp for its
+        // phones, so it goes as it always has, without one.
+        let service = filled.first { $0.path == "lamp.js" }.flatMap { LGPhones.names($0.data) ? phones : nil }
+        for (path, data) in filled where path != "appinfo.json" {
             let url = app.appendingPathComponent(path)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: url)
-            size += data.count
+            var written = data
+            if path == "lamp.js", let service { written = try LGPhones.naming(data, service: service.id) }
+            try written.write(to: url)
+            size += written.count
+        }
+        if let service {
+            let folder = work.appendingPathComponent("data/usr/palm/services/\(service.id)")
+            for (path, data) in service.files {
+                let url = folder.appendingPathComponent(path)
+                try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url)
+                size += data.count
+            }
         }
         try Data(TVTemplate.webOSAppInfo(for: project).utf8).write(to: app.appendingPathComponent("appinfo.json"))
         if let icon = await icon(for: project, size: 80, in: work) { try icon.write(to: app.appendingPathComponent("icon.png")) }
         if let large = await icon(for: project, size: 130, in: work) { try large.write(to: app.appendingPathComponent("largeIcon.png")) }
-        let packageInfo = ["app": id, "id": id, "loc_name": project.name, "package_format_version": 2, "vendor": "Lamp", "version": "1.0.0"] as [String: Any]
+        var packageInfo = ["app": id, "id": id, "loc_name": project.name, "package_format_version": 2, "vendor": "Lamp", "version": "1.0.0"] as [String: Any]
+        if let service { packageInfo["services"] = [service.id] }
         try JSONSerialization.data(withJSONObject: packageInfo, options: [.sortedKeys]).write(to: info.appendingPathComponent("packageinfo.json"))
         let control = """
             Package: \(id)

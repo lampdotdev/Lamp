@@ -81,10 +81,11 @@ final class SharingScreenTests: XCTestCase {
 
             // The review reads the page and the Swift beside it, and is told what a page is.
             let found = Sharing.inspect(package)
-            // Home HQ's page is more than the review sends, so the Swift beside the page goes first.
+            // Home HQ's page is more than one request holds: it goes in several, the Swift beside the page first.
             XCTAssertEqual(found.files.first?.name, "Sources/Native.swift")
-            XCTAssertTrue(found.files.map(\.name).contains("Web/index.html") && found.truncated, "\(found.files.map(\.name))")
-            XCTAssertTrue(found.detected.map(\.label).contains("Connects to the internet"), "\(found.detected.map(\.label))")
+            XCTAssertTrue(found.files.map(\.name).contains("Web/index.html") && !found.truncated, "\(found.files.map(\.name))")
+            XCTAssertGreaterThan(found.batches.count, 1)
+            XCTAssertTrue(found.detected.map(\.label).contains("Connects to geocoding-api.open-meteo.com"), "\(found.detected.map(\.label))")
             let request = Sharing.reviewRequest(name: package.name, description: nil, notes: nil, files: found.files, page: true)
             XCTAssertTrue(request.system.contains("This app is a page"))
             XCTAssertFalse(request.system.contains("This app is a TV app"))
@@ -108,6 +109,52 @@ final class SharingScreenTests: XCTestCase {
         XCTAssertEqual(Sharing.format(withWidget: false, platform: .screen), 12)
         XCTAssertEqual(Sharing.format(withWidget: false, platform: .webApp), 12)
         XCTAssertEqual(Sharing.format(withWidget: false, platform: .tv), 10)
+    }
+
+    /// The Little House as its sender has it: its page with a copy of three.js beside it, its Native.swift, and Lamp's
+    /// files around the page, the phone controllers' kit among them. The review reads all of the sender's own code and
+    /// none of Lamp's: not the kit, which the Mac that opens the file writes itself, nor three.js where it is Lamp's copy
+    /// byte for byte; a copy changed in any way is the sender's code, read in full and checked like the rest.
+    func testTheLittleHouseIsReviewedInFullAndWithoutLampsFiles() throws {
+        let fm = FileManager.default
+        let house = try StarterTrees.tree("thelittlehouse")
+        let three = StarterTrees.folder.deletingLastPathComponent().appendingPathComponent("WebLibraries/three")
+        let shipped = try fm.subpathsOfDirectory(atPath: three.path).compactMap { try? String(contentsOf: three.appendingPathComponent($0), encoding: .utf8) }
+        XCTAssertFalse(shipped.isEmpty)
+        let known = Sharing.knownLibraries
+        Sharing.knownLibraries = Set(shipped.map(Sharing.fingerprint))
+        defer { Sharing.knownLibraries = known }
+
+        func inspected(_ change: ((URL) throws -> Void)? = nil) throws -> Sharing.Inspection {
+            let sender = try homeHQ(.webApp, name: "The Little House \(UUID().uuidString.prefix(4))")
+            defer { try? fm.removeItem(at: sender.dir) }
+            try? fm.removeItem(at: sender.dir.appendingPathComponent(Credits.file))
+            for path in ["Web", "Sources/Native.swift", "Sources/LampControllerKit.swift"] {
+                try? fm.removeItem(at: sender.dir.appendingPathComponent(path))
+                try fm.copyItem(at: house.appendingPathComponent(path), to: sender.dir.appendingPathComponent(path))
+            }
+            try change?(sender.dir)
+            let package = try opened(try exported(sender))
+            XCTAssertFalse(package.sources.map(package.path(of:)).contains("Sources/LampControllerKit.swift"), "Lamp's, written by the Mac that opens the file")
+            return Sharing.inspect(package)
+        }
+
+        let found = try inspected()
+        let names = found.files.map(\.name)
+        XCTAssertFalse(found.truncated)
+        XCTAssertEqual(found.batches.count, 1)
+        XCTAssertTrue(Set(names).isSuperset(of: ["Sources/Native.swift", "Web/app.js", "Web/style.css", "Web/house.js", "Web/index.html"]), "\(names)")
+        XCTAssertFalse(names.contains { $0.hasPrefix("Web/three/") || $0.hasPrefix("Sources/Lamp") }, "\(names)")
+        XCTAssertFalse(found.detected.contains { $0.level > .ordinary }, "\(found.detected.map(\.label))")
+
+        // The same three.js with one line added is the sender's code, sent whole and checked.
+        let changed = try inspected { dir in
+            let module = dir.appendingPathComponent("Web/three/three.module.js")
+            try (String(contentsOf: module, encoding: .utf8) + "\neval(atob(location.hash.slice(1)));\n").write(to: module, atomically: true, encoding: .utf8)
+        }
+        XCTAssertTrue(changed.files.contains { $0.name.hasPrefix("Web/three/three.module.js") })
+        XCTAssertTrue(changed.detected.contains { $0.label == "Loads code at runtime (can hide what it does)" }, "\(changed.detected.map(\.label))")
+        XCTAssertFalse(changed.truncated)
     }
 
     /// Put on GitHub, a screen's repository holds its page and Native.swift with Lamp's files around them, so it builds as

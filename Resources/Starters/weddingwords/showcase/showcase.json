@@ -1,0 +1,110 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "reel": {
+    "speaker": "Marco’s mother",
+    "you": "You, in Italian"
+  },
+  "steps": [
+    {
+      "wait": 0.5
+    },
+    {
+      "action": "click",
+      "target": "At the table"
+    },
+    {
+      "wait": 1.2
+    },
+    {
+      "action": "click",
+      "target": "Take my seat"
+    },
+    {
+      "wait_for": "Speak Italian",
+      "timeout": 40
+    },
+    {
+      "focus": [
+        "Speak Italian",
+        "Send my reply",
+        "New rehearsal"
+      ]
+    },
+    {
+      "wait": 0.4
+    },
+    {
+      "action": "click",
+      "target": "Speak Italian"
+    },
+    {
+      "action": "click",
+      "target": "Send my reply"
+    },
+    {
+      "wait": 1
+    },
+    {
+      "focus": "window"
+    },
+    {
+      "wait_for": "Speak Italian",
+      "timeout": 40
+    },
+    {
+      "wait": 1.5
+    }
+  ],
+  "ai": [
+    {
+      "json": {
+        "italian": "Eccoti finalmente! Tu sei la sorella della sposa, vero? Vieni, siediti qui vicino a me. Come ti chiami?",
+        "translation": "There you are at last! You’re the bride’s sister, right? Come, sit here next to me. What’s your name?",
+        "coaching": "She’s asking your name. Start with “Piacere” and tell her who you are.",
+        "score": 0,
+        "phrase": "Piacere di conoscerla.",
+        "meaning": "A pleasure to meet you (polite)."
+      }
+    },
+    {
+      "json": {
+        "italian": "Che bello, Anna! Il piacere è tutto mio. E dimmi, hai già assaggiato il mio ragù?",
+        "translation": "How lovely, Anna! The pleasure is all mine. And tell me, have you tried my ragù yet?",
+        "coaching": "Lovely start! For her, “Piacere di conoscerla” is the polite form. It’ll make her smile.",
+        "score": 4,
+        "phrase": "Piacere di conoscerla.",
+        "meaning": "A pleasure to meet you (polite)."
+      }
+    },
+    {
+      "json": {
+        "italian": "Brava! Allora ne prendi un altro piatto, sì? In questa famiglia, nessuno va a casa con la fame!",
+        "translation": "Well done! So you’ll have another plate, yes? In this family, nobody goes home hungry!",
+        "coaching": "Perfect! “Buonissimo” is exactly how you praise her cooking. That’s a real compliment.",
+        "score": 5,
+        "phrase": "Ancora un po’, grazie!",
+        "meaning": "Just a little more, thank you!"
+      }
+    }
+  ],
+  "lines": {
+    "spoken": [
+      {
+        "text": "Piacere, signora! Mi chiamo Anna. Sono così felice di essere qui.",
+        "caption": "Nice to meet you, ma’am! My name is Anna. I’m so happy to be here."
+      },
+      {
+        "text": "Sì! È buonissimo, grazie mille!",
+        "caption": "Yes! It’s delicious, thank you so much!"
+      }
+    ]
+  },
+  "captions": {
+    "Eccoti finalmente! Tu sei la sorella della sposa, vero? Vieni, siediti qui vicino a me. Come ti chiami?": "There you are at last! You’re the bride’s sister, right? Come, sit here next to me. What’s your name?",
+    "Che bello, Anna! Il piacere è tutto mio. E dimmi, hai già assaggiato il mio ragù?": "How lovely, Anna! The pleasure is all mine. And tell me, have you tried my ragù yet?",
+    "Brava! Allora ne prendi un altro piatto, sì? In questa famiglia, nessuno va a casa con la fame!": "Well done! So you’ll have another plate, yes? In this family, nobody goes home hungry!"
+  }
+}

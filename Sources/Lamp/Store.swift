@@ -318,10 +318,10 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// icon, which is answered (the person draws icons, or something draws them by Settings' choices) and
     /// folded away while the app's own pictures aren't. An offer that isn't about the icon then takes that
     /// card's place (the line at the index given).
-    enum Standing: Equatable { case new, offered, replaces(Int) }
+    enum Standing: Equatable { case new, offered(Int), replaces(Int) }
     static func standing(of offer: SetupOffer, in lines: [LogLine], iconAnswered: Bool) -> Standing {
         guard let index = lines.firstIndex(where: { $0.setupOffer == offer }) else { return .new }
-        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered
+        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered(index)
     }
 
     /// Whether a chat with these lines should get a line offering to draw the design `key`: not when it has
@@ -648,6 +648,8 @@ final class Store: ObservableObject {
 
     func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
     @Published var setup = SetupCheck()
+    /// A request is waiting for what builds, and the desk is asking for it (`SetupView`).
+    @Published var askingForSetup = false
     /// Whether Lamp has really looked at setup yet, with the saved keys in. Before that `setup` can't be gone
     /// by: it starts out assuming everything is in place, and a look made before the keys are read finds no key.
     private let setupLook = FirstLook()
@@ -748,6 +750,12 @@ final class Store: ObservableObject {
         var shown: [Date] = []
         /// Why the latest change couldn't go into the open app (LiveReload's reason, in words), for the agent's look.
         var reloadWhy: String?
+        /// The latest change went into an open game by its page opening again (its code couldn't be swapped in, why in
+        /// `reloadWhy`): told with the look, since the player's place was kept but the world was built again.
+        var pageReopened = false
+        /// The latest change went into an open game by its code running again in place (`reloadWhy` says why it
+        /// couldn't be swapped): the player's place and the parts the game keeps stayed, the rest was built again.
+        var pageRanAgain = false
         /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
         var endedReloadWait = false
         /// The person pressed Reload while the agent worked, and the app reopened with the change that waited
@@ -932,25 +940,32 @@ final class Store: ObservableObject {
         let asked = projects.first { $0.id == id }
         let owner = asked.map { Self.requestOwner(of: $0, among: projects) }
         let id = owner?.id ?? id
-        guard let owner, let project = waitingForReload(in: owner) else {
+        let waiting = owner.flatMap(waitingForReload(in:))
+        guard let owner, waiting != nil || awaitsReloadElsewhere(owner) else {
             reloadWhenFree.remove(id)
             _ = away.landed(id, stillWaits: false)   // put in meanwhile, by the app closing: nothing of Lamp's to carry on
-            return
-        }
-        // A game's page holding a change until a pause takes it now, where it is, keeping the player's place.
-        if PageLive.shared.putInNow(project) {
-            reloadWhenFree.remove(id)
             return
         }
         // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
         guard begin(owner) != nil else { reloadWhenFree.insert(id); return }
         reloadWhenFree.remove(id)
         away.installs(id)
-        // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
-        var mac = project
-        mac.chosen = .mac
         Task {
-            _ = await install(mac, inFront: true, fresh: true, reload: true)
+            // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since); a
+            // game's page holding a change until a pause takes it now, where it is, keeping the player's place.
+            var done: Set<String> = []
+            if let project = waiting {
+                if PageLive.shared.putInNow(project) {
+                    done = [project.id + "/mac", project.id + "/ios"]
+                } else {
+                    var mac = project
+                    mac.chosen = .mac
+                    _ = await install(mac, inFront: true, fresh: true, reload: true)
+                    done = [project.id + "/mac"]
+                }
+            }
+            // Reload is the person's go-ahead: every other place they have the wish on gets the change too.
+            await reloadEverywhere(owner, done: done)
             // Lamp pressed it while the person was away, and the turn that left it is over (it ended asking for Reload,
             // paused, or the Reload was put off until its end): the agent goes on, as after a pause.
             if away.landed(id, stillWaits: waitingForReload(in: owner) != nil), away.carriesOn(id) { queueCarryOn(owner) }
@@ -1126,9 +1141,11 @@ final class Store: ObservableObject {
             setupLook.done()
             openWaitingImport()
         }
-        // During the welcome, Apple's installer waits for the step that explains it.
+        // During the welcome, Apple's installer waits for the step that explains it, and while what builds is still to
+        // be chosen it waits too, so there's one thing to do at a time.
         // Only for a request that waits for them: a Mac that makes only games and screens never needs them.
-        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && waitsForAppleTools { requestBuildTools() }
+        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && setup.hasBuilder
+            && (waitsForAppleTools || waitingImport.count > 0) { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
         prepareStarters()   // the prebuilt ones need no build tools, nor do games and screens
         if setup.ready && !wasReady { await becameReady() }
@@ -1214,6 +1231,18 @@ final class Store: ObservableObject {
     }
 
     var selected: LampProject? { projects.first { $0.id == selection } }
+
+    /// The wish a menu bar command acts on: the one picked on the desk while the desk's window is the active one
+    /// (`deskPick`), else the chat in front. The pick stays apart from `selection`, which also says what's been read and
+    /// which window asks the store's questions: a wish picked on the desk has had neither happen.
+    func commandTarget(deskPick: LampProject.ID?) -> LampProject? {
+        deskPick.flatMap { id in projects.first { $0.id == id } } ?? selected
+    }
+
+    /// Whether Duplicate… can be chosen for a wish, in the File menu and the wish's own. `remix` asks again when it runs.
+    func canDuplicate(_ project: LampProject) -> Bool {
+        !busy.contains(project.id) && !project.untitled && project.scaffolded && AppUpdates.mayRemix(project)
+    }
 
     /// Clears the "ready" dot for the app on screen. Also called when Lamp comes back to the front.
     func markRead() {
@@ -2069,6 +2098,21 @@ final class Store: ObservableObject {
         SidebarServer.shared.send(project)
     }
 
+    /// Asks for what builds, on the desk: wishes run without it, so the first request is when it's needed.
+    func askForSetup() {
+        showDesk()
+        askingForSetup = true
+    }
+
+    /// What a shared app waits for before its review can open: what builds, on the desk, then Apple's tools.
+    func askForWhatsMissing() {
+        if !setup.hasBuilder || !setup.hasAgent {
+            askForSetup()
+        } else if !setup.hasBuildTools, !setup.installRequested {
+            requestBuildTools()
+        }
+    }
+
     /// The desk's window in front.
     func showDesk() {
         NSApp.activate()
@@ -2181,6 +2225,7 @@ final class Store: ObservableObject {
             try Template.fill(part)
             if let kept {
                 try Sharing.install(kept.package, into: part)
+                SharedNetwork.arrive(kept.package, in: part, arriving: SharedNetwork.isShared(wish, parts: parts(of: wish)))
                 Sharing.forgetKept(in: wish.dir, for: kind, slot: reserved)
             }
         } catch {
@@ -3023,6 +3068,8 @@ final class Store: ObservableObject {
                 try fm.copyItem(at: suggestions, to: Starters.suggestionsFile(of: copy))
             }
             try Template.saveMeta(copy)
+            // A remix of a wish from someone else is held as the wish is, before its first build.
+            SharedNetwork.carry(from: project, parts: parts(of: project), to: copy)
             if let original = Sharing.identity(of: project) {
                 try Credits.add(Credits(remixOf: [Credits.Remix(name: project.name, wish: original)]), to: copy)
             }
@@ -3425,6 +3472,8 @@ final class Store: ObservableObject {
                     alert.informativeText = "Then open the shared app again."
                 }
                 alert.runModal()
+                // Nothing else would ask: no request is waiting in a chat for what this needs.
+                if Onboarding.isDone || welcomeFinished { askForWhatsMissing() }
                 return
             }
             review(file, updating: target)
@@ -3469,6 +3518,9 @@ final class Store: ObservableObject {
     private var importRequest: UUID?
 
     private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
+
+    /// A shared app is kept for its review.
+    var hasWaitingImport: Bool { waitingImport.count > 0 }
 
     /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
     /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a
@@ -3593,8 +3645,15 @@ final class Store: ObservableObject {
             // What the wish arrived with (`Credits.load`) is in .lamp too, and the file's credits replace it.
             let creditsRecord = project.dir.appendingPathComponent(Credits.arrivedPath)
             let creditsBefore = try? Data(contentsOf: creditsRecord)
+            // And what its apps may reach (`SharedNetwork`), kept in Lamp's own folder.
+            let networkBefore = SharedNetwork.snapshot([project] + parts(of: project))
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
+                // The apps the update made are still listed here, and their policies go with them.
+                SharedNetwork.restore(networkBefore, apps: await parts(of: project)
+                    + package.parts.map { LampProject(id: Parts.id(wish: project.id, folder: $0.folder), name: project.name, exe: project.exe,
+                                                      dir: project.dir.appendingPathComponent($0.folder),
+                                                      instance: Parts.instance(wish: project, folder: $0.folder), partOf: project.id) })
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
                 if let creditsBefore { try? creditsBefore.write(to: creditsRecord, options: .atomic) } else { try? fm.removeItem(at: creditsRecord) }
                 try? fm.removeItem(at: waiting)
@@ -3618,6 +3677,7 @@ final class Store: ObservableObject {
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
+                SharedNetwork.arrive(package, in: project, arriving: false)
                 let notIn = await installParts(of: package, into: project)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be put in place.") }
                 // The copy's credits name the wish it was copied from; the wish keeps its own, moved on to the update.
@@ -3690,6 +3750,12 @@ final class Store: ObservableObject {
         let merged: Upstream.Merged
         do {
             merged = try await Upstream.merge(package, into: project, from: source, commit: origin?.commit, arrival: arrival)
+            // What the reviewed file says each app reaches: the wish's own, and each of its apps merged in its folder.
+            SharedNetwork.arrive(package, in: project, arriving: false)
+            for part in package.parts {
+                guard let app = parts(of: project).first(where: { $0.dir.lastPathComponent.lowercased() == part.folder.lowercased() }) else { continue }
+                SharedNetwork.arrive(part.package, in: app, arriving: false)
+            }
             if let credits = package.credits { try Credits.add(credits, to: project) }
         } catch {
             _ = await Versions.git("git read-tree --reset -u HEAD && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
@@ -3739,6 +3805,8 @@ final class Store: ObservableObject {
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
             try Sharing.install(package, into: project)
+            // Someone else's: held to what its sheet named, from now on (`SharedNetwork`).
+            SharedNetwork.arrive(package, in: project, arriving: true)
             // The copy is the same app as the sender's: the next file shared from theirs can update it. A
             // second copy made beside one that's already here (Keep Both), or beside one of another kind, is an
             // app of its own.
@@ -3790,6 +3858,8 @@ final class Store: ObservableObject {
     /// app of the same family already here is never taken for one of them, since its files were merged in place.
     func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
         var notIn: [String] = []
+        // A part of a wish from someone else is held as the wish is (`SharedNetwork`), and one of the person's own isn't.
+        let shared = SharedNetwork.isShared(wish, parts: parts(of: wish))
         func failed(_ kind: Platform) {
             let name = Parts.name(of: kind)
             notIn.append(name.prefix(1).uppercased() + name.dropFirst())
@@ -3833,7 +3903,10 @@ final class Store: ObservableObject {
                 }
                 target = made
             }
-            do { try Sharing.install(part.package, into: target, replacing: had != nil) } catch {
+            do {
+                try Sharing.install(part.package, into: target, replacing: had != nil)
+                SharedNetwork.arrive(part.package, in: target, arriving: shared)
+            } catch {
                 log(wish, .error, "Lamp couldn't put \(Parts.name(of: kind))'s files in place: \(error.localizedDescription)")
                 failed(kind)
             }
@@ -3865,7 +3938,11 @@ final class Store: ObservableObject {
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
         let ready = readyFor(project)
         if !ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
-        if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested { requestBuildTools() }
+        if !setup.hasBuilder || !setup.hasAgent {
+            askForSetup()
+        } else if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested {
+            requestBuildTools()
+        }
         let files = message.attachments, pointed = message.pointed
         // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
         // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
@@ -4334,6 +4411,8 @@ final class Store: ObservableObject {
     /// Marks the app idle again, then starts anything queued while it was busy.
     func finish(_ project: LampProject) {
         settleDecided(project)
+        // A preview opened beside a page's Mac copy, for another shape, goes with the turn that opened it.
+        for app in [project] + parts(of: project) where asidePreviews.remove(app.id) != nil { TVPreview.close(app) }
         if let turn = turns[project.id], turn.reloadedWhileAway, turn.reloadedByPerson, away.carriesOn(project.id) {
             queueCarryOn(project)
         }
@@ -4871,7 +4950,9 @@ final class Store: ObservableObject {
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     /// `sendsRequest`: this run carries the turn's own request, not a repair Lamp asks for after it (a build's
     /// errors, a crash), which an engine switched to meanwhile needs the turn's messages for (`CatchUp`).
-    private func runAgent(_ request: String, files: [String] = [], sendsRequest: Bool = false, on project: LampProject) async -> Bool {
+    /// `afresh`: this run is the one try again in a fresh conversation after the last couldn't be sent.
+    private func runAgent(_ request: String, files: [String] = [], sendsRequest: Bool = false, afresh: Bool = false,
+                          on project: LampProject) async -> Bool {
         var prompt = request
         // Apps this run tells the agent to write again, done once it ends well (`DeviceApps.finishRewrite`).
         var rewriting: [LampProject] = []
@@ -4934,13 +5015,18 @@ final class Store: ObservableObject {
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.
         await EngineSignIn.refresh()
-        guard turns[project.id] === turn, !turn.stopped, exists(project) else {
-            if turn.stopped, exists(project) {
-                turn.stopped = false
-                log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+        /// Whether the turn still goes on after a wait: Stop pressed meanwhile has no agent to end yet.
+        func goesOn() -> Bool {
+            guard turns[project.id] === turn, !turn.stopped, exists(project) else {
+                if turn.stopped, exists(project) {
+                    turn.stopped = false
+                    log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+                }
+                return false
             }
-            return false
+            return true
         }
+        guard goesOn() else { return false }
         if sendsRequest { followPromptShape(project) }
         // A conversation the copy of the engine Lamp runs can't resume (one kept by the other copy, Lamp's or
         // the person's, not found to bring over) is forgotten, and the request starts a new one rather than failing.
@@ -4953,7 +5039,21 @@ final class Store: ObservableObject {
         // that was ended) goes with the request, so switching engines doesn't lose the conversation.
         let missed = CatchUp.note(for: project, engine: engine, session: session, chat: logs[project.id] ?? [],
                                   turn: turn.requests, sendsRequest: sendsRequest)
-        var run = Agent.run(prompt: prompt + missed, files: files, project: project, offered: offers(in: project),
+        // The conversation as the engine will send it: the older pictures out of Claude Code's and Codex's (pi's
+        // extension takes out its own), and its size in Lamp's log, beside its size after the run.
+        let transcript = session.flatMap { Conversation.transcript(of: engine, session: $0, in: project) }
+        var sizeBefore: Conversation.Size?
+        if let transcript {
+            let (dropped, size) = await Task.detached {
+                (Conversation.keepPicturesFew(in: transcript, engine: engine), Conversation.measure(transcript, engine: engine))
+            }.value
+            sizeBefore = size
+            Conversation.note(project, engine: engine, "before: \(size.described)" + (dropped > 0 ? ", took out \(dropped) older pictures" : ""))
+            guard goesOn() else { return false }
+        }
+        // A conversation that took the place of one set aside is told what the wish is (its APP.md).
+        let fresh = Conversation.freshNote(for: engine, in: project)
+        var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
@@ -5036,12 +5136,8 @@ final class Store: ObservableObject {
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
                 case .compacted:
-                    Memory.compacted(project)
-                    AIStatus.compacted(project)
-                    Skills.compacted(project)
-                    DeviceNote.compacted(project)
-                    WishNote.compacted(project)
-                    Parts.compacted(project)
+                    conversationCompacted(project)
+                    Conversation.note(project, engine: engine, "compacted")
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
@@ -5152,6 +5248,11 @@ final class Store: ObservableObject {
         turn.toolRunning = false
         takeBackHanded(project)
         if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project); DeviceNote.delivered(to: project); WishNote.delivered(to: project); Parts.delivered(to: project) }
+        if answered, !fresh.isEmpty { Conversation.told(engine, in: project) }
+        // The conversation's size after the run, in Lamp's log: what the next request will carry.
+        let sizeAfter = await measureConversation(of: project, engine: engine, session: session, failure: failure)
+        // Codex says nothing when it compacts, so its file says it: the notes are told again, as for the others.
+        if engine == .codex, let after = sizeAfter?.compactions, after > (sizeBefore?.compactions ?? 0) { conversationCompacted(project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -5184,14 +5285,31 @@ final class Store: ObservableObject {
            lower.contains("auto"), lower.contains("mode") || lower.contains("permission") {
             CommandApproval.claudeAutoUnavailable = true
             log(project, .status, "Claude's auto mode isn't available, so Lamp will ask before every command.")
-            return await runAgent(prompt, files: files, sendsRequest: sendsRequest, on: project)
+            // The request as it came: the run adds what it adds to it (a rewrite's note) again.
+            return await runAgent(request, files: files, sendsRequest: sendsRequest, on: project)
         }
-        // A request too big to send, which the engine couldn't shrink (Claude Code and Codex don't in Lamp's
-        // non-interactive runs; pi's extension drops pictures and tries once more before this is reached):
-        // every later request would be too big too, so the conversation ends here and the next request starts
-        // a fresh one. The notes (Memory) and the app's AI status are told again to the new conversation.
-        if Agent.isRequestTooLarge(failure) {
-            Self.forgetConversation(of: project, engine: engine)
+        // A request too big to send, which the engine couldn't shrink (pi's extension drops pictures and tries once
+        // more before this is reached), or a connection cut while sending a conversation that large: every later request
+        // would fail the same way. So the conversation is set aside (never deleted) and the request goes once more in a
+        // fresh one, told the wish's APP.md and the chat so far (`Conversation.freshNote`, `CatchUp`).
+        if Conversation.isTooBigToSend(failure, size: sizeAfter) {
+            Conversation.setAside([engine], of: project, reason: "too-large")
+            conversationCompacted(project)
+            Conversation.note(project, engine: engine, "set aside: \(failure.prefix(160))")
+            if !afresh, exists(project) {
+                log(project, .status, Conversation.startedFresh(for: project.name))
+                // What the person sent while it worked and the model took (Send Now) goes too: the chat note stops at
+                // the turn's request, and the conversation that had them is gone.
+                // Their files and what they pointed at go as `handOver` first sent them.
+                let taken = (logs[project.id] ?? []).filter { turn.midTurn.contains($0.id) }
+                let words = taken.map(\.text).filter { !$0.trimmed.isEmpty }.joined(separator: "\n\n")
+                let names = taken.flatMap { $0.attachments ?? [] }
+                let again = taken.isEmpty ? request
+                    : request + "\n\n---\nThe person then sent this while you worked, oldest first:\n\n"
+                        + (words.isEmpty ? Self.onlyFiles(names.count) : words)
+                        + Attachments.note(for: names, inlined: false) + PointedAt.note(for: taken.compactMap(\.pointed))
+                return await runAgent(again, files: files, sendsRequest: sendsRequest, afresh: true, on: current(project) ?? project)
+            }
             log(project, .error, Agent.conversationTooLarge)
             return false
         }
@@ -5417,6 +5535,25 @@ final class Store: ObservableObject {
         try? now.write(to: file, atomically: true, encoding: .utf8)
     }
 
+    /// The engine's conversation, as it would be sent now, measured off the main thread and noted in Lamp's log.
+    private func measureConversation(of project: LampProject, engine: Engine, session: String?, failure: String?) async -> Conversation.Size? {
+        let id = engine == .pi ? session : Self.savedSession(Self.sessionFile(for: project, engine: engine))
+        guard let id, let file = Conversation.transcript(of: engine, session: id, in: project) else { return nil }
+        let size = await Task.detached { Conversation.measure(file, engine: engine) }.value
+        Conversation.note(project, engine: engine, "after: \(size.described)" + (failure.map { ", failed: \($0.prefix(160))" } ?? ""))
+        return size
+    }
+
+    /// Everything Lamp tells a conversation once is told again: it was summed up, or it's a new one.
+    private func conversationCompacted(_ project: LampProject) {
+        Memory.compacted(project)
+        AIStatus.compacted(project)
+        Skills.compacted(project)
+        DeviceNote.compacted(project)
+        WishNote.compacted(project)
+        Parts.compacted(project)
+    }
+
     private static func forgetConversation(of project: LampProject, engine: Engine) {
         let file = engine == .pi ? project.dir.appendingPathComponent(".lamp/pi-session") : sessionFile(for: project, engine: engine)
         try? FileManager.default.removeItem(at: file)
@@ -5502,7 +5639,10 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
+        for app in [project] + parts { SharedNetwork.forget(app) }
         if project.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(project) }
+        // What Lamp kept of what its apps share goes before the key that reads it.
+        WishKeep.forget(project)
         WishKeys.forget(project)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
@@ -5816,7 +5956,8 @@ final class Store: ObservableObject {
             if await updateForThisForge(project) { return }
         }
         // Its App Intents or its share extension were left out for want of a team to sign it for, and there is one
-        // now: built again, since the build that left them out has none to put back.
+        // now: built again, since signing for the team is part of the build. Only when the build has them to give
+        // (`intentsCanComeBack`, `shareCanComeBack`), else it would be built again on every open.
         let intentsBack = await Self.intentsCanComeBack(project)
         let shareBack = await Self.shareCanComeBack(project)
         if intentsBack || shareBack, !busy.contains(project.id),
@@ -5917,14 +6058,25 @@ final class Store: ObservableObject {
         if turn.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
-              let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
+              var json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
         // A game is played in the preview, wherever else it's played: the same moves give the same frames.
         if GameKit.isGame(project), !GameKit.ownsLoop(project) { return await useOnGame(project, actions: actions) }
-        // A page with the remote's focus and keys (a screen, a game made for the Xbox with a loop of its own) is used in
-        // the page preview, wherever it's shown.
-        if project.platform.target.looksInTVPreview || GameKit.ownsLoop(project) { return await useOnTV(project, actions: actions, json: json) }
+        // A page with the remote's focus and keys (a screen, a game made for the Xbox with a loop of its own) is used where
+        // it was last looked at: its Mac copy when that's what the person sees (`pageOnMac`), else the page preview.
+        let onMac = pageOnMac(project, shape: nil) && !(asidePreviews.contains(project.id) && TVPreview.isOpen(project))
+        if !onMac, project.platform.target.looksInTVPreview || GameKit.ownsLoop(project) { return await useOnTV(project, actions: actions, json: json) }
+        let project = onMac ? project.at(.mac) : project
+        // The remote's keys the page's rules name, as a Mac keyboard sends them (lamp.js reads Escape as Back).
+        if onMac {
+            let keys = ["back": "escape", "ok": "return", "enter": "return"]
+            let mapped = actions.map { action -> [String: Any] in
+                guard action["action"] as? String == "key", let key = (action["key"] as? String)?.lowercased(), let mac = keys[key] else { return action }
+                return action.merging(["key": mac]) { $1 }
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: mapped) { json = String(decoding: data, as: UTF8.self) }
+        }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         if project.onTV { return await useOnTV(project, actions: actions, json: json) }
@@ -5937,7 +6089,7 @@ final class Store: ObservableObject {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         // An app that can't be stopped part way (built before `LampDriver.Handover`) is rebuilt first: the person
-        // is shown Stop, and it has to work.
+        // is shown Stop, and it has to work. "lampUseAppStop" also finds the longer key newer apps carry.
         guard Self.binary(of: project, contains: "lampUseAppSignature"), Self.binary(of: project, contains: "lampUseAppStop") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
@@ -5953,7 +6105,11 @@ final class Store: ObservableObject {
         var stoppedAt: Date?
         let trial = Handover(label: "\(Self.lampName) is trying \(project.name)") {
             stoppedAt = Date()
-            Self.signal(project, "useAppStop", ["id": id], signedAs: "lampUseAppStop", over: "stop\n\(id)")
+            // Under both keys: an app built before the longer one reads the first.
+            let stop = Self.signature(over: "stop\n\(id)", token: Template.token(for: project))
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name(Edition.notificationPrefix + "useAppStop.\(project.id)"), object: nil,
+                userInfo: ["id": id, "lampUseAppStop": stop, "lampUseAppStopSignature": stop], deliverImmediately: true)
         }
         if let window = Handover.frontWindow(of: app.processIdentifier) { trial.show(window: window) }
         // Where each action is about to happen and how long until it does, from the app (`LampDriver.aimed`), for
@@ -6594,6 +6750,7 @@ final class Store: ObservableObject {
         if intent == .game, kind != .game { said.append("It's a game: read the game skill with `read_skill` before you write it.") }
         said.append(watchLine(for: part, wanted: target.rows.contains("watch"), had: false))
         said.append(Skills.forNewDevices(target.rows))
+        said.append(Agent.Rules.newAppAI)
         said.append("Done: the wish has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. It's a new app "
                     + "with data of its own, starting empty: nothing another app of the wish saved is in it unless its code reads it from that app. Build it in this "
                     + "request, made to work with the rest. `make_app_for` and `remove_app` name it with `app` \"\(part.dir.lastPathComponent)\"; `look_at_app` and `use_app` reach it with `part` \"\(Parts.address(of: part, among: apps(of: current(wish) ?? wish)))\". "
@@ -6612,6 +6769,8 @@ final class Store: ObservableObject {
         // What this says replaces what Lamp still had to tell about the app since it made it from the wish's list.
         if let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }) { Parts.forgetMade(about: app, in: wish) }
         var said: [String] = []
+        // An app given its first kind is a new app being built: the moment the builder weighs AI for it.
+        if app.undecided != nil { said.append(Agent.Rules.newAppAI) }
         if kind != app.platform || app.undecided != nil || (kind == .device && target.integration != app.integration) {
             let (status, answer) = await convert(app, to: kind, integration: kind == .device ? target.integration : nil)
             guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed") else {
@@ -7401,6 +7560,8 @@ final class Store: ObservableObject {
     private var placesRetries: [String: Int] = [:]
     /// How long the wish is left alone after a change before its other places are built.
     private static let placesSettle: Duration = .seconds(20)
+    /// The same for a page, whose places take its change as it is: a moment, so a run of saves goes as one.
+    private static let pageSettle: Duration = .seconds(1)
 
     /// Keeps every place of a wish's apps on its latest code. After anything that changed the wish (a request, Undo, a
     /// restore, an update for this Lamp), each place Try On doesn't point at whose build is older than the code is built
@@ -7412,32 +7573,55 @@ final class Store: ObservableObject {
         guard AppUpdates.mayOpen(wish(of: project)) else { return }
         let wish = self.wish(of: project)
         refreshPlacesBehind(wish)
+        // A page's copies open on the person's devices take its change whether or not any of Lamp's own places is behind:
+        // a TV app on its own has no other place at all.
+        let copiesOpen = apps(of: wish).contains { $0.platform.target.changesAreWeb($0) } && !WishRooms.presence(of: wish).isEmpty
         guard setup.hasBuildTools || !needsAppleTools(wish), !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
-              apps(of: wish).contains(where: { !placesToUpdate(of: $0).isEmpty }) else { return }
+              copiesOpen || apps(of: wish).contains(where: { !placesToUpdate(of: $0).isEmpty }) else { return }
         // Started by a change, not a retry: the places out of reach get their tries afresh.
         if !retrying { placesRetries[wish.id] = nil }
         // Each change waits out the one before: only the last of a run of requests builds every place.
         placesDelay[wish.id]?.cancel()
+        // A change of pages alone is new web files, which each open copy takes as it is (`PageCopies`, `PageLive`): there's
+        // no build of the app around them to put off.
+        let settle = apps(of: wish).allSatisfy { app in placesToUpdate(of: app).allSatisfy { PageCopies.pageOnly(app, at: $0) } }
+            ? Self.pageSettle : Self.placesSettle
         placesDelay[wish.id] = Task {
-            try? await Task.sleep(for: Self.placesSettle)
+            try? await Task.sleep(for: settle)
             guard !Task.isCancelled else { return }
             placesDelay[wish.id] = nil
             guard placesIdle(wish), updatingPlaces.insert(wish.id).inserted else { return }
-            var unreached: [String: Set<Destination>] = [:]
+            // The copies open on the person's other devices (a TV, the Xbox, an iPad, an Android frame) are given a page's
+            // change through the wish's room, at once; the rest are built below.
+            let (live, silent) = await pageToCopies(wish)
+            // Where each page's change went, said in one line once it's everywhere it could go.
+            var put: [String: [String]] = live.mapValues { places in
+                places.sorted { $0.rawValue < $1.rawValue }.map { GameKit.spoken([$0]) }
+            }
+            // A copy that took nothing it said, so the place isn't counted reached.
+            var unreached: [String: Set<Destination>] = silent.filter { !$0.value.isEmpty }
             var stopped = false
             for app in apps(of: wish) {
                 for place in placesToUpdate(of: app) where placesFailed[app.id + "/" + place.rawValue] != Runtime.fingerprint(app.at(place)) {
+                    if live[app.id]?.contains(place) == true { continue }
                     guard placesIdle(wish), let now = current(app) else { stopped = true; break }
                     // An install that didn't get there (the simulator shut down meanwhile, adb refused it) counts as out of reach.
-                    if await reaches(now, place), await update(now, at: place) { continue }
+                    if await reaches(now, place), await update(now, at: place) {
+                        if now.platform.target.changesAreWeb(now) { put[app.id, default: []].append(place == .mac ? "this Mac" : place == .ios ? "the simulator" : "the Android emulator") }
+                        continue
+                    }
                     unreached[app.id, default: []].insert(place)
                 }
                 if stopped { break }
             }
             updatingPlaces.remove(wish.id)
             refreshPlacesBehind(wish)
+            if pagesAgain.remove(wish.id) != nil { updatePlaces(of: wish) }
             guard !stopped else { return }
-            for app in apps(of: wish) { tellUnreached(app, unreached[app.id] ?? []) }
+            for app in apps(of: wish) {
+                if let places = put[app.id], !places.isEmpty { log(app, .status, "Put the change on \(Self.listed(places))") }
+                tellUnreached(app, unreached[app.id] ?? [])
+            }
             // A TV or an Xbox gets it when Play puts the app there: putting it there now would take its screen over.
             if unreached.values.contains(where: { $0.contains { $0 != .tv && $0 != .device } }), placesRetries[wish.id, default: 0] < 5 {
                 placesWaiting.insert(wish.id); retryPlaces()
@@ -7542,6 +7726,192 @@ final class Store: ObservableObject {
         log(app, .status, "Couldn't reach \(GameKit.spoken(ordered)) now: \(one ? "it gets" : "they get") this change when \(one ? "it's" : "they're") next on, or when you open \(placeName(app)) there.")
     }
 
+    // MARK: A page's change in every open copy, and Reload on every place
+
+    /// Wishes whose page changed while its copies were being given it: given it again once that's over.
+    private var pagesAgain: Set<String> = []
+
+    /// The places each app's open copy waits at for Reload, with why: a page's change that copy couldn't take in place
+    /// (`PageCopies.cannot`). Reload puts it there, with every other place (`reloadEverywhere`).
+    @Published private(set) var placesAwaitReload: [String: [Destination: String]] = [:]
+
+    /// Whether any app of the wish has a place waiting for Reload, beside a change held for the Mac copy.
+    func awaitsReloadElsewhere(_ wish: LampProject) -> Bool {
+        apps(of: self.wish(of: wish)).contains { placesAwaitReload[$0.id]?.isEmpty == false }
+    }
+
+    /// Puts each page's change into its copies open on the person's other devices, through the wish's room
+    /// (`PageCopies.put`): a place counts as reached only once its copy says it took the change. A copy that can't take it
+    /// in place (or said why it couldn't) waits for Reload, which the chat shows; one that didn't answer is said in the
+    /// line of places not reached. Answers the places reached and those that didn't answer, by app.
+    @discardableResult private func pageToCopies(_ wish: LampProject) async -> (took: [String: Set<Destination>], silent: [String: Set<Destination>]) {
+        var took: [String: Set<Destination>] = [:], silent: [String: Set<Destination>] = [:]
+        for app in apps(of: wish) where app.platform.target.changesAreWeb(app) {
+            let outcome = await PageCopies.put(app, wish: wish)
+            // Changed again while its copies took it (their answers can take a while): they're given the newer page once
+            // this pass is over.
+            if outcome.stale { pagesAgain.insert(wish.id) }
+            took[app.id] = outcome.took
+            silent[app.id] = outcome.silent
+            let before = placesAwaitReload[app.id] ?? [:]
+            var now = before
+            for place in outcome.took { now[place] = nil }
+            for (place, why) in outcome.waiting { now[place] = why }
+            placesAwaitReload[app.id] = now.isEmpty ? nil : now
+            guard !outcome.waiting.isEmpty, Set(outcome.waiting.keys) != Set(before.keys) else { continue }
+            let places = app.openPlaces.filter { outcome.waiting[$0] != nil }
+            log(app, .detail, "\(GameKit.spoken(places)) can't take this change as it's open (\(Set(outcome.waiting.values).sorted().joined(separator: "; "))).")
+            // The chat's Reload, which puts it there with every other place.
+            log(app, .reload, "")
+        }
+        return (took, silent)
+    }
+
+    /// The app as it is on one of its places, on a device of the person's or Lamp's own there (nil: the simulator, the
+    /// emulator, this Mac).
+    private func on(_ app: LampProject, _ place: Destination, device: String?) -> LampProject {
+        var there = app
+        there.chosen = place
+        there.device = device
+        return there
+    }
+
+    /// Reload is the person's go-ahead: the change goes on every place of the wish they have it on and Lamp can reach.
+    /// Each app's copy on this Mac, in the booted simulator, in Lamp's running emulator and on each device of the
+    /// person's Lamp put it on (a TV, the Xbox, an iPhone or iPad, an Android device: `Runtime.placed`) is built for and
+    /// given the change, an open copy opening again with it. `done` are the places already given it, as app/place. One
+    /// line says where it went and which places couldn't be reached.
+    private func reloadEverywhere(_ wish: LampProject, done: Set<String>) async {
+        var reached: [String] = [], unreached: [String] = []
+        if done.contains(where: { $0.hasSuffix("/mac") }) { reached.append("this Mac") }
+        for app in apps(of: wish) {
+            guard let app = current(app), app.holdsApp, app.scaffolded else { continue }
+            var targets: [(there: LampProject, name: String)] = []
+            for place in app.openPlaces where !done.contains(app.id + "/" + place.rawValue) {
+                let there = on(app, place, device: nil)
+                let waits = placesAwaitReload[app.id]?[place] != nil
+                guard Runtime.builtFingerprint(there) != nil, Runtime.behind(app, at: place) || waits else { continue }
+                switch place {
+                case .mac: targets.append((there, "this Mac"))
+                case .ios where await reaches(there, .ios): targets.append((there, "the simulator"))
+                case .android, .androidTV:
+                    if await reaches(there, place) { targets.append((there, "the Android emulator")) }
+                default: break
+                }
+            }
+            for placed in Runtime.placed(app) where app.openPlaces.contains(placed.place) {
+                let there = on(app, placed.place, device: placed.device)
+                guard placed.fingerprint != Runtime.fingerprint(there) || placesAwaitReload[app.id]?[placed.place] != nil else { continue }
+                targets.append((there, deviceName(placed)))
+            }
+            guard !targets.isEmpty else { continue }
+            // Each part under a hold of its own; the wish's own app is under the Reload's.
+            let held = turns[app.id] == nil
+            if held, begin(app) == nil { continue }
+            for (there, name) in targets {
+                guard exists(there) else { break }
+                let problem: String?
+                if Runtime.sourcesChanged(there) {
+                    problem = await build(there, inPlace: false)
+                } else {
+                    problem = nil
+                }
+                // Lamp's own places (this Mac, the simulator, the emulator) are given it without opening a copy that isn't
+                // open, and a copy open there opens again with it; a device of the person's has the app put on it, opening
+                // there, as Play does.
+                let mine = there.device == nil
+                let open = mine ? await isOpen(there, at: there.destination) : openOnDevice(app, at: there.destination, in: wish)
+                // A device of the person's the app isn't open on is only given the new version, so nothing opens over
+                // what it shows; one the app is open on opens again with it, as Play would.
+                if !mine, !open { installsOnly.insert(app.id) }
+                let installed = problem == nil
+                    ? await install(there, inFront: !mine, fresh: true, reload: true, saysReady: false, quiet: mine && !open) : problem
+                installsOnly.remove(app.id)
+                if installed == nil {
+                    reached.append(!mine && !open ? name + " (for next time)" : name)
+                    placesAwaitReload[app.id]?[there.destination] = nil
+                } else {
+                    unreached.append(name)
+                }
+            }
+            if placesAwaitReload[app.id]?.isEmpty == true { placesAwaitReload[app.id] = nil }
+            if held { finish(app) }
+        }
+        guard reached.count > 1 || !unreached.isEmpty else { return }
+        var line = reached.isEmpty ? "" : "Reloaded on \(Self.listed(reached))."
+        if !unreached.isEmpty { line += (line.isEmpty ? "" : " ") + "Couldn't reach \(Self.listed(unreached))." }
+        log(wish, .status, line)
+    }
+
+    /// Places said in a line, each once: "this Mac, the simulator and Living Room TV".
+    private static func listed(_ names: [String]) -> String {
+        let names = names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        return names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
+
+    /// Apps being put on a device of the person's by Reload without opening there (`reloadEverywhere`).
+    private var installsOnly: Set<String> = []
+
+    /// Whether a copy of the app is open on a device of the person's at `place`, as far as the wish's room says: a copy
+    /// there is in it while it's open. An app that doesn't use the wish isn't seen there, so it counts as not open.
+    /// A copy in the room says only the kind of device it's on, not which one, so it counts only where Lamp has put the
+    /// app on just one device at that place; with several, which is open can't be told, and none is opened over.
+    private func openOnDevice(_ app: LampProject, at place: Destination, in wish: LampProject) -> Bool {
+        guard Set(Runtime.placed(app).filter { $0.place == place }.map(\.device)).count == 1 else { return false }
+        let peer = WishRooms.peer(app, in: wish)
+        return WishRooms.presence(of: wish).contains { member in
+            guard let copy = member["peer"] as? String, WishChannel.app(of: copy) == peer, let device = member["device"] as? String,
+                  device != "Android emulator", let there = PageCopies.place(of: device) else { return false }
+            return there == place || (there == .android && place == .androidTV)
+        }
+    }
+
+    /// Whether a copy of the app is open on one of Lamp's own places: this Mac, the simulator, Lamp's emulator.
+    private func isOpen(_ app: LampProject, at place: Destination) async -> Bool {
+        switch place {
+        case .mac: return isRunning(app.at(.mac))
+        case .ios:
+            if let running = simulatorApps[app.id], Simulator.isRunning(pid: running.pid) { return true }
+            return PageLive.shared.isOpen(app, at: .simulator)
+        case .android, .androidTV: return await openAndroidCopy(app, on: place) != nil
+        case .tv, .device: return false
+        }
+    }
+
+    /// The chat's Reload line for a wish (`ReloadLine`): where Reload opens the app again and where it only puts the change,
+    /// as `reloadEverywhere` will, as far as Lamp knows before it tries.
+    func reloadLine(_ project: LampProject) -> String {
+        let wish = self.wish(of: project)
+        var reopens: [String] = [], updates: [String] = []
+        if waitingForReload(in: wish) != nil { reopens.append("this Mac") }
+        for app in apps(of: wish) {
+            if app.openPlaces.contains(.mac), placesAwaitReload[app.id]?[.mac] != nil || (Runtime.behind(app, at: .mac) && Runtime.builtFingerprint(app.at(.mac)) != nil) {
+                if isRunning(app.at(.mac)) { reopens.append("this Mac") } else { updates.append("this Mac") }
+            }
+            if app.openPlaces.contains(.ios), Runtime.behind(app, at: .ios) || placesAwaitReload[app.id]?[.ios] != nil,
+               simulatorApps[app.id].map({ Simulator.isRunning(pid: $0.pid) }) == true || PageLive.shared.isOpen(app, at: .simulator) {
+                reopens.append("the simulator")
+            }
+            for placed in Runtime.placed(app) where app.openPlaces.contains(placed.place) {
+                let there = on(app, placed.place, device: placed.device)
+                guard placed.fingerprint != Runtime.fingerprint(there) || placesAwaitReload[app.id]?[placed.place] != nil else { continue }
+                if openOnDevice(app, at: placed.place, in: wish) { reopens.append(deviceName(placed)) } else { updates.append(deviceName(placed)) }
+            }
+        }
+        let unique = { (names: [String]) in names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } } }
+        let opened = unique(reopens)
+        return ReloadLine.text(placeName(wish), reopens: opened, updates: unique(updates).filter { !opened.contains($0) })
+    }
+
+    /// What the person calls one of their devices the app was put on.
+    private func deviceName(_ placed: Runtime.Placed) -> String {
+        switch placed.place {
+        case .tv: return TVs.record(placed.device)?.name ?? "your TV"
+        case .ios, .android, .androidTV: return devices.first { $0.udid == placed.device }?.name ?? "your \(GameKit.placeName(placed.place))"
+        default: return "your \(GameKit.placeName(placed.place))"
+        }
+    }
+
     /// Looks again, every couple of minutes, at the wishes with a place out of reach that may come within it.
     private func retryPlaces() {
         guard placesRetry == nil else { return }
@@ -7640,6 +8010,15 @@ final class Store: ObservableObject {
         }
         let restored = await takeName(renaming, await followRestored(project))
         Versions.remember(restored, restoredTo: target.label, from: target.date)
+        // Undoing a Start Again from the Original brings back the chat and the conversations it set aside.
+        if let record = Conversation.startedAgain(at: undoing.id, in: restored) {
+            settleChat(restored)
+            if let chat = Conversation.bringBack(record, in: restored) {
+                progress[restored.id] = nil
+                logs[restored.id] = chat
+            }
+            conversationCompacted(restored)
+        }
         log(restored, .status, "Undid “\(undoing.label)”")
         await rebuild(restored, restoredFrom: target)
     }
@@ -7652,7 +8031,8 @@ final class Store: ObservableObject {
     }
 
     /// `restore` for a caller that has begun the wish's work itself (`begin`), and finishes it afterwards.
-    func restoreBegun(_ project: LampProject, to version: AppVersion) async {
+    /// `startingAgain`: Start Again from the Original, which starts the conversation again too (`startAgain`).
+    func restoreBegun(_ project: LampProject, to version: AppVersion, startingAgain: Bool = false) async {
         dropPausedRequest(project)
         let renaming = self.renaming(project, to: version, in: await Versions.list(project))
         guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version), renaming: renaming) else {
@@ -7660,9 +8040,30 @@ final class Store: ObservableObject {
             return
         }
         let restored = await takeName(renaming, await followRestored(project))
-        Versions.remember(restored, restoredTo: version.label, from: version.date)
-        log(restored, .status, Versions.restoredMessage(to: version))
+        if startingAgain {
+            await startConversationAgain(restored)
+        } else {
+            Versions.remember(restored, restoredTo: version.label, from: version.date)
+            log(restored, .status, Versions.restoredMessage(to: version))
+        }
         await rebuild(restored, restoredFrom: version)
+    }
+
+    /// After Start Again from the Original has put back the original's files: every engine's conversation about the
+    /// game that's gone is set aside, and the chat with it, down to one line; the next request starts fresh, told the
+    /// original's APP.md (`Conversation.freshNote`). Both are kept with the version the restore made, so Undo of it
+    /// brings back the code, the chat and the conversations together (`undo`).
+    private func startConversationAgain(_ project: LampProject) async {
+        settleChat(project)
+        let record = Conversation.setAside(Engine.allCases, of: project, reason: "start-again", chat: logs[project.id] ?? [])
+        if let record, var saved = Conversation.record(in: record, of: project), let head = await Versions.head(project) {
+            saved.version = head
+            Conversation.save(saved, in: record, of: project)
+        }
+        conversationCompacted(project)
+        progress[project.id] = nil
+        logs[project.id] = []
+        log(project, .status, Conversation.startedAgain)
     }
 
     /// Goes back to the version a request in the chat made, or to the one before it.
@@ -7892,16 +8293,18 @@ final class Store: ObservableObject {
 
     /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
     /// the app installs the whole build anyway.
-    private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
+    /// `ownStep`: the build a game's step makes while it's the change being put in (`stepPage`), which doesn't wait for
+    /// itself; every other build waits for that change.
+    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false) async -> String? {
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
-        let problem = await buildNow(project, inPlace: inPlace)
+        let problem = await buildNow(project, inPlace: inPlace, ownStep: ownStep)
         if glowing, problem != nil { AppTransition.end(project) }
         return problem
     }
 
-    private func buildNow(_ project: LampProject, inPlace: Bool) async -> String? {
+    private func buildNow(_ project: LampProject, inPlace: Bool, ownStep: Bool = false) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         // Only the wish, its apps all in folders of their own: nothing to build here.
         guard project.holdsApp else { return nil }
@@ -7911,7 +8314,7 @@ final class Store: ObservableObject {
         owner?.building = true
         defer { owner?.building = false }
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
-        await owner?.applying?.value
+        if !ownStep { await owner?.applying?.value }
         await owner?.warming?.value
         log(project, .status, "Building…")
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
@@ -8167,7 +8570,7 @@ final class Store: ObservableObject {
     /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
     private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
         Task { [weak self] in
-            var seen = "", tried = "", seenAt = Date()
+            var seen = "", tried = "", seenAt = Date(), lastPageStep = Date.distantPast
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 // Reload pressed while the agent works goes in here, between its steps, inside this turn.
@@ -8175,9 +8578,12 @@ final class Store: ObservableObject {
                     await reloadInTurn(project, turn)
                     continue
                 }
+                // A game's page also takes a step while the agent's look plays the game in the hidden copy, which can
+                // run for minutes: only the look's build, which writes the same folders, is waited for.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
-                      !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
-                      let current = current(project), LiveReload.eligible(current),
+                      !turn.building, !turn.keptOpen, turn.applying == nil,
+                      let current = current(project), LiveReload.eligible(current) || stepsPage(current),
+                      !turn.look.inProgress || stepsPage(current),
                       isRunning(current), !Runtime.waitsForReload(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false
@@ -8185,10 +8591,23 @@ final class Store: ObservableObject {
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
                 if now != seen { seen = now; seenAt = Date(); continue }
+                // A game's page takes a change once the saving has paused a while, and no more often than every 15 s:
+                // each can hold the picture for a moment, and a run of small ones, seconds apart, reads as stutter.
+                if stepsPage(current), Date().timeIntervalSince(seenAt) < 6 || Date().timeIntervalSince(lastPageStep) < 15 { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
                 let saved = seenAt
                 turn.applyingSources = now
+                if stepsPage(current) {
+                    lastPageStep = Date()
+                    turn.applying = Task { [weak self] in
+                        guard let self else { return }
+                        defer { turn.applying = nil }
+                        await stepPage(current, in: turn, saved: saved)
+                    }
+                    await turn.applying?.value
+                    continue
+                }
                 turn.applying = Task { [weak self] in
                     guard let self else { return }
                     defer { turn.applying = nil }
@@ -8212,6 +8631,8 @@ final class Store: ObservableObject {
                         turn.updatedInPlace = true
                         turn.outcomes.append(.live)
                         turn.reloadWhy = nil
+                        turn.pageReopened = false
+                        turn.pageRanAgain = false
                         turn.autoApplied += 1
                         // A step, not the turn's end: "is updated" is said once the request is done, and here the
                         // agent is still at work on it.
@@ -8228,6 +8649,35 @@ final class Store: ObservableObject {
                 await turn.applying?.value
             }
         }
+    }
+
+    /// A game whose page is open on this Mac takes each change the agent saves the same way, once it compiles: the page
+    /// is built (a TypeScript game bundled, which fails on what doesn't) and put into the open game (`pageInPlace`), which
+    /// swaps it in or runs the game's code again from where the player is, the smoke over the window until it's on
+    /// screen. Not waiting for the agent to look: a step whose modules don't parse is left alone until the next save,
+    /// and one that compiles but fails as it runs opens the page again from the snapshot, as a change at the turn's end
+    /// would. What can't go into the open page at all waits for the turn's end, as before.
+    private func stepsPage(_ project: LampProject) -> Bool {
+        PageLive.takes(project) && PageLive.shared.isOpen(project, at: .mac)
+    }
+
+    private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
+        // Still being written, or broken: tried again once it changes.
+        guard await GameKit.codeProblem(project) == nil else { return }
+        // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
+        var mac = project
+        mac.chosen = .mac
+        guard await build(mac, ownStep: true) == nil, turns[project.id] === turn, !turn.stopped, var current = current(project) else { return }
+        current.chosen = .mac
+        guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {
+            AppTransition.end(current)
+            return
+        }
+        // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
+        guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
+        turn.autoApplied += 1
+        log(current, .status, "Put the change into \(current.name)")
+        log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
     }
 
     /// Reload pressed while a request's agent works on the app (`reloadWaiting`): the change held for it goes in as soon
@@ -8249,6 +8699,7 @@ final class Store: ObservableObject {
             var mac = current
             mac.chosen = .mac
             _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false)
+            await reloadEverywhere(wish, done: [current.id + "/mac"])
             // Lamp's, while the person was away, with the turn over meanwhile: the agent never heard the change is in.
             let lamps = away.landed(project.id, stillWaits: Runtime.waitsForReload(current))
             if lamps, turns[project.id] !== turn, away.carriesOn(project.id) { queueCarryOn(wish) }
@@ -8349,12 +8800,27 @@ final class Store: ObservableObject {
         case .cannot:
             return false
         case .held:
+            owner?.reloadWhy = PageLive.shared.reason(project)
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)
         case .unchanged, .went:
+            // A swap is on screen at once; a page that runs its code again, or opens again, says when it's showing the
+            // change (`shown`, `pageShown`), and the smoke stays over the window until then.
+            // Only the game runtime says `shown`: a screen, a web app or a game running its own loop opens again with its
+            // own page, and the smoke goes as before (`install`).
+            let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
+            if outcome == .went("swapped") { AppTransition.land(project) }
+            else if saysShown, outcome == .went("rerun") || outcome == .went("reloading") {
+                awaitShown(project)
+                // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
+                await untilShown(project)
+                try? await Task.sleep(for: .milliseconds(400))
+            }
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
-            owner?.reloadWhy = nil
+            owner?.pageReopened = outcome == .went("reloading")
+            owner?.pageRanAgain = outcome == .went("rerun")
+            owner?.reloadWhy = owner?.pageReopened == true || owner?.pageRanAgain == true ? PageLive.shared.reason(project) : nil
             if outcome != .unchanged { owner?.shown.append(Date()) }
             pageWentIn(project, saying: false)
             if inFront { log(project, .status, "\(project.name) is updated") }
@@ -8624,9 +9090,46 @@ final class Store: ObservableObject {
                          early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
         let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
-        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
-        AppTransition.end(project)
+        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`). A game's
+        // page still putting the change in keeps it until it's on screen (`pageShown`).
+        if !waitingToShow.keys.contains(project.id) { AppTransition.end(project) }
         return crash
+    }
+
+    /// Games whose page is putting a change in by running its code again or opening again, with the smoke held over
+    /// their window until the page says the change is on screen; a page that never says lets it go after a while.
+    private var waitingToShow: [String: Task<Void, Never>] = [:]
+    /// Whoever waits for the change to be on screen (`untilShown`), let go by `shown` or by the wait running out.
+    private var shownWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    /// A `shown` that came before Lamp began waiting for it (a run in place quicker than the page's first answer).
+    private var shownEarly: [String: Date] = [:]
+    private func awaitShown(_ project: LampProject) {
+        waitingToShow[project.id]?.cancel()
+        let id = project.id
+        if let early = shownEarly.removeValue(forKey: id), Date().timeIntervalSince(early) < 5 { return AppTransition.land(project) }
+        waitingToShow[id] = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled, waitingToShow.removeValue(forKey: id) != nil else { return }
+            letShownWaitersGo(id)
+            if let current = projects.first(where: { $0.id == id }) { AppTransition.end(current) }
+        }
+    }
+
+    private func untilShown(_ project: LampProject) async {
+        guard waitingToShow[project.id] != nil else { return }
+        await withCheckedContinuation { shownWaiters[project.id, default: []].append($0) }
+    }
+
+    private func letShownWaitersGo(_ id: String) {
+        for waiter in shownWaiters.removeValue(forKey: id) ?? [] { waiter.resume() }
+    }
+
+    /// The page shows the change it was putting in: the light crosses the window, and the smoke goes.
+    func pageShown(_ project: LampProject) {
+        guard let waiting = waitingToShow.removeValue(forKey: project.id) else { shownEarly[project.id] = Date(); return }
+        waiting.cancel()
+        letShownWaitersGo(project.id)
+        AppTransition.land(project)
     }
 
     private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {
@@ -8692,6 +9195,8 @@ final class Store: ObservableObject {
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.reloadWhy = nil
+            owner?.pageReopened = false
+            owner?.pageRanAgain = false
             await DataSnapshots.wentIn(project)
             prepareIconMeanwhile(project)
             return nil
@@ -8851,11 +9356,15 @@ final class Store: ObservableObject {
             let claimsKey = Template.carriesWish(project)
             if claimsKey { WishClaims.shared.open(project.id, from: record.address) }
             do {
-                if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
-                else { try await TVs.installLG(project, staged: staged, on: record, say: say) }
+                // Reload for a TV the app isn't open on puts it there without opening it over what the TV shows.
+                let opens = !installsOnly.contains(project.id)
+                if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, opens: opens, say: say) }
+                else { try await TVs.installLG(project, staged: staged, on: record, opens: opens, say: say) }
                 if claimsKey { WishClaims.shared.renew(project.id, from: record.address) }
                 Runtime.putOnTV(project, tv: record.id, staged: stagedFrom)
-                log(project, .status, "\(project.name) is open on \(record.name).")
+                Runtime.putOn(project, staged: stagedFrom)
+                PageCopies.installed(project)
+                if opens { log(project, .status, "\(project.name) is open on \(record.name).") }
                 return nil
             } catch {
                 log(project, .error, error.localizedDescription)
@@ -8863,7 +9372,7 @@ final class Store: ObservableObject {
             }
         }
         note("Opening \(project.name) in the TV preview…", for: project)
-        let problem = await TVPreview.show(project, staged: staged, inFront: inFront)
+        let problem = await TVPreview.show(project, staged: staged, inFront: inFront, seed: await previewSeed(project))
         refreshOpenApps()
         syncLocalNetwork()   // its phone page reaches phones over the Wi‑Fi
         return problem
@@ -8884,6 +9393,8 @@ final class Store: ObservableObject {
             size = asked
         }
         var summary = "The app is open in \(preview) on this Mac."
+        // A page with a window on this Mac: the preview is beside it, and holds a copy of what it saved, or doesn't.
+        let aside = PageLive.takes(project) && project.hasMac
         // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
         let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
         if changed || stale || !TVPreview.isOpen(project) || reopen {
@@ -8917,6 +9428,11 @@ final class Store: ObservableObject {
         if let taken, !screenshots.isEmpty, Privacy.sharesPictures {
             text += " " + TVPreview.takenNote(taken)
             if !taken.moving { text += " " + TVPreview.stillNote }
+        }
+        if aside {
+            text += TVPreview.isSeeded(project)
+                ? " It started from a copy of what the app's window on this Mac saved, the person's own data: what you do here stays here and never reaches it."
+                : " The app's window on this Mac wasn't open while Lamp ran, so the preview has what it kept from its last opening, which may be older than the person's data or only example content; open the window (a look without `shape`) and look here again for theirs."
         }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesPictures { text += "\n\n" + TVPreview.text(await TVPreview.items(project)) }
@@ -9019,8 +9535,9 @@ final class Store: ObservableObject {
             let built = Runtime.builtFingerprint(project)
             let staged = try await TVs.stage(project, folder: folder)
             previewBuilt[project.id] = built
+            let seed = await previewSeed(project)
             note("Opening \(project.name) in \(Self.previewName(device))…", for: project)
-            let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device)
+            let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device, seed: seed)
             refreshOpenApps()
             return problem
         } catch {
@@ -9031,6 +9548,27 @@ final class Store: ObservableObject {
 
     /// Which build each device app's preview on this Mac was opened from, as `deviceRunBuilt` is for the device.
     private var previewBuilt: [String: String] = [:]
+
+    /// What a page's preview starts from, wherever it's opened (in place of a TV, or for another shape): the person's own
+    /// data, copied one way from its Mac copy, when it has one. Such a preview is beside the Mac copy (`asidePreviews`).
+    private func previewSeed(_ project: LampProject) async -> [String: String]? {
+        guard PageLive.takes(project), project.hasMac else { return nil }
+        asidePreviews.insert(project.id)
+        return await PageLive.shared.saved(of: project)
+    }
+
+    /// Pages whose preview was opened beside their Mac copy (for another shape, or while it wasn't open): `use_app` goes
+    /// where the last look was, and the preview closes at the next look in the Mac copy or when the turn ends.
+    private var asidePreviews: Set<String> = []
+
+    /// Whether a page Lamp otherwise looks at in the preview (a screen, a web app, a game with a loop of its own) is looked
+    /// at and used in its Mac copy: the window the person sees, when the page has one and it's open or at home on the Mac
+    /// (where a look opens it). Any other `shape` is the preview's, which shows a page at any size, where a Mac window
+    /// can't take a phone's or a TV's without covering the screen or changing the window the person has.
+    private func pageOnMac(_ project: LampProject, shape: String?) -> Bool {
+        guard shape == nil, project.platform.target.looksInTVPreview || GameKit.ownsLoop(project), project.hasMac else { return false }
+        return project.destination == .mac || isRunning(project)
+    }
 
     /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox"). A page
     /// looked at in the TV preview wherever it's shown (a web app at home on the Mac, a screen on a phone) stands in for a
@@ -9093,12 +9631,26 @@ final class Store: ObservableObject {
         let file = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         do {
             let built = Runtime.builtFingerprint(project)
-            let run = try await DeviceApps.install(project, on: device, log: file, stillWanted: stillWanted) { [weak self] in
+            let run = try await DeviceApps.install(project, on: device, log: file, opens: !installsOnly.contains(project.id),
+                                                   stillWanted: stillWanted) { [weak self] in
                 self?.note("Finishing installing on \(name)…", for: project)
             }
             guard stillWanted() else { run.end(); return "Stopped." }
+            // Put there by Reload without opening: nothing runs there to look at.
+            if installsOnly.contains(project.id) {
+                run.end()
+                var placed = project
+                placed.device = device.id
+                Runtime.putOn(placed, staged: built)
+                PageCopies.installed(project)
+                return nil
+            }
             deviceRuns[project.id] = run
             deviceRunBuilt[project.id] = built
+            var placed = project
+            placed.device = device.id
+            Runtime.putOn(placed, staged: built)
+            PageCopies.installed(project)
             refreshOpenApps()
             if inFront { log(project, .status, "\(project.name) is open on \(device.name).") }
             return nil
@@ -9291,6 +9843,12 @@ final class Store: ObservableObject {
     private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
         // The preview is drawn out of sight, often while the person plays the game itself: these say it's a copy.
         note("Building a hidden copy…", for: project)
+        // Its copy of the page is made from the same folders a step of the agent's saves builds from (a TypeScript game's
+        // Web/app/ among them): one going in is waited for, and none starts until the copy is made (`autoApply` waits
+        // while the turn builds); the preview then plays from its own copy, alongside any step.
+        await owner.applying?.value
+        owner.building = true
+        defer { owner.building = false }
         do {
             // A three.js game has nothing to compile: its page is copied where the preview reads it.
             if GameKit.engine(project) == .web { _ = try await GameKit.stageWeb(project) }
@@ -9317,8 +9875,15 @@ final class Store: ObservableObject {
             return (200, ["text": error.localizedDescription])
         }
         guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
-        // What the game logged is its log, for the person's Agent Details as much as the agent.
-        try? AppFolder.write(played.printed.joined(separator: "\n") + "\n", to: Runtime.logURL(project), in: project.dir)
+        // What the game logged is its log, for the person's Agent Details as much as the agent. While the game is open on
+        // this Mac its own copy is writing that log: the hidden copy's play is added after it, never written over it.
+        let printed = played.printed.joined(separator: "\n") + "\n"
+        if isRunning(project), let log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir) {
+            log.write(Data(("[the hidden copy's play]\n" + printed).utf8))
+            try? log.close()
+        } else {
+            try? AppFolder.write(printed, to: Runtime.logURL(project), in: project.dir)
+        }
         var text = said
         if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
         // It names the game's sound files and comes from what the preview printed: the agent's only when the log is.
@@ -9472,7 +10037,11 @@ final class Store: ObservableObject {
             if !fresh, await Adb.pid(of: package, on: serial) != nil { kept = await Adb.saveState(package, on: serial) }
             try await Adb.install(project.builtURL, package: package, on: serial)
             await Adb.tellApp(Template.androidInstallValues(for: project, onDevice: project.device != nil, wishKey: wishKey(for: project)), package: package, on: serial)
+            Runtime.putOn(project)
+            PageCopies.installed(project)
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            // Reload for a device the app isn't open on: the new version waits there for next time (`reloadEverywhere`).
+            if installsOnly.contains(project.id) { return nil }
             Runtime.startLog(project)
             // State the new code can't take may end it at once, before or after it's seen running; the app has used
             // the state up by then, so it opens fresh.
@@ -9966,6 +10535,16 @@ final class Store: ObservableObject {
             }
             offerKeepOpening(project)
             guard stillOwns() else { return nil }
+            // Reload for a phone the app isn't open on: the new version waits there for next time (`reloadEverywhere`).
+            if installsOnly.contains(project.id) {
+                onPhone[project.id] = PhoneBuild(udid: udid, build: build)
+                var placed = project
+                placed.device = udid
+                Runtime.putOn(placed)
+                PageCopies.installed(project)
+                owner.phoneReady = true
+                return nil
+            }
             deviceApps[project.id]?.terminate()
             deviceApps[project.id] = nil
             Runtime.startLog(project)
@@ -9976,6 +10555,10 @@ final class Store: ObservableObject {
             guard stillOwns() else { Subprocess.terminateTree(attached); return nil }
             deviceApps[project.id] = attached
             onPhone[project.id] = PhoneBuild(udid: udid, build: build)
+            var placed = project
+            placed.device = udid
+            Runtime.putOn(placed)
+            PageCopies.installed(project)
             owner.phoneReady = true
             if progress[project.id]?.finished != nil { progress[project.id]?.failed = false }
             attached.terminationHandler = { _ in Task { @MainActor in Store.shared.refreshOpenApps() } }
@@ -10801,18 +11384,23 @@ final class Store: ObservableObject {
     /// any app; the agent's, which come with a reason of their own, only from what was turned down in this
     /// one. Returns what happened, in words for the agent.
     @discardableResult
-    func offerSetup(_ project: LampProject, _ offer: SetupOffer, because reason: String, fromAgent: Bool = false) -> String {
+    func offerSetup(_ project: LampProject, _ offer: SetupOffer, because reason: String, fromAgent: Bool = false, asked: Bool = false) -> String {
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
         guard resolution.tier != .best else {
             return "\(offer.capability.title) is already set up: \(resolution.answer ?? ""). Nothing to offer."
         }
-        guard !offer.declined(in: fromAgent ? project : nil) else {
+        if asked { offer.undecline(in: project) }
+        guard asked || !offer.declined(in: fromAgent ? project : nil) else {
             return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
         }
         // An icon's card is answered apart from the app's pictures (it follows Settings' choices and the
         // choice to draw by hand, not the app's own models), so it can be all set while this isn't.
         let iconAnswered = AppAI.resolve(.pictures, for: project, in: .icon).tier == .best
         switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconAnswered: iconAnswered) {
+        case .offered(let index) where asked:
+            // Asked for by the person: the card comes back to the end of the chat, where they're looking.
+            logs[project.id]?.remove(at: index)
+            log(project, .offer, reason, offer: offer)
         case .offered: return "Lamp already offered this in the chat. Don't offer it again."
         case .replaces(let index):
             // The card there was about the icon and is folded away, answered. This is about pictures the
@@ -11462,7 +12050,9 @@ final class Store: ObservableObject {
     }
 
     /// A game set to open on the person's Xbox (its integration's device: the one chosen under Try On, else theirs),
-    /// which Lamp can't watch either: the host there opens the page's link to the relay for it.
+    /// which Lamp can't watch either. Lamp serves the phones of a game that chose Lamp (`start({ host: 'lamp' })`, or no
+    /// host), and of a package made by an earlier Lamp; the console's host opens the page's link to Lamp's relay for it.
+    /// A game that chose its own host runs them in the console's host instead (lamp_controllers.h) and doesn't ask here.
     static func onDevice(_ project: LampProject) -> Bool {
         project.platform.target.takesPhones && project.onDevice
     }
@@ -11480,6 +12070,18 @@ final class Store: ObservableObject {
         let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
         let parts = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst(2).map { $0.removingPercentEncoding ?? "" }
         guard let id = parts.first, !id.isEmpty, let project = projects.first(where: { $0.id == id }), Self.servesPhonePage(project) else { return missing }
+        let reach = PhonePageReach.reach(project)
+        var page = await phoneFile(Array(parts.dropFirst()), path: path, of: project, held: reach != .unrestricted)
+        // An unrestricted page (an app the person made) is served as it always was, with no rules and no wait for the relay.
+        if reach != .unrestricted { page.policy = PhonePagePolicy.header(host: host, relayPort: await ControllerRelay.ready(), reach: reach) }
+        return page
+    }
+
+    /// One of a TV app's phone page's files, by its steps after the app's id. `held`: the page has rules, which
+    /// lamp-relay.json says (`policy`) for lamp-controller.js.
+    private func phoneFile(_ steps: [String], path: String, of project: LampProject, held: Bool) async -> Gateway.Page {
+        let missing = Gateway.Page(status: 404, body: Data("Nothing here. Open the app on the TV first.".utf8))
+        let parts = [project.id] + steps
         // The page's own links are relative, so its address has to end in a slash.
         if parts.count == 1 { return Gateway.Page(status: 301, location: path + "/") }
         var names = Array(parts.dropFirst())
@@ -11491,8 +12093,10 @@ final class Store: ObservableObject {
         // Where lamp-controller.js opens its socket: the controllers' relay, on this Mac by the name the page was reached
         // at, asked before each try, since the relay may have started again elsewhere.
         if names == ["lamp-relay.json"] {
-            guard let port = await ControllerRelay.ready(),
-                  let body = try? JSONSerialization.data(withJSONObject: ["port": Int(port), "app": project.id]) else {
+            let port = await ControllerRelay.ready()
+            var said: [String: Any] = ["port": Int(port ?? 0), "app": project.id]
+            if held { said["policy"] = true }
+            guard port != nil, let body = try? JSONSerialization.data(withJSONObject: said) else {
                 return Gateway.Page(status: 503, body: Data("Lamp couldn't start the link for controllers.".utf8))
             }
             return Gateway.Page(status: 200, type: Self.pageType("json"), body: body)
@@ -11509,8 +12113,8 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
+        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -11594,6 +12198,7 @@ final class Store: ObservableObject {
             await EngineInstall.lookForPersonsCopies()
         }
         if route == "/ai/status" { return await aiStatus(for: project) }
+        if route == "/ai/setup" { return askedForSetup(request, for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
         // The About window's credits as they are now (`LampAbout`): a credit added since the app was installed shows.
@@ -11601,12 +12206,13 @@ final class Store: ObservableObject {
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }
-        // A game's page taking changes while it's played (`PageLive`).
+        // A page taking changes while it's open, and saying what it saved (`PageLive`).
         if route.hasPrefix("/app/page/") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             switch route {
             case "/app/page/live": return await PageLive.shared.poll(body, for: project)
             case "/app/page/file": return PageLive.shared.file(body, for: project)
+            case "/app/page/saved": return PageLive.shared.savedArrived(body, for: project)
             default: return PageLive.shared.state(body, for: project)
             }
         }
@@ -11627,7 +12233,13 @@ final class Store: ObservableObject {
         }
         // The page stopping its controllers: Lamp's sessions end with what they're for (the preview closing, the app no
         // longer set to open on a TV), not with this; a game on the Mac answers it itself.
-        if ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any])?["stop"] as? Bool == true { return (200, [:]) }
+        let asked = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        if asked["stop"] as? Bool == true { return (200, [:]) }
+        // A page that chose the game itself as its phones' host (`start({ host: 'game' })`) and reached Lamp has no host of
+        // its own here: it hears so, and Lamp never hosts its phones in the game's place.
+        if asked["host"] as? String == "game" {
+            return (409, ["error": "This copy of the game has no host of its own for phones here: start({ host: 'lamp' }) has Lamp host them."])
+        }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         // A game's copy on this Mac runs its own phones; one that asks here was built by an earlier Lamp.
         if !request.fromPreview, !request.fromNetwork, project.platform.target.takesPhones {
@@ -11672,6 +12284,10 @@ final class Store: ObservableObject {
             // screen among the wish's apps, so it never takes the place of the screen's own window or TV.
             if request.fromPreview, project.platform.target.looksInTVPreview, !(project.onTV && project.device == nil) {
                 return (409, ["error": "This is Lamp's preview of the screen: the screen where it's shown is the one the wish's other apps reach."])
+            }
+            // A preview holding a copy of the Mac copy's data isn't one of the wish's apps: what's done there stays there.
+            if request.fromPreview, TVPreview.isSeeded(project) {
+                return (409, ["error": "This is Lamp's preview, holding a copy of the app's data: it doesn't join the wish's other apps."])
             }
             return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host, preview: request.fromPreview)
         }
@@ -12053,10 +12669,49 @@ final class Store: ObservableObject {
     private func aiStatus(for project: LampProject) async -> (Int, [String: Any]) {
         await EngineSignIn.refresh()
         var reply: [String: Any] = [:]
+        var details: [String: Any] = [:]
+        let ready = readyFor(project)
         for capability in Capability.allCases {
-            reply[capability.rawValue] = readyFor(project) && AppAI.resolve(capability, for: project).tier != .none
+            let resolution = AppAI.resolve(capability, for: project)
+            reply[capability.rawValue] = ready && resolution.tier != .none
+            details[capability.rawValue] = AppAI.details(resolution)
         }
+        // Actions are asked of the same route as `/ai/act`'s probe, so the two never disagree.
+        let act = AppAct.status(appModel: AppModels.load(project).text)
+        reply["act"] = ready && act["available"] as? Bool == true
+        details["act"] = act
+        if !ready {
+            for (key, value) in details {
+                guard var one = value as? [String: Any] else { continue }
+                one["available"] = false
+                one["reason"] = "Lamp is still being set up."
+                one["setup"] = "lamp"
+                details[key] = one
+            }
+        }
+        reply["details"] = details
         return (200, reply)
+    }
+
+    /// `LampAI.openSetup`: the person pressed the app's own "Set up in Lamp", so the setup card goes in the app's chat
+    /// even where Lamp wouldn't raise it by itself (a "Not Now" before). Actions are set up as the app's text.
+    private func askedForSetup(_ request: Gateway.Request, for project: LampProject) -> (Int, [String: Any]) {
+        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        let asked = body["capability"] as? String ?? "text"
+        guard let capability = Capability(rawValue: asked == "act" ? "text" : asked) else {
+            return (400, ["error": "There's no capability called \(asked)."])
+        }
+        let reason = Self.askedReason(capability, AppAI.resolve(capability, for: project), app: project.name)
+            ?? Self.offerReason(capability, for: project)
+        let said = offerSetup(project, SetupOffer(capability: capability), because: reason, asked: true)
+        return (200, ["shown": said.hasPrefix("Lamp showed"), "said": said])
+    }
+
+    /// Why the card is there when the person asked for it themselves: what the resolution says is wrong, when
+    /// something answers in a way that isn't what was chosen (a removed model on this Mac). Nil for the usual reasons.
+    static func askedReason(_ capability: Capability, _ resolution: Resolution, app: String) -> String? {
+        guard resolution.tier == .works, let note = resolution.note else { return nil }
+        return "\(app) can't use the AI chosen for it. \(note)"
     }
 
     /// What an app on the person's own phone keeps so its AI works away from the Mac:
@@ -12487,16 +13142,22 @@ final class Store: ObservableObject {
         }
 
         try? await writeOwnFiles(project, all: false)
+        // A page otherwise looked at in the preview (a screen, a web app, a game with a loop of its own) is looked at in its
+        // Mac copy when that's what the person sees (`pageOnMac`): built, opened and pictured as a Mac app is, a change of
+        // its page going into the open window. A preview beside it, for another shape, closes.
+        let onMac = !onDevice && pageOnMac(project, shape: shape)
+        if onMac, asidePreviews.remove(project.id) != nil { TVPreview.close(project) }
+        let project = onMac ? project.at(.mac) : project
         // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
-        if GameKit.isGame(project), !onDevice {
+        if GameKit.isGame(project), !onDevice, !onMac {
             // One made for the Xbox with a loop of its own can't play the preview's script: it's looked at as a page is.
             if GameKit.ownsLoop(project) { return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen) }
             return await lookAtGame(project, turn: turn, motion: motion)
         }
-        // A page with the remote's focus and keys (a screen) is looked at in the TV preview, wherever it's shown, with no
+        // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
         // the preview, at any shape the agent asks for.
-        if project.platform.target.looksInTVPreview, !onDevice, !project.onTV {
+        if project.platform.target.looksInTVPreview, !onDevice, !project.onTV, !onMac {
             return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen, shape: shape)
         }
         let changed = Runtime.sourcesChanged(project)
@@ -12627,6 +13288,15 @@ final class Store: ObservableObject {
             case .live?:
                 note = saved > 0 ? "What you saved went into the open app by itself as you saved it (\(saved) \(saved == 1 ? "time" : "times")), without reopening it: the person is seeing it now, with the window as they left it."
                     : "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
+                // A game's page that couldn't swap the code in opened again from its snapshot: the place is kept, the
+                // world was built again.
+                if turn.pageReopened {
+                    note = "The change went into the open game, but its page opened again for it" + (turn.reloadWhy.map { " (\($0))" } ?? "")
+                        + " and started from its snapshot: the person waited for the world to be built again. Where you can, make the next change one its modules swap in (the game skill, \"Changes while it's played\")."
+                } else if turn.pageRanAgain {
+                    note = "The change went into the open game by running its code again in place" + (turn.reloadWhy.map { " (\($0))" } ?? "")
+                        + ": it started from its snapshot, keeping the page, the renderer and the parts it keeps, and built the rest again. The game's log says what was kept and how long it took (the game skill, \"Changes while it's played\")."
+                }
                 if turn.endedReloadWait {
                     note += " The change that was waiting for Reload went in with it, so nothing waits for Reload now; don't tell the person to press it."
                     turn.endedReloadWait = false
@@ -12742,7 +13412,8 @@ final class Store: ObservableObject {
     /// app it couldn't sign for an Apple team, since macOS lists such an app's intents and never runs them. Read
     /// off the installed copy, so a team that's chosen but couldn't sign (its key refused) is told as well.
     nonisolated static func intentsHint(for project: LampProject) async -> String {
-        guard project.platform == .mac, usesAppIntents(project), !hasIntentsMetadata(project.installedURL) else { return "" }
+        guard project.platform == .mac, usesAppIntents(project), !hasIntentsMetadata(project.installedURL),
+              buildCanGiveIntents(project) else { return "" }
         if await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status != 0 {
             return "\n\nSiri, Shortcuts and Spotlight can't see this app's App Intents: reading them out of the code takes Xcode, which " +
                 "isn't installed. Tell the user they come on once Xcode is installed."
@@ -12774,23 +13445,39 @@ final class Store: ObservableObject {
         FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Resources/Metadata.appintents").path)
     }
 
-    /// A Mac app installed without its App Intents, which a build could now give them: Xcode's tool is here to
-    /// read them, there's a team on this Mac to sign for, and signing for that team hasn't already failed (its
-    /// key refused), so an app whose intents can't come back opens as it is instead of being built every time.
+    /// Whether a build gives the app itself App Intents, read off its last build, which `deploy` copies and so never
+    /// takes them out of: it has them, or there's none yet, or it was made without Xcode's tool (build.sh empties
+    /// .build/appintents at the start of each build, and its `intents` leaves a folder there only when it ran). A build that ran the tool and wrote none writes none
+    /// again: the code that imports App Intents declares none in the app, as when they're all the widget's, which
+    /// keeps its own whatever the app is signed with.
+    nonisolated static func buildCanGiveIntents(_ project: LampProject) -> Bool {
+        let fm = FileManager.default
+        return !fm.fileExists(atPath: project.builtURL.path) || hasIntentsMetadata(project.builtURL)
+            || !fm.fileExists(atPath: project.dir.appendingPathComponent(".build/appintents/\(project.exe)").path)
+    }
+
+    /// A Mac app installed without its App Intents, which a build could now give them: its build has some to give
+    /// (`buildCanGiveIntents`), Xcode's tool is here to read them, there's a team on this Mac to sign for, and
+    /// signing for that team hasn't already failed (its key refused), so an app whose intents can't come back
+    /// opens as it is instead of being built every time.
     nonisolated static func intentsCanComeBack(_ project: LampProject) async -> Bool {
         guard project.platform == .mac, usesAppIntents(project),
               FileManager.default.fileExists(atPath: project.installedURL.path), !hasIntentsMetadata(project.installedURL),
+              buildCanGiveIntents(project),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         guard await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status == 0 else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
     }
 
     /// The same for a Mac app's share extension, which `deploy` leaves out of an app it can't sign for a team:
-    /// a team to sign for now, which hasn't already failed, brings it back with a build.
+    /// a team to sign for now, which hasn't already failed, brings it back with a build, when the build makes one
+    /// (its last build has it, or there's none yet).
     nonisolated static func shareCanComeBack(_ project: LampProject) async -> Bool {
         guard project.platform == .mac, Template.hasShare(project),
               FileManager.default.fileExists(atPath: project.installedURL.path),
               !FileManager.default.fileExists(atPath: Template.shareURL(in: project.installedURL, of: project).path),
+              !FileManager.default.fileExists(atPath: project.builtURL.path)
+                || FileManager.default.fileExists(atPath: Template.shareURL(in: project.builtURL, of: project).path),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
     }

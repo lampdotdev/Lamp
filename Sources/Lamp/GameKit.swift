@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import JavaScriptCore
 
 /// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js, or with Phaser for a 2D game
 /// (`web/lamp-phaser.js` over the runtime), and played through Lamp's game runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
@@ -207,7 +208,10 @@ enum GameKit {
     /// Lamp's common host for a page on Apple's devices (a web game's and a screen's: serving and showing it, LampAI
     /// through the app, and `LampNative` calls of the device); and where those calls are answered, the app's own Swift, written only
     /// when the app has none yet.
-    static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first
+    /// The page's host, with the script that reads the page's screen as the preview reads it (`PageScreen`) written in.
+    static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first.map {
+        ($0.path, $0.text.replacingOccurrences(of: "\"{{PAGE_SCREEN_SCRIPT}}\"", with: String(reflecting: PageScreen.script)))
+    }
     static let native: (path: String, text: String)? = read([("Sources/Native.swift", "apple/Native.swift")]).first
     /// The controller kit a game on the Mac runs its own phones with (`ControllerRuntime`: its phone page and relay, in
     /// its own process): LampRelayKit's Swift as one file, which build.sh writes into Lamp's bundle. In the player, and
@@ -310,7 +314,7 @@ enum GameKit {
     }
 
     /// Lamp's own Swift in a page's app: the player has all of it. `Native.swift` too while it's still Lamp's.
-    private static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
+    static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
                                                      ScreenKit.screenPage.swift, ScreenKit.webAppPage.swift].map { String($0.dropFirst("Sources/".count)) })
 
     /// Swift of the app's own beside Lamp's, in Sources/ (what its Package.swift compiles): a `Native.swift` that answers
@@ -369,7 +373,7 @@ enum GameKit {
     /// joining from the game's Phone/ page), and `Lamp.wish`, the TV app's block for the wish's other apps and its own
     /// other copies, for a game that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        DeviceSupport.webJS + controllersJS + (Template.carriesWish(project) ? TVTemplate.wishJS : "")
+        DeviceSupport.webJS + controllersJS + (Template.carriesWish(project) ? TVTemplate.withShell(TVTemplate.wishJS, for: project) : "")
     }
 
     /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the blocks make one to hang from.
@@ -427,6 +431,100 @@ enum GameKit {
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
+
+    /// Why the game's own modules in Web/ wouldn't load as written (the first one that doesn't parse, and where), or
+    /// nil: what a change the agent is still writing goes into the open game by (`Store.stepPage`). Parsed as modules by
+    /// the Bun inside Lamp's pi (its transpiler, which reads them as a browser does and runs nothing), in the game's
+    /// sandbox; Lamp's own files and the libraries beside the page are left out. A game bundled from TypeScript is checked
+    /// by its bundling instead.
+    static func codeProblem(_ project: LampProject) async -> String? {
+        guard !compilesSource(project), let bun = Agent.executable else { return nil }
+        let web = project.dir.appendingPathComponent(webFolder)
+        let base = web.standardizedFileURL.path + "/"
+        let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
+            .map { String($0.standardizedFileURL.path.dropFirst(base.count)) }
+            .filter { path in
+                ["js", "mjs"].contains((path as NSString).pathExtension.lowercased()) && !path.hasPrefix("three/") && !path.hasPrefix("phaser/")
+                    && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
+            }.sorted()
+        guard !files.isEmpty else { return nil }
+        if let strict = strictProblem(in: files, of: web, project: project) { return strict }
+        // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
+        // it runs in a scratch folder, reading the page's files by their paths.
+        let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-check-\(project.id)-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        do {
+            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+            try parseCheck.write(to: scratch.appendingPathComponent("check.js"), atomically: true, encoding: .utf8)
+        } catch { return nil }
+        var said: [String] = []
+        let command = "cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) check.js \"$LAMP_WEB\" "
+            + files.map(Sandbox.quoted).joined(separator: " ")
+        let status = await Sandbox.run(command, for: project, cwd: project.dir, env: ["LAMP_SCRATCH": scratch.path, "LAMP_WEB": web.path],
+                                       opening: [scratch.path], reading: [bun.deletingLastPathComponent().path]) { said.append($0) }
+        // A check that couldn't run says nothing of the code.
+        guard status == 1 else { return nil }
+        return said.first { !$0.isEmpty } ?? "a module doesn't parse"
+    }
+
+    /// What a module may not do because a module is strict, which Bun's parser lets through (`010`, `delete x`, `with`, a
+    /// repeated parameter, `'\012'`): JavaScriptCore checks each file as a strict script, its module statements written
+    /// as script (a rough rewrite, since JavaScriptCore doesn't parse modules), and only its strict-mode errors count;
+    /// Bun is the judge of the rest.
+    private static func strictProblem(in files: [String], of web: URL, project: LampProject) -> String? {
+        guard let context = JSContext() else { return nil }
+        for path in files {
+            guard let data = AppFile.read(web.appendingPathComponent(path), in: project) else { continue }
+            var exception: JSValueRef?
+            let text = JSStringCreateWithCFString(scriptForm(of: String(decoding: data, as: UTF8.self)) as CFString)
+            defer { JSStringRelease(text) }
+            if JSCheckScriptSyntax(context.jsGlobalContextRef, text, nil, 0, &exception) { continue }
+            let error = JSValue(jsValueRef: exception, in: context)
+            guard let message = error?.toString(), message.contains("strict mode") else { continue }
+            let line = (error?.objectForKeyedSubscript("line")?.toInt32() ?? 1) - 1
+            return "\(path):\(max(1, line)): \(message)"
+        }
+        return nil
+    }
+
+    private static let moduleToScript: [(NSRegularExpression, String)] = {
+        let gap = #"(?:\s|/\*[\s\S]*?\*/|//[^\n]*\n)*"#, lead = #"(?<![.\w$])"#
+        return [
+            (lead + #"import"# + gap + #"[^;'"]*?\bfrom\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + #"import\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + "export" + gap + #"\*\s*(?:as\s+[\w$]+\s*)?from\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + "export" + gap + #"\{[^}]*\}"# + gap + #"(?:from\s*(['"])[^'"\n]+\1)?\s*;?"#, ""),
+            (lead + "export" + gap + #"default\b"#, "void "),
+            (lead + #"export\b(?=\s*(?:async\b|function\b|class\b|const\b|let\b|var\b|/))"#, ""),
+            (#"\bimport\.meta\b"#, "({ url: '' })"),
+        ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
+    }()
+
+    /// A module as a script, its lines where they were (one line down).
+    static func scriptForm(of module: String) -> String {
+        var text = module as NSString
+        for (pattern, template) in moduleToScript {
+            for match in pattern.matches(in: text as String, range: NSRange(location: 0, length: text.length)).reversed() {
+                let breaks = String(repeating: "\n", count: text.substring(with: match.range).filter { $0 == "\n" }.count)
+                text = text.replacingCharacters(in: match.range, with: template + breaks) as NSString
+            }
+        }
+        return "'use strict'; (async () => {\n" + (text as String) + "\n});"
+    }
+
+    /// The parse check Bun runs: each file read as a module, the first that doesn't parse said with its line.
+    private static let parseCheck = """
+        const [web, ...files] = process.argv.slice(2);
+        const parse = new Bun.Transpiler({ loader: 'js' });
+        for (const file of files) {
+          try { parse.transformSync(await Bun.file(web + '/' + file).text()); }
+          catch (e) {
+            const m = (e.errors && e.errors[0]) || e;
+            console.log(`${file}${m.position ? ':' + m.position.line : ''}: ${m.message || e}`);
+            process.exit(1);
+          }
+        }
+        """
 
     static func compilesSource(_ project: LampProject) -> Bool {
         FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("\(sourceFolder)/main.ts").path)
@@ -541,7 +639,7 @@ enum GameKit {
             // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host);
             // elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page. Either way
             // lamp.js is the game's own on top: the game's code is the same everywhere, so it finds `Lamp.controllers`
-            // (over the host's pipe on the Xbox, and saying it can't start where phones aren't hosted) and `Lamp.wish` on the Xbox too, where the page is
+            // (from the game's own host on the Xbox, and saying it can't start where phones aren't hosted) and `Lamp.wish` on the Xbox too, where the page is
             // the wish's peer itself and the host opens its links.
             if project.integration != nil { try DeviceSupport.writeDeclared(for: project) }
             try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
@@ -578,7 +676,7 @@ enum GameKit {
         guard let resources else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
         let web = engine(project) == .web
         let scaffold = resources.appendingPathComponent(web ? "scaffold-web" : "scaffold")
-        for path in web ? ["\(webFolder)/index.html", "\(webFolder)/game.js"] : ["Game/game.cpp", "Game/scene.glsl"] {
+        for path in web ? ["\(webFolder)/index.html"] + scaffoldCode(web: true) : ["Game/game.cpp", "Game/scene.glsl"] {
             let text = try String(contentsOf: scaffold.appendingPathComponent(path), encoding: .utf8)
             try Template.write(text, to: path, for: project)
         }
@@ -590,13 +688,20 @@ enum GameKit {
         try write(for: project)
     }
 
-    /// Whether the game is still the scaffold: its code is as Lamp wrote it.
+    /// The scaffold's code: what a game that's still the scaffold has as Lamp wrote it.
+    private static func scaffoldCode(web: Bool) -> [String] {
+        web ? ["game.js", "world.js", "making.js"].map { "\(webFolder)/\($0)" } : ["Game/game.cpp"]
+    }
+
+    /// Whether the game is still the scaffold: its code is as Lamp wrote it, every file of it.
     static func isScaffold(_ project: LampProject) -> Bool {
-        let path = engine(project) == .web ? "\(webFolder)/game.js" : "Game/game.cpp"
-        guard let scaffold = resources?.appendingPathComponent((engine(project) == .web ? "scaffold-web/" : "scaffold/") + path),
-              let written = try? String(contentsOf: scaffold, encoding: .utf8),
-              let now = AppFile.text(project.dir.appendingPathComponent(path), in: project) else { return false }
-        return now == written.replacingOccurrences(of: "{{NAME}}", with: project.name)
+        let web = engine(project) == .web
+        return scaffoldCode(web: web).allSatisfy { path in
+            guard let scaffold = resources?.appendingPathComponent((web ? "scaffold-web/" : "scaffold/") + path),
+                  let written = try? String(contentsOf: scaffold, encoding: .utf8),
+                  let now = AppFile.text(project.dir.appendingPathComponent(path), in: project) else { return false }
+            return now == written.replacingOccurrences(of: "{{NAME}}", with: project.name)
+        }
     }
 
     static let webAppMd = """
@@ -608,6 +713,11 @@ enum GameKit {
 
     ## What it does
     Nothing yet: fresh scaffold, a card saying "Lamp is making this game.", for the game to replace.
+
+    ## Code
+    game.js puts the parts together and keeps the renderer and the world through a change (`hot(import.meta).keep`),
+    world.js builds the world (the scene and camera) and builds it again in place when it changes, and making.js (the
+    card) is a part that changes while the game is played: a class in a module ending with `hot(import.meta).accept()`.
 
     """
 
@@ -900,7 +1010,7 @@ enum GameKit {
     @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
-        guard let (drawn, result) = await WebGamePreview.play(page, script: script) else {
+        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: SharedNetwork.policy(for: project)) else {
             throw Failure(message: "The game didn't start in the preview, or ran for more than two minutes without finishing the play: "
                 + "check that Web/index.html loads it and that game() is called once, and look for an error in what it logged.")
         }
@@ -1009,12 +1119,14 @@ extension Agent.Rules {
     """
 
     static let gameOwnLoopTry = """
-    - `look_at_app` opens the page in the Xbox preview on this Mac, a 1920x1080 window running it in this Mac's browser, and \
-    shows you a picture of it with its screen as text and what its console printed; it's the preview, not the person's \
-    Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys there: the arrows, enter, \
-    back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's move), then shows it again. Try it by \
-    playing it. `look_at_app` with `on_device` opens it where Try On points (its window on this Mac, or the Xbox) and \
-    shows that screen and its log.
+    - `look_at_app` shows you the game in its window on this Mac while that's open, or when Try On points at the Mac \
+    (where it opens it): the window the person sees, a change of the page going in as you save. Otherwise it opens the \
+    page in the Xbox preview on this Mac, a 1920x1080 window running it in this Mac's browser, which starts from a copy of \
+    what the Mac window saved. Either way you get a picture with its screen as text and what its console printed; neither \
+    is the person's Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys where you \
+    last looked: the arrows, enter, back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's \
+    move), then shows it again. Try it by playing it. `look_at_app` with `on_device` opens it where Try On points (its \
+    window on this Mac, or the Xbox) and shows that screen and its log.
 
     """
 
@@ -1043,7 +1155,8 @@ extension Agent.Rules {
     static let screenAmongApps = placesAmongApps("screen", verb: "shown") + """
 
     - The screen reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
-    values and files, wherever it's shown, the Xbox included. Lamp's TV preview, where you look at it, joins them only when the screen is shown there, so what \
+    values and files, wherever it's shown, the Xbox included. Its window on this Mac is one of them; Lamp's preview \
+    never is while it holds a copy of that window's data, and otherwise only when the screen is shown there, so what \
     another app sends shows where the screen is shown. What every place shows (a list, the calendar, photos) goes in \
     `LampStore.shared` and `LampStore.sharedFiles`, kept the same on every copy of the screen (and with `{ wish: true }` \
     in every app of the wish), with a copy that can read the calendar or the album (on the Mac, an iPhone or an iPad, \
@@ -1075,6 +1188,7 @@ extension Agent.Rules {
     make_app_for with the game's folder in `app` ("." when it's the wish's own folder), `kind` "game", `made` "web" and \
     `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", "xbox-one"…: a page \
     goes wherever the table of devices gives a web host); it stays the same game, and the wish's other apps stay as they are.
+    \(pageCopies)
     """ }
 
     /// How a page (a web game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the
@@ -1142,8 +1256,14 @@ extension Agent.Rules {
     data through lamp-game.js (`texture('bricks.png')`, `model('car.glb')`, `sound.load('hit.wav')`, `asset('level.json')`), \
     never by a URL of your own, so a new copy goes into the running game; where the game makes something of its own from \
     a file (a material from shader source, clones of a model, a level from JSON), give game() `assetChanged(path)`, which \
-    makes it again and returns true. While a match, race or round is on, `busy()` returns true: a change of code waits \
-    for the next pause and the person can press Reload. A change of code with no snapshot starts the game again.
+    makes it again and returns true. A change of code goes into the running game without the page opening again: \
+    swapped where a module that ends with `hot(import.meta).accept()` takes it, else by the game's code running again \
+    in place from the snapshot, keeping the renderer and the parts kept with `hot(import.meta).keep`. So write the game \
+    in parts as the game skill ("Changes while it's played") says: the starting module only puts them together and keeps \
+    the renderer and each part of the world, the HUD and menus are made at each start, and what changes often is a class \
+    in a module that takes its changes. The log says what was swapped or kept and how long it took. While a match, race \
+    or round is on, `busy()` returns true: a change that runs the code again waits for the next pause and the person \
+    can press Reload. A change of code with no snapshot that can't be swapped starts the game again.
     """
 
     static let gameWebSound = """

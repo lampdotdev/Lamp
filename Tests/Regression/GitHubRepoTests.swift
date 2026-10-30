@@ -46,6 +46,11 @@ final class GitHubRepoTests: XCTestCase {
         let ideas = GitHubRepo.readme(for: wish, credits: Credits(), open: Publish.OpenInLamp(), build: GitHubRepo.Build(alone: true, app: "Mac", others: false),
                                       repo: "someone/tally", showcase: GitHubRepo.Showcase(ideas: ["Count [by] twos (fast)"], remix: true))
         XCTAssertTrue(ideas.contains("- [Count \\[by\\] twos (fast)](https://lamp.dev/?repo=https://github.com/someone/tally&from=readme&ask=Count%20%5Bby%5D%20twos%20%28fast%29)"), ideas)
+        // A reel takes the preview's place: its silent loop, linked to the video with sound.
+        let reel = GitHubRepo.readme(for: wish, credits: Credits(), open: Publish.OpenInLamp(), build: GitHubRepo.Build(alone: true, app: "Mac", others: false),
+                                     repo: "someone/tally", showcase: GitHubRepo.Showcase(preview: ".github/preview.png", reel: ".github/showcase", remix: true))
+        XCTAssertTrue(reel.contains("<a href=\".github/showcase/reel.mp4\"><img src=\".github/showcase/loop.webp\""), reel)
+        XCTAssertFalse(reel.contains("preview.png"), reel)
         // Nothing of Lamp's records.
         XCTAssertFalse(has(".lamp"))
         XCTAssertFalse(has(".git"))

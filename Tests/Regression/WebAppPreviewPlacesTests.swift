@@ -1,8 +1,9 @@
 import XCTest
 @testable import Lamp
 
-/// A web app at home on the Mac is looked at in the TV preview, but it isn't a TV app: its preview isn't called a TV's,
-/// and its agent isn't sent to look at it as a TV, a frame and a phone before it finishes. Pointed at a TV, it is one.
+/// A web app at home on the Mac is looked at in its window there, and in the preview at other shapes, but it isn't a TV
+/// app: its preview isn't called a TV's, and its agent isn't sent to look at it as a TV, a frame and a phone before it
+/// finishes. Pointed at a TV, it is one.
 @MainActor
 final class WebAppPreviewPlacesTests: XCTestCase {
     private func webApp(_ places: [Destination], chosen: Destination = .mac) -> LampProject {
@@ -26,8 +27,8 @@ final class WebAppPreviewPlacesTests: XCTestCase {
 
     func testTheShapesLookedAtAreThoseOfItsPlaces() {
         let mac = Agent.screenPrompt(for: webApp([.mac]))
-        XCTAssertTrue(mac.contains("\"1280x800\" (a Mac window)"))
-        for other in ["1920x1080", "820x1180", "390x844"] { XCTAssertFalse(mac.contains(other), other) }
+        XCTAssertTrue(mac.contains("on the Mac " + Agent.Rules.macLook))
+        for other in ["1920x1080", "820x1180", "390x844", "1280x800"] { XCTAssertFalse(mac.contains(other), other) }
 
         let tv = Agent.screenPrompt(for: webApp([.mac, .tv]))
         XCTAssertTrue(tv.contains("\"1920x1080\" (a TV)"))
@@ -58,12 +59,12 @@ final class WebAppPlacesChangeTests: XCTestCase {
     /// (the Mac), so they mustn't name only the Mac's shapes; what's said once its places are set names the iPhone's and iPad's.
     func testAnAppMadeIntoAWebAppForTheIPhoneIsToldTheIPhonesShapes() {
         let rules = Target.webApp.guidance.changeRules(webApp(nil))
-        XCTAssertFalse(rules.contains("and only those: \"1280x800\""), "written before its places are set")
+        XCTAssertFalse(rules.contains("and only those: on the Mac"), "written before its places are set")
         XCTAssertTrue(rules.contains("820x1180"))
         let placed = Agent.Rules.screenPlaced(webApp([.mac, .ios]))
         XCTAssertTrue(placed.contains("\"820x1180\" (an iPad upright)"))
         XCTAssertTrue(placed.contains("\"390x844\" (an iPhone)"))
-        XCTAssertTrue(placed.contains("\"1280x800\" (a Mac window)"))
+        XCTAssertTrue(placed.contains("on the Mac " + Agent.Rules.macLook))
     }
 
     func testAnOpenPreviewsTitleFollowsTryOn() async throws {

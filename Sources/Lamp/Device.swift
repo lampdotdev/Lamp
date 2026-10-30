@@ -387,11 +387,19 @@ struct Device: Identifiable, Hashable {
 /// only when it changes (Try On moved, a phone's software updated), so most requests carry nothing.
 enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
-        let here = place(for: project, store: store)
+        var here = place(for: project, store: store)
+        // A page with a window on this Mac is looked at there, whatever else Try On points at (`Store.pageOnMac`).
+        if (project.platform.target.looksInTVPreview || GameKit.ownsLoop(project)) && project.hasMac { here += " " + macWindow }
         // A game says every place it's played and what the slowest allows, then where Try On points.
         return GameKit.isGame(project) ? Agent.Rules.gamePlaces(project) + " " + here
             : ScreenKit.isScreen(project) ? Agent.Rules.screenPlaces(project) + " " + here : here
     }
+
+    /// Where the agent's looks go for a page with a window on this Mac: that window, which is what the person sees, and
+    /// the preview only for another shape or where nothing on this Mac shows it.
+    static let macWindow = "look_at_app without `shape`, and use_app after it, reach its window on this Mac (the one the person sees) "
+        + "while that's open, or when Try On points at the Mac, where a look opens it; with `shape`, or with neither, they reach "
+        + "the preview, a window of Lamp's that starts from a copy of what the Mac window saved, so what's done there stays there."
 
     @MainActor private static func place(for project: LampProject, store: Store) -> String {
         let phones = store.devices.filter { $0.kind.isPhone }
@@ -414,7 +422,8 @@ enum DeviceNote {
         if project.onTV {
             let onTV = Runtime.onTV(project)
             return tv(previewOpen: TVPreview.isOpen(project), chosen: project.device, tvs: store.devices.filter { $0.kind.isTV },
-                      onTV: onTV, current: onTV.isEmpty ? "" : Runtime.fingerprint(project))
+                      onTV: onTV, current: onTV.isEmpty ? "" : Runtime.fingerprint(project),
+                      macWindow: (project.platform.target.looksInTVPreview || GameKit.ownsLoop(project)) && project.hasMac)
         }
         if project.onAndroid {
             let androids = store.devices.filter { $0.kind == .android }
@@ -471,9 +480,10 @@ enum DeviceNote {
     /// Where a TV app is, from what Lamp has seen: the preview, which the agent's tools reach, and each of the person's
     /// TVs, which they don't. A TV found on the network is only that: Lamp hasn't asked it what it's running, so that
     /// stays unknown, and the agent is left to find out what else it can learn of it rather than being told it can't.
-    static func tv(previewOpen: Bool, chosen: String?, tvs: [Device], onTV: [String: Runtime.OnTV], current: String) -> String {
+    /// `macWindow`: a page with a window of its own on this Mac too, which the looks reach while it's open (`macWindow`).
+    static func tv(previewOpen: Bool, chosen: String?, tvs: [Device], onTV: [String: Runtime.OnTV], current: String, macWindow: Bool = false) -> String {
         var line = "The TV preview, a window on this Mac with a remote's keys, is \(previewOpen ? "open" : "closed") now; "
-            + "look_at_app and use_app reach only the preview."
+            + (macWindow ? "look_at_app and use_app never reach a TV." : "look_at_app and use_app reach only the preview.")
         if chosen == nil { line += " Try On points at the preview, so Play opens the app there." }
         if let chosen, !tvs.contains(where: { $0.udid == chosen }) {
             line += " Try On points at one of the person's TVs, which Lamp doesn't find on the network now."

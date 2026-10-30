@@ -187,6 +187,7 @@ struct UpgradeView: View {
         case .key(let provider): return Provider.keyProvider(provider) != nil
         case .signIn: return true
         case .drawIcons: return Icons.playgroundAvailable
+        case .useText: return true
         }
     }
 
@@ -202,6 +203,8 @@ struct UpgradeView: View {
             SignInUpgrade(engine: engine, compact: compact, onChange: onChange)
         case .drawIcons:
             DrawIconsUpgrade(compact: compact)
+        case .useText(let route, let label, let app):
+            UseTextUpgrade(route: route, label: label, app: app, compact: compact, onChange: onChange)
         }
     }
 }
@@ -369,6 +372,33 @@ private struct DecisionModelUpgrade: View {
                 } else {
                     Button("Download") { local.download(spec) }
                 }
+            }
+        }
+    }
+}
+
+/// What answers now, kept as the choice: for one app, or in Settings for every app.
+private struct UseTextUpgrade: View {
+    let route: String
+    let label: String
+    let app: String?
+    let compact: Bool
+    let onChange: () -> Void
+
+    var body: some View {
+        OptionRow(symbol: "arrow.triangle.swap", title: "Use \(label) instead",
+                  detail: app == nil ? "For every app, as Settings' choice. What they send goes to it."
+                                     : "For this app. What it sends goes to it.",
+                  compact: compact) {
+            Button("Use It") {
+                if let app, let project = Store.shared.projects.first(where: { $0.id == app }) {
+                    var models = AppModels.load(project)
+                    models.text = route
+                    models.save(project)
+                } else {
+                    UserDefaults.standard.set(route, forKey: "appModel")
+                }
+                onChange()
             }
         }
     }

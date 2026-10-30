@@ -43,22 +43,56 @@ enum TVFiles {
 
     // MARK: - The review
 
-    /// Where a TV app's code reaches beyond itself, in the words the review uses for a Mac app's: a page's scripts fetch
-    /// and send over the network, can load a script from the internet and can run text as code, which hide what the app
-    /// does as loading code at runtime does in Swift. Lamp's AI blocks are the web library's (`DeviceSupport.webJS`).
+    /// Where a TV app's code reaches beyond itself, in the words the review uses for a Mac app's: a page's scripts can
+    /// load a script from the internet and can run text as code, which hide what the app does as loading code at runtime
+    /// does in Swift. Lamp's AI blocks are the web library's (`DeviceSupport.webJS`). Where its requests go is worked out
+    /// from the code (`WebReach`), not from words in it.
     static let checks: [Sharing.Capability] = [
         Sharing.Capability(label: "Uses AI (your OpenRouter credit)", icon: "sparkles", level: .ordinary, patterns: ["LampAI.", "LampQuestion."]),
-        Sharing.Capability(label: "Connects to the internet", icon: "network", level: .ordinary,
-                           patterns: ["fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "http://", "https://"]),
-        Sharing.Capability(label: "Loads code from the internet (can hide what it does)", icon: "eye.slash", level: .sensitive,
-                           patterns: ["<script src=\"http", "<script src='http", "import(\"http", "import('http", "importScripts("]),
+        remoteCode,
         Sharing.Capability(label: "Loads code at runtime (can hide what it does)", icon: "eye.slash", level: .sensitive,
                            patterns: ["eval(", "new Function(", "document.write("]),
     ]
 
-    static func detected(in sources: [URL]) -> [Sharing.Capability] {
+    static let remoteCode = Sharing.Capability(label: "Loads code from the internet (can hide what it does)", icon: "eye.slash", level: .sensitive,
+                                               patterns: ["<script src=\"http", "<script src='http", "import(\"http", "import('http", "importScripts("])
+    static let mayConnect = Sharing.Capability(label: "May connect outside this app", icon: "network", level: .ordinary, patterns: [])
+    static let opensWebsites = Sharing.Capability(label: "Opens websites when clicked", icon: "link", level: .ordinary, patterns: [])
+
+    /// "Connects to open-meteo.com": the sites the page's requests go to, by the names people know them by.
+    static func connects(_ reach: WebReach.Result) -> Sharing.Capability? {
+        guard reach.connects else { return nil }
+        var sites = Array(Set(reach.hosts.map(WebReach.site))).sorted()
+        let label: String
+        if sites.isEmpty {
+            label = "Connects to the internet"
+        } else {
+            let more = sites.count > 3 ? sites.count - 2 : 0
+            if more > 0 { sites = Array(sites.prefix(2)) + ["\(more) more"] }
+            if reach.unnamed && more == 0 { sites.append("other sites") }
+            label = "Connects to " + (sites.count == 1 ? sites[0] : sites.dropLast().joined(separator: ", ") + " and " + sites.last!)
+        }
+        return Sharing.Capability(label: label, icon: "network", level: .ordinary, patterns: [])
+    }
+
+    /// Where the page's requests go, read from its code and its models: what the sheet says (`detected`), and what the
+    /// app is held to once it's here (`SharedNetwork.reading`).
+    static func reach(in sources: [URL], data: [URL] = []) -> WebReach.Result {
+        let code = sources.compactMap { url in (try? String(contentsOf: url, encoding: .utf8)).map { (url.lastPathComponent, $0) } }
+        let models = data.filter { ["gltf", "glb"].contains($0.pathExtension.lowercased()) }
+            .compactMap { url in (try? Data(contentsOf: url)).map { (url.lastPathComponent, $0) } }
+        return WebReach.analyze(code: code, data: models)
+    }
+
+    static func detected(in sources: [URL], data: [URL] = []) -> [Sharing.Capability] {
         let everything = sources.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
-        return checks.filter { item in item.patterns.contains { everything.contains($0) } }
+        let reach = reach(in: sources, data: data)
+        var found = checks.filter { item in item.patterns.contains { everything.contains($0) } }
+        if reach.remoteCode, !found.contains(remoteCode) { found.append(remoteCode) }
+        if let connects = connects(reach) { found.insert(connects, at: min(1, found.count)) }
+        if reach.unknown { found.append(mayConnect) }
+        if reach.links { found.append(opensWebsites) }
+        return found
     }
 }
 
@@ -182,7 +216,7 @@ enum GameFiles {
 /// A web app's or a screen's files in a shared file (`Sharing`): its page in Web/, the agent's HTML, CSS and JavaScript as
 /// code and its pictures, sounds and fonts as data, and the Swift beside the page that answers its calls of the device
 /// (Sources/Native.swift, as a game's) as code too. Never Lamp's own files around the page (Web/lamp.js, the app that shows
-/// the page, LampPage.swift and LampSupport.swift in Sources/, the Android app), which the Mac that opens the file writes
+/// the page, LampPage.swift, LampControllerKit.swift and LampSupport.swift in Sources/, the Android app), which the Mac that opens the file writes
 /// itself (`ScreenKit.write`), never a hidden file or a link. Both kinds travel the same way; the file's `platform` says
 /// which the copy is, so a screen stays a screen with its address and saves (`ScreenKit`).
 enum ScreenFiles {
@@ -190,11 +224,11 @@ enum ScreenFiles {
     /// file's code is read before the kind's project exists.
     static func isLamps(_ relative: String) -> Bool {
         relative == TVTemplate.supportFile || relative == ScreenKit.screenPage.swift || relative == ScreenKit.webAppPage.swift
-            || relative == "Sources/LampPage.swift" || relative == "Sources/LampSupport.swift"
+            || relative == "Sources/LampPage.swift" || relative == "Sources/LampControllerKit.swift" || relative == "Sources/LampSupport.swift"
     }
 
-    /// The Swift beside the page first: it's what reaches the device, and the review sends the code in this order up to a
-    /// cap, which a large page would push it past.
+    /// The Swift beside the page first: it's what reaches the device, and the review sends the code in this order, so it
+    /// goes in the first request however large the page is.
     static func list(in root: URL) -> (code: [URL], data: [URL]) {
         let fm = FileManager.default
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]

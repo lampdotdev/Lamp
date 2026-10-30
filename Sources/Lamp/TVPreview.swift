@@ -3,6 +3,7 @@ import CryptoKit
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 import WebKit
+import LampRelayKit
 
 /// The TV on this Mac's screen: a TV app opened at the TVs' own size (1920×1080, shown at half that), from the copy of
 /// its files in Lamp's folder (`TVs.stage`). A screen that fills whatever it's shown on is opened at any shape the
@@ -34,6 +35,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     private var log: FileHandle?
     /// The page's size in CSS pixels: a TV's, or the shape a screen is looked at in.
     private var shape = CGSize(width: 1920, height: 1080)
+    /// Opened with a copy of what the app's copy on this Mac saved (`isSeeded`).
+    private var seeded = false
     /// Pixels in a picture (and points for `use_app`) per pixel of the page: half for a TV, as it always was.
     private var scale: CGFloat { 960 / max(shape.width, shape.height) }
 
@@ -67,14 +70,20 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 
     /// Opens the staged app (again, from the start), in front or behind what the person is doing. Nil once it has loaded.
+    /// `seed`, what the app's copy on this Mac has saved, replaces everything the preview kept: it starts from the person's
+    /// own data, and what's done in it stays in it.
     @discardableResult
-    static func show(_ project: LampProject, staged: URL, inFront: Bool, device: String? = "TV") async -> String? {
+    static func show(_ project: LampProject, staged: URL, inFront: Bool, device: String? = "TV", seed: [String: String]? = nil) async -> String? {
         let preview = open[project.id] ?? TVPreview(project: project)
         open[project.id] = preview
         preview.device = device
         preview.window.title = title(of: project.name, device: device)
-        return await preview.load(staged: staged, inFront: inFront)
+        return await preview.load(staged: staged, inFront: inFront, seed: seed)
     }
+
+    /// Whether the open preview started from a copy of what the app's copy on this Mac saved (`show`'s `seed`): it's a
+    /// copy, so it never joins the wish's apps, where it would pass on what's done in it as the person's.
+    static func isSeeded(_ project: LampProject) -> Bool { open[project.id]?.seeded == true }
 
     /// The window's title: the app on its device ("Clock on TV"), or the app's preview when it stands in for none.
     static func title(of name: String, device: String?) -> String { device.map { "\(name) on \($0)" } ?? "\(name) Preview" }
@@ -140,6 +149,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         controller.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = controller
         configuration.setURLSchemeHandler(files, forURLScheme: Self.scheme)
+        // A shared page is held back as it is in its app (`NetworkPolicy.holdBack`).
+        if SharedNetwork.policy(for: project) != nil { NetworkPolicy.holdBack(configuration.preferences) }
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 960, height: 540), configuration: configuration)
         webView.pageZoom = 0.5
         webView.autoresizingMask = [.width, .height]
@@ -184,11 +195,15 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         Store.shared.syncLocalNetwork()   // its phone page isn't handed out any more
     }
 
-    private func load(staged: URL, inFront: Bool) async -> String? {
+    private func load(staged: URL, inFront: Bool, seed: [String: String]?) async -> String? {
         Runtime.startLog(project)
         try? log?.close()
         log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         files.folder = staged
+        // A shared page is held in its preview to what it's held to as an app (`SharedNetwork`).
+        files.policy = SharedNetwork.policy(for: project)
+        files.own = "\(Self.scheme)://app"
+        files.connect = files.policy?.restricts == true ? await Self.relaySites(project) : []
         lastPictured = nil
         // WebKit keeps the scripts and styles a page loaded and serves them again for the same address, so an
         // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
@@ -196,11 +211,23 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                                                                 modifiedSince: .distantPast)
         // Closed while the caches went: loading now would start the app again in a preview nobody can see or close.
         guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
-        let carried = await savedFromFileAddress(staged)
+        // The person's own data, copied from the Mac's copy: in place of everything the preview kept, so nothing of an
+        // earlier opening (the scaffold's example content, the agent's tries) is mixed in.
+        var seedJSON: String?
+        if let seed, let json = try? JSONSerialization.data(withJSONObject: seed) {
+            seedJSON = String(decoding: json, as: UTF8.self)
+            await webView.configuration.websiteDataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+        }
+        seeded = seedJSON != nil
+        let carried = seedJSON == nil ? await savedFromFileAddress(staged) : nil
         guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
+        if let seedJSON { webView.configuration.userContentController.addUserScript(Self.restoreScript(seedJSON, replacing: true)) }
         if let carried { webView.configuration.userContentController.addUserScript(Self.restoreScript(carried)) }
         await navigate { $0.load(URLRequest(url: Self.home)) }
-        if carried != nil {
+        if seedJSON != nil {
+            webView.configuration.userContentController.removeAllUserScripts()
+            webView.configuration.userContentController.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        } else if carried != nil {
             // Marked done only once the app's page says it has the saves: a load that failed, timed out or was closed
             // ran no script, and the next opening tries again.
             if Self.open[project.id] === self, (try? await webView.evaluateJavaScript("window.lampRestored === true", in: nil, contentWorld: Self.restoreWorld)) as? Bool == true {
@@ -216,6 +243,17 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Its scripts start on load; a moment more lets a first screen draw and take focus.
         try? await Task.sleep(for: .milliseconds(600))
         return nil
+    }
+
+    /// The controllers relay a shared game's page opens its own socket to here (`controllerSession`, which hands it out
+    /// at the address the preview reaches Lamp at), once the relay listens: the one site on this Mac the page may connect
+    /// to beyond its own, and only at the relay's port now, so every other port stays closed to it. None for a page that
+    /// takes no players. Asked before the page loads, since a page's rules are the ones its files came with.
+    static func relaySites(_ project: LampProject) async -> [String] {
+        guard Store.servesPhonePage(project) else { return [] }
+        ControllerRelay.open(project.id)
+        guard let port = await ControllerRelay.ready() else { return [] }
+        return ["ws://127.0.0.1:\(port)"]
     }
 
     /// Starts a navigation and waits for it to finish, fail, or ten seconds to pass.
@@ -244,15 +282,15 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
 
     private static func carriedKey(_ project: LampProject) -> String { "tvPreviewCarriedSaves." + project.id }
 
-    /// Puts back what was handed over, before the app's own scripts run, leaving alone anything already saved here, and
-    /// says it did in a world of its own, which the app's scripts can't see or set.
+    /// Puts back what was handed over, before the app's own scripts run, leaving alone anything already saved here (or,
+    /// `replacing`, in place of it), and says it did in a world of its own, which the app's scripts can't see or set.
     private static let restoreWorld = WKContentWorld.world(name: "lampRestore")
-    private static func restoreScript(_ saved: String) -> WKUserScript {
+    private static func restoreScript(_ saved: String, replacing: Bool = false) -> WKUserScript {
         WKUserScript(source: """
             (function () {
               if (location.protocol !== '\(scheme):') return;
               var s = \(saved);
-              for (var k in s) if (localStorage.getItem(k) === null) localStorage.setItem(k, s[k]);
+              for (var k in s) if (\(replacing) || localStorage.getItem(k) === null) localStorage.setItem(k, s[k]);
               window.lampRestored = true;
             })();
             """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: restoreWorld)
@@ -263,6 +301,14 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         loaded = nil
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finishLoading() }
+
+    /// A shared page never leaves its own address, in its window or a frame (`NetworkPolicy.allowsFrame`).
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        guard let url = action.request.url, let policy = files.policy, !policy.allowsFrame(url, own: files.own) else { return decisionHandler(.allow) }
+        log?.write(Data("Lamp kept this shared app from opening \(url.absoluteString.prefix(300))\n".utf8))
+        decisionHandler(.cancel)
+    }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         write("error: the page didn't load: \(error.localizedDescription)")
         finishLoading()
@@ -440,7 +486,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// What's on the screen, focusable things and text, in reading order.
     static func items(_ project: LampProject) async -> [Item] {
         guard let preview = open[project.id],
-              let json = try? await preview.webView.evaluateJavaScript(screenScript) as? String,
+              let json = try? await preview.webView.evaluateJavaScript(PageScreen.script) as? String,
               let list = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] else { return [] }
         var counts: [String: Int] = [:]
         let scale = preview.scale
@@ -455,7 +501,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 
     static func text(_ items: [Item]) -> String {
-        guard !items.isEmpty else { return "The TV preview's screen as text: nothing on it can be read." }
+        guard !items.isEmpty else { return "The preview's screen as text: nothing on it can be read." }
         let lines = items.prefix(150).map { item -> String in
             var line = "\(item.id) \(item.kind)"
             if !item.name.isEmpty { line += " \"\(item.name.prefix(80))\"" }
@@ -463,46 +509,12 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
             if item.focused { line += ", has focus" }
             return line + " @\(Int(item.frame.midX.rounded())),\(Int(item.frame.midY.rounded())) \(Int(item.frame.width.rounded()))x\(Int(item.frame.height.rounded()))"
         }
-        return "The TV preview's screen as text, in reading order. Each line is a thing's id, what it is, its name, \"= \" what it holds, whether it "
+        return "The preview's screen as text, in reading order. Each line is a thing's id, what it is, its name, \"= \" what it holds, whether it "
             + "has the remote's focus, then @x,y (its middle in the picture) and its size. Act on a thing with `target` set to its id "
             + "or exact name; x and y are for what isn't listed:\n" + lines.joined(separator: "\n")
             + (items.count > 150 ? "\n… and \(items.count - 150) more" : "")
     }
 
-    private static let screenScript = """
-        (function () {
-          var FOCUSABLE = '[data-focus], button, a[href], input, select, textarea, [tabindex]';
-          var focused = document.activeElement, out = [];
-          function box(el) {
-            var r = el.getBoundingClientRect();
-            if (r.width <= 0 || r.height <= 0 || r.right < 0 || r.bottom < 0 || r.left > window.innerWidth || r.top > window.innerHeight) return null;
-            var s = window.getComputedStyle(el);
-            if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return null;
-            return r;
-          }
-          function words(t) { return (t || '').replace(/\\s+/g, ' ').trim(); }
-          var all = document.body ? document.body.querySelectorAll('*') : [];
-          for (var i = 0; i < all.length; i++) {
-            var el = all[i], r = box(el);
-            if (!r || el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
-            var takes = el === focused || (el.matches(FOCUSABLE) && !(el.getAttribute('tabindex') === '-1' && !el.hasAttribute('data-focus')));
-            if (takes) {
-              var field = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
-              out.push({ kind: field ? 'field' : el.tagName === 'SELECT' ? 'choice' : 'button',
-                name: words(el.getAttribute('aria-label') || el.getAttribute('alt') || (field ? el.getAttribute('placeholder') : el.innerText)).slice(0, 120),
-                value: field ? String(el.value || '') : '', focused: el === focused, x: r.left, y: r.top, w: r.width, h: r.height });
-              continue;
-            }
-            if (el.closest && el.parentElement && el.parentElement.closest(FOCUSABLE)) continue;
-            var own = '';
-            for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3) own += c.nodeValue;
-            own = words(own);
-            if (own) out.push({ kind: 'text', name: own.slice(0, 160), value: '', focused: false, x: r.left, y: r.top, w: r.width, h: r.height });
-            else if (el.tagName === 'IMG' && el.getAttribute('alt')) out.push({ kind: 'image', name: words(el.getAttribute('alt')), value: '', focused: false, x: r.left, y: r.top, w: r.width, h: r.height });
-          }
-          return JSON.stringify(out);
-        })();
-        """
 
     // MARK: Using
 
@@ -633,12 +645,60 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 }
 
+/// What's on a page's screen, focusable things and text in reading order, as JSON (each thing's kind, name, value, whether it
+/// has focus and its box in CSS pixels): read in the preview (`TVPreview.items`) and, by the same script, in the app around a
+/// page on the Mac (`LampPageScreen` in LampPage.swift, where `GameKit.page` writes it in), so the agent reads one list
+/// wherever it looks.
+enum PageScreen {
+    static let script = """
+        (function () {
+          var FOCUSABLE = '[data-focus], button, a[href], input, select, textarea, [tabindex]';
+          var focused = document.activeElement, out = [];
+          function box(el) {
+            var r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0 || r.right < 0 || r.bottom < 0 || r.left > window.innerWidth || r.top > window.innerHeight) return null;
+            var s = window.getComputedStyle(el);
+            if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return null;
+            return r;
+          }
+          function words(t) { return (t || '').replace(/\\s+/g, ' ').trim(); }
+          var all = document.body ? document.body.querySelectorAll('*') : [];
+          for (var i = 0; i < all.length; i++) {
+            var el = all[i], r = box(el);
+            if (!r || el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
+            var takes = el === focused || (el.matches(FOCUSABLE) && !(el.getAttribute('tabindex') === '-1' && !el.hasAttribute('data-focus')));
+            if (takes) {
+              var field = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
+              out.push({ kind: field ? 'field' : el.tagName === 'SELECT' ? 'choice' : 'button',
+                name: words(el.getAttribute('aria-label') || el.getAttribute('alt') || (field ? el.getAttribute('placeholder') : el.innerText)).slice(0, 120),
+                value: field ? String(el.value || '') : '', focused: el === focused, x: r.left, y: r.top, w: r.width, h: r.height });
+              continue;
+            }
+            if (el.closest && el.parentElement && el.parentElement.closest(FOCUSABLE)) continue;
+            var own = '';
+            for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3) own += c.nodeValue;
+            own = words(own);
+            if (own) out.push({ kind: 'text', name: own.slice(0, 160), value: '', focused: false, x: r.left, y: r.top, w: r.width, h: r.height });
+            else if (el.tagName === 'IMG' && el.getAttribute('alt')) out.push({ kind: 'image', name: words(el.getAttribute('alt')), value: '', focused: false, x: r.left, y: r.top, w: r.width, h: r.height });
+          }
+          return JSON.stringify(out);
+        })();
+        """
+}
+
 /// The staged copy of a TV app, served to its preview: only plain files inside the copy, each with its type (WebAssembly
 /// is compiled as it arrives only when it says it's WebAssembly) and a part of one when asked (sound and video ask for
 /// theirs in parts). Not kept in WebKit's cache, so an opening after a change has the files as they are now.
 @MainActor
 final class StagedFiles: NSObject, WKURLSchemeHandler {
     var folder: URL?
+    /// What a shared page may reach (`SharedNetwork`), and the address it's served at: every file then carries the rules
+    /// the app around it serves it with (`LampPageGuard`).
+    var policy: NetworkPolicy?
+    var own = "lamp-tv://app"
+    /// Where the page may connect beyond its sites while it's open here, and load nothing from: Lamp's controllers relay,
+    /// at the port it listens on now (`TVPreview.relaySites`). Never kept with its sites.
+    var connect: [String] = []
 
     private static let types = ["html": "text/html", "htm": "text/html", "js": "text/javascript", "mjs": "text/javascript",
                                 "css": "text/css", "json": "application/json", "wasm": "application/wasm", "svg": "image/svg+xml"]
@@ -646,7 +706,7 @@ final class StagedFiles: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
         guard let data = file(at: url) else {
-            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Cache-Control": "no-store"])!)
+            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Cache-Control": "no-store"].merging(rules) { $1 })!)
             task.didFinish()
             return
         }
@@ -660,12 +720,19 @@ final class StagedFiles: NSObject, WKURLSchemeHandler {
             headers["Content-Range"] = "bytes \(part.lowerBound)-\(part.upperBound - 1)/\(data.count)"
         }
         headers["Content-Length"] = String(body.count)
+        headers.merge(rules) { $1 }
         task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
         task.didReceive(body)
         task.didFinish()
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+
+    /// The rules every response of a shared page carries, a missing file's too.
+    private var rules: [String: String] {
+        guard let csp = policy?.contentSecurityPolicy(own: own, connect: connect) else { return [:] }
+        return ["Content-Security-Policy": csp, "X-DNS-Prefetch-Control": "off"]
+    }
 
     /// The file a page address names, when it's a plain file inside the staged copy (which never holds links).
     private func file(at url: URL) -> Data? {

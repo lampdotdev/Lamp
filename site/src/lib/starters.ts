@@ -18,12 +18,14 @@ export type Starter = {
   /** What kind of thing it is, and where it runs, as its sleeve says (a place's icon is the homepage's). */
   kind: string;
   places: string[];
+  /** The page anyone can play it on in a browser, where its repository publishes one. */
+  page?: string;
   /** The changes the starter suggests (its starter.md), on the back of its sleeve. */
   tweaks: string[];
 };
 
 export const STARTERS: Starter[] = [
-  { id: "newyork", name: "New York", by: "Mr.doob", remix: "Make it a snowy winter night", treat: "snow", about: "Mr.doob's Slop New York: explore Manhattan on foot, by car, by bike or by helicopter.", kind: "Game \u00b7 3D", places: ["Mac", "iPad", "Xbox", "TV"], tweaks: ["Make it a snowy winter night", "Make it a lot more fun", "Move the city to the Moon"] },
+  { id: "newyork", page: "https://lampdotdev.github.io/newyork/", name: "New York", by: "Mr.doob", remix: "Make it a snowy winter night", treat: "snow", about: "Mr.doob's Slop New York: explore Manhattan on foot, by car, by bike or by helicopter.", kind: "Game \u00b7 3D", places: ["Mac", "iPad", "Xbox", "TV"], tweaks: ["Make it a snowy winter night", "Make it a lot more fun", "Move the city to the Moon"] },
   { id: "homehq", name: "Home HQ", by: "Wes Bos", remix: "Put it on our photo frame", treat: "frame", about: "Wes Bos's family dashboard: the day, calendar, chores, shopping and photos at a glance.", kind: "Screen", places: ["Mac", "iPad", "TV"], tweaks: ["Put it on our kitchen tablet", "Put it on our photo frame", "Add a countdown to school"] },
   { id: "thelittlehouse", name: "The Little House", by: "remvze", remix: "Make it a rainy Tokyo night", about: "A cozy little room on a rainy night, with a fire and a ticking clock to listen to.", kind: "Web app \u00b7 3D", places: ["Mac", "iPad", "TV"], tweaks: ["Make it a starry night sky", "Wake me gently with birdsong", "Make it a rainy Tokyo night"] },
   { id: "universalremote", name: "Universal Remote", by: "Lamp", remix: "Add a bedtime button", about: "One remote you can tap or talk to for your TV, Roku and Sonos speakers.", kind: "Mac app", places: ["Mac"], tweaks: ["Put the remote on my iPhone", "Add a bedtime button", "A kids' mode with their apps"] },

@@ -9,10 +9,13 @@ enum TVTemplate {
     static let webFolder = "Web"
     static let supportFile = "Web/lamp.js"
     /// A page for a phone, as a controller or a companion to the TV app, which Lamp hands out from this Mac while the app
-    /// runs (`Store.phonePage`). It never goes on the TV.
+    /// runs (`Store.phonePage`). It goes on a TV only inside an LG game's own phone service (`LGPhones`).
     static let phoneFolder = "Phone"
     /// Where Lamp writes the phone page's address into the staged copy of lamp.js (`TVs.stage`).
     static let phoneMarker = "/*LAMP_PHONE*/null"
+    /// Where lamp.js names the game's own phone service on an LG TV (`LGPhones`), filled in only in the package that
+    /// carries it.
+    static let lgServiceMarker = "/*LAMP_LG_SERVICE*/null"
 
     /// Whether an app's folder is a TV app, read off what every version keeps: Lamp's script in `Web/`. A device app
     /// whose integration takes the web building blocks may keep them at the same path (an Xbox's), so its own marker
@@ -72,7 +75,9 @@ enum TVTemplate {
         String((Edition.appBundlePrefix + project.id).lowercased().map { $0.isLetter || $0.isNumber || $0 == "." ? $0 : "-" })
     }
 
-    static func tizenConfig(for project: LampProject) -> String {
+    /// Samsung's manifest. What it lets the app reach is all of the network for an app made here, and only its own
+    /// sites and Lamp for a shared one (`TVNetworkGuard`).
+    static func tizenConfig(for project: LampProject, guarded policy: TVNetworkGuard.Policy?) -> String {
         let ids = tizenIDs(for: project)
         let name = project.name.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
         return """
@@ -84,7 +89,7 @@ enum TVTemplate {
                 <icon src="icon.png"/>
                 <name>\(name)</name>
                 <tizen:profile name="tv-samsung"/>
-                <access origin="*" subdomains="true"/>
+                \(TVNetworkGuard.tizenManifest(policy))
                 <tizen:privilege name="http://tizen.org/privilege/internet"/>
                 <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
                 <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
@@ -177,8 +182,14 @@ enum TVTemplate {
 
     /// lamp.js as an app is given it: with `Lamp.wish` for a TV app that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.carriesWish(project) ? lampJS
+        Template.carriesWish(project) ? withShell(lampJS, for: project)
             : DeviceSupport.webJS + remoteJS.replacingOccurrences(of: wishLine, with: "") + controllersJS
+    }
+
+    /// lamp.js with the app around the page as this build has it (`PageCopies.native`), which a copy tells Lamp before
+    /// it's given a change.
+    static func withShell(_ js: String, for project: LampProject) -> String {
+        js.replacingOccurrences(of: "/*LAMP_SHELL*/''", with: "'\(PageCopies.native(of: project))'")
     }
 
     private static let wishLine = " * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below\n"
@@ -213,6 +224,10 @@ enum TVTemplate {
             415: 'play', 19: 'pause', 10252: 'playpause', 413: 'stop', 417: 'fastforward', 412: 'rewind',
             403: 'red', 404: 'green', 405: 'yellow', 406: 'blue', 427: 'channelup', 428: 'channeldown', 457: 'info' };
           for (var d = 0; d <= 9; d++) names[48 + d] = String(d);
+          // A key known only by its name: the Xbox's controller, whose presses Lamp's host gives as keys with a name and no
+          // code (padKeys in Lamp's device support, since a key made by a page can't carry one).
+          var named = { ArrowLeft: 'left', ArrowUp: 'up', ArrowRight: 'right', ArrowDown: 'down', Enter: 'enter', Escape: 'back' };
+          function nameOf(event) { return names[event.keyCode] || named[event.key] || null; }
           if (platform === 'tizen') {
             try {
               tizen.tvinputdevice.registerKeyBatch(['MediaPlay', 'MediaPause', 'MediaPlayPause', 'MediaStop', 'MediaFastForward',
@@ -287,7 +302,7 @@ enum TVTemplate {
           if (phone) { setTimeout(askPhone, 0); setInterval(askPhone, 30000); }
 
           document.addEventListener('keydown', function (event) {
-            var name = names[event.keyCode];
+            var name = nameOf(event);
             // Backspace is Back only where nothing is being typed (the preview's keyboard stands in for the remote).
             if (!name && event.keyCode === 8 && !typing(event.target)) name = 'back';
             if (!name) return;
@@ -318,7 +333,7 @@ enum TVTemplate {
             navigation: true,
             scope: null,
             store: store,
-            key: function (event) { return names[event.keyCode] || null; },
+            key: nameOf,
             onKey: function (handler) {
               keyHandlers.push(handler);
               return function () { var i = keyHandlers.indexOf(handler); if (i >= 0) keyHandlers.splice(i, 1); };
@@ -587,9 +602,13 @@ extension TVTemplate {
           }
         """#
 
-    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks where its relay is
-    /// (`/app/controller`: Lamp, for a TV app's page, the preview and the Xbox; the game itself on the Mac,
-    /// `ControllerRuntime`), as it opens and every few seconds after, and opens its own socket there, where phones' pages
+    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks where its relay is, of the host the
+    /// game chose with `start({ host })` (`/app/controller`: Lamp, for a TV app's page, the preview and the Xbox; the game
+    /// itself on the Mac, iPhone and iPad, `ControllerRuntime`; on an LG TV, `'game'` is the service its package carries,
+    /// `LGPhones`, through a subscription that is the session; on the Xbox, `'game'` is the game's WebView2 host, asked
+    /// with `controllers` messages over its pipe, lamp_controllers.h; `start()` with no host asks whoever answers
+    /// `/app/controller` where it runs, as before), as it opens and every few seconds after, and opens its own socket
+    /// there, where phones' pages
     /// join; stopping says so, which closes a game's own relay and page. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
     /// block joins here (`_attach`), so they go on playing with Lamp closed. The page numbers the players itself, whichever
     /// way they came. What a player holds down is let go when it leaves or its link drops, and movement that arrives late
@@ -600,6 +619,14 @@ extension TVTemplate {
          * Lamp.controllers.start()                    opens a game for phones on this Wi-Fi; Promise. The phones' page is
          *                                              Phone/index.html, loading lamp-controller.js (its own comment says how);
          *                                              the wish's iPhone or Mac app joins with LampController.
+         * Lamp.controllers.start({ host: 'game' })    the game itself serves the phones' page and runs their link, with no
+         *                                              Lamp: on the Mac, an iPhone or iPad, an LG TV whose package
+         *                                              carries the game's service, and the Xbox's own host
+         * Lamp.controllers.start({ host: 'lamp' })    Lamp on the Mac serves the page and runs the link (Lamp open, the Mac
+         *                                              reachable)
+         *     A host that isn't there, or fails, is said in onError and tried again; the other host is never used instead.
+         *     start() with no host keeps where it ran before: the game itself on the Mac, iPhone and iPad, Lamp elsewhere.
+         *     stop() ends the session the chosen host runs; start() again may choose another.
          * Lamp.controllers.onLink(fn(url))             the address phones open: draw it with LampQR.draw (its comment
          *                                              says how); it changes every few minutes, and fn is called each time
          * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
@@ -636,6 +663,10 @@ extension TVTemplate {
           var relayLinks = lampLinks(pipe);
           // Players that come another way than Lamp's relay: each way's own code joins them here (`_attach`).
           var others = [];
+          // On an LG TV, a game packaged with its own phone service (LGPhones) can run its phones there, with no Mac: the
+          // service is named here in that package's copy only, and `start({ host: 'game' })` uses it. `host` is what this
+          // start chose (null for none); `run` counts starts and stops, so an answer to an earlier one is never taken.
+          var lgService = /*LAMP_LG_SERVICE*/null, lgBridge = null, host = null, run = 0;
         /*LAMP_FILES*/
           var files = lampFiles(function (route, file) {
             var number = byKey[route.key];
@@ -798,27 +829,93 @@ extension TVTemplate {
             if (code === 4003 || code === 4005) return ask(1000);
             l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
           }
+          // Where the relay is and the page's credential for it, from Lamp or the game's own service.
+          function take(answer) {
+            var list = answer.links || [];
+            for (var i = 0; i < list.length; i++) {
+              var info = list[i], id = 'relay';
+              if (info.kind !== 'relay') continue;
+              var l = links[id] || (links[id] = { id: id, kind: info.kind, socket: null, offset: null });
+              l.credential = info.credential;
+              l.app = info.app;
+              if (!l.socket) { l.address = info.socket; connect(l); }
+            }
+          }
           function ask(after) {
             clearTimeout(askTimer);
+            var mine = run;
             askTimer = setTimeout(function () {
-              if (!started) return;
-              LampAI._post('/app/controller', {}, 20000).then(function (answer) {
-                if (!started) return;
-                var list = answer.links || [];
-                for (var i = 0; i < list.length; i++) {
-                  var info = list[i], id = 'relay';
-                  if (info.kind !== 'relay') continue;
-                  var l = links[id] || (links[id] = { id: id, kind: info.kind, socket: null, offset: null });
-                  l.credential = info.credential;
-                  l.app = info.app;
-                  if (!l.socket) { l.address = info.socket; connect(l); }
-                }
+              if (!started || mine !== run) return;
+              if (host === 'game' && lgService) return askService();
+              if (host === 'game' && pipe) return askPipe(mine);
+              // The host asked for goes with the question, so whoever answers says when it isn't that host rather than
+              // serve as the other.
+              LampAI._post('/app/controller', host ? { host: host } : {}, 20000).then(function (answer) {
+                if (!started || mine !== run) return;
+                take(answer);
                 ask((answer.renew || 15) * 1000);
               }, function (error) {
+                if (!started || mine !== run) return;
                 emit('error', [error.message]);
                 ask(5000);
               });
             }, after || 0);
+          }
+          function lgCall(method, params, fn) {
+            var bridge = new PalmServiceBridge();
+            bridge.onservicecallback = function (text) {
+              var answer; try { answer = JSON.parse(text); } catch (e) {}
+              fn(answer && typeof answer === 'object' ? answer : { returnValue: false });
+            };
+            bridge.call('luna://' + lgService + '/' + method, JSON.stringify(params));
+            return bridge;
+          }
+          function lgFailed(answer) {
+            emit('error', [answer.errorText || "The game's phones couldn't start on this TV."]);
+            if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; }
+            ask(5000);
+          }
+          // The subscription is the session: held from start() to stop(), and the service tells it each time the relay
+          // or the TV's address changes. A relay that turned the page away is asked for a fresh credential, and the
+          // answer counts only while the subscription it was asked under is still the page's.
+          // The Xbox's own host (lamp_web_host.cpp), asked over its pipe: it answers as /app/controller does.
+          var pipeAsks = {}, pipeAskId = 0;
+          if (pipe) pipe.addEventListener('message', function (e) {
+            var m = e.data, waiting = m && m.lamp === 'controllers' && pipeAsks[m.id];
+            if (!waiting) return;
+            delete pipeAsks[m.id];
+            waiting(m);
+          });
+          function pipeCall(op, then) {
+            var id = ++pipeAskId;
+            if (then) pipeAsks[id] = then;
+            pipe.postMessage({ lamp: 'controllers', op: op, id: id });
+          }
+          function askPipe(mine) {
+            pipeCall('start', function (m) {
+              if (!started || mine !== run) return;
+              if (m.status === 200) { take(m.body || {}); ask(((m.body && m.body.renew) || 15) * 1000); return; }
+              emit('error', [(m.body && m.body.error) || "The game's phones couldn't start on this console."]);
+              ask(5000);
+            });
+          }
+          function askService() {
+            try {
+              if (lgBridge) {
+                var held = lgBridge;
+                lgCall('session', {}, function (answer) {
+                  if (!started || lgBridge !== held) return;
+                  if (answer.returnValue === false) lgFailed(answer); else take(answer);
+                });
+                return;
+              }
+              var bridge = lgBridge = lgCall('start', { subscribe: true }, function (answer) {
+                if (!started || lgBridge !== bridge) return;
+                if (answer.returnValue === false) lgFailed(answer); else take(answer);
+              });
+            } catch (e) {
+              lgFailed({ errorText: "The game's phones couldn't start on this TV: " + e.message });
+            }
           }
           function askLink() {
             if (links.relay) sendOn(links.relay, { t: 'link' });
@@ -837,17 +934,35 @@ extension TVTemplate {
           }
 
           var api = {
-            start: function () {
-              if (started) return Promise.resolve();
+            start: function (options) {
+              var chosen = options && options.host !== undefined ? options.host : null;
+              if (chosen !== null && chosen !== 'game' && chosen !== 'lamp') {
+                var wrong = new Error("Lamp.controllers.start: host is 'game' or 'lamp', not " + JSON.stringify(chosen) + '.');
+                emit('error', [wrong.message]);
+                return Promise.reject(wrong);
+              }
+              if (started) {
+                if (chosen === host) return Promise.resolve();
+                var busy = new Error('Lamp.controllers.start: phones are already hosted by ' + (host || 'the default host') + '; stop() first.');
+                emit('error', [busy.message]);
+                return Promise.reject(busy);
+              }
               started = true;
+              host = chosen;
+              run++;
               ask(0);
               beatTimer = setInterval(beat, 5000);
               for (var i = 0; i < others.length; i++) others[i].start(hooks());
               return Promise.resolve();
             },
             stop: function () {
-              if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', { stop: true }, 20000).then(function () {}, function () {});
+              // The session the chosen host runs, and only it, ends.
+              if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; }
+              else if (started && host === 'game' && pipe) pipeCall('stop', null);
+              else if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', host ? { stop: true, host: host } : { stop: true }, 20000).then(function () {}, function () {});
               started = false;
+              host = null;
+              run++;
               clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
               for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }
               for (var i = 0; i < others.length; i++) others[i].stop();
@@ -1179,7 +1294,307 @@ extension TVTemplate {
         """#
 
     static let wishJS = wishJSBody.replacingOccurrences(of: "/*LAMP_WISH_CRYPTO*/", with: wishCryptoJS.trimmingCharacters(in: .whitespacesAndNewlines))
-        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS)
+        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS) + pageChangeJS
+
+    /// A change of the page while it's open, for every copy of it that's in the wish's room (`PageCopies`): Lamp's own
+    /// word, from the relay's name, which `Lamp.wish` hands here rather than to the page. Last in lamp.js, so a page
+    /// opening again from a change finds the rest of lamp.js there before it puts the new files in place.
+    static let pageChangeJS = #"""
+
+        /* A change while it's open. Written by Lamp before every build; don't edit.
+         *
+         * Lamp puts a change of this page into each copy open on another device (a TV, the Xbox, an iPad, an Android
+         * frame) as soon as it's made, through the wish's room, and the page takes it in place, keeping everything it
+         * saved: a change of stylesheets alone is swapped in as the page runs; anything else opens the page again from the
+         * new files, which lamp.js, the page's first script, puts in place of the copy's own before any of the page's
+         * scripts run. The files are kept for this session only: the copy's own come back when it's opened afresh, and
+         * Lamp's Reload or Play puts the app there with them.
+         */
+        (function () {
+          'use strict';
+          // Only in a page (not where lamp.js is run on its own, as the tests run it).
+          if (window.__lampPageChange || typeof location === 'undefined' || typeof document === 'undefined') return;
+          var KEY = 'lamp:page-change', pieces = {};
+          // The app around this page as Lamp built it, written in by Lamp: a change of it needs the app put here again.
+          var SHELL = /*LAMP_SHELL*/'';
+          // What this copy has of a change, told to Lamp, which says it's in only once the page says so.
+          function report(state, id, why) {
+            var wish = window.Lamp && window.Lamp.wish;
+            if (wish && wish._toLamp) wish._toLamp({ lampPage: { state: state, id: id || '', why: why ? String(why).slice(0, 300) : '', shell: SHELL } });
+          }
+          var TYPES = { css: 'text/css', js: 'text/javascript', html: 'text/html', htm: 'text/html', json: 'application/json',
+                        svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+                        woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf', mp3: 'audio/mpeg', m4a: 'audio/mp4',
+                        wav: 'audio/wav', ogg: 'audio/ogg', mp4: 'video/mp4', webm: 'video/webm', glb: 'model/gltf-binary' };
+          var here = String(location.href).split('#')[0].split('?')[0];
+          var base = here.slice(0, here.lastIndexOf('/') + 1);
+          var urls = {};
+          function say(text) { if (window.console) console.log('Lamp: ' + text); }
+          function typeOf(path) { return TYPES[path.split('.').pop().toLowerCase()] || 'application/octet-stream'; }
+          function text(b64) { try { return decodeURIComponent(escape(atob(b64))); } catch (e) { return null; } }
+          function bytes(b64) {
+            var s = atob(b64), b = new Uint8Array(s.length);
+            for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+            return b;
+          }
+          // The path in Web/ an address names, or null for one outside the page.
+          function pathOf(address, from) {
+            var a;
+            try { a = String(new URL(address, from || base).href).split('#')[0].split('?')[0]; } catch (e) { return null; }
+            if (a.indexOf(base) !== 0) return null;
+            try { return decodeURIComponent(a.slice(base.length)) || 'index.html'; } catch (e) { return null; }
+          }
+          // A stylesheet's url()s, made to work from anywhere: a file of the change by its own address, any other by the
+          // copy's own, full address.
+          function cssOf(change, path, css) {
+            var from = base + path;
+            function to(address) {
+              var p = pathOf(address, from);
+              if (p !== null && change.files[p]) return urlOf(change, p);
+              try { return new URL(address, from).href; } catch (e) { return address; }
+            }
+            // @import "theme.css" as well as url(...), since from a blob neither finds its file by itself.
+            return css.replace(/@import\s+(['"])([^'"]+)\1/g, function (whole, quote, address) {
+              return /^(data:|blob:)/.test(address) ? whole : '@import url("' + to(address) + '")';
+            }).replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, function (whole, quote, address) {
+              return /^(data:|blob:|#)/.test(address) ? whole : 'url("' + to(address) + '")';
+            });
+          }
+          function urlOf(change, path) {
+            if (urls[path]) return urls[path];
+            var f = change.files[path];
+            if (!f) return null;
+            var body = typeof f.t === 'string' ? (typeOf(path) === 'text/css' ? cssOf(change, path, f.t) : f.t) : bytes(f.b);
+            urls[path] = URL.createObjectURL(new Blob([body], { type: typeOf(path) }));
+            return urls[path];
+          }
+          function addressFor(change, address) {
+            var p = pathOf(address);
+            return p !== null && change.files[p] ? urlOf(change, p) : address;
+          }
+          function rewrite(change, root) {
+            var named = [root].concat(Array.prototype.slice.call(root.querySelectorAll('[src], [href], [poster]')));
+            for (var i = 0; i < named.length; i++) {
+              var el = named[i];
+              if (el.tagName === 'SCRIPT') continue;
+              var names = ['src', 'href', 'poster'];
+              for (var j = 0; j < names.length && el.getAttribute; j++) {
+                var v = el.getAttribute(names[j]);
+                if (!v || /^(#|data:|blob:|javascript:|mailto:)/.test(v)) continue;
+                var to = addressFor(change, v);
+                if (to === v) continue;
+                el.setAttribute(names[j], to);
+                // What it was, so a later change of the same file finds it (`swapStyles`).
+                el.setAttribute('data-lamp-path', pathOf(v));
+              }
+            }
+          }
+          // What the page asks for as it runs (fetch, XMLHttpRequest, a src or href a script sets) is a file of the change
+          // where the change has one, so a level's JSON or a picture loaded by code is the new one too.
+          function overlay(change) {
+            var to = function (address) {
+              if (typeof address !== 'string' || /^(data:|blob:)/.test(address)) return address;
+              var p = pathOf(address);
+              return p !== null && change.files[p] ? urlOf(change, p) : address;
+            };
+            if (window.fetch) {
+              var fetch0 = window.fetch;
+              window.fetch = function (input, init) {
+                if (typeof input === 'string') input = to(input);
+                else if (input && typeof input.url === 'string' && to(input.url) !== input.url) input = to(input.url);
+                return fetch0.call(window, input, init);
+              };
+            }
+            if (window.XMLHttpRequest) {
+              var open0 = XMLHttpRequest.prototype.open;
+              XMLHttpRequest.prototype.open = function (method, url) {
+                var args = Array.prototype.slice.call(arguments);
+                args[1] = to(url);
+                return open0.apply(this, args);
+              };
+            }
+            var kinds = [['HTMLImageElement', 'src'], ['HTMLMediaElement', 'src'], ['HTMLSourceElement', 'src'], ['HTMLLinkElement', 'href']];
+            for (var k = 0; k < kinds.length; k++) {
+              var proto = window[kinds[k][0]] && window[kinds[k][0]].prototype;
+              var d = proto && Object.getOwnPropertyDescriptor(proto, kinds[k][1]);
+              if (!d || !d.set) continue;
+              (function (d, name, proto) {
+                Object.defineProperty(proto, name, { configurable: true, enumerable: d.enumerable, get: d.get,
+                                                     set: function (v) { d.set.call(this, to(v)); } });
+              })(d, kinds[k][1], proto);
+            }
+          }
+          function sync(url) {
+            try { var r = new XMLHttpRequest(); r.open('GET', url, false); r.send(); return r.status === 0 || r.status === 200 ? r.responseText : null; } catch (e) { return null; }
+          }
+
+          // The page opened again from the change kept for this session: what the copy loaded of its own is stopped and
+          // replaced, then its scripts run from the new files in order, lamp.js (already running) left out.
+          function rebuild(change) {
+            var source = change.files['index.html'] && typeof change.files['index.html'].t === 'string' ? change.files['index.html'].t : sync(here);
+            if (!source) return false;
+            var doc = new DOMParser().parseFromString(source, 'text/html');
+            try { window.stop(); } catch (e) {}
+            var head = document.head || document.documentElement.appendChild(document.createElement('head'));
+            var old = head.querySelectorAll('link, style, meta, title, base');
+            for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+            var scripts = [];
+            function take(from, into) {
+              var children = Array.prototype.slice.call(from.childNodes);
+              for (var k = 0; k < children.length; k++) {
+                var node = children[k];
+                if (node.nodeType === 1 && node.tagName === 'SCRIPT') { scripts.push(node); continue; }
+                if (node.nodeType === 1) {
+                  var inner = node.querySelectorAll('script');
+                  for (var m = 0; m < inner.length; m++) { scripts.push(inner[m]); inner[m].parentNode.removeChild(inner[m]); }
+                }
+                var copy = document.importNode(node, true);
+                if (copy.nodeType === 1) rewrite(change, copy);
+                into.appendChild(copy);
+              }
+            }
+            take(doc.head, head);
+            var body = document.body || document.documentElement.appendChild(document.createElement('body'));
+            while (body.attributes.length) body.removeAttribute(body.attributes[0].name);
+            for (var a = 0; a < doc.body.attributes.length; a++) body.setAttribute(doc.body.attributes[a].name, doc.body.attributes[a].value);
+            body.innerHTML = '';
+            take(doc.body, body);
+            if (doc.documentElement) for (var h = 0; h < doc.documentElement.attributes.length; h++) {
+              document.documentElement.setAttribute(doc.documentElement.attributes[h].name, doc.documentElement.attributes[h].value);
+            }
+            // The copy's own document stopped early, so the page's start is said again once its scripts have run; the
+            // browser's own, if it says one late, isn't heard twice.
+            var ours = false;
+            function quiet(e) { if (!e.__lamp && ours && (e.target === document || e.target === window)) e.stopImmediatePropagation(); }
+            window.addEventListener('DOMContentLoaded', quiet, true);
+            window.addEventListener('load', quiet, true);
+            ours = true;
+            overlay(change);
+            for (var s = 0; s < scripts.length; s++) {
+              var given = scripts[s], src = given.getAttribute('src');
+              if (src && /(^|\/)lamp\.js([?#]|$)/.test(src)) continue;
+              // A script that isn't code (JSON, a template) is data the page reads: kept as it is, where the page finds it.
+              var type = (given.getAttribute('type') || '').toLowerCase();
+              if (!src && type && !/^(text|application)\/(javascript|ecmascript)$|^module$/.test(type)) {
+                body.appendChild(document.importNode(given, true));
+                continue;
+              }
+              var el = document.createElement('script');
+              for (var t = 0; t < given.attributes.length; t++) if (given.attributes[t].name !== 'src') el.setAttribute(given.attributes[t].name, given.attributes[t].value);
+              el.async = false;
+              el.src = src ? addressFor(change, src) : URL.createObjectURL(new Blob([given.textContent], { type: 'text/javascript' }));
+              body.appendChild(el);
+            }
+            var end = document.createElement('script');
+            end.async = false;
+            end.src = URL.createObjectURL(new Blob(['window.__lampPageStarted && window.__lampPageStarted();'], { type: 'text/javascript' }));
+            body.appendChild(end);
+            window.__lampPageStarted = function () {
+              window.__lampPageStarted = null;
+              var e = document.createEvent('Event'); e.initEvent('DOMContentLoaded', true, false); e.__lamp = true; document.dispatchEvent(e);
+              var l = document.createEvent('Event'); l.initEvent('load', false, false); l.__lamp = true; window.dispatchEvent(l);
+            };
+            return true;
+          }
+
+          // Only stylesheets changed: each is swapped where the page has it, as it runs.
+          // Only stylesheets changed: each is swapped where the page has it, as it runs. Null when one of them isn't
+          // linked from the page (it's put in by opening the page again), else the links swapped.
+          function swapStyles(change) {
+            var links = document.querySelectorAll('link[rel~="stylesheet"]'), found = [], done = {};
+            for (var i = 0; i < links.length; i++) {
+              var p = links[i].getAttribute('data-lamp-path') || pathOf(links[i].getAttribute('href') || '');
+              if (p === null || change.changed.indexOf(p) < 0 || !change.files[p]) continue;
+              found.push([links[i], p]);
+              done[p] = true;
+            }
+            for (var j = 0; j < change.changed.length; j++) if (!done[change.changed[j]]) return null;
+            for (var k = 0; k < found.length; k++) {
+              delete urls[found[k][1]];
+              found[k][0].setAttribute('data-lamp-path', found[k][1]);
+              found[k][0].href = urlOf(change, found[k][1]);
+            }
+            return found.map(function (f) { return f[0]; });
+          }
+
+          // Told once every swapped stylesheet has loaded, or failed with the first that didn't (a page whose rules turn
+          // away a stylesheet from Lamp's copy, say): within ten seconds either way.
+          function whenLoaded(links, id) {
+            var left = links.length, over = false;
+            var end = function (why) { if (over) return; over = true; report(why ? 'failed' : 'took', id, why); };
+            var timer = setTimeout(function () { end('a stylesheet did not load'); }, 10000);
+            links.forEach(function (link) {
+              link.addEventListener('load', function () { if (--left === 0) { clearTimeout(timer); end(); } });
+              link.addEventListener('error', function () { clearTimeout(timer); end('a stylesheet did not load'); });
+            });
+            if (!left) { clearTimeout(timer); end(); }
+          }
+
+          function take(change) {
+            if (!change || typeof change.files !== 'object' || !(change.changed instanceof Array)) return report('failed', change && change.id, 'the change came malformed');
+            var stylesOnly = change.changed.length > 0;
+            for (var i = 0; i < change.changed.length; i++) if (!/\.css$/i.test(change.changed[i]) || !change.files[change.changed[i]]) stylesOnly = false;
+            var kept = JSON.stringify(change);
+            try { sessionStorage.setItem(KEY, kept); } catch (e) {
+              say('this change is too big to take as the page is open; Reload puts it here.');
+              return report('failed', change.id, 'the page could not keep the change');
+            }
+            var swapped = stylesOnly ? swapStyles(change) : null;
+            if (swapped) { say('the page took the change.'); return whenLoaded(swapped, change.id); }
+            say('the page opens again with the change.');
+            try { sessionStorage.setItem(KEY + ':told', ''); } catch (e) {}
+            location.reload();
+          }
+
+          // One piece of a change, as Lamp sent it through the wish's room: the change is taken once every piece is here.
+          window.__lampPageChange = function (piece) {
+            // Lamp asking what this copy has, before it sends a change.
+            if (piece && piece.ask) return report('here');
+            if (!piece || typeof piece.id !== 'string' || typeof piece.s !== 'string' || !(piece.n > 0) || !(piece.i >= 0) || piece.i >= piece.n) return;
+            var got = pieces[piece.id] || (pieces[piece.id] = { n: piece.n, parts: [], have: 0 });
+            if (got.parts[piece.i] === undefined) { got.parts[piece.i] = piece.s; got.have++; }
+            if (got.have < got.n) return;
+            delete pieces[piece.id];
+            var whole = text(got.parts.join(''));
+            var change;
+            try { change = JSON.parse(whole); } catch (e) { say('a change from Lamp did not arrive whole.'); return report('failed', piece.id, 'the change did not arrive whole'); }
+            change.id = piece.id;
+            take(change);
+          };
+
+          var opening, told = null;
+          try { opening = sessionStorage.getItem(KEY); told = sessionStorage.getItem(KEY + ':told'); } catch (e) {}
+          if (opening) {
+            var kept = null, failed = null;
+            try { kept = JSON.parse(opening); } catch (e) {}
+            // What goes wrong while the page starts again from the change (a script that throws, one that didn't load) is
+            // what it says to Lamp, which offers Reload; the page's own later errors aren't.
+            var watching = true;
+            var caught = function (e) { if (watching && !failed) failed = (e && (e.message || (e.target && (e.target.src || e.target.href)))) || 'the page failed to start'; };
+            window.addEventListener('error', caught, true);
+            try { if (!kept || !rebuild(kept)) failed = 'the page could not open again from the change'; } catch (e) { failed = String(e); }
+            var tell = function () {
+              watching = false;
+              window.removeEventListener('error', caught, true);
+              // Told once per change: opening the page again later in the session says nothing more.
+              if (!kept || told === kept.id || told === null) return;
+              try { sessionStorage.setItem(KEY + ':told', kept.id || ''); } catch (e) {}
+              report(failed ? 'failed' : 'took', kept.id, failed);
+            };
+            // Once its scripts have run and it has had a moment to start; told to Lamp once the room is reached again.
+            var started = window.__lampPageStarted;
+            window.__lampPageStarted = function () { if (started) started(); setTimeout(tellWhenLinked, 1500); };
+            var tries = 0;
+            var tellWhenLinked = function () {
+              var wish = window.Lamp && window.Lamp.wish;
+              var linked = wish && wish.state && wish.state() === 'connected';
+              if (linked || ++tries > 20) return tell();
+              setTimeout(tellWhenLinked, 1000);
+            };
+            if (failed) setTimeout(tellWhenLinked, 0);
+          }
+        })();
+        """#
 
     private static let wishJSBody = #"""
         /* The wish's other apps. Written by Lamp before every build; don't edit.
@@ -1247,9 +1662,11 @@ extension TVTemplate {
           var MESSAGE = 16384, VALUE = 8192, VALUES = 65536;
           // What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
           // 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
-          // (LampStore.shared), 6 the wish's own collections, shared by all its apps; an app from before says none, which
-          // counts as 1.
-          var WIRE = 6;
+          // (LampStore.shared), 6 the wish's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
+          // before says none, which counts as 1.
+          var WIRE = 7;
+          // Lamp's own name in its room, as the keeper of the wish's shared collections: never one of the wish's apps.
+          var KEEPER = 'lamp';
           var REASONS = { connecting: "Connecting to the wish's other apps…",
                           away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
@@ -1299,6 +1716,9 @@ extension TVTemplate {
           // listens, else looked for on this network at the wish's port for it. Each is sealed the same way, with the
           // wish's key; a message goes the straight way when there is one. So the apps go on talking with Lamp closed.
           var relayIn = false, lampAway = false, alone = false, relayPresent = {}, roster = [], restored = false;
+          // Lamp's room said Lamp keeps the wish's shared collections: Lamp is shared with as a copy is, under its own name
+          // (KEEPER), so a page that opens alone gets the latest and what it changes reaches the others when they open.
+          var lampKeeps = false;
           // Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then a page
           // whose wish has no other app doesn't look for its copies on the network.
           var copiesSeen = false;
@@ -1827,6 +2247,7 @@ extension TVTemplate {
             var i;
             if (m.t === 'welcome') {
               retry = 0; undeliveredSaid = {}; lampAway = false; relayIn = true; alone = false; reported = '';
+              lampKeeps = m.keeps === true;
               if (isName(m.peer)) mine = appOf(m.peer);
               setRoster(m.apps || []);
               relayPresent = {};
@@ -1834,6 +2255,8 @@ extension TVTemplate {
               for (i = 0; i < list.length; i++) present(list[i]);
               rebuild();
               reach();
+              // Lamp keeps what the copies share: each tells the other what it has, as two copies do when they meet.
+              if (lampKeeps && mine) { sendSums(KEEPER); fetchFiles(); }
             } else if (m.t === 'joined' && m.peer) {
               present(m.peer); rebuild(); reach();
             } else if (m.t === 'left') {
@@ -1845,6 +2268,8 @@ extension TVTemplate {
               // The wish gained an app or lost one: the others keep what's known of them.
               setRoster(m.apps || []);
             } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
+              // Lamp's own word (the relay's name, which no app has): a change of this page, for lamp.js alone.
+              if (m.from === 'lamp') { if (m.data && m.data.lampPage && window.__lampPageChange) window.__lampPageChange(m.data.lampPage); return; }
               emit('message', [appOf(m.from), m.data, m.from]);
             } else if (m.t === 'values' && isName(m.from)) {
               heardValues(m, m.from);
@@ -1928,7 +2353,7 @@ extension TVTemplate {
           // page is; dropped otherwise, the page comes back after a moment.
           function lost(code) {
             var wasIn = relayIn;
-            socket = null; hello = null; sendKey = openKey = null; relayIn = false; relayPresent = {};
+            socket = null; hello = null; sendKey = openKey = null; relayIn = false; lampKeeps = false; relayPresent = {};
             dropRoutes(null, 'r', 'The link was lost.');
             rebuild();
             if (!started) return;
@@ -2060,7 +2485,10 @@ extension TVTemplate {
           function routeTo(peer, d) {
             var way = d ? d.way : 'r', k = 'w-' + peer + '-' + way;
             if (routes[k]) return routes[k];
-            function up() { return d ? !d.over && directs[peer] === d && d.ready : relayIn && !!socket && socket.readyState === 1 && !!sendKey && !!relayPresent[peer]; }
+            function up() {
+              return d ? !d.over && directs[peer] === d && d.ready
+                : relayIn && !!socket && socket.readyState === 1 && !!sendKey && (!!relayPresent[peer] || (peer === KEEPER && lampKeeps));
+            }
             var route = routes[k] = {
               key: k, place: 0, peer: peer, way: way,
               text: function (m) {
@@ -2106,6 +2534,12 @@ extension TVTemplate {
           // A file to another copy open now, the straight way when there is one, else through Lamp's room: the one named, or
           // the app's opened last.
           function sendFile(given, data, info, ch) {
+            // A shared file's bytes to Lamp, which keeps them for the copies that open later: through its room alone.
+            if (given === KEEPER && ch && ch.indexOf('store:') === 0 && lampKeeps) {
+              var lampRoute = routeTo(KEEPER, null);
+              return files.send({ key: lampRoute.key, place: 0, peer: KEEPER, way: 'r', binary: lampRoute.binary, buffered: lampRoute.buffered,
+                                  text: function (m) { if (m.t === 'file') m.ch = ch; return lampRoute.text(m); } }, data, info);
+            }
             var p = find(given), peer = String(given).indexOf('.') < 0 && p && p.copies.length ? p.copies[p.copies.length - 1].id : given;
             var d = directs[peer] && directs[peer].ready ? directs[peer] : null, why = null;
             if (!p) why = 'the wish has no app called "' + given + '".';
@@ -2350,7 +2784,7 @@ extension TVTemplate {
               started = false;
               clearTimeout(askTimer); clearTimeout(again); clearInterval(beatTimer);
               if (socket) { var s = socket; socket = null; s.close(); }
-              sendKey = openKey = null; relayIn = false; relayPresent = {};
+              sendKey = openKey = null; relayIn = false; lampKeeps = false; relayPresent = {};
               epoch++;
               dropRoutes(null, null, 'The link was stopped.');
               for (var id in directs) directs[id].end();
@@ -2543,11 +2977,12 @@ extension TVTemplate {
           function storePeers() {
             if (!mine) return [];
             var me = myCopy();
-            return copiesFor(null).filter(function (id) { return id !== me && wireOf(id) >= (appOf(id) === mine ? 5 : 6); });
+            return copiesFor(null).filter(function (id) { return id !== me && wireOf(id) >= (appOf(id) === mine ? 5 : 6); })
+              .concat(relayIn && lampKeeps ? [KEEPER] : []);
           }
           // A collection goes to another copy and is taken from it: this app's own only between its copies, never another
           // app's of the wish; the wish's own between every app of it.
-          function shares(name, peer) { return !!mine && peer !== myCopy() && (appOf(peer) === mine || wishWide(name)); }
+          function shares(name, peer) { return !!mine && peer !== myCopy() && (appOf(peer) === mine || wishWide(name) || peer === KEEPER); }
           function heardStore(m, from) {
             var name, i;
             if (!mine || from === myCopy()) return;
@@ -2636,11 +3071,12 @@ extension TVTemplate {
             if (changed.length) itemsChanged(name, changed, from);
             else { var u = false; for (var un in unsaved) u = true; if (u) saveItemsSoon(); }
             if (!any) return;
-            // Passed on as values are: to the copies open now that the one it came from may not reach.
+            // Passed on as values are: to the copies open now that the one it came from may not reach. Lamp tells each copy
+            // in its room what it keeps, so what came from Lamp goes no further; what came straight goes on to Lamp.
             var each_ = storePeers();
             for (var j = 0; j < each_.length; j++) {
               var to = each_[j], straight = directs[to] && directs[to].ready;
-              if (to !== from && shares(name, to) && (straight || (!relayPresent[from] && relayPresent[to]))) shareItems(name, taken, to);
+              if (to !== from && shares(name, to) && (straight || (from !== KEEPER && !relayPresent[from] && (relayPresent[to] || to === KEEPER)))) shareItems(name, taken, to);
             }
           }
           function shareItems(name, list, id) {
@@ -2663,7 +3099,7 @@ extension TVTemplate {
             body.t = 'store';
             var d = directs[id];
             if (d && d.ready) directSeal(d, JSON.stringify(body));
-            else if (relayPresent[id] && socket && socket.readyState === 1 && sendKey) { body.to = id; seal(JSON.stringify(body)); }
+            else if ((relayPresent[id] || (id === KEEPER && lampKeeps)) && socket && socket.readyState === 1 && sendKey) { body.to = id; seal(JSON.stringify(body)); }
           }
           function sums(name) {
             var parts = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], c = cols[name] || {};
@@ -2953,6 +3389,7 @@ extension TVTemplate {
                 }
                 for (var j = 0; j < said.length; j++) emit('change', [said[j][0], copyOf(said[j][1]), own(by, said[j][0]) ? by[said[j][0]] : mine]);
               } else if (m.t === 'message') {
+                if (m.from === 'lamp') { if (m.data && m.data.lampPage && window.__lampPageChange) window.__lampPageChange(m.data.lampPage); return; }
                 emit('message', [m.from, m.data, m.copy || m.from]);
               } else if (m.t === 'file') {
                 var data = fromBase64(m.data || ''), size = data.length;
@@ -3119,6 +3556,13 @@ extension TVTemplate {
             };
             store.here = function (name, id) { subscribe(name); return !!here_[name + '\t' + id]; };
           }
+          // A word for Lamp itself (lamp.js's "A change while it's open"): through the app around the page when it's hosted,
+          // else sealed into Lamp's room; nothing while Lamp's room isn't reached.
+          api._toLamp = function (data) {
+            // As text, as `send` hands it over: the app around the page reads it as JSON.
+            if (host) { try { host.postMessage({ op: 'toLamp', data: JSON.stringify(data) }); } catch (e) {} return; }
+            if (socket && socket.readyState === 1 && sendKey) seal(JSON.stringify({ t: 'send', to: 'lamp', data: data }));
+          };
           if (host) hosted();
           else if (stranded) {
             var standStill = function () { started = true; setState('away', STRANDED); };
@@ -3190,6 +3634,24 @@ extension TVTemplate {
             var join = (location.hash || '').replace(/^#/, '');
             if (join) history.replaceState(null, '', location.pathname + location.search);
             function state(s) { if (handlers.onState) handlers.onState(s); }
+            // Once for each port the relay was refused at, keeping the credential so the page comes back as the same
+            // player; a second refusal there is the page's rules, not a move, and it goes on trying as for any lost link.
+            // Only on a page Lamp gave rules to (a shared app's), which its lamp-relay.json says (policy): an app's own page
+            // has none, and never reloads for a refused socket.
+            var trying = null, held = false;
+            function refused(port, credential) {
+              var key = 'lamp-controller-reloaded:' + base;
+              if (sessionStorage.getItem(key) === String(port)) { later(); return; }
+              sessionStorage.setItem(key, String(port));
+              if (credential) sessionStorage.setItem(keyName, credential);
+              closedForGood = true;
+              location.reload();
+            }
+            if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('securitypolicyviolation', function (event) {
+              if (!event.isTrusted || !held || !trying || !socket || String(event.blockedURI || '').replace(/\/?$/, '/') !== trying) return;
+              var s = socket; socket = null; s.onclose = null; s.close();
+              refused(new URL(trying).port, join || sessionStorage.getItem(keyName));
+            });
             function later() {
               if (closedForGood) return;
               state('connecting');
@@ -3208,7 +3670,13 @@ extension TVTemplate {
               state('connecting');
               where().then(function (relay) {
                 if (closedForGood) return;
-                var s = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.hostname + ':' + relay.port + '/');
+                var address = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.hostname + ':' + relay.port + '/';
+                var s;
+                // The page's rules name the relay where it was as the page was served: one that has moved since is
+                // refused, so the page is loaded again under rules that name where it is now.
+                trying = address;
+                held = relay.policy === true;
+                try { s = new WebSocket(address); } catch (e) { if (held && e && e.name === 'SecurityError') { refused(relay.port, credential); return; } throw e; }
                 s.binaryType = 'arraybuffer';
                 socket = s;
                 s.onopen = function () {
@@ -3357,6 +3825,16 @@ extension Agent.Rules {
     files as the app grows (scripts, styles, pictures), loaded from index.html with relative paths. File names use \
     letters, digits, dots, dashes and underscores only. Web/lamp.js belongs to Lamp and is rewritten before every \
     build: never edit it, and keep index.html loading it before the app's own scripts.
+    """ + "\n" + pageCopies
+
+    /// Where a page's change goes (`PageCopies`, `PageLive`, `Store.reloadEverywhere`): every page's edit rule ends with
+    /// it (a screen's, a web app's, a web game's, a TV app's), so it's said once.
+    static let pageCopies = """
+    - A change of the page goes into every copy of it that's open (its window on this Mac, a simulator, an iPad, a \
+    TV, the Xbox, an Android device) as soon as your turn ends, each keeping what it saved, without a build or the \
+    person doing anything; a copy that can't take it as it is (a change of Sources/, or of a script that runs before \
+    lamp.js) waits for the person's Reload, which puts it on every device they have the app on. So never say a \
+    change reaches only where Try On points.
     """
 
     static let tvFrameworks = """
@@ -3406,9 +3884,9 @@ extension Agent.Rules {
 
     static let tvPhone = """
     - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
-    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
-    the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
-    first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
+    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; who serves it is a \
+    choice made as the app starts its controllers, and the phone-controllers skill says what each choice needs. Open \
+    it first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
     phone's hardware or data the phone keeps.
     """
 

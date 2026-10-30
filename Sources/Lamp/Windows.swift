@@ -3,7 +3,7 @@ import AppKit
 
 /// Lamp's window: the desk. Each wish's chat is beside whatever shows it (`ChatPanel`). `Store.selection` is the wish
 /// whose chat is in front (nil for the desk), so what acts on "this wish" (the menu bar's commands, the dialogs) acts
-/// on the chat being looked at.
+/// on the chat being looked at. File → Duplicate… acts on the desk's pick while the desk is in front (`DeskPick`).
 @MainActor
 enum LampWindows {
     /// SwiftUI's way to open a window, handed over by the first window to appear. It opens any of the app's
@@ -23,6 +23,21 @@ enum LampWindows {
     }
 }
 
+/// The wish picked on the desk, for the menu bar's commands. An object of its own, so moving the pick doesn't redraw
+/// everything that watches the store. Whether the desk is key is followed from the window rather than left to SwiftUI's
+/// focused values: those didn't come back to the desk after Settings had been in front.
+@MainActor
+final class DeskPick: ObservableObject {
+    static let shared = DeskPick()
+
+    /// The desk's `current`: the row clicked or moved to, else the first.
+    @Published var wish: LampProject.ID?
+    @Published var deskIsKey = false
+
+    /// A chat or Settings in front never acts on a row behind it.
+    var target: LampProject.ID? { deskIsKey ? wish : nil }
+}
+
 /// Notes the window the desk is drawn in (`LampWindows.desk`), so what's asked of the desk asks the real window.
 struct DeskWindowMarker: NSViewRepresentable {
     final class Probe: NSView {
@@ -35,36 +50,49 @@ struct DeskWindowMarker: NSViewRepresentable {
     func updateNSView(_ view: Probe, context: Context) {}
 }
 
-/// Runs `became` whenever the window this view is in becomes the key window.
+/// Runs `became` whenever the window this view is in becomes the key window, and `resigned` when it stops being it.
 struct WindowKeyWatcher: NSViewRepresentable {
     let became: () -> Void
+    var resigned: () -> Void = {}
 
     final class Probe: NSView {
         var became: (() -> Void)?
-        private var observer: NSObjectProtocol?
+        var resigned: (() -> Void)?
+        private var observers: [NSObjectProtocol] = []
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-            observer = nil
-            guard let window else { return }
-            observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window,
-                                                              queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.became?() }
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else {
+                resigned?()
+                return
             }
+            let center = NotificationCenter.default
+            observers = [
+                center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.became?() }
+                },
+                center.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.resigned?() }
+                },
+            ]
             if window.isKeyWindow { DispatchQueue.main.async { [weak self] in self?.became?() } }
         }
 
-        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+        deinit { observers.forEach(NotificationCenter.default.removeObserver) }
     }
 
     func makeNSView(context: Context) -> Probe {
         let view = Probe()
-        view.became = became
+        updateNSView(view, context: context)
         return view
     }
 
-    func updateNSView(_ view: Probe, context: Context) { view.became = became }
+    func updateNSView(_ view: Probe, context: Context) {
+        view.became = became
+        view.resigned = resigned
+    }
 }
 
 /// The questions and sheets the store raises (rename, name a version, delete, a shared wish to review, Image

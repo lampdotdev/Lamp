@@ -173,7 +173,9 @@ everything it loads, not just the wish's links, and the console's web view may n
 page in Lamp's own preview has no way to Lamp, and a page over https anywhere else no host, so there `Lamp.wish` stays
 `away` with a reason saying it can't reach the others (`stranded`); the agent is told where it works
 (`Rules.gameAmongApps`, `Rules.screenAmongApps`). The TV preview of a screen joins the
-wish only when the screen is shown there (`Store.wishRoom`), so the agent's look never takes the screen's place.
+wish only when the screen is shown there (`Store.wishRoom`), so the agent's look never takes the screen's place, and never
+while it holds a copy of the Mac copy's data (`TVPreview.isSeeded`), so nothing the agent does there reaches the wish's
+shared data.
 Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,
 and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app in its own folder (or, for a wish whose apps are all in folders, one whose folder is
 the one its kind gets, since the app at a file's root comes out named by its kind, `WishRooms.peer`, and every app of a
@@ -203,12 +205,42 @@ A web app, and a screen made before, travel the same way (`ScreenFiles`, asked f
 folder holds a TV app's page too: `Sharing.kindFiles`): Web/ without Lamp's lamp.js, with its pages and scripts as code
 and its pictures, sounds and fonts as data, and the Swift beside the page (Sources/Native.swift, or any other Swift of
 the agent's there) as code, never Lamp's app around the page (LampScreen.swift or LampWebApp.swift, LampPage.swift,
-LampSupport.swift) or its Android app, which the Mac that opens it writes (`ScreenKit.write`). The file's `platform` says
+LampControllerKit.swift, LampSupport.swift) or its Android app, which the Mac that opens it writes (`ScreenKit.write`). The file's `platform` says
 which of the two it is, and the copy is that kind: a screen stays a screen, at its own address with its saves. The copy
 opens on the Mac, wherever the sender had put it. Such a file says 12: a Lamp from before would take the page for a TV
 app's and leave the Swift beside it. The review is told what a page is and what it reaches through Lamp (`pageReview`:
 Lamp's AI through the app around it, the device through Native.swift), for a game too, and reads the page's reach as a
-TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `isPage`). On GitHub, Lamp's files around
+TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `isPage`). A page's reach is read from where
+its requests go (`WebReach`), not from words in its code: "Connects to" names the outside sites a request goes to, "May connect
+outside this app" stands where a request's address can't be worked out (or a web address in the code reaches nothing it can
+follow), links are "Opens websites when clicked", and a page that only reads its own files says none of these. A copy of a library Lamp ships
+(three.js, Rapier) that is Lamp's byte for byte is left out of the review wherever it sits (`Sharing.knownLibraries`);
+one changed in any way is the sender's code.
+
+A page that arrives from someone else (a shared file, its update, or a part of its wish) is then held to what its sheet
+named: its own files and the exact sites (scheme, host and port) of "Connects to" (`SharedNetwork`, the policy itself
+`NetworkPolicy` in LampRelayKit). Lamp records it as the app arrives, in its own folder (`SharedNetwork.folder`, which the
+agent's commands can't write), never for a starter or an app made here, and writes it into every build's Info.plist
+(`LampNetwork`), so it holds with Lamp closed and no rebuild or live change widens it. On the Mac, the iPhone and the
+iPad the app around the page enforces it (`LampPageGuard` in LampPage.swift): every document and worker is served with a
+Content-Security-Policy naming only those sites; the page never leaves its own address in its window or a frame
+(redirects included); a link opens in the browser only on the person's click, once they've seen where it goes; what
+no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
+"May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
+or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
+(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A phone's controller page reads it
+too (`PhonePageReach`, under "TV apps"): its servers allow only the policy's sites, an app with Swift of the sender's
+included, since Lamp and an LG TV serve it outside the app's process; a game that serves its own page on the Mac,
+iPhone or iPad (`PhonePageServer`) does so in that process, where its Swift could change that too. A host elsewhere (a
+TV, an Xbox, Android) holds a shared page only once it reads `SharedNetwork.policy(for:)` and enforces the same
+`NetworkPolicy`. Swift of the sender's beside the page (Sources/Native.swift or any other Swift there) runs in the app's
+process, where no page rule reaches, and can turn the page's guard off too (the person's choices are kept in the app's
+defaults): such an app isn't held to its sites at all, its page included. Its Swift isn't switched off, since the page's
+calls of the device depend on it; the sheet says "Has Swift that can reach any site" instead (`Sharing.ownSwift`). The rest of the sender's code is read in full: in requests of at most
+`Sharing.batchLimit` characters, a long file in slices, their answers put together with the highest risk any gave
+(`Sharing.Answer.merged`), every concern kept. A review in more than one request is never an all-clear (`ImportReview.split`:
+"AI checked its code in parts", and a click to open), and only past `Sharing.batchCount` requests, or a request that came
+to nothing, does the sheet say AI didn't check all of it. On GitHub, Lamp's files around
 the page are the ones `GitHubRepo.ownedPaths` adds and an update leaves out (`DeviceSupport.paths`, `ScreenKit.paths`).
 
 ## Credit
@@ -307,8 +339,8 @@ first build out of sight isn't asking, and the copy the last link opened is take
 else a fresh copy, made as the first launch makes one (`put(starter:)`, its chain naming the
 starter at the commit this Lamp ships). A link without a request opens it with an empty box. A repository
 goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
-box. Nothing is sent or built from the link. During the welcome a starter's remix waits (`Onboarding.keptRemix`, saved
-like the welcome's wish) and opens once setup is done, in the desk's own copy of the starter, put there moments
+box. Nothing is sent or built from the link. During the welcome a starter's remix waits a moment (`Onboarding.keptRemix`, saved
+like the welcome's wish) and opens as the welcome gives way to the desk, with nothing set up, in the desk's own copy of the starter, put there moments
 before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
 links are read as a browser's form writes them too (`Wish.items`: "+" is a space).
 
@@ -405,7 +437,9 @@ relay lets a peer in only once it has proved it holds the room's key and named a
 every copy of one app or to all as
 a `message` with who sent it, tells the sender when the one it was for isn't there (`undelivered`), and holds peers to a
 phone's size and rate limits (16 KB of JSON a message, `ControllerWire`), and passes files and a game's controls to one
-peer (below). The same
+peer (below). Lamp itself speaks in a room only to put a page's change into its open copies (`Relay.say`, the `say` op
+on the relay's input): a message from the relay's own name, `lamp`, which no app of a wish may take, so lamp.js knows it
+as Lamp's and takes it rather than handing it to the page ("A page's change in every open copy" in the kinds-of-app guide). The same
 block in every language, under one name: `LampWish.shared` in LampSupport.swift (a WebSocket of its own to the relay),
 `Lamp.wish` in lamp.js (the same, from the TV page, in the preview and on a TV), and `LampWish` in LampSupport.kt, whose
 blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp holds the room's socket for the Android app
@@ -593,6 +627,28 @@ then as it changes (`items`), and puts, publishes and fetches a file's bytes thr
 `GameAndroid.pageWish`). `WishSharedStoreTests` has a Swift app and a TV page, copies of one app, each change different
 items before they meet, then end with both and with the Swift copy's file on the page.
 
+**Lamp keeps them too.** Copies alone only merge when two are open at once, and a new screen is often the only thing
+open; Lamp runs on the Mac all day. So while Lamp runs, it's a member of every wish's room that keeps every collection
+its copies share (`WishKeeper`, in the relay): each app's own, by that app, and the wish's own, with the shared files'
+bytes. It speaks the copies' own `store` messages under the relay's own name, `lamp` (`WishChannel.relayName`, which no
+app of a wish may take): told the room keeps (`keeps` in the `welcome`), a copy that speaks 7 counts Lamp among those it
+shares collections with (`storePeers`, `shares`: all of them, as if Lamp were a copy of its own app and of every other),
+and sends it its sums, items and files as it would another copy; Lamp answers the same way, with its sums as a copy
+joins and once a minute, asks for what it lacks, and asks a copy for a file's bytes it hasn't got. It never sets an item:
+it merges by the same rules (item by item, the latest setting winning, a deletion kept a month, within what a copy holds
+from others) and passes on nothing, since each copy in the room hears from it; a copy passes Lamp what it took from
+a copy Lamp's room doesn't have (`pass`). So a copy that opens while no other is open gets the latest from Lamp, and
+what it changes while only Lamp is there reaches the others when they open. Lamp is never one of the wish's apps or
+copies: it isn't in the room's list (`roster`) or members, so `peers`, `apps()` and their `copies` never show it, and a
+screen alone with Lamp is still `alone`. What copies that speak less say to each other through the room is kept as well
+(`overheard`), though Lamp sends them nothing. Lamp keeps it in its own folder, under Shared Data by the wish's tag
+(`WishKeep`, `Edition.supportFolder`, so each Lamp Dev instance has its own), sealed with AES-GCM under a key from the
+wish's key (`lamp-wish keep`), which is kept apart (`WishKeys`): the room's `keep`, read when a room opens and written a
+moment after a change. Deleting the wish removes it, before its key (`WishKeep.forget`, `end-room` with `forget`); taking
+one app away keeps its collections, as Undo can bring it back. With Lamp closed, copies meet straight as before, and
+Lamp catches up from them when it next runs. `WishSharedStoreTests` has a TV page put a list and a file and close, the
+relay start again, and later pages opening alone get both and pass a change on.
+
 Besides messages and values, a wish's apps send each other **files** (`LampWish.sendFile`, `onFile` in Swift and Kotlin;
 `Lamp.wish.sendFile`, `onFile` in lamp.js): up to 64 MB to one app open now, in pieces under the controllers' flow
 (`ControllerWire`: 64 KB a piece, never more than 512 KB past what the receiver has acknowledged, two at a time each way
@@ -616,14 +672,14 @@ On a TV every piece goes through lamp.js's own AES-GCM, so a big file is slow th
 two Swift apps through the room and straight, and between a TV page and a Mac app; `WishRoomTests` holds the relay to
 them.
 
-What a wish's apps say to each other is numbered (`wire` in each library: 6 since the wish's own collections, 5 shared collections, 4 brought copies,
+What a wish's apps say to each other is numbered (`wire` in each library: 7 since Lamp keeps shared collections, 6 the wish's own collections, 5 shared collections, 4 brought copies,
 3 files and a game's controls, 2 values; an app from before says none,
 which counts as 1). Each says its number in its join, to the relay and on a direct link, and the relay passes each
 member's on (`welcome`, `joined`). An open app whose number differs is **out of date** (`outOfDate`), still open, so
 messages still go, with a reason: "The TV app is out of date. Open it from Lamp on your Mac to update it.", or, for one
 newer than this one, "This app is older than the TV app. Open it from Lamp on your Mac to update it."; values go only to
 an app that speaks 2 or more, files and a game's controls only to one that speaks 3, shared collections only to one
-that speaks 5, and the wish's own only to one that speaks 6 (an older copy keeps its own and catches up once it's rebuilt). The builder's note says when an app in the room was built by an earlier Lamp
+that speaks 5, the wish's own only to one that speaks 6, and Lamp's own keeping only to one that speaks 7 (an older copy keeps its own and catches up once it's rebuilt). The builder's note says when an app in the room was built by an earlier Lamp
 (`WishRooms.wire`). Opening such an app from Lamp builds it again: a Mac or iPhone app of several is stamped with a
 fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an Android one is compared by its
 LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`

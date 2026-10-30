@@ -51,7 +51,12 @@ A wish that arrived from somewhere and has been changed since (`Store.original(t
 the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
 original" in the panel, with Start Again beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
 creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Again from the Original in
-its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. For a starter there's
+its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. It starts
+the conversation again too, since one about a game that's gone would steer the next request: every engine's
+conversation is set aside (`Conversation.setAside`, "How big a conversation grows" in the engines guide), so the next
+request starts fresh, told the original's APP.md, and the chat goes down to one line, "Started again from the
+original" (`Store.startConversationAgain`). Both are kept with the version the restore made, so Undo of it brings back
+the code, the old chat and the old conversations together. For a starter there's
 also Duplicate the Original (`Store.duplicateOriginal`): a fresh copy of the starter as this Lamp ships it, put on the
 desk as a remix link puts one, beside the changed copy. Send Changes Back… is
 in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
@@ -60,7 +65,8 @@ untouched copy of the starter with the request written into its box (`openCopy`)
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
 open the starter itself), and the shuffle mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
-wish's menu and File → Duplicate…) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
+wish's menu and File → Duplicate…, which acts on the row picked while the desk is in front and otherwise on the chat in
+front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
 to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
 panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
 the card its starter's chat opens on (the original's starter.md kept as `.lamp/starter-suggestions.md`,
@@ -97,8 +103,11 @@ isn't an answer to a card names it like any first request and ends `finding`.
 
 A new person's desk isn't empty: Lamp comes with fifteen wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
-what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
-once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
+what to make. So the welcome is the hello, and ends on the desk with nothing set up: a starter runs from the copy
+Lamp ships built, and the first request to any wish asks for what builds (`Store.askForSetup`, `SetupView` over the
+desk), signed in where the choice needs it, then Apple's tools where it needs them, the request waiting in its chat. A
+shared file or repository opened before then asks the same way and waits for its review. A starter from the site opens at
+once, and only a wish from the site, which has to be made, goes on to the welcome's setup. They're copied once, on the first launch, each saved as its first version ("From Lamp"),
 and from then on they're the person's: a later Lamp with other starters gives those only to new people. As soon
 as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
 their chats; nothing on the desk shows it; one clicked before its build is done glows, says it's opening, and opens when it's
@@ -141,8 +150,8 @@ file's). A starter of a kind Lamp doesn't share yet has none. A starter based on
 Home HQ) still credits that work in its credits.json; its repository is Lamp's version.
 
 What a starter's repository shows is the starter's own: the GitHub description is lamp-app.json's line; the README
-(`GitHubRepo.readme` with a `Showcase`) opens with the icon and preview from `.github/`, the description, the buttons (Play in your browser for a game, Open
-in Lamp, "Generated apps"), and "Ideas to try" titled with starter.md's `offer` and listing its tweaks, each a link
+(`GitHubRepo.readme` with a `Showcase`) opens with the icon from `.github/`, the description, the buttons (Play in your browser for a game, Open
+in Lamp, "Generated apps"), its reel's loop where it has one and its preview otherwise, and "Ideas to try" titled with starter.md's `offer` and listing its tweaks, each a link
 that opens Lamp on a copy with that request. A game whose page is the whole game also gets a page
 anyone plays in a browser (`StarterRepos.stagePage`: Publish's page with the credit bar and the tweaks in its Remix
 panel, which names the starter so a remix starts from a fresh copy of it, "Remixing a published page" in the
@@ -191,6 +200,23 @@ without Lamp's chat). Shrink it to at most 800 px on the long side (`sips -Z 800
 in the starter's repository, then move the pin (below). Look at it before committing: example content only, nothing
 from the Mac it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured
 with its panel open.
+
+**A starter's reel.** A starter may have a reel: a video of at most thirty seconds of it being used, cut to what shows it best, with its voices
+and captions, which its README shows as a silent loop (GitHub plays no video a README holds) linked to the video
+with sound (`GitHubRepo.Showcase.reel`). What happens in it is `Resources/Starters/<folder>/showcase/showcase.json`,
+the storyboard: the window's size, the steps played on it (use_app's actions by target, waits, and where the camera
+goes), and the script the app follows instead of the person's world (its AI's answers, the person's spoken lines,
+a place, captions), with any file it brings beside it (a photo for a camera, `data/<name>.json` for the app's
+store to start with). `scripts/showcase-starters.sh [<folder>]` records it: it stages the starter with this checkout's
+files as `publish-starters.sh` does, builds it under its own bundle id, opens it with `LAMP_SHOWCASE` ("Showcase
+mode" in the generated-apps guide), records its window while it plays the steps in front, and edits the take
+(`scripts/showcase/edit.py`: the recording filling the frame with Lamp's logo in its corner, so a storyboard's window is 16:9; the camera, a cursor, the voices where they were heard, double speed
+while the AI answers, a hard cut for each `{"mark": "cut"}` to the next `{"mark": "resume"}` (never over a voice), an end card, Made with Lamp) into the tree's `.github/showcase/` (reel.mp4,
+loop.webp, poster.png), which `publish-starters.sh` puts up with the other pictures. The app comes to the front
+for the minute a take lasts, since a window behind others is drawn with gray controls. Code of a starter's own that
+reads the person's world (its microphone, camera, files) asks `LampShowcase` while it's on, in its repository like
+any change to it. A starter that shows what's really on the disk has no script to follow: its storyboard says `"cleanMachine": true`, and the script passes it over unless `CLEAN_MACHINE=1` says the machine holds nothing of anyone's (a throwaway VM), so a reel of it never shows a person's files. Watch the reel before publishing it: example content only, as for the preview. Lamp's bundle
+leaves the storyboards and reels out (build.sh).
 
 **Changing a starter.** Its repository is the starter; Lamp pins a commit of it. A change is best made in Lamp Dev,
 where it's played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>), ask

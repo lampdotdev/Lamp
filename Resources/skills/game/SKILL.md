@@ -143,14 +143,76 @@ game is written to keep the player's place through one:
   prompt, a fade in) built or shown at all. One start path, given the state or not, is the pattern: never start fresh
   and then put the place back, which leaves the title over the game and input in the title's mode. Keep snapshot()
   current as state is added, and let the start take an older snapshot: a field it lacks keeps its start value. Without
-  a snapshot a change of code starts the game again, from its saves. (`restore(state)`, called after init when the
+  a snapshot a change of code that can't be swapped in (below) starts the game again, from its saves. (`restore(state)`, called after init when the
   game didn't read pendingRestore(), is still taken from games written that way; a new game reads the state at start.)
 - Pictures, models, sounds and data load through the runtime (`texture()`, `model()`, `sound.load()`, `asset()`), never
   by a URL of the game's own: a new copy of one of those goes into the running game with no reload. What the game makes
   of a file itself (a material from shader source, clones of a model, a mixer for its animations, a level from JSON) is
   made again in `assetChanged(path)`, which returns true when it has.
-- `busy()` is true while a match, race or round is on: a change of code then waits for the next pause, and the person
-  can put it in at once with Reload.
+- Code goes into the running game too, never by opening the page again, in one of two ways, and the log says which,
+  what was kept and how long it took:
+  - **Swapped**, at once: a change to the methods of a class in a module that ends with `hot(import.meta).accept()`
+    from lamp-game.js. Every object the game made of that class runs the new methods with its fields kept.
+  - **Run again in place**, for anything else (the HTML, the module that starts the game, a class's constructor or
+    fields, an exported function, a new module): the page is put back as the new HTML has it, every module of the game
+    runs again, and the game starts straight from the snapshot, as a reload would but without one. What the game keeps
+    stays: the renderer and its compiled shaders, the files the runtime loaded, and each part kept with
+    `hot(import.meta).keep(key, build, { inputs })`, so the change costs only what's built again. The listeners,
+    timers, sound contexts and workers the old code started are taken away by Lamp; `dispose` in game() is for anything
+    else it must let go of.
+
+  So a game is written in parts, each in a module of its own:
+
+  - **The module that starts the game only puts the parts together** (`game.js`; New York's `main.js`). It keeps the
+    renderer, and each part of the world:
+
+    ```js
+    import { game, hot, pendingRestore } from './lamp-game.js';
+    const live = hot(import.meta);
+    const renderer = live.keep('renderer', () => new THREE.WebGLRenderer({ antialias: true }));
+    const ground = live.keep('ground', () => buildGround());
+    const trees = live.keep('trees', () => buildTrees(ground.heights), { inputs: [ground] });
+    scene.add(ground.group, trees.group);
+    ```
+
+    A kept part is built again only when its own module (or one it imports) changed, its build function changed, or
+    one of its `inputs` (the parts it's built from) was built again. So build each part of the world (the ground, the
+    buildings, the trees and street details, the props, the traffic) in a module of its own, into a group of its own
+    that's added to the scene at each start, and do everything to it (setting it on the ground, cutting it for
+    culling) inside its build, never to a kept part afterwards. The build function in the starting module names the
+    module it builds from (`buildTrees`), since that's how Lamp tells which change is its own.
+  - **The HUD and menus are made at each start**, from the page's HTML or built in code, and their elements found
+    there (in init, or the function that starts the game), never once at a module's top level: the page they find is
+    the one the new HTML put back.
+  - **What changes as the person plays is a class the game makes an object of** (a vehicle and its tuning, the
+    player's moves, missions, enemies, the HUD's code, the camera, a shader's settings), its state in the object and
+    the module ending with `hot(import.meta).accept()`, so most changes are swapped:
+
+    ```js
+    import { hot } from '../lamp-game.js';
+    const CAR = { topSpeed: 36, acceleration: 4.5 };   // tuning, read where it's used
+    export class Car {
+        constructor(scene) { this.mesh = buildCar(); scene.add(this.mesh); this.speed = 0; }
+        update(dt, pad) { this.speed = Math.min(CAR.topSpeed, this.speed + pad.rt * CAR.acceleration * dt); … }
+    }
+    hot(import.meta).accept();
+    ```
+
+    Export every class a module defines and the game calls (one kept to itself keeps its old methods), read tuning
+    where it's used rather than copying it into fields in the constructor, and keep state in the objects, not in
+    variables at the module's top. An exported plain object (`export const TUNING = {…}`) takes the values a change
+    changed and keeps the rest. What a constructor built once stays as built through a swap: give
+    `accept((next, { changed }) => …)` the rebuild, or have it return false to run the code again.
+    `hot(import.meta).dispose(data => …)` takes away what a version made at its top level, keeping in `data` what the
+    next version reads as `hot(import.meta).data`.
+
+  A stylesheet is swapped by itself. Where running again can't be done (a change to the import map or to a script that
+  isn't a module, modules that import each other in a circle) the change waits for the person's Reload, which opens the
+  page again from the snapshot; so does new code that fails as it starts, before its first frame or in its first
+  second, at once. A game bundled from TypeScript is one
+  file, so its changes run it again, and what it keeps is built again with each change.
+- `busy()` is true while a match, race or round is on: a change that runs the code again then waits for the next
+  pause, and the person can put it in at once with Reload. A swap goes in at once.
 - On a phone, Android, a TV or the Xbox a change arrives when Lamp installs the game again, and the runtime restores the
   last snapshot then, once.
 

@@ -388,7 +388,7 @@ enum DeviceApps {
     /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
     private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start) throws {
         var files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
-        if entry == .webHost { files = try WebHost.payload(files) }
+        if entry == .webHost { files = try WebHost.payload(files, phone: try GamePhones.xboxPage(for: project)) }
         let folder = buildFolder(for: project)
         let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
         var identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
@@ -442,7 +442,9 @@ enum DeviceApps {
     /// app's from the moment before the install, so what the device says of the package is in it.
     /// `stillWanted` is asked before each thing that changes the device, so a Stop meanwhile leaves it as it was.
     /// `waiting` is told when Lamp waits on the device to finish installing it.
-    static func install(_ project: LampProject, on device: Device, log: FileHandle?,
+    /// `opens` false puts the app there without opening it (Reload for a device the app isn't open on): the copy running
+    /// there isn't ended and nothing is launched.
+    static func install(_ project: LampProject, on device: Device, log: FileHandle?, opens: Bool = true,
                         stillWanted: @escaping @MainActor () -> Bool = { true },
                         waiting: @escaping @MainActor () -> Void = {}) async throws -> Run {
         guard let integration = integration(for: project), let bridge = integration.bridge, let install = bridge.install else {
@@ -474,7 +476,7 @@ enum DeviceApps {
         // A Roku's installer waits on a developer channel that's still running until the upload times out, so a package
         // that isn't wrapped (one copy on the device, whichever app it is) is always ended first.
         let running = integration.app?.declared?.wrap == nil ? values(project) : installedValues(project, on: device)
-        if let stop = bridge.stop, !stop.isEmpty, let running {
+        if opens, let stop = bridge.stop, !stop.isEmpty, let running {
             _ = try? await runner.run(stop, extra: running)
         }
         // A setting the install changes for itself (an Xbox's "treat apps as games") stays changed until the app has been
@@ -491,7 +493,7 @@ enum DeviceApps {
                 remember(project, on: device, pending: false)
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
-                if let launch = bridge.launch, !launch.isEmpty {
+                if opens, let launch = bridge.launch, !launch.isEmpty {
                     // A device only just done installing can refuse the launch, or take it and not open the app yet:
                     // launched again until it's seen running (`IntegrationRunner.open`).
                     do {

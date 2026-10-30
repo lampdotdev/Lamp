@@ -57,7 +57,8 @@ A capability given to one engine must be given to all of them that can take it, 
   the one before it, none of them a link, and only a plain file read. That's what reaches the agent (what the app
   printed, its screen as text, its answers to Lamp, its pictures and their copies, the app's notes and what was taken
   back from them, the note after a restore), what Lamp writes into the app's code or hands an engine (its secrets,
-  `Template.ownSecret`, and the conversation ids), and what Lamp rewrites in place (the migration, a rename, the
+  `Template.ownSecret`, and the conversation ids, set aside under `.lamp/set-aside` and brought back through `AppFolder`),
+  and what Lamp rewrites in place (the migration, a rename, the
   live layout), which would otherwise bring what a link leads to into the folder. A new such read belongs there. Lamp's own
   writes there around a build go through `AppFolder` on the same terms (see "Generated apps").
   Lamp's adb server and Android emulators (the phone and the TV) run on ports of each Lamp's own (`Edition.androidPorts`), never adb's usual
@@ -68,7 +69,7 @@ A capability given to one engine must be given to all of them that can take it, 
   what's there stays open): they're on the path of everything Lamp runs as itself, so a command could otherwise
   leave a program there for Lamp to run unconfined. The agent can't `brew install`. `/Applications` and the developer folder in use
   (`Sandbox.developerFolders`: `DEVELOPER_DIR` and xcode-select's choice, the whole Xcode wherever it is) are closed
-  for writing the same way: an Xcode dragged there is the person's to write, and Lamp runs its tools as itself. A program Lamp runs outside
+  for writing the same way: an Xcode dragged there is the person's to write, and Lamp runs its tools as itself. The developer folder is opened for reading even where the profile closes everything else (an Xcode kept on another disk, under `/Volumes`), or no compile would find its SDK. A program Lamp runs outside
   the sandbox (in a `Shell.run` command, `signing-identity.sh`, Claude Code's hook) is named by its full path
   (`/usr/bin/codesign`), never found on the path. Apple's developer tools are the exception to `/usr/bin`: `xcrun`, `xcodebuild`,
   `git`, `swift` and the rest there are wrappers that find the real program through a cache in the temporary
@@ -91,7 +92,17 @@ A capability given to one engine must be given to all of them that can take it, 
   could only stall a save.
   Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
   or live, Lamp copies its LampStore database into its Backups folder, named after the version that wrote it
-  (`DataSnapshots`, beside the app's own once-a-launch copies).
+  (`DataSnapshots`, beside the app's own once-a-launch copies). A page's preview on this Mac starts from a copy of what
+  the page in its Mac copy saved (`PageLive.saved`, asked of the open copy with its own token): held in Lamp's memory
+  only, written nowhere but the preview's own store, and never sent back, so the agent's tries there leave the person's
+  data alone (the devices guide, "The preview holds the person's data, one way").
+- **A wish's shared data on this Mac** (`WishKeeper`, "Lamp keeps them too" in the wishes guide): Lamp keeps what a
+  wish's copies share in collections and shared files, which is the family's, in its own folder (Shared Data, by the
+  wish's tag), sealed with a key from the wish's key, and it leaves the Mac only as the copies' own sealed messages on the
+  home network. The agent doesn't read it: the sandbox closes every Lamp's folders, no tool answers with it, and the
+  agent sees an app's data as before, only as the app shows it (`look_at_app`, `use_app`, what the app prints) and in the
+  preview's one-way copy of what the Mac copy saved; a seeded preview never joins the room, so it never reaches Lamp's
+  copy either. It goes with the wish.
 - **Files Lamp fetches for an app** (`assets`, "3D scenes and games"): Lamp itself downloads them, unconfined, but only
   from the addresses in its own index, checks each against the hash the index pins, and writes it into the app's folder
   with `AppFolder` (never through a link). They're data: a model, a picture, an atlas's XML; nothing is run, opened or

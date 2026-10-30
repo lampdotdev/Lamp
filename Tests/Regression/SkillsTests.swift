@@ -71,6 +71,20 @@ final class SkillsTests: XCTestCase {
     }
 
     /// The Android prompt names its design skill, and the list it offers carries the skill's description.
+    /// A no to AI holds for the app it was said in, and nowhere else: every engine's rules, the notes rule when Lamp's
+    /// notes are on, and the app-ai skill keep it in that app's APP.md and still offer AI in other apps.
+    func testANoToAIHoldsForThatAppAlone() {
+        let rules = Agent.tryRules
+        XCTAssertTrue(rules.contains("A no is for that app alone"), "the AI rule doesn't scope a no to its app")
+        XCTAssertTrue(rules.contains("never in Lamp's notes about the person"), "a no could be saved where every app reads it")
+        XCTAssertTrue(rules.contains("still offer it in other apps where it fits"), "a no could stop AI being offered anywhere")
+        XCTAssertFalse(rules.contains("don't offer it again unless they bring it up"), "an unscoped \"never again\" is back")
+        if Memory.isOn { XCTAssertTrue(rules.contains("A no to AI in one app isn't one of these")) }
+        let skill = shipped["app-ai"]!.body.replacingOccurrences(of: "\n", with: " ")
+        XCTAssertTrue(skill.contains("A no is for that app alone"), "the skill doesn't scope a no to its app")
+        XCTAssertTrue(skill.contains("still offer it in other apps where it fits"))
+    }
+
     func testAndroidPromptOffersDesignSkill() {
         XCTAssertTrue(Agent.androidPrompt().contains("open the android-design skill"))
         let index = Skills.index(Skills.offered(.android), from: shipped)
@@ -169,7 +183,7 @@ final class SkillsTests: XCTestCase {
     func testTVPromptOffersThePhoneSkill() throws {
         let prompt = Agent.tvPrompt(skills: shipped)
         XCTAssertTrue(prompt.contains("  • phone-controllers: \(shipped["phone-controllers"]!.description)\n"))
-        XCTAssertTrue(prompt.contains("Open the phone-controllers skill"))
+        XCTAssertTrue(prompt.contains("the phone-controllers skill says what each choice needs. Open it first"))
         XCTAssertFalse(prompt.contains("LampController.connect"), "the phone page's instructions belong in the skill")
         XCTAssertTrue(shipped["phone-pages"]!.body.contains("LampController.connect"))
         XCTAssertTrue(shipped["phone-pages"]!.body.contains("Lamp.onPhonePage"))

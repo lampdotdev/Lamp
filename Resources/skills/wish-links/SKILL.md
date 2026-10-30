@@ -67,7 +67,9 @@ in `values`:
   `publish`, `onChange { id, item, from in }`), `LampStore.shared<Grocery>("groceries") { it.id }` in Kotlin (`items`
   is a StateFlow), `LampStore.shared('groceries')` in lamp.js (items are objects with an `id`; `all()`, `put`, `get`,
   `delete`, `publish`, `onChange(fn(id, item, from))`). Each copy keeps the items on its device and works alone; copies
-  merge them item by item whenever they meet, through Lamp or straight on the home network with Lamp closed. Two copies
+  merge them item by item whenever they meet, through Lamp or straight on the home network with Lamp closed. While Lamp
+  runs on the Mac it keeps every shared collection too, so a copy that opens when no other is open still gets the
+  latest, and what it changes then reaches the others when they open. Lamp is never one of the copies or apps. Two copies
   that changed different items while apart both keep both; where two changed the same item, the later change wins in
   both; a deleted item stays deleted. An item is at most 8 KB as JSON, everything the app shares at most 1 MB
   (thousands of small items).
@@ -78,7 +80,7 @@ in `values`:
   other copies put are left alone. Publish again each time it's read.
 - `LampStore.sharedFiles("photos")`: files kept on every copy (`put(name, data, type)`, `get(name)`, `url(name)`,
   `files`/`all()` with whether each is here yet, `delete`, `onChange`). A copy that can read the album puts each
-  picture; every other copy fetches the bytes from a copy that has them, including copies that open later. 64 MB a
+  picture; every other copy fetches the bytes from a copy that has them or from Lamp, including copies that open later. 64 MB a
   file, 256 MB in all. On a TV the bytes are kept in memory and fetched again each time the app opens.
 - Draw from the collection and redraw on `onChange`; never keep a copy of your own. Never split a list into `values`
   by hand, or send the same data around with messages to keep copies in step.

@@ -6,13 +6,14 @@ import UniformTypeIdentifiers
 /// version's thumbnail. The full-size files stay as they are: a picture of a window is what the person sees,
 /// and a painted asset is what the app shows.
 enum Previews {
-    /// The long side of a painted picture handed to the agent: enough to judge it by, a thirtieth of the PNG.
+    /// The long side of a painted picture handed to the agent: enough to judge it by, a fortieth of the PNG.
     /// A screenshot keeps its pixels: `use_app` takes its points as pixels in the picture, and the app
     /// (`LampDriver`) and the simulator driver turn them into points on the screen at the scale the picture was
-    /// taken at (at most 1400 pixels on the long side for a Mac window, point size for an iPhone), so a smaller
-    /// picture would land every click short of its target. JPEG alone makes it a fifth of the PNG.
-    static let artMaxPixels = 1280
-    static let agentQuality = 0.7
+    /// taken at (at most 1024 pixels on the long side for a Mac window, point size for an iPhone), so a smaller
+    /// picture would land every click short of its target. JPEG alone makes it a sixth of the PNG; at 0.6 a window's
+    /// words still read clearly, at about 110 KB for a busy Mac window where 0.7 at 1400 pixels was about 240 KB.
+    static let artMaxPixels = 1024
+    static let agentQuality = 0.6
 
     /// A JPEG of `source`, no larger than `maxPixels` on its long side when given, else the same size. Nil if the
     /// source can't be read.

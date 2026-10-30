@@ -40,7 +40,12 @@ struct SetupCheck {
         // Whether Claude Code or Codex is there depends on the look for the person's own copy, which takes a few
         // seconds at launch: judged before it's done, a Mac with one showed the setup screen until it finished.
         if Builder.engine != .pi, !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
-        var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(), builderProblem: Builder.problem(),
+        // Claude Code or Codex without its sign-in can't build yet, and a request let through to it would be lost.
+        await EngineSignIn.refresh(olderThan: 5)
+        let engine = Builder.engine
+        let signedOut = await MainActor.run { engine != .pi && EngineSignIn.known[engine] == false }
+        var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(),
+                               builderProblem: Builder.problem() ?? (signedOut ? "Sign in to \(engine.title) to build." : nil),
                                hasAgent: Agent.executable != nil)
         check.installerOpen = installerIsOpen()
         return check.keeping(previous)
@@ -108,6 +113,8 @@ struct SetupCheck {
 
 struct SetupView: View {
     @EnvironmentObject private var store: Store
+    /// Puts it off: the request stays in its chat, and the next one asks again.
+    let later: () -> Void
     @State private var key = ""
     @State private var checkingKey = false
     @State private var keyProblem: String?
@@ -131,8 +138,8 @@ struct SetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Lamp can't build apps right now").font(.largeTitle.bold())
-            Text("Finish what's left below. Your apps and chats are kept.")
+            Text("Get Lamp ready").font(.largeTitle.bold())
+            Text("Your request starts as soon as this is done.")
                 .foregroundStyle(.secondary)
 
             if !store.setup.hasAgent {
@@ -200,9 +207,15 @@ struct SetupView: View {
                 }
                 .padding(.leading, 36)
             }
+            HStack {
+                Spacer()
+                Button("Not Now", action: later).keyboardShortcut(.cancelAction)
+            }
         }
         .padding(40)
-        .frame(maxWidth: 600)
+        .frame(width: 600)
+        // As tall as what's in it: a sheet would otherwise take all the height it's offered.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @Environment(\.openSettings) private var openSettingsAction

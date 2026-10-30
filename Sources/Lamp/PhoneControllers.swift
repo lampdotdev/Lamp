@@ -150,16 +150,38 @@ enum ControllerRelay {
 
     /// Opens a wish's room with its wish's key, or tells the relay its apps again when they changed.
     static func openRoom(_ key: String, wishKey: Data, apps: [[String: Any]]) {
-        let line: [String: Any] = ["op": "room", "app": key, "key": wishKey.base64EncodedString(), "apps": apps]
+        // With the folder Lamp keeps the wish's shared collections in (`WishKeep`), so a copy that opens alone gets them.
+        let line: [String: Any] = ["op": "room", "app": key, "key": wishKey.base64EncodedString(), "apps": apps,
+                                   "keep": WishKeep.folder(for: wishKey).path]
         guard rooms[key].map({ NSDictionary(dictionary: $0) != NSDictionary(dictionary: line) }) ?? true else { return }
         rooms[key] = line
         if process == nil { launch() } else { send(line) }
     }
 
-    static func endRoom(_ key: String) {
+    private static var saying: [Int: CheckedContinuation<[String], Never>] = [:]
+    private static var lastSay = 0
+
+    /// Lamp's own word to some copies in a wish's room (`Relay.say`): the copies it went to, none when the relay isn't
+    /// running or didn't answer within a few seconds.
+    static func say(in room: String, to copies: [String], data: Any) async -> [String] {
+        guard process != nil, rooms[room] != nil, !copies.isEmpty, JSONSerialization.isValidJSONObject(["data": data]) else { return [] }
+        lastSay += 1
+        let ask = lastSay
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(10))
+            saying.removeValue(forKey: ask)?.resume(returning: [])
+        }
+        return await withCheckedContinuation { answer in
+            saying[ask] = answer
+            send(["op": "say", "app": room, "to": copies, "data": data, "ask": ask])
+        }
+    }
+
+    /// `forget`: the wish is gone, and what Lamp kept of its shared collections goes too.
+    static func endRoom(_ key: String, forget: Bool = false) {
         presence[key] = nil
         guard rooms.removeValue(forKey: key) != nil else { return }
-        send(["op": "end-room", "app": key])
+        send(forget ? ["op": "end-room", "app": key, "forget": true] : ["op": "end-room", "app": key])
         if sessions.isEmpty, rooms.isEmpty { quit() }
     }
 
@@ -220,6 +242,12 @@ enum ControllerRelay {
                     guard let room = said["app"] as? String else { continue }
                     let members = said["peers"] as? [[String: Any]] ?? []
                     Task { @MainActor in if Self.process === process, rooms[room] != nil { presence[room] = members } }
+                case "heard":
+                    guard let room = said["app"] as? String, let copy = said["from"] as? String, let data = said["data"] else { continue }
+                    Task { @MainActor in if Self.process === process { PageCopies.heard(copy, in: room, data) } }
+                case "said":
+                    let ask = said["ask"] as? Int ?? 0, reached = said["to"] as? [String] ?? []
+                    Task { @MainActor in saying.removeValue(forKey: ask)?.resume(returning: reached) }
                 default:
                     continue
                 }

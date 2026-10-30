@@ -193,9 +193,11 @@ rm -rf "$APP/Contents/Resources/Devices" && if [[ -d Resources/Devices ]]; then 
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 # The wishes Lamp comes with (Starters.swift): each one's tree is its repository at the commit starter.md pins, fetched
-# here (never committed), and copied without the fetch's own git history.
+# here (never committed), and copied without the fetch's own git history, nor each one's reel and what records it,
+# which only its repository shows (scripts/showcase-starters.sh).
 scripts/fetch-starters.sh
-rm -rf "$APP/Contents/Resources/Starters" && rsync -a --exclude '.git' Resources/Starters/ "$APP/Contents/Resources/Starters/"
+rm -rf "$APP/Contents/Resources/Starters" && rsync -a --exclude '.git' --exclude '/*/showcase/' --exclude '/*/tree/.github/showcase/' \
+  Resources/Starters/ "$APP/Contents/Resources/Starters/"
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as three.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what a game is written against, and its hosts (GameKit.swift)
@@ -204,6 +206,7 @@ rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Conten
 # game's phones never need Lamp.
 scripts/controller-kit.sh "$APP/Contents/Resources/GameKit/apple/LampControllerKit.swift"
 rm -rf "$APP/Contents/Resources/WebHost" && cp -R Resources/WebHost "$APP/Contents/Resources/WebHost"   # the program that shows an Xbox web app in WebView2 (WebHost.swift)
+rm -rf "$APP/Contents/Resources/LGPhones" && cp -R Resources/LGPhones "$APP/Contents/Resources/LGPhones"   # the service an LG game runs its own phones with (LGPhones.swift)
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'

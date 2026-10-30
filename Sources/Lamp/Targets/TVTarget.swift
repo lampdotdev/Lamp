@@ -33,7 +33,7 @@ extension Target {
                    wishRule: Agent.Rules.tvParts) { dir, wish in
             AppFile.read(dir.appendingPathComponent(TVTemplate.supportFile), inFolder: wish, last: 1) != nil
         },
-        setup: .none)
+        setup: .none, changesAreWeb: { _ in true })
 }
 
 extension Language {

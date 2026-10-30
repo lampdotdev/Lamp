@@ -20,7 +20,9 @@ reason to refuse 3D. The rules are `Agent.tvPrompt` (`Rules.tv…`: a
 Web Audio (`Rules.webSound`, also given to every declared kind with the web library, the Xbox's included), with no
 building block of Lamp's: every one of these browsers has it, and the preview on the Mac plays it with no click first
 (WebKit on macOS starts audio without one). The agent tries the app in
-the TV preview (`TVPreview`; the chat is Lamp's panel, attached to it as its child window and moving with it, and on
+the TV preview (a screen, a web app or a game with a loop of its own is looked at in its window on this Mac instead while
+it has one, and in this preview only at another shape or where nothing on this Mac shows it: "Where the agent looks at it"
+in the devices guide; `TVPreview`; the chat is Lamp's panel, attached to it as its child window and moving with it, and on
 its own while the app is on a TV: `ChatPanel`): a window showing it at the TV's size, half scale, from the staged copy, where
 the page is opened at an address of its own (`lamp-tv://app/`, `StagedFiles`) rather than as a file, so it reads its own
 files with fetch and XMLHttpRequest, as text or bytes, as it does on a TV (WebKit refuses both to a file's page), and
@@ -30,7 +32,8 @@ is only the fallback, and the agent is told its picture can't show movement; eac
 after the one before, since the agent's own thinking between two calls is part of the time a movement took) and reads it as text (focusable things and text, with which has focus) and `use_app` presses
 remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
 each app keeps its own saved data there between openings, as a TV does (what it saved when earlier Lamps opened it as a
-file is handed to its new address once, `savedFromFileAddress`). The preview runs in the Mac's browser, so everything
+file is handed to its new address once, `savedFromFileAddress`), except a page with a Mac copy, whose preview starts each
+opening from a copy of what that copy saved (`seed`, "The preview holds the person's data, one way" in the devices guide). The preview runs in the Mac's browser, so everything
 the agent is told of it (each look and use with `Store.notTheTV`, the screen as text, the note on its picture) says it is
 the TV preview on this Mac and not the person's TV. Where the app is otherwise comes with the request, as the device line
 (`DeviceNote.tv`), from Lamp's own state and never a fixed description: whether the preview is open, each of the person's
@@ -66,6 +69,29 @@ network description; the first scan brings macOS's firewall and local network qu
 reads, pictures and sounds as data), never Lamp's lamp.js or three.js, which the Mac that opens it writes back as it installs them.
 A web app or a screen, whose page is the TV app's with Lamp's app around it, travels its own way (`ScreenFiles`, "Wishes").
 
+A shared TV app is held on the TV to its own files and the exact sites its safety sheet named (`TVNetworkGuard`), by
+rules inside the package, so they hold with Lamp closed. The sites are the app's `NetworkPolicy` as Lamp recorded it when the app
+arrived (`SharedNetwork`, "Wishes"), read only through `TVNetworkGuard.allowedOrigins`: an app made here, or one the
+person let reach every site, packages as before, and one the sheet said "may connect" is held to its named sites alone,
+since a TV can't ask the person about another. Each site is checked as a bare origin before it goes anywhere. Neither TV filters a packaged web app's network from outside the page beyond
+Samsung's manifest, so the rule is the page's Content Security Policy: a meta tag Lamp puts first in every HTML page of
+the package (after the doctype, ahead of anything the page says), and on Samsung the same policy in `config.xml`
+(`tizen:content-security-policy`), its `<access>` list cut from everything to the app's sites and Lamp's, and
+navigation only to the sites' hosts. Frames and workers come only from the app's sites, since one of its own files opened
+as a frame or worker is a document no meta tag reaches. Lamp's own ways out stay open: the gateway at its port and the
+relay at any port by this Mac's names at the time of the build, and the TV's loopback for an LG game's own phone
+service. A policy in the page is weaker than a filter outside it: it doesn't stop the page leaving for another address
+(on LG; Samsung's navigation list covers its pages), WebRTC's own connections, or a DNS lookup a link hint asks for; a
+document of the package that isn't HTML (SVG, XML, XHTML) opened as the whole page carries no meta tag; and a browser
+before Chromium 60 opens a data: document as a whole page with no policy. So the policy goes in on every TV, but only one
+whose browser holds it (`TVNetworkGuard.holds`: Tizen 5 or webOS 5 and later, with a version Lamp has read) counts as
+guarding the app; on an older one Play says so.
+
+In the TV preview a shared TV app is held by the same `NetworkPolicy`, served with every file (`StagedFiles`), and the
+only way out of it Lamp adds is its relay: once the relay listens, a game that takes players may connect to it at
+`ws://127.0.0.1:<its port>` and load nothing from there (`TVPreview.relaySites`, `contentSecurityPolicy`'s `connect`).
+That's asked before the page loads, never kept with the app's sites, and every other port on this Mac stays closed.
+
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
 `Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-pages`
 skill, which the `phone-controllers` skill, offered to every prompt, points to once the agent has weighed whose phones
@@ -73,7 +99,7 @@ and what the game's device can take). The page is one way for phones to steer a 
 phones are another. `Rules.tvPhone`, `make_app_for`'s description and the naming call set them side by side with what each
 suits, and map no request to either: the agent chooses, and when one way can't be built on this Mac (no Xcode, no Android
 tools) `make_app_for`'s answer leaves it free to take another rather than stop. Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's
-staged beside `Web/` the same way (links refused) and never packaged, into a folder nothing serves, and put in place of
+staged beside `Web/` the same way (links refused) and packaged only inside an LG game's own phone service (`LGPhones`), into a folder nothing serves, and put in place of
 the served one in one swap only once it has passed (`TVs.publishPhone`), so a request never reads a copy being made or
 one that failed. A game on Lamp's runtime has one too, served the same way while it's open on the Mac ("Games" in the
 devices guide). It's served by Lamp at a port of the app's own (`PhoneSites`, from `Edition.phonePagePorts`, sixteen
@@ -90,6 +116,25 @@ which lamp.js asks for again as the page opens and every half minute (`/app/phon
 when the site moves; `Lamp.onPhonePage` hears each change, so a QR code follows the page. The address is plain http at the Mac's local address, so a phone's browser won't give the page motion sensors or the camera, which
 need https.
 
+A shared app's phone page is held to rules (`PhonePagePolicy`, a Content-Security-Policy) that every server of one sends
+in the same words: Lamp's (`Store.phonePage`), a game's own (`PhonePageServer`), an LG TV's (`relay.js`) and the Xbox
+host's (`lamp_controllers.h`), held to them by `PhonePagePolicyTests` and `check-web-host-controllers.sh`. Whether an
+app is held is the shared-app policy's to say (`SharedNetwork.policy(for:)`, under "Wishes of more than one app"), read
+through `PhonePageReach`: an app the person made, a starter, or one they let reach every site is unrestricted, and its
+page goes out with no rules at all, as before phone pages had any. For a held page nothing is allowed unless it's
+named: the page's own files; its game's relay, by the name the phone used and at the port it listens on as the page is
+served, and no other address on the network; and the sites its safety review named. Sites the person allowed on a
+device are that device's, so a phone page doesn't get them. Lamp writes a held page's sites beside the page it puts in
+a game's bundle, an LG TV's service or an Xbox package (`lamp-reach.json`, in place of any file of the app's by that
+name), and nothing for an unrestricted one, so its page is what it was before these rules; a server that finds a reach
+file it can't read holds the page to no sites. A held page's lamp-relay.json says so (`policy`). A relay that moved
+after a held page loaded is outside its rules, so lamp-controller.js loads the page again, once for each port, keeping
+the phone's credential, when its socket is refused, and only on such a page: an own page never reloads for a refused
+socket. Lamp waits for the relay before answering only a held page, whose rules name its port.
+A rule a browser can't enforce is not one: a page can still leave by navigating (`location`), and a page reached by an
+IPv6 address has no relay in its rules, since a policy can't name one. The Xbox's shipped host (`App.exe`) isn't built
+from the current `lamp_controllers.h` yet, so on the Xbox a shared app's phone page goes without its rules for now.
+
 Phones as controllers never go through Lamp's own process: Lamp introduces the two sides and hands out short-lived
 credentials, and they talk through a relay of Lamp's own (`PhoneControllers`), over the home network the
 phone page is already served on, so nothing is hosted and nothing leaves the home. The relay (`LampRelayKit`'s `Relay`)
@@ -104,7 +149,9 @@ buttons, sticks, messages and files, and tilt asked for from a tap), asks the pa
 always wins over a credential the page kept from before. The TV page has `Lamp.controllers` in lamp.js
 (`TVTemplate.controllersJS`), the same in the preview and on a TV: it asks Lamp where its relay is (`/app/controller`,
 through the preview's bridge or the gateway, as it opens and every 15 seconds) and opens its own socket there, with a
-host credential. A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
+host credential. A game chooses its host with `start({ host })`: on an LG TV from webOS 5 on, `'game'` asks a service
+packaged with it instead and runs its phones with no Mac ("Phones as players" and "Which host" in the devices guide,
+`LGPhones`). A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
 the wish's apps reach each other (under "Wishes of more than one app"), with nothing from Lamp. The preview's page
 reaches them from WebKit itself, never through an `evaluateJavaScript` or a script message per message. lamp.js numbers
 the players, whichever way they came, and tells each its number (`player`). The credentials are the controllers' own

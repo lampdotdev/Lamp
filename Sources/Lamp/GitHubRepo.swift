@@ -197,6 +197,9 @@ enum GitHubRepo {
     struct Showcase {
         var icon: String? = nil
         var preview: String? = nil
+        /// The folder of its reel (loop.webp, reel.mp4): GitHub plays no video a README holds, so the README shows the
+        /// silent loop and links the video, which GitHub plays with its sound.
+        var reel: String? = nil
         /// Where it plays in a browser, for a game whose page is up.
         var play: String? = nil
         /// What to ask for first, and the line that offers them ("Make Hours fit your work").
@@ -271,7 +274,12 @@ enum GitHubRepo {
             text += "<p align=\"center\">" + buttons.joined(separator: "&nbsp;&nbsp;") + "</p>\n\n"
         }
         if !links.isEmpty { text += "<p align=\"center\">" + links.joined(separator: " · ") + "</p>\n\n" }
-        if let preview = showcase.preview { text += "<p align=\"center\"><img src=\"\(preview)\" width=\"720\" alt=\"\(name)\"></p>\n\n" }
+        if let reel = showcase.reel {
+            text += "<p align=\"center\"><a href=\"\(reel)/reel.mp4\"><img src=\"\(reel)/loop.webp\" width=\"720\" alt=\"\(name)\"></a></p>\n\n"
+            text += "<p align=\"center\"><a href=\"\(reel)/reel.mp4\">Watch it with sound</a></p>\n\n"
+        } else if let preview = showcase.preview {
+            text += "<p align=\"center\"><img src=\"\(preview)\" width=\"720\" alt=\"\(name)\"></p>\n\n"
+        }
         if !showcase.ideas.isEmpty {
             text += "## \(showcase.ideasTitle ?? "Ideas to try")\n\n"
             if let remix {

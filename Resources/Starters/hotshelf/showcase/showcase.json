@@ -1,0 +1,52 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "steps": [
+    {
+      "wait": 3
+    },
+    {
+      "action": "type",
+      "x": 1176,
+      "y": 716,
+      "text": "Fish tacos with slaw"
+    },
+    {
+      "wait": 1
+    },
+    {
+      "action": "key",
+      "key": "return"
+    },
+    {
+      "wait_for": "Another One",
+      "timeout": 10
+    },
+    {
+      "wait": 5
+    },
+    {
+      "action": "click",
+      "target": "Another One"
+    },
+    {
+      "wait": 5
+    }
+  ],
+  "ai": [
+    {
+      "json": {
+        "id": "first",
+        "why": "Bright fruit and a clean burn that cuts right through the crema. You haven't touched this one in weeks, and it deserves better."
+      }
+    },
+    {
+      "json": {
+        "id": "first",
+        "why": "Fine, you want more drama. This one brings the heat and still lets the fish do its thing. Keep a lime nearby."
+      }
+    }
+  ]
+}
