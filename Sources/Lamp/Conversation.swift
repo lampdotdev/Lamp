@@ -183,7 +183,8 @@ enum Conversation {
                 size.compactions += 1
                 pictures = []
             }
-            if let tokens = line.tokens { size.tokens = tokens }
+            // A message the engine made up itself (Claude Code's after an error) says it took nothing.
+            if let tokens = line.tokens, tokens > 0 { size.tokens = tokens }
             if line.pictures > 0 { pictures.append((object["id"] as? String, line.pictures, line.pictureBytes)) }
             if engine == .pi, object["type"] as? String == "context_edit", let target = object["targetId"] as? String { edited.insert(target) }
         }

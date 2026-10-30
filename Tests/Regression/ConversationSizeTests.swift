@@ -55,4 +55,9 @@ final class ConversationSizeTests: XCTestCase {
         XCTAssertTrue(Conversation.isTooBigToSend("Prompt is too long", size: nil))
         XCTAssertFalse(Conversation.isTooBigToSend("429 rate limit exceeded", size: Conversation.Size(tokens: 466_000)))
     }
+
+    func testClaudeCodesOwnErrorIsntTheAgentSpeaking() {
+        let line = #"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: Connection dropped (ECONNRESET)"}]},"error":"server_error"}"#
+        XCTAssertTrue(Agent.parseClaude(line).isEmpty)
+    }
 }

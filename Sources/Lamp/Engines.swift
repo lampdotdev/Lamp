@@ -607,6 +607,9 @@ extension Agent {
             if obj["subtype"] as? String == "init", let id = obj["session_id"] as? String { return [.session(id)] }
             if obj["subtype"] as? String == "compact_boundary" { return [.compacted] }
         case "assistant":
+            // Claude Code's own words for a request that failed ("API Error: Connection dropped"), as if the model said
+            // them: the run's result carries the failure, which Lamp says in its own words or recovers from.
+            if obj["error"] != nil || obj["isApiErrorMessage"] as? Bool == true { return [] }
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             return content.flatMap { block -> [AgentEvent] in
                 switch block["type"] as? String {
