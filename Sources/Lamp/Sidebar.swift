@@ -967,6 +967,15 @@ final class SidebarServer {
                         card.button = OldCopyLine.remove
                     }
                     out.append(card)
+                case .newerOriginal:
+                    let done = NewerOriginalLine.isDone(line.text)
+                    var card = SidebarLine(id: line.id, kind: .action, text: NewerOriginalLine.title(done: done), gap: gap)
+                    card.symbol = NewerOriginalLine.symbol
+                    card.button = done ? nil : NewerOriginalLine.button
+                    // A prominent card with no button draws an empty one.
+                    card.prominent = !done
+                    card.disabled = !done && Store.shared.busy.contains(project.id)
+                    out.append(card)
                 case .keepOpening:
                     // What Lamp does now, whatever was pressed before: turned off in Settings, the card offers it again.
                     let on = PhoneRenewals.staysOpen
@@ -1238,6 +1247,7 @@ final class SidebarServer {
                 Task { await store.answerOldCopy(project, line: line.id, remove: true) }
                 return
             }
+            if line.kind == .newerOriginal { return store.updateFromOriginal(project, opening: false) }
             if line.kind == .keepOpening {
                 store.keepPhoneAppsOpening(true, for: project)
                 return pushNow()

@@ -249,23 +249,19 @@ enum Starters {
     /// merges against and Send Changes Back… goes on top of). starter.md goes into .lamp; the drawn icon and the
     /// preview come from the tree's pictures. `package` stands in for the tree when given (a wish on this Mac being
     /// made a starter, `StarterRepos`).
-    static func copy(_ starter: Starter, into project: LampProject, package given: Sharing.Package? = nil) throws {
+    /// `replacing` puts the starter in place of a copy's own files (`Store.bringUp`), as an update replaces a wish's.
+    static func copy(_ starter: Starter, into project: LampProject, package given: Sharing.Package? = nil, replacing: Bool = false) throws {
         let fm = FileManager.default
-        var package = try given ?? RepoImport.open(folder: starter.tree)
+        let package = try given.map { given in
+            var package = given
+            package.credits = linked(RepoImport.naming(given.credits, repository: starter.repository, commit: starter.commit,
+                                                       name: starter.name, identity: given.identity), to: starter)
+            return package
+        } ?? self.package(of: starter)
         defer { if given == nil { try? fm.removeItem(at: package.folder) } }
-        package.credits = RepoImport.naming(package.credits, repository: starter.repository, commit: starter.commit, name: starter.name, identity: package.identity)
-        try Sharing.install(package, into: project)
-        try? fm.removeItem(at: file(of: project))
-        try fm.copyItem(at: starter.folder.appendingPathComponent("starter.md"), to: file(of: project))
-        // The link names the starter (`starter`), which is how a copy is known as one wherever its name goes.
-        var credits = Credits.load(project)
-        let link = Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent, url: starter.repository, commit: starter.commit)
-        if let last = credits.remixOf.indices.last, credits.remixOf[last].sameLink(as: link) || credits.remixOf[last].url == nil {
-            credits.remixOf[last] = link
-        } else {
-            credits = credits.remixed(from: link)
-        }
-        try Credits.arrive(credits, in: project)
+        try Sharing.install(package, into: project, replacing: replacing)
+        try keepFile(of: starter, in: project)
+        try Credits.arrive(linked(Credits.load(project), to: starter), in: project)
         let icon = iconFolder(of: starter)
         for made in iconFiles(of: project) {
             let shipped = icon.appendingPathComponent(made.lastPathComponent)
@@ -293,7 +289,80 @@ enum Starters {
         let preview = preview(of: starter)
         if fm.fileExists(atPath: preview.path) {
             try? fm.createDirectory(at: Runtime.macFolder(project), withIntermediateDirectories: true)
+            if replacing { try? fm.removeItem(at: Runtime.previewURL(project)) }
             try? fm.copyItem(at: preview, to: Runtime.previewURL(project))
         }
     }
+
+    /// The starter as a repository opens (`RepoImport.open`), its credits naming it where it lives and at the commit this
+    /// Lamp ships. Its folder is the caller's to remove.
+    static func package(of starter: Starter) throws -> Sharing.Package {
+        var package = try RepoImport.open(folder: starter.tree)
+        package.credits = linked(RepoImport.naming(package.credits, repository: starter.repository, commit: starter.commit,
+                                                   name: starter.name, identity: package.identity), to: starter)
+        return package
+    }
+
+    /// Credits with the starter as the chain's last link, where it lives and at the commit this Lamp ships. The link names
+    /// the starter (`starter`), which is how a copy is known as one wherever its name goes.
+    static func linked(_ credits: Credits?, to starter: Starter) -> Credits {
+        var credits = credits ?? Credits()
+        let link = Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent, url: starter.repository, commit: starter.commit)
+        if let last = credits.remixOf.indices.last, credits.remixOf[last].sameLink(as: link) || credits.remixOf[last].url == nil {
+            credits.remixOf[last] = link
+        } else {
+            credits = credits.remixed(from: link)
+        }
+        return credits
+    }
+
+    /// The starter's starter.md, as this Lamp ships it, into the copy's .lamp: its changes to offer, and its commit.
+    static func keepFile(of starter: Starter, in project: LampProject) throws {
+        try? FileManager.default.removeItem(at: file(of: project))
+        try FileManager.default.copyItem(at: starter.folder.appendingPathComponent("starter.md"), to: file(of: project))
+    }
+
+    // MARK: Keeping copies current
+
+    /// The starter a copy was made from, as this Lamp ships it: found by the name in its starter.md, which stays the
+    /// starter's when the wish is renamed, else by the folder its link names. Nil for one this Lamp doesn't ship.
+    static func shipped(of project: LampProject) -> Starter? {
+        let bundled = self.bundled
+        if let name = starter(of: project)?.name, let found = bundled.first(where: { $0.name == name }) { return found }
+        guard let folder = Credits.load(project).remixOf.last(where: { $0.starter != nil })?.starter else { return nil }
+        return bundled.first { $0.folder.lastPathComponent == folder }
+    }
+
+    /// The commit of its starter a copy has: its link's in credits.json, which goes with the copy's versions, so Undo of
+    /// an update takes it back too (`.lamp`'s records stay as they are). Nil for a copy made before starters named one.
+    static func commit(of project: LampProject) -> String? {
+        Credits.read(project.dir.appendingPathComponent(Credits.file))?.remixOf.last { $0.starter != nil }?.commit
+    }
+
+    /// The starter a copy was made from as this Lamp ships it, when the copy can take it: the same kind of wish. "The
+    /// original" is always this, whatever the copy arrived as: what Start Over lands on.
+    static func original(for project: LampProject) -> Starter? {
+        guard !project.isPart, isStarter(project), let shipped = shipped(of: project), shipped.commit != nil,
+              shipped.kind == project.platform else { return nil }
+        return shipped
+    }
+
+    /// The original, when it's newer than what the copy has. A copy that names no commit is behind; a starter not put
+    /// on GitHub yet has no commit to be behind.
+    static func newer(for project: LampProject) -> Starter? {
+        guard let shipped = original(for: project), let pin = shipped.commit,
+              commit(of: project)?.lowercased() != pin.lowercased() else { return nil }
+        return shipped
+    }
+}
+
+/// The chat's card for a copy of a starter changed here, when this Lamp ships a newer one: Update brings it in, keeping
+/// the person's changes (`Store.updateFromOriginal`). Said once for each newer starter; its text is the starter's commit,
+/// with `done` before it once it's in.
+enum NewerOriginalLine {
+    static let done = "updated:"
+    static func isDone(_ text: String) -> Bool { text.hasPrefix(done) }
+    static func title(done: Bool) -> String { done ? "Updated from the original" : "A newer original is available" }
+    static let button = "Update"
+    static let symbol = "arrow.down.circle"
 }

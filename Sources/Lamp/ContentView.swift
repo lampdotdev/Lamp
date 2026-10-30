@@ -400,7 +400,7 @@ enum AppInfoView {
     /// `own` is where this wish was put on GitHub, which isn't where it came from.
     /// `update` is what was last heard of an update (`AppUpdates`): a row of its own, and the button that checks or
     /// reviews it, for a wish with somewhere to be updated from.
-    /// `changedFromOriginal` says so in a row, with the button that starts again from the original (`Store.startAgain`).
+    /// `changedFromOriginal` says so in a row, with the button that starts over from the original (`Store.startAgain`).
     static func creditsSection(_ credits: Credits, own: String?, update: AppUpdates.Availability? = nil,
                                changedFromOriginal: Bool = false) -> SidebarInfoSection? {
         guard !credits.isEmpty else { return nil }
@@ -444,10 +444,13 @@ enum AppInfoView {
             buttons.append(SidebarInfoButton(title: "Visit \(remix.name) on GitHub", action: remixedFromPage))
         }
         // The same button whichever way the wish came: it checks, and once there's an update, it brings it in.
+        // A starter's copy takes the starter Lamp ships with no review: it's Lamp's own.
         if route != nil {
-            buttons.append(SidebarInfoButton(title: update?.reviews == true ? "Review Update…" : "Check for Updates…", action: updateFromRepository))
+            let starter = credits.origin(own: own)?.starter != nil
+            let title = update?.reviews == true ? (starter ? "Update from the Original" : "Review Update…") : "Check for Updates…"
+            buttons.append(SidebarInfoButton(title: title, action: updateFromRepository))
         }
-        if changedFromOriginal { buttons.append(SidebarInfoButton(title: "Start Again from the Original", action: startAgain)) }
+        if changedFromOriginal { buttons.append(SidebarInfoButton(title: "Start Over", action: startAgain)) }
         return SidebarInfoSection(title: "Credits", rows: rows, buttons: buttons)
     }
 

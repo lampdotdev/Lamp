@@ -355,6 +355,8 @@ extension Store {
     /// none: the panel asking is the wish being looked at. A copy an update is prepared in shows none of its own.
     func updateAvailability(of project: LampProject) -> AppUpdates.Availability? {
         guard AppUpdates.Job.load(project) == nil, let route = AppUpdates.route(of: project) else { return nil }
+        // A starter's copy follows the starter as this Lamp ships it, not its repository's latest: nothing to ask GitHub.
+        if Self.followsShippedStarter(project) { return Starters.newer(for: project) != nil ? .available : .upToDate }
         if preparingUpdates.contains(project.id) { return .preparing }
         if let prepared = updateCopy(of: project) { return prepared.job.ready == true ? .ready : .preparing }
         let check = updateChecks[AppUpdates.key(route.url)]
@@ -366,7 +368,7 @@ extension Store {
 
     /// Asks GitHub for the latest commit of where the wish comes from, once for every wish that follows it.
     func checkForUpdates(_ project: LampProject) {
-        guard let route = AppUpdates.route(of: project), let source = route.repository else { return }
+        guard !Self.followsShippedStarter(project), let route = AppUpdates.route(of: project), let source = route.repository else { return }
         let key = AppUpdates.key(route.url)
         guard updateChecks[key]?.checking != true else { return }
         updateChecks[key] = AppUpdates.Check(tip: updateChecks[key]?.tip, at: Date(), checking: true)
@@ -382,6 +384,8 @@ extension Store {
     func reviewUpdate(_ project: LampProject) {
         // The copy itself: its chat is where its update is.
         if AppUpdates.Job.load(project) != nil { return showChat(project.id) }
+        // A starter's copy takes the starter in Lamp's bundle, from its chat (Wish Info is there).
+        if Self.followsShippedStarter(project) { return updateFromOriginal(project, opening: false) }
         // Being set up: one copy at a time.
         if preparingUpdates.contains(project.id) { return }
         if let prepared = updateCopy(of: project) {
@@ -413,6 +417,11 @@ extension Store {
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             prepareUpdate(project, job: job)
         }
+    }
+
+    /// A copy of a starter this Lamp ships: its updates are the starter as this Lamp ships it (`Starters.newer`).
+    static func followsShippedStarter(_ project: LampProject) -> Bool {
+        Starters.isStarter(project) && Starters.shipped(of: project)?.commit != nil
     }
 
     private func tellBusy(_ project: LampProject) {
