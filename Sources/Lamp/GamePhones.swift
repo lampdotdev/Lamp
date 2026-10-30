@@ -6,7 +6,8 @@ import LampRelayKit
 /// `GameKit.controllerKit`; lamp_controllers.h in the Xbox's host), so its phones never need Lamp. Lamp's part is only to
 /// put the page in the bundle or package as it builds or installs the game: the copy of Phone/ it published at the build
 /// (`TVs.stagePhone`, which turns away links), checked again as it's read, with Lamp's lamp-controller.js beside it. The
-/// page is in the bundle, so it's signed with the game, and a change to it goes in as the game is installed again.
+/// page is in the bundle, so it's signed with the game. A change to it goes to a copy open on the Mac or in the simulator
+/// as it's played (`PageLive`), which serves the newer page beside its bundle's, and to any other as the game is installed.
 enum GamePhones {
     /// Where the page goes in a Mac app's bundle, which LampPage.swift serves from.
     static let folder = "Contents/Resources/Phone"
@@ -73,8 +74,8 @@ enum GamePhones {
         try page.write(to: target)
     }
 
-    /// Whether the page published now differs from the one in the game's installed copy: a change that can't go into the
-    /// open game as it's played, since the game serves the page from its bundle.
+    /// Whether the page published now differs from the one in the game's installed copy: a change that a copy built by an
+    /// earlier Lamp, which serves the page from its bundle alone, can't take as it's played.
     static func changed(_ project: LampProject) -> Bool {
         guard takes(project) else { return false }
         let installed = try? ControllerSnapshot.read(project.installedURL.appendingPathComponent(folder))

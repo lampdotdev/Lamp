@@ -68,7 +68,8 @@ final class ControllerRuntimeTests: XCTestCase {
         // A new phone fetches the page and where to open its socket from the game alone, and joins.
         let (pageStatus, body) = try await get(pagePort, "/")
         XCTAssertEqual(pageStatus, 200)
-        XCTAssertEqual(String(decoding: body, as: UTF8.self), "<title>Pad</title>")
+        let served = String(decoding: body, as: UTF8.self)
+        XCTAssertTrue(served.hasPrefix("<!--lamp-phone ") && served.hasSuffix("-->\n<title>Pad</title>"), "the page, marked with its version: \(served)")
         let art = try await get(pagePort, "/art/pad.svg")
         XCTAssertEqual(art.0, 200)
         let relay = try JSONSerialization.jsonObject(with: try await get(pagePort, "/lamp-relay.json").1) as? [String: Any]
