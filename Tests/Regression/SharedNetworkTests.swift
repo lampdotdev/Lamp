@@ -32,6 +32,22 @@ final class SharedNetworkTests: XCTestCase {
         XCTAssertNil(NetworkPolicy(origins: ["https://x.example"], unrestricted: true).contentSecurityPolicy(own: own))
     }
 
+    /// A site its host lets the page connect to (Lamp's relay in the TV preview) is only for connecting: nothing is loaded
+    /// from it, and only its exact port is open.
+    func testAConnectionOnlySiteIsOnlyConnectedTo() {
+        let own = "lamp-tv://app"
+        let csp = NetworkPolicy(origins: ["https://api.example"]).contentSecurityPolicy(own: own, connect: ["ws://127.0.0.1:61234/", "not a site"]) ?? ""
+        let directives = Dictionary(csp.split(separator: ";").map {
+            let parts = $0.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
+            return (String(parts[0]), parts.count > 1 ? String(parts[1]) : "")
+        }, uniquingKeysWith: { a, _ in a })
+        XCTAssertEqual(directives["connect-src"], "'self' lamp-tv://app https://api.example ws://127.0.0.1:61234 data: blob:", csp)
+        for (name, sources) in directives where name != "connect-src" {
+            XCTAssertFalse(sources.contains("127.0.0.1"), "\(name) loads nothing from it: \(csp)")
+        }
+        XCTAssertFalse(csp.contains("not a site"))
+    }
+
     func testTheSitesAreTheOnesTheSheetNamed() throws {
         // Lamp's own Native.swift and three.js, which a test run has none of Lamp's resources for.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

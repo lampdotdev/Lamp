@@ -203,6 +203,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // A shared page is held in its preview to what it's held to as an app (`SharedNetwork`).
         files.policy = SharedNetwork.policy(for: project)
         files.own = "\(Self.scheme)://app"
+        files.connect = files.policy?.restricts == true ? await Self.relaySites(project) : []
         lastPictured = nil
         // WebKit keeps the scripts and styles a page loaded and serves them again for the same address, so an
         // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
@@ -242,6 +243,17 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Its scripts start on load; a moment more lets a first screen draw and take focus.
         try? await Task.sleep(for: .milliseconds(600))
         return nil
+    }
+
+    /// The controllers relay a shared game's page opens its own socket to here (`controllerSession`, which hands it out
+    /// at the address the preview reaches Lamp at), once the relay listens: the one site on this Mac the page may connect
+    /// to beyond its own, and only at the relay's port now, so every other port stays closed to it. None for a page that
+    /// takes no players. Asked before the page loads, since a page's rules are the ones its files came with.
+    static func relaySites(_ project: LampProject) async -> [String] {
+        guard Store.servesPhonePage(project) else { return [] }
+        ControllerRelay.open(project.id)
+        guard let port = await ControllerRelay.ready() else { return [] }
+        return ["ws://127.0.0.1:\(port)"]
     }
 
     /// Starts a navigation and waits for it to finish, fail, or ten seconds to pass.
@@ -684,6 +696,9 @@ final class StagedFiles: NSObject, WKURLSchemeHandler {
     /// the app around it serves it with (`LampPageGuard`).
     var policy: NetworkPolicy?
     var own = "lamp-tv://app"
+    /// Where the page may connect beyond its sites while it's open here, and load nothing from: Lamp's controllers relay,
+    /// at the port it listens on now (`TVPreview.relaySites`). Never kept with its sites.
+    var connect: [String] = []
 
     private static let types = ["html": "text/html", "htm": "text/html", "js": "text/javascript", "mjs": "text/javascript",
                                 "css": "text/css", "json": "application/json", "wasm": "application/wasm", "svg": "image/svg+xml"]
@@ -715,7 +730,7 @@ final class StagedFiles: NSObject, WKURLSchemeHandler {
 
     /// The rules every response of a shared page carries, a missing file's too.
     private var rules: [String: String] {
-        guard let csp = policy?.contentSecurityPolicy(own: own) else { return [:] }
+        guard let csp = policy?.contentSecurityPolicy(own: own, connect: connect) else { return [:] }
         return ["Content-Security-Policy": csp, "X-DNS-Prefetch-Control": "off"]
     }
 

@@ -87,6 +87,11 @@ before Chromium 60 opens a data: document as a whole page with no policy. So the
 whose browser holds it (`TVNetworkGuard.holds`: Tizen 5 or webOS 5 and later, with a version Lamp has read) counts as
 guarding the app; on an older one Play says so.
 
+In the TV preview a shared TV app is held by the same `NetworkPolicy`, served with every file (`StagedFiles`), and the
+only way out of it Lamp adds is its relay: once the relay listens, a game that takes players may connect to it at
+`ws://127.0.0.1:<its port>` and load nothing from there (`TVPreview.relaySites`, `contentSecurityPolicy`'s `connect`).
+That's asked before the page loads, never kept with the app's sites, and every other port on this Mac stays closed.
+
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
 `Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-pages`
 skill, which the `phone-controllers` skill, offered to every prompt, points to once the agent has weighed whose phones
