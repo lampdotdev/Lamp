@@ -220,6 +220,11 @@ enum Sandbox {
         if let tmp = ProcessInfo.processInfo.environment["TMPDIR"], !tmp.isEmpty {
             lines.append("(allow file-read* file-write* (subpath \(quotedPath(real(tmp)))))")
         }
+        // The Xcode in use, read only, wherever it is: one kept on another disk (under /Volumes, or a link from
+        // /Applications into one) is closed above, and every compile would find no SDK.
+        for folder in developerFolders() {
+            lines.append("(allow file-read* (subpath \(quotedPath(folder))))")
+        }
         // Both Lamps' folders (keys, sign-ins, every other app) stay closed; the app's own folder opens.
         for name in Edition.lampFolderNames {
             lines.append("(deny file-read* file-write* (subpath \(quotedPath(support + "/" + name))))")
