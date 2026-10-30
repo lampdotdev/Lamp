@@ -9882,7 +9882,12 @@ final class Store: ObservableObject {
             if owner.stoppedForMessage {
                 owner.stoppedForMessage = false
                 // Nothing in it for the person: the change is in their game, and they've moved on. The agent says nothing of it.
-                return (200, ["text": "Your change is in the game open on the person's Mac, and they've written again: go on with their new message. This is Lamp's own detail, not something to tell them."])
+                // Said to be on screen only when a step put these very sources into the open game.
+                var mac = project
+                mac.chosen = .mac
+                let shown = !owner.shownSources.isEmpty && owner.shownSources == Runtime.fingerprint(mac)
+                return (200, ["text": (shown ? "Your change is in the game open on the person's Mac, and they've written again" : "The person has written again")
+                    + ": go on with their new message. This is Lamp's own detail, not something to tell them."])
             }
             return (200, ["text": error.localizedDescription])
         }
