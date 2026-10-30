@@ -817,6 +817,8 @@ enum EngineSignIn {
         }.status
         let wasCancelled = cancelled()
         _ = await isSignedIn(engine)
+        // Setup counts the sign-in (`SetupCheck.run`), so requests waiting for it start wherever it was made from.
+        await Store.shared.recheckSetup()
         return wasCancelled ? nil : status == 0
     }
 

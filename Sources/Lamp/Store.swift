@@ -2093,7 +2093,7 @@ final class Store: ObservableObject {
     }
 
     /// What a shared app waits for before its review can open: what builds, on the desk, then Apple's tools.
-    private func askForWhatsMissing() {
+    func askForWhatsMissing() {
         if !setup.hasBuilder || !setup.hasAgent {
             askForSetup()
         } else if !setup.hasBuildTools, !setup.installRequested {
@@ -3506,6 +3506,9 @@ final class Store: ObservableObject {
     private var importRequest: UUID?
 
     private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
+
+    /// A shared app is kept for its review.
+    var hasWaitingImport: Bool { waitingImport.count > 0 }
 
     /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
     /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a

@@ -212,7 +212,8 @@ struct OnboardingView: View {
             // Once Lamp's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
-            store.openWaitingImport()
+            // A shared app opened during the welcome waits for setup, which nothing else asks for now.
+            if !store.openWaitingImport(), store.hasWaitingImport { store.askForWhatsMissing() }
             // A remix from the site: the desk's own copy of its starter, just put there, opened with the request in
             // its box for them to send.
             if let remix = Onboarding.keptRemix {
