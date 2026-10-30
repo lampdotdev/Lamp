@@ -33,8 +33,11 @@ const logs = [];
 // The browser's own functions, kept before the runtime starts watching what the game's code leaves running (see
 // "Running the game's code again"): the runtime's own listeners, timers and sound go through these, so they stay when
 // the game's are taken away.
+// A runtime run outside a page (Lamp's tests) may have none of them, and uses whatever the target has.
+const events = globalThis.EventTarget && EventTarget.prototype;
 const browser = {
-    listen: EventTarget.prototype.addEventListener, unlisten: EventTarget.prototype.removeEventListener,
+    listen: events ? events.addEventListener : function (...rest) { return this.addEventListener(...rest); },
+    unlisten: events ? events.removeEventListener : function (...rest) { return this.removeEventListener(...rest); },
     setTimeout: window.setTimeout, clearTimeout: window.clearTimeout, setInterval: window.setInterval, clearInterval: window.clearInterval,
     frame: window.requestAnimationFrame, cancelFrame: window.cancelAnimationFrame,
     AudioContext: window.AudioContext || window.webkitAudioContext, Worker: window.Worker,
@@ -787,6 +790,8 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         }
         // The first frame drawn from a snapshot has gone without an error: from here an error is the game's own.
         guarding = false;
+        shoot();
+        lift();
         live();
         nextFrame(loop);
     };
@@ -1474,6 +1479,8 @@ async function runAgain(change, state) {
 
     tellHost(change.gen, 'rerun', why);
     log(`Lamp: running the game's code again in place for a change (${why}), keeping where the player was.`);
+    // The frame on screen now, held there until the new code draws its first.
+    const still = await new Promise(done => { shooting = done; after(250, () => { if (shooting === done) { shooting = null; done(null); } }); });
     const again = runningAgain = { change, state, began, called: false, kept: [], built: [], done: null };
     const done = new Promise(resolve => { again.done = resolve; });
     // The old code stops: its frame loop, what it asked to have taken away, and what it left running.
@@ -1494,7 +1501,7 @@ async function runAgain(change, state) {
     voices.clear();
     if (musicVoice) { sound.stop(musicVoice); musicVoice = null; }
     for (const k of kept.values()) k.used = false;
-    await putPage(page, paths);
+    await putPage(page, paths, still);
     pageText = text;
     // The new code, each module once, in order, importing the others' new versions.
     const addresses = new Map();
@@ -1534,7 +1541,7 @@ async function runAgain(change, state) {
 
 // The page as the new HTML has it: what isn't a script in its head (a stylesheet it already links stays, unless it
 // changed), and its body, with Lamp's own elements (the touch controls, the Reload button) kept.
-async function putPage(page, paths) {
+async function putPage(page, paths, still) {
     const head = document.head, links = [...head.querySelectorAll('link[rel~="stylesheet"]')], loads = [], stays = new Set();
     for (const node of [...head.children]) if (node.tagName !== 'SCRIPT' && !links.includes(node)) node.remove();
     for (const node of [...page.head.children]) {
@@ -1556,12 +1563,54 @@ async function putPage(page, paths) {
     const body = document.body;
     for (const a of [...body.attributes]) body.removeAttribute(a.name);
     for (const a of [...page.body.attributes]) body.setAttribute(a.name, a.value);
+    // The old page stays in view, still, over the new one until the new code has drawn (`lift`): its elements go last,
+    // so the new code finds its own by id, and the frame it showed stands where the canvas was.
+    const canvas = renderer && renderer.domElement;
+    const old = [...body.childNodes].filter(n => n !== touchLayer && n !== pill && n !== canvas && n !== curtain);
+    if (curtain) curtain.remove();
+    curtain = document.createElement('div');
+    curtain.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none';
+    if (still) curtain.append(still);
+    curtain.append(...old);
     // Scripts from the new page don't run as they go in: the modules run from runAgain.
-    body.replaceChildren(...[...page.body.childNodes].map(n => document.adoptNode(n)), ...[touchLayer, pill].filter(Boolean));
+    body.replaceChildren(...[...page.body.childNodes].map(n => document.adoptNode(n)), curtain, ...[touchLayer, pill].filter(Boolean));
+}
+
+// The frame just drawn, as a picture placed where the game's canvas is, for runAgain to hold on screen; asked of the
+// next frame, since a WebGL canvas keeps what it drew only until the frame is shown.
+let shooting = null, curtain = null, lifting = 0;
+function shoot() {
+    if (!shooting) return;
+    const done = shooting;
+    shooting = null;
+    let still = null;
+    try {
+        const drawn = renderer && renderer.domElement;
+        const canvas = drawn && (drawn.tagName === 'CANVAS' ? drawn : drawn.querySelector && drawn.querySelector('canvas'));
+        if (canvas && canvas.width && canvas.height) {
+            const r = canvas.getBoundingClientRect();
+            still = document.createElement('canvas');
+            still.width = canvas.width; still.height = canvas.height;
+            still.getContext('2d').drawImage(canvas, 0, 0);
+            still.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`;
+        }
+    } catch (e) { still = null; }
+    done(still);
+}
+// Once the new code has drawn a couple of frames, the old page held over it fades away.
+function lift() {
+    if (!curtain || runningAgain || ++lifting < 3) return;
+    const going = curtain;
+    curtain = null;
+    lifting = 0;
+    going.style.transition = 'opacity 0.2s';
+    going.style.opacity = '0';
+    after(250, () => going.remove());
 }
 
 function ranAgain(again) {
     runningAgain = null;
+    lifting = 0;
     for (const [id, k] of kept) if (!k.used) { letGo(k); kept.delete(id); }
     const said = [again.kept.length ? `kept ${again.kept.join(', ')}` : '', again.built.length ? `built again ${again.built.join(', ')}` : ''].filter(Boolean);
     log(`Lamp: the game's code ran again in place${said.length ? ` (${said.join('; ')})` : ''} in ${Math.round(performance.now() - again.began)} ms.`);
