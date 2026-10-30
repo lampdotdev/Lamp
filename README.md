@@ -148,7 +148,7 @@ on the desk, and Lamp makes it for there:
 - **Devices Lamp doesn't know yet** (a speaker, a smart plug, a projector) can be taken on: Lamp finds them on your
   network when you ask, and the agent writes how to reach one, in a form Lamp checks and limits, never code it runs.
 
-Lamp looks at your network only when you ask it to, and what it finds stays on this Mac.
+Lamp looks at your network only when you ask it to. What it finds stays on this Mac, except that it's told to the AI that builds your apps when that AI works on something for your devices (device names often include people's names); it's never put in an app or sent anywhere else.
 
 ## Choosing the AI
 
