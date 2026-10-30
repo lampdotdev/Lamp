@@ -14,7 +14,8 @@ depends on how an app is made and run, not on the device alone. What follows is 
 ## Whose phones?
 
 - **Several people's** (family, friends, a class): each phone has to join with nothing to install. That's a page for
-  phones: they scan a QR code on the screen and play in their browser. The phone-pages skill says how to build it.
+  phones: they scan a QR code on the screen and play in their browser. The phone-pages skill says how to build it,
+  held sideways by default.
 - **Only the person's own phone**: on an iPhone, an app of the wish's own, made natively, is the controller: it has
   the phone's own feel, hardware and haptics, and keeps its data, and joins as a player with `LampController` over
   `LampWish`. Installing it goes the way the table says for that phone. An Android app has no `LampController`, so it

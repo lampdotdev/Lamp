@@ -22,7 +22,7 @@ pad.axis('stick', x, y);                         // a stick or slider, each from
 pad.send({ ready: true });                       // JSON to the TV app, 16 KB at most
 ```
 
-Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped. The number comes from the TV app once it's there (`onPlayer`), so show the state until then.
+Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped. The number comes from the TV app once it's there (`onPlayer`), so show the state until then. `onState` runs during `connect()` itself, before it returns, so set up everything it touches first: a first draw that throws there stops the page's script and leaves the phone on its loading text.
 
 On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game. It starts with a host:
 
@@ -49,6 +49,26 @@ Lamp.controllers.start();
 ```
 
 In a game, the join card is a screen of its own, not part of the title (the game-ui skill has the flow): show it at once when the player goes to join, or from setup or pause to add players, and a game played only with phones may open on it. While it's up it says when the game is getting ready for phones (until the first link), when phones can't join and when it's trying again. Keep the session running behind it: hiding the card never calls `stop()`, drops a player or starts again. While it's hidden, keep the newest `onLink` address and the newest error rather than a picture of an old code, and draw the card from those when it opens, finding its elements again, since a change to the code may have made them anew. Register the handlers before `start()` in every case, and keep the links short-lived. A page that isn't a game (a second screen, a file sent to the TV) may show its code from the start. Draw into the same canvas each time `onLink` calls again. A code that couldn't be drawn and phones that can't join (`start()` rejects, `onError`) each say so in the card; neither hides it as if the game had no phones. In a game drawn on a canvas (three.js, Phaser), put the join card in HTML over it, or draw `LampQR.matrix(url)` (its `size` and `dark(x, y)`) into the scene yourself, with a light border four modules wide.
+
+### Held sideways
+
+A page of game controls is laid out for a phone on its side: two thumbs, with movement on the left, the main action on the right, and identity, connection and Back quiet in the middle or along the top. Compose it for that shape rather than stretching an upright pad. A page that isn't game controls (a second screen, a file sent to the TV) keeps whatever suits it, and so does a page already made: don't add a rotation gate to it unasked.
+
+Use `viewport-fit=cover`, `env(safe-area-inset-*)` on every side, since the notch moves, and `100dvh`, not `100vh`, so the browser's bars don't hide a control. A phone can't be forced sideways: `screen.orientation.lock('landscape')` works only in some browsers and usually only in full screen, so try it after a tap if you like and expect it to fail. Never rotate the page with CSS to fake it.
+
+Held upright during play, show a state in the game's own look: "Turn your phone sideways", with the player's name and the connection, and no controls live. Offer "Use upright", a compact layout, for a phone with rotation locked or a player who needs it. Keep Back reachable. Joining and typing a name may stay usable upright, and an open keyboard changes the viewport's shape, so decide this by the game's phase as well as by `(orientation: landscape)`.
+
+A turn never ends the link: the page keeps its player and restores the current phase, and one phone turning doesn't pause the party. A finger may be down as it turns, so the page tracks what's held and lets it go, and a control needs a fresh press afterward:
+
+```js
+var held = {};
+function press(name, down) { if (down) held[name] = true; else delete held[name]; pad.button(name, down); }
+function letGo() {
+  Object.keys(held).forEach(function (name) { press(name, false); });
+  pad.axis('stick', 0, 0);                         // every axis this page moves
+}
+matchMedia('(orientation: landscape)').addEventListener('change', letGo);
+```
 
 ## Files
 

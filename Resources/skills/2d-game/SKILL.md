@@ -94,6 +94,10 @@ What Lamp has changed in Phaser, so its usual code works here:
   play (`this.scene.launch('pause'); this.scene.pause()`), which reads the pad itself and resumes play
   (`this.scene.resume('play'); this.scene.stop()`). Keep the game's state (score, lives, level) in a plain object
   passed in `this.scene.start('play', state)`, not spread over scenes.
+- **A map as a menu**, where the game-ui skill's example suits: the stops in an array, one sprite tweened between them
+  with `this.tweens.add` as the choice changes, `this.cameras.main.pan` or `zoomTo` from the title's view, and input
+  ignored only for the tween's few frames so a fast press can go on to the next stop. `snapshot()` keeps the stop and the
+  camera's position, and `create` sets them directly from `pendingRestore()`.
 - **The step**: move by `delta`, and give Arcade physics the work of falling, sliding and colliding. Arcade steps its
   world at a fixed 60 times a second whatever the screen's rate (its `fps`, the default), so jumps reach the same
   height on a 120 Hz Mac and a 50 Hz TV. Game logic that must be exact (a puzzle's grid, a rhythm) counts in its own
