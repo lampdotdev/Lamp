@@ -318,10 +318,10 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// icon, which is answered (the person draws icons, or something draws them by Settings' choices) and
     /// folded away while the app's own pictures aren't. An offer that isn't about the icon then takes that
     /// card's place (the line at the index given).
-    enum Standing: Equatable { case new, offered, replaces(Int) }
+    enum Standing: Equatable { case new, offered(Int), replaces(Int) }
     static func standing(of offer: SetupOffer, in lines: [LogLine], iconAnswered: Bool) -> Standing {
         guard let index = lines.firstIndex(where: { $0.setupOffer == offer }) else { return .new }
-        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered
+        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered(index)
     }
 
     /// Whether a chat with these lines should get a line offering to draw the design `key`: not when it has
@@ -6609,6 +6609,7 @@ final class Store: ObservableObject {
         if intent == .game, kind != .game { said.append("It's a game: read the game skill with `read_skill` before you write it.") }
         said.append(watchLine(for: part, wanted: target.rows.contains("watch"), had: false))
         said.append(Skills.forNewDevices(target.rows))
+        said.append(Agent.Rules.newAppAI)
         said.append("Done: the wish has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. It's a new app "
                     + "with data of its own, starting empty: nothing another app of the wish saved is in it unless its code reads it from that app. Build it in this "
                     + "request, made to work with the rest. `make_app_for` and `remove_app` name it with `app` \"\(part.dir.lastPathComponent)\"; `look_at_app` and `use_app` reach it with `part` \"\(Parts.address(of: part, among: apps(of: current(wish) ?? wish)))\". "
@@ -6627,6 +6628,8 @@ final class Store: ObservableObject {
         // What this says replaces what Lamp still had to tell about the app since it made it from the wish's list.
         if let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }) { Parts.forgetMade(about: app, in: wish) }
         var said: [String] = []
+        // An app given its first kind is a new app being built: the moment the builder weighs AI for it.
+        if app.undecided != nil { said.append(Agent.Rules.newAppAI) }
         if kind != app.platform || app.undecided != nil || (kind == .device && target.integration != app.integration) {
             let (status, answer) = await convert(app, to: kind, integration: kind == .device ? target.integration : nil)
             guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed") else {
@@ -11089,18 +11092,23 @@ final class Store: ObservableObject {
     /// any app; the agent's, which come with a reason of their own, only from what was turned down in this
     /// one. Returns what happened, in words for the agent.
     @discardableResult
-    func offerSetup(_ project: LampProject, _ offer: SetupOffer, because reason: String, fromAgent: Bool = false) -> String {
+    func offerSetup(_ project: LampProject, _ offer: SetupOffer, because reason: String, fromAgent: Bool = false, asked: Bool = false) -> String {
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
         guard resolution.tier != .best else {
             return "\(offer.capability.title) is already set up: \(resolution.answer ?? ""). Nothing to offer."
         }
-        guard !offer.declined(in: fromAgent ? project : nil) else {
+        if asked { offer.undecline(in: project) }
+        guard asked || !offer.declined(in: fromAgent ? project : nil) else {
             return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
         }
         // An icon's card is answered apart from the app's pictures (it follows Settings' choices and the
         // choice to draw by hand, not the app's own models), so it can be all set while this isn't.
         let iconAnswered = AppAI.resolve(.pictures, for: project, in: .icon).tier == .best
         switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconAnswered: iconAnswered) {
+        case .offered(let index) where asked:
+            // Asked for by the person: the card comes back to the end of the chat, where they're looking.
+            logs[project.id]?.remove(at: index)
+            log(project, .offer, reason, offer: offer)
         case .offered: return "Lamp already offered this in the chat. Don't offer it again."
         case .replaces(let index):
             // The card there was about the icon and is folded away, answered. This is about pictures the
@@ -11799,7 +11807,7 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
@@ -11884,6 +11892,7 @@ final class Store: ObservableObject {
             await EngineInstall.lookForPersonsCopies()
         }
         if route == "/ai/status" { return await aiStatus(for: project) }
+        if route == "/ai/setup" { return askedForSetup(request, for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
         // The About window's credits as they are now (`LampAbout`): a credit added since the app was installed shows.
@@ -12354,10 +12363,49 @@ final class Store: ObservableObject {
     private func aiStatus(for project: LampProject) async -> (Int, [String: Any]) {
         await EngineSignIn.refresh()
         var reply: [String: Any] = [:]
+        var details: [String: Any] = [:]
+        let ready = readyFor(project)
         for capability in Capability.allCases {
-            reply[capability.rawValue] = readyFor(project) && AppAI.resolve(capability, for: project).tier != .none
+            let resolution = AppAI.resolve(capability, for: project)
+            reply[capability.rawValue] = ready && resolution.tier != .none
+            details[capability.rawValue] = AppAI.details(resolution)
         }
+        // Actions are asked of the same route as `/ai/act`'s probe, so the two never disagree.
+        let act = AppAct.status(appModel: AppModels.load(project).text)
+        reply["act"] = ready && act["available"] as? Bool == true
+        details["act"] = act
+        if !ready {
+            for (key, value) in details {
+                guard var one = value as? [String: Any] else { continue }
+                one["available"] = false
+                one["reason"] = "Lamp is still being set up."
+                one["setup"] = "lamp"
+                details[key] = one
+            }
+        }
+        reply["details"] = details
         return (200, reply)
+    }
+
+    /// `LampAI.openSetup`: the person pressed the app's own "Set up in Lamp", so the setup card goes in the app's chat
+    /// even where Lamp wouldn't raise it by itself (a "Not Now" before). Actions are set up as the app's text.
+    private func askedForSetup(_ request: Gateway.Request, for project: LampProject) -> (Int, [String: Any]) {
+        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        let asked = body["capability"] as? String ?? "text"
+        guard let capability = Capability(rawValue: asked == "act" ? "text" : asked) else {
+            return (400, ["error": "There's no capability called \(asked)."])
+        }
+        let reason = Self.askedReason(capability, AppAI.resolve(capability, for: project), app: project.name)
+            ?? Self.offerReason(capability, for: project)
+        let said = offerSetup(project, SetupOffer(capability: capability), because: reason, asked: true)
+        return (200, ["shown": said.hasPrefix("Lamp showed"), "said": said])
+    }
+
+    /// Why the card is there when the person asked for it themselves: what the resolution says is wrong, when
+    /// something answers in a way that isn't what was chosen (a removed model on this Mac). Nil for the usual reasons.
+    static func askedReason(_ capability: Capability, _ resolution: Resolution, app: String) -> String? {
+        guard resolution.tier == .works, let note = resolution.note else { return nil }
+        return "\(app) can't use the AI chosen for it. \(note)"
     }
 
     /// What an app on the person's own phone keeps so its AI works away from the Mac:
