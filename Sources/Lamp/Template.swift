@@ -8700,6 +8700,11 @@ enum Template {
                 LampShowcase.note("act", showcaseText(frame), action.action, target)
                 // The reel's cursor gets there before anything happens.
                 try? await Task.sleep(for: .seconds(0.3))
+            } else if let x = action.x, let y = action.y, let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview {
+                // A spot given in the picture's pixels (what isn't listed): the reel's cursor goes there too.
+                let scale = LampRuntime.scale(of: window)
+                LampShowcase.note("act", showcaseText(CGRect(x: x / (frame.bounds.width * scale), y: y / (frame.bounds.height * scale), width: 0, height: 0)), action.action, "a spot")
+                try? await Task.sleep(for: .seconds(0.3))
             }
             // Taken from a run-loop timer (`after`), as `perform` takes its steps: an action that opens a dialog doesn't
             // return until it closes, and the steps after it are how it gets answered. Those resume on the main queue,
