@@ -8577,11 +8577,11 @@ final class Store: ObservableObject {
                     continue
                 }
                 // A game's page also takes a step while the agent's look plays the game in the hidden copy, which can
-                // run for minutes: only the look's build, which writes the same folders, is waited for.
+                // run for minutes. Not before: a look puts its change into the open game itself, first.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.building, !turn.keptOpen, turn.applying == nil,
                       let current = current(project), LiveReload.eligible(current) || stepsPage(current),
-                      !turn.look.inProgress || stepsPage(current),
+                      !turn.look.inProgress || (stepsPage(current) && turn.stopHidden != nil),
                       isRunning(current), !Runtime.waitsForReload(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false
@@ -9854,7 +9854,10 @@ final class Store: ObservableObject {
     }
 
     private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
-        // Lamp's own checking, out of sight: nothing in the chat says it's happening.
+        // Lamp's own checking, out of sight: nothing in the chat says it's happening. The change is in the open game by now,
+        // so the activity line says what the agent said it's checking, never the updating that came before.
+        let wish = self.wish(of: project).id
+        if let doing = logs[wish]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty { note(doing, for: project) }
         let played: GameKit.Played
         var hiddenProcess: Process?
         let id = project.id
