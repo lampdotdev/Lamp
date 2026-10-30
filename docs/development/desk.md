@@ -3,14 +3,26 @@
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
 Lamp's window is the desk and only the desk (`WishDesk`, `Desk.swift`): no wish's chat is ever drawn in it. It's drawn
-on Lamp's paper (`Paper`, in LampSidebarKit, which the welcome and the chat draw from too): the person's wishes in one
-list, the place to make a new one above it, and down the side the person's devices. Everything someone
+on Lamp's paper (`Paper`, in LampSidebarKit, which the welcome and the chat draw from too): one list of the person's
+wishes and the starters Lamp comes with, the place to make a new one above it, and down the side the person's devices. Everything someone
 makes with Lamp is a **wish** in what they read; a wish may be made of an app, a widget, a menu bar item, a watch app,
 so "app" stays where it means that piece. A wish is a thing to change as much as to use, and it may run in several
 places, so the desk shows none of a Mac's icon grid and makes no difference between a game and an app.
 
-**The list** (`DeskList.swift`) is every wish: those Lamp came with and those the person made, together, with nothing
-set apart for the starters (a starter deleted is gone; a remix of it from the site puts it back). Each row is the wish's
+**The list** (`DeskList.swift`) has two sections (`DeskList.sections`). **Yours**, on top, is the person's own: what they
+made, remixed or opened, and any starter's copy they've changed. **Starter apps**, under it, is every starter this Lamp
+ships (`Starters.bundled`), once each: its untouched copy, or, where there's none on the desk (the person changed theirs,
+deleted it, or the starter came with a later Lamp), the starter itself (`DeskList.Fresh`), which is copied only once it's
+opened or remixed (`Store.open(starter:)`, through `put(starter:)`), so no second wish waits on disk for it. Changed
+means what Start Over goes by (`Store.original(toStartAgain:)`, below): since Remix changes a wish in place, the first
+change to a starter's copy moves it to Yours, and the starter is listed afresh. Where there are two untouched copies of
+one starter, the first stands for it and the other is the person's. Starter apps' heading says how many there are
+("Starter apps · 15") with a disclosure control, and stays when it's closed; it's open for someone with nothing of
+their own yet and closed once they have, until the person opens or closes it, which is kept (`deskStartersOpen`). An
+untouched copy there has no Delete in its menu and isn't deleted by dragging it to the Trash (`AppMenu.deletable`,
+`WishDrag.deletable`): closing the section is how it's tidied away. Yours is headed only when it has something in it. Until the first reading of
+the wishes is in, with which copies have changed (asked of git for all at once), neither section is drawn, so a changed
+copy never passes through Starter apps on the way to Yours. Each row is the wish's
 icon (narrower than a picture, and easier to find again down a list), its name and its about.json line, who made it, where
 it runs (each place its apps open, `openPlaces`), when it last changed, and **Open** with the wish's menu, ⋯, beside it (`DeskListRow`, `DeskWishMore`),
 in a narrow window only the icon, the name and the buttons, the rest being in the side panel (`DeskListRow.compact`); all read from its files away from the main thread for each change to the wishes and as each turn ends (`DeskEntry`).
@@ -27,6 +39,8 @@ panel, beside the simulator, the emulator or Lamp's preview that shows it, or on
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
 (`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over and Send Changes Back… where they apply, Wish Info
 (its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
+A starter not on the desk yet has Open alone, and its side panel offers Remix it as any wish's does; the arrows move the
+pick through both sections, and File → Duplicate… acts on no wish while one is picked.
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
 for the menu. Dragged out
 of Lamp a row is the wish's shared file, or the app itself in the Dock or the Applications folder (`WishDrag`). A dot
@@ -108,8 +122,8 @@ Lamp ships built, and the first request to any wish asks for what builds (`Store
 desk), signed in where the choice needs it, then Apple's tools where it needs them, the request waiting in its chat. A
 shared file or repository opened before then asks the same way and waits for its review. A starter from the site opens at
 once, and only a wish from the site, which has to be made, goes on to the welcome's setup. They're copied once, on the first launch, each saved as its first version ("From Lamp"),
-and from then on they're the person's: a later Lamp with other starters gives those only to new people, and brings the
-copies of the ones it still ships up to them ("The original", below). As soon
+so they open at once: a later Lamp with other starters lists those under Starter apps, copied when they're opened, and
+brings the copies of the ones it still ships up to them ("The original", below). As soon
 as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
 their chats; nothing on the desk shows it; one clicked before its build is done glows, says it's opening, and opens when it's
 ready (`openWhenReady`). A
@@ -209,9 +223,11 @@ the starter as this Lamp ships it (`Starters.original`), behind or merged up to 
 version (`Store.startOverBegun`), so it lands on the current starter with the chat started over ("Started over from the latest original"), one Undo away; a wish from
 GitHub or a shared file still goes back to what arrived.
 
-A starter deleted from the desk is gone, as any wish is; a remix of it from the site puts a fresh copy back
-(`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put on the desk, which the first launch
-uses too), saved and built out of sight like the first launch's.
+A changed starter's copy deletes as any wish does, and the starter is still listed under Starter apps. An untouched copy
+deleted some other way (an earlier Lamp, the chat) is never stuck gone: the starter is listed in its place. Opening it
+there, or a remix of it from the site, puts a fresh copy back (`Store.put(starter:)`, through `Store.add(starter:)`, the
+one way a starter is put on the desk, which the first launch uses too), saved and built out of sight like the first
+launch's; one opened before its build is done says "Getting it ready…" (`openWhenReady`).
 
 **A starter added or changed in how it looks gets a new preview in the same change** (`StartersTests` fails
 without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,

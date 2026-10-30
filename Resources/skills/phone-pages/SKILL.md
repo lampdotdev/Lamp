@@ -15,14 +15,18 @@ On the phone, the page loads `lamp-controller.js`, which Lamp serves beside it (
 var pad = LampController.connect({
   onPlayer: function (n) { },      // this phone's player number (1, 2, ...)
   onMessage: function (data) { },  // what the TV app sent this phone, or every phone
-  onState: function (state) { }    // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
+  onState: function (state) { },   // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
+  busy: function () { return false; },  // true while opening again would lose something (a drawing, a form)
+  onUpdate: function (apply) { }   // leave it out unless the page must choose: call apply() to open the newer page
 });
 pad.button('a', true); pad.button('a', false);  // a button held, then let go
 pad.axis('stick', x, y);                         // a stick or slider, each from -1 to 1
 pad.send({ ready: true });                       // JSON to the TV app, 16 KB at most
 ```
 
-Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped. The number comes from the TV app once it's there (`onPlayer`), so show the state until then.
+A page open on a phone takes what you save to Phone/ by itself where the host can, a few seconds later: it opens again as the same player once no button is held, no file is on its way, nothing is being typed and `busy` says false. So keep a form's or a drawing's work behind `busy`, or give `onUpdate` a button when only the person should choose. Phones and the TV don't switch at the same moment, so a change of what they send each other should still read the other side's old messages.
+
+Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped. The number comes from the TV app once it's there (`onPlayer`), so show the state until then. `onState` runs during `connect()` itself, before it returns, so set up everything it touches first: a first draw that throws there stops the page's script and leaves the phone on its loading text.
 
 `pad.button`, `pad.axis` and `pad.send` return false when nothing was sent: show that state, never a press that went nowhere.
 
@@ -35,6 +39,16 @@ A page of game controls is made for landscape: two thumbs, movement on the left,
 - Joining and typing a name may stay upright, and the keyboard changes the viewport's shape: decide what `@media (orientation: …)` shows from the game's phase too, so a keyboard never hides the name field behind "turn your phone".
 - Held upright during play, keep the player and the link on screen, show a themed "Turn your phone sideways", take no play gestures, and offer "Use upright" with a compact layout for someone who can't rotate. Keep Back reachable, and never pause the party for one phone turning.
 - If the phone turns during a press, send every held button's release and zero every active axis, drop the page's own pointer capture and gesture state, and ask for a fresh press. The page keeps track of what's held; never close the link to clear it. Turning back restores the phase as it was, with no new join and no reset.
+
+```js
+var held = {};
+function press(name, down) { if (down) held[name] = true; else delete held[name]; pad.button(name, down); }
+function letGo() {
+  Object.keys(held).forEach(function (name) { press(name, false); });
+  pad.axis('stick', 0, 0);                         // every axis this page moves
+}
+matchMedia('(orientation: landscape)').addEventListener('change', letGo);
+```
 
 ### Seeing the page
 

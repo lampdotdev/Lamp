@@ -1253,7 +1253,9 @@ final class Store: ObservableObject {
     /// (`deskPick`), else the chat in front. The pick stays apart from `selection`, which also says what's been read and
     /// which window asks the store's questions: a wish picked on the desk has had neither happen.
     func commandTarget(deskPick: LampProject.ID?) -> LampProject? {
-        deskPick.flatMap { id in projects.first { $0.id == id } } ?? selected
+        // A starter picked on the desk that isn't on it yet is no wish: nothing to act on.
+        if let deskPick { return projects.first { $0.id == deskPick } }
+        return selected
     }
 
     /// Whether Duplicate… can be chosen for a wish, in the File menu and the wish's own. `remix` asks again when it runs.
@@ -7375,7 +7377,8 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A starter put on the desk after the first launch (a remix of one from the site, once it was deleted): added, shown on the desk, and
+    /// A starter put on the desk after the first launch (opened from the desk's Starter apps, a remix of one from the site, New
+    /// Copy of the Original): added, shown on the desk, and
     /// saved and built out of sight like the first launch's (`prepareStarters`).
     @discardableResult func put(starter: Starters.Starter) -> LampProject? {
         guard let added = add(starter: starter) else { return nil }
@@ -8448,17 +8451,18 @@ final class Store: ObservableObject {
     /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
     /// the app installs the whole build anyway.
     /// `ownStep`: the build a game's step makes while it's the change being put in (`stepPage`), which doesn't wait for
-    /// itself; every other build waits for that change.
-    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false) async -> String? {
+    /// itself; every other build waits for that change. `phone`: the version of the phone page that step checked, the only
+    /// one it publishes.
+    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
-        let problem = await buildNow(project, inPlace: inPlace, ownStep: ownStep)
+        let problem = await buildNow(project, inPlace: inPlace, ownStep: ownStep, phone: phone)
         if glowing, problem != nil { AppTransition.end(project) }
         return problem
     }
 
-    private func buildNow(_ project: LampProject, inPlace: Bool, ownStep: Bool = false) async -> String? {
+    private func buildNow(_ project: LampProject, inPlace: Bool, ownStep: Bool = false, phone: String? = nil) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         // Only the wish, its apps all in folders of their own: nothing to build here.
         guard project.holdsApp else { return nil }
@@ -8503,7 +8507,7 @@ final class Store: ObservableObject {
         // A game's page for phones is copied where Lamp serves it from, wherever the game is built for (on a TV, with the
         // rest of its files, just below).
         if project.platform.target.takesPhones, !project.onTV {
-            do { try await TVs.stagePhone(project) } catch {
+            do { try await TVs.stagePhone(project, expecting: phone) } catch {
                 log(project, .detail, "Build failed:\n" + error.localizedDescription)
                 return error.localizedDescription
             }
@@ -8738,9 +8742,11 @@ final class Store: ObservableObject {
                 // run for minutes. Not while the look stages that copy, which reads the same folders.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.building, !turn.keptOpen, turn.applying == nil,
-                      let current = current(project), LiveReload.eligible(current) || stepsPage(current),
-                      !turn.look.inProgress || (stepsPage(current) && turn.stopHidden != nil),
-                      isRunning(current), !Runtime.waitsForReload(current),
+                      let current = stepped(project), LiveReload.eligible(current) || stepsPage(current) || stepsPhones(current),
+                      !turn.look.inProgress || (stepsPage(current) && turn.stopHidden != nil) || stepsPhones(current),
+                      isRunning(current) || stepsPhones(current),
+                      // A change waiting for Reload holds back the rest of the app, not a phone's page (`stepPhones`).
+                      !Runtime.waitsForReload(current) || stepsPage(current) || stepsPhones(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false
                           || turn.carriedSetAside == setAsideChanges[project.id]?.crash else { continue }
@@ -8751,17 +8757,21 @@ final class Store: ObservableObject {
                 // whole: in a progress line of what's in it (`progressSinceStep`), or by looking at these very sources in
                 // the hidden copy (`lookedSources`), which can take minutes the person would otherwise wait out. A save in
                 // between, half a piece of work, waits for one or the other.
-                if stepsPage(current), Date().timeIntervalSince(seenAt) < 3
+                let held = Runtime.waitsForReload(current)
+                if stepsPage(current), !held, Date().timeIntervalSince(seenAt) < 3
                     || (progressSinceStep(current, turn) == nil && turn.lookedSources[current.id] != now) { continue }
+                // Phones take theirs after the same pause: no change of the game is going on screen to narrate.
+                if stepsPhones(current) || held, Date().timeIntervalSince(seenAt) < 3 { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
                 let saved = seenAt
                 turn.applyingSources = now
-                if stepsPage(current) {
+                if stepsPage(current) || stepsPhones(current) {
                     turn.applying = Task { [weak self] in
                         guard let self else { return }
                         defer { turn.applying = nil }
-                        await stepPage(current, in: turn, saved: saved)
+                        if stepsPage(current), !held { await stepPage(current, in: turn, saved: saved) }
+                        else { await stepPhones(current, saved: saved) }
                     }
                     await turn.applying?.value
                     continue
@@ -8847,12 +8857,12 @@ final class Store: ObservableObject {
         return logs[wish(of: project).id]?.last { $0.kind == .progress && ($0.at ?? .distantPast) >= since }?.text
     }
 
-    /// The game's page as it is (each file's path, size and time), to tell a save that changed what's shown from one that
-    /// changed nothing the page is made of (notes, APP.md, a file saved again as it was).
+    /// The game's pages as they are (each file's path, size and time), its phone page among them, to tell a save that
+    /// changed what's shown from one that changed nothing they're made of (notes, APP.md, a file saved again as it was).
     private func pageSignature(_ project: LampProject) -> String {
-        let web = project.dir.appendingPathComponent(GameKit.webFolder)
         var hasher = SHA256()
-        let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])?.allObjects as? [URL] ?? [])
+        let files = [GameKit.webFolder, TVTemplate.phoneFolder]
+            .flatMap { FileManager.default.enumerator(at: project.dir.appendingPathComponent($0), includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])?.allObjects as? [URL] ?? [] }
             .sorted { $0.path < $1.path }
         for file in files {
             let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
@@ -8861,26 +8871,57 @@ final class Store: ObservableObject {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    /// The app a turn's saves are stepped into: the turn's own, or for a wish whose apps are all in folders of their own,
+    /// the one whose page is open or whose phones Lamp serves.
+    private func stepped(_ project: LampProject) -> LampProject? {
+        guard let app = current(project) else { return nil }
+        return app.holdsApp ? app : parts(of: app).first { stepsPage($0) || stepsPhones($0) }
+    }
+
+    /// Phones on a page Lamp serves (a game on a TV or the Xbox, a TV app, the TV preview) with no copy on this Mac being
+    /// stepped: each change of the phone page is published as it's saved, and a page open on a phone finds the new version
+    /// itself. A game hosting its own phones on this Mac is handed its page by `stepPage`.
+    private func stepsPhones(_ project: LampProject) -> Bool {
+        Self.servesPhonePage(project) && !stepsPage(project)
+    }
+
+    /// The phone page as it's saved, once its scripts parse, published only if what's copied is what was checked: a save
+    /// made meanwhile waits for the next step, so an open phone never reloads into something half written. Also how a game
+    /// open on this Mac, with a change of its page waiting for Reload, is handed a new phone page: that change stays held.
+    private func stepPhones(_ project: LampProject, saved: Date) async {
+        let source = project.dir.appendingPathComponent(TVTemplate.phoneFolder)
+        guard let checked = (try? ControllerSnapshot.read(source))?.version, checked != TVs.phoneVersion(of: project),
+              await GameKit.codeProblem(project, in: TVTemplate.phoneFolder) == nil,
+              (try? await TVs.stagePhone(project, expecting: checked)) == true else { return }
+        if stepsPage(project), PageLive.shared.takesPhonePage(project, at: .mac) { _ = await PageLive.shared.put(project, at: .mac) }
+        log(project, .status, "Updated the phone page")
+        log(project, .detail, "The phone page was published \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
+    }
+
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
+        // A turn's project is the wish while the game is one of its parts.
+        func stillOwned() -> Bool { !turn.stopped && (turns[project.id] === turn || turns[wish(of: project).id] === turn) }
         // Nothing the page is made of changed since the last step: nothing to put in, nor to say.
         let page = pageSignature(project)
         guard page != turn.shownPage else { return }
         // The line this step goes in for, and where it starts: a line the agent posts while it goes in is the next step's.
         // A step its look let in, with no line, is said in the words of the steps the agent took to make it.
         let words = progressSinceStep(project, turn) ?? doingSinceStep(project, turn), boundary = Date()
+        // Read before it's checked: what's published is that version or nothing (`TVs.stagePhone`).
+        let phone = (try? ControllerSnapshot.read(project.dir.appendingPathComponent(TVTemplate.phoneFolder)))?.version
         // Still being written, or broken: tried again once it changes.
-        guard await GameKit.codeProblem(project) == nil else { return }
+        guard await GameKit.codeProblem(project) == nil, await GameKit.codeProblem(project, in: TVTemplate.phoneFolder) == nil else { return }
         // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
         var mac = project
         mac.chosen = .mac
-        guard await build(mac, ownStep: true) == nil, turns[project.id] === turn, !turn.stopped, var current = current(project) else { return }
+        guard await build(mac, ownStep: true, phone: phone) == nil, stillOwned(), var current = current(project) else { return }
         current.chosen = .mac
         guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {
             AppTransition.end(current)
             return
         }
         // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
-        guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
+        guard stillOwned(), !Runtime.waitsForReload(current) else { return }
         turn.shownSources = Runtime.fingerprint(current)
         turn.shownPage = page
         turn.lastStepAt = boundary
@@ -9000,9 +9041,9 @@ final class Store: ObservableObject {
     /// installed as usual (a change of its Swift, a copy Lamp isn't hearing from, a page that didn't answer).
     private func pageInPlace(_ project: LampProject, at place: PageLive.Place, owner: Turn?, inFront: Bool) async -> Bool {
         guard PageLive.takes(project), PageLive.shared.isOpen(project, at: place) else { return false }
-        // The game on the Mac serves its phone page from its bundle: a change to the page goes in with the game installed
-        // again, so the open game, its phones and any that join have the same page.
-        if place == .mac, GamePhones.changed(project) { return false }
+        // A game on the Mac that can only serve its phone page from its bundle (an older Lamp built it): a change to the
+        // page goes in with the game installed again, so the open game, its phones and any that join have the same page.
+        if place == .mac, GamePhones.changed(project), !PageLive.shared.takesPhonePage(project, at: place) { return false }
         note("Updating \(project.name) in place…", for: project)
         let outcome = await PageLive.shared.put(project, at: place)
         switch outcome {
@@ -9018,7 +9059,7 @@ final class Store: ObservableObject {
             // Only the game runtime says `shown`: a screen, a web app or a game running its own loop opens again with its
             // own page, and the smoke goes as before (`install`).
             let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
-            if outcome == .went("swapped") { AppTransition.land(project) }
+            if outcome == .went("swapped") || outcome == .went("phone") { AppTransition.land(project) }
             else if saysShown, outcome == .went("rerun") || outcome == .went("reloading") {
                 awaitShown(project)
                 // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
@@ -12357,11 +12398,18 @@ final class Store: ObservableObject {
             }
             return Gateway.Page(status: 200, type: Self.pageType("json"), body: body)
         }
+        // Which version of the page is published now, for a page already open on a phone to find a newer one.
+        if names == [PhonePageServer.versionFile] {
+            guard let version = TVs.phoneVersion(of: project) else { return missing }
+            return Gateway.Page(status: 200, type: Self.pageType("json"), body: PhonePageServer.versionAnswer(version))
+        }
         // Only the staged copy's own files: no step up, nothing hidden, no empty name, nothing that isn't a plain file.
         guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") && !$0.contains("\0") }) else { return missing }
         guard let file = TVs.phoneFile(names, in: TVs.phoneFolder(for: project)),
               let data = try? Data(contentsOf: file) else { return missing }
-        return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: data)
+        let html = ["html", "htm"].contains(file.pathExtension.lowercased())
+        let body = html ? TVs.phoneVersion(of: project).map { PhonePageServer.marked(data, version: $0) } ?? data : data
+        return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: body)
     }
 
     /// The type a page's file is served as: the list a game's own phone page is served by too (`PhonePageServer`).
