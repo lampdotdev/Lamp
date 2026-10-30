@@ -5001,13 +5001,18 @@ final class Store: ObservableObject {
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.
         await EngineSignIn.refresh()
-        guard turns[project.id] === turn, !turn.stopped, exists(project) else {
-            if turn.stopped, exists(project) {
-                turn.stopped = false
-                log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+        /// Whether the turn still goes on after a wait: Stop pressed meanwhile has no agent to end yet.
+        func goesOn() -> Bool {
+            guard turns[project.id] === turn, !turn.stopped, exists(project) else {
+                if turn.stopped, exists(project) {
+                    turn.stopped = false
+                    log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+                }
+                return false
             }
-            return false
+            return true
         }
+        guard goesOn() else { return false }
         if sendsRequest { followPromptShape(project) }
         // A conversation the copy of the engine Lamp runs can't resume (one kept by the other copy, Lamp's or
         // the person's, not found to bring over) is forgotten, and the request starts a new one rather than failing.
@@ -5030,6 +5035,7 @@ final class Store: ObservableObject {
             }.value
             sizeBefore = size
             Conversation.note(project, engine: engine, "before: \(size.described)" + (dropped > 0 ? ", took out \(dropped) older pictures" : ""))
+            guard goesOn() else { return false }
         }
         // A conversation that took the place of one set aside is told what the wish is (its APP.md).
         let fresh = Conversation.freshNote(for: engine, in: project)
@@ -5276,7 +5282,12 @@ final class Store: ObservableObject {
             Conversation.note(project, engine: engine, "set aside: \(failure.prefix(160))")
             if !afresh, exists(project) {
                 log(project, .status, Conversation.startedFresh(for: project.name))
-                return await runAgent(prompt, files: files, sendsRequest: sendsRequest, afresh: true, on: current(project) ?? project)
+                // What the person sent while it worked and the model took (Send Now) goes too: the chat note stops at
+                // the turn's request, and the conversation that had them is gone.
+                let taken = (logs[project.id] ?? []).filter { turn.midTurn.contains($0.id) }.map(\.text).filter { !$0.trimmed.isEmpty }
+                let again = taken.isEmpty ? prompt
+                    : prompt + "\n\n---\nThe person then sent this while you worked, oldest first:\n\n" + taken.joined(separator: "\n\n")
+                return await runAgent(again, files: files, sendsRequest: sendsRequest, afresh: true, on: current(project) ?? project)
             }
             log(project, .error, Agent.conversationTooLarge)
             return false
