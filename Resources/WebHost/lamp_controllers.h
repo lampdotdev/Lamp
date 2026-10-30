@@ -514,7 +514,7 @@ inline std::optional<std::vector<std::string>> reach(std::optional<std::string> 
 inline std::string policy(std::optional<std::string> const& host, std::optional<uint16_t> relay_port,
                           std::optional<std::vector<std::string>> const& named) {
     std::vector<std::string> sites;
-    if (!named) sites = { "https:", "wss:" };
+    if (!named) sites = { "https:" };
     else for (auto const& site : *named) if (auto source = policy_source(site)) sites.push_back(*source);
     std::string connect = "'self'";
     if (host) {
@@ -524,6 +524,7 @@ inline std::string policy(std::optional<std::string> const& host, std::optional<
             if (plain_host(name) && relay_port) connect += " ws://" + name + ":" + std::to_string(*relay_port);
         }
     }
+    if (!named) connect += " wss:";
     auto list = [&](std::string base) { for (auto const& site : sites) base += " " + site; return base; };
     return "default-src 'none'; script-src " + list("'self' 'unsafe-inline'") + "; style-src " + list("'self' 'unsafe-inline'")
         + "; img-src " + list("'self' data: blob:") + "; media-src " + list("'self' data: blob:") + "; font-src " + list("'self' data:")

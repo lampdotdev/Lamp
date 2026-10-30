@@ -179,13 +179,14 @@ function readReach(root) {
 }
 
 function policy(host, relayPort, reach) {
-  var sites = reach.secureSites ? ['https:', 'wss:'] : reach.only.map(policySource).filter(Boolean);
+  var sites = reach.secureSites ? ['https:'] : reach.only.map(policySource).filter(Boolean);
   var connect = ["'self'"];
   var name = String(host || '').trim().toLowerCase();
   if (name && name.charAt(0) !== '[') {
     if (name.indexOf(':') >= 0) name = name.slice(0, name.indexOf(':'));
     if (plainHost(name) && relayPort) connect.push('ws://' + name + ':' + relayPort);
   }
+  if (reach.secureSites) connect.push('wss:');
   var list = function (base) { return base.concat(sites).join(' '); };
   return [
     "default-src 'none'",

@@ -9,7 +9,7 @@ import Foundation
 public enum PhonePagePolicy {
     /// Sites beyond the page's own files and its relay.
     public enum Reach: Equatable, Sendable {
-        /// Any https site (and its secure sockets): an app the person made here, whose page reaches what they asked for.
+        /// Any https site, and secure sockets to any site: an app the person made here, whose page reaches what they asked for.
         case secureSites
         /// Only these: an app shared with the person, held to the sites its safety review named. Each is a host name
         /// ("api.example.com", or "*.example.com" for its subdomains) or an origin ("https://api.example.com:8443"); anything else is dropped.
@@ -40,11 +40,12 @@ public enum PhonePagePolicy {
     public static func header(host: String?, relayPort: UInt16?, reach: Reach) -> String {
         let sites: [String]
         switch reach {
-        case .secureSites: sites = ["https:", "wss:"]
+        case .secureSites: sites = ["https:"]
         case .only(let named): sites = named.compactMap(source)
         }
         var connect = ["'self'"]
         if let name = relayHost(host), let relayPort { connect.append("ws://\(name):\(relayPort)") }
+        if reach == .secureSites { connect.append("wss:") }
         func list(_ base: [String]) -> String { (base + sites).joined(separator: " ") }
         return [
             "default-src 'none'",
