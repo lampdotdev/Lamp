@@ -512,6 +512,8 @@ extension TVTemplate {
 
             return {
               send: send,
+              // Whether a file is on its way, either way.
+              busy: function () { for (var k in outgoing) return true; for (k in incoming) return true; return false; },
               // A file message: true when it was one.
               text: function (route, m) {
                 var k = key(route, m.id);
@@ -1595,7 +1597,7 @@ extension TVTemplate {
             var tries = 0;
             var tellWhenLinked = function () {
               var wish = window.Lamp && window.Lamp.wish;
-              var linked = wish && wish.state && wish.state() === 'connected';
+              var linked = wish && wish._linked && wish._linked();
               if (linked || ++tries > 20) return tell();
               setTimeout(tellWhenLinked, 1000);
             };
@@ -3564,6 +3566,8 @@ extension TVTemplate {
             };
             store.here = function (name, id) { subscribe(name); return !!here_[name + '\t' + id]; };
           }
+          // Whether a word for Lamp gets there now: a copy alone in its wish's room is linked though it has no one to talk to.
+          api._linked = function () { return !!host || !!(socket && socket.readyState === 1 && sendKey); };
           // A word for Lamp itself (lamp.js's "A change while it's open"): through the app around the page when it's hosted,
           // else sealed into Lamp's room; nothing while Lamp's room isn't reached.
           api._toLamp = function (data) {
@@ -3580,6 +3584,10 @@ extension TVTemplate {
           if (window.Lamp) window.Lamp.wish = api;
           if (window.LampStore) { window.LampStore.shared = shared; window.LampStore.sharedFiles = sharedFiles; }
           if (!host && window.Lamp && window.Lamp.controllers && window.Lamp.controllers._attach) window.Lamp.controllers._attach(padSource);
+          // A copy on a TV or the Xbox is in the room whether its page uses the wish or not: it's how a change of the page
+          // reaches it (`PageCopies`). An app around a page joins when the page first asks, since joining can have the
+          // system ask about the local network, and Lamp's preview takes its changes from Lamp.
+          if (!host && !bridge && !stranded && where) api.start();
         })();
 
         """#
@@ -3596,7 +3604,12 @@ extension TVTemplate {
          *     onMessage: function (data) { ... },   // what the TV app sent this phone (or every phone)
          *     onFile: function (file) { ... },      // the TV app is sending a file: file.name, .type, .size,
          *                                           // .onProgress(fn(received, size)), .cancel(), .done.then(fn(arrayBuffer))
-         *     onState: function (state) { ... }     // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
+         *     onState: function (state) { ... },    // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
+         *     busy: function () { return false; },  // true while reloading the page would lose something (a drawing, a form):
+         *                                           // a newer page waits until this says false
+         *     onUpdate: function (apply) { ... }    // a newer page is ready: show a button that calls apply(), for a page
+         *                                           // that opens again only when the person says. Without it a newer page
+         *                                           // opens by itself at the first safe moment, keeping this player
          *   });
          *   pad.button('a', true); pad.button('a', false);   // a button held, then let go
          *   pad.axis('stick', x, y);                          // a stick or slider, each from -1 to 1
@@ -3752,15 +3765,61 @@ extension TVTemplate {
               if (Date.now() - lastHeard > 12000) { socket.close(); return; }
               socket.send(JSON.stringify({ t: 'beat' }));
             }, 5000);
+
+            // A newer page, published while this one is open: read from the host, which marks the page it serves with its
+            // version (a host that doesn't has nothing to compare, and the page stays as it is). It opens again at a
+            // moment nothing would be lost: no button or stick held, no file on its way, nothing being typed, and the
+            // page's own `busy` says so. The credential is kept first, so it comes back as the same player. Once for each
+            // version, so a page that can't become that version doesn't open again for ever.
+            var LOADED = (function () {
+              for (var n = typeof document !== 'undefined' && document.firstChild; n; n = n.nextSibling) {
+                var m = n.nodeType === 8 && /^lamp-phone (\S+)$/.exec(n.nodeValue);
+                if (m) return m[1];
+              }
+              return null;
+            })();
+            var pressed = {}, newer = null, told = null, updateKey = 'lamp-controller-updated:' + base;
+            function typing() {
+              var el = document.activeElement, tag = el && el.tagName;
+              return !!el && (el.isContentEditable || tag === 'TEXTAREA' || (tag === 'INPUT' && !/^(button|checkbox|radio|range|submit)$/i.test(el.type)));
+            }
+            function settled() {
+              for (var name in pressed) if (pressed[name]) return false;
+              return !files.busy() && !typing() && !(handlers.busy && handlers.busy());
+            }
+            function apply() {
+              var credential = join || sessionStorage.getItem(keyName);
+              if (!newer || !credential) return;
+              sessionStorage.setItem(keyName, credential);
+              sessionStorage.setItem(updateKey, newer);
+              closedForGood = true;
+              location.reload();
+            }
+            function consider() {
+              if (!newer || newer === LOADED || sessionStorage.getItem(updateKey) === newer) return;
+              if (handlers.onUpdate) { if (told !== newer) { told = newer; handlers.onUpdate(apply); } return; }
+              if (settled()) apply();
+            }
+            var checking = false;
+            function check() {
+              if (!LOADED || closedForGood || checking || document.hidden) return;
+              checking = true;
+              fetch(base + 'lamp-phone.json', { cache: 'no-store' }).then(function (answer) { return answer.ok ? answer.json() : null; }).then(function (said) {
+                checking = false;
+                if (said && typeof said.version === 'string') { newer = said.version; consider(); }
+              }, function () { checking = false; });
+            }
+            var watch = LOADED ? setInterval(check, 3000) : null;
+            if (LOADED) document.addEventListener('visibilitychange', check);
             open();
 
             return {
               get player() { return player; },
-              button: function (name, down) { return post({ t: 'button', name: name, down: !!down }); },
-              axis: function (name, x, y) { return post({ t: 'axis', name: name, x: x, y: y }); },
+              button: function (name, down) { pressed[name] = !!down; return post({ t: 'button', name: name, down: !!down }); },
+              axis: function (name, x, y) { pressed['axis:' + name] = !!(x || y); return post({ t: 'axis', name: name, x: x, y: y }); },
               send: function (data) { return post({ t: 'message', data: data }); },
               sendFile: function (data, info) { return files.send(route, data, info); },
-              close: function () { closedForGood = true; clearInterval(beat); clearTimeout(again); again = null; if (socket) socket.close(); }
+              close: function () { closedForGood = true; clearInterval(beat); clearInterval(watch); clearTimeout(again); again = null; if (socket) socket.close(); }
             };
           }
 
@@ -3839,8 +3898,8 @@ extension Agent.Rules {
     /// it (a screen's, a web app's, a web game's, a TV app's), so it's said once.
     static let pageCopies = """
     - A change of the page goes into every copy of it that's open (its window on this Mac, a simulator, an iPad, a \
-    TV, the Xbox, an Android device) as soon as your turn ends, each keeping what it saved, without a build or the \
-    person doing anything; a copy that can't take it as it is (a change of Sources/, or of a script that runs before \
+    TV, the Xbox, an Android device) a few seconds after you save it, or as soon as your turn ends at the latest, each \
+    keeping what it saved, without a build or the person doing anything; a copy that can't take it as it is (a change of Sources/, or of a script that runs before \
     lamp.js) waits for the person's Reload, which puts it on every device they have the app on. So never say a \
     change reaches only where Try On points.
     """

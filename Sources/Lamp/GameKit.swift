@@ -436,10 +436,12 @@ enum GameKit {
     /// nil: what a change the agent is still writing goes into the open game by (`Store.stepPage`). Parsed as modules by
     /// the Bun inside Lamp's pi (its transpiler, which reads them as a browser does and runs nothing), in the game's
     /// sandbox; Lamp's own files and the libraries beside the page are left out. A game bundled from TypeScript is checked
-    /// by its bundling instead.
-    static func codeProblem(_ project: LampProject) async -> String? {
-        guard !compilesSource(project), let bun = Agent.executable else { return nil }
-        let web = project.dir.appendingPathComponent(webFolder)
+    /// by its bundling instead. `folder`: another page of the app's (its phone page, `Store.publishPages`), whose scripts
+    /// aren't modules, so nothing is asked of them that only a module must keep to.
+    static func codeProblem(_ project: LampProject, in folder: String = webFolder) async -> String? {
+        let modules = folder == webFolder
+        guard !(modules && compilesSource(project)), let bun = Agent.executable else { return nil }
+        let web = project.dir.appendingPathComponent(folder)
         let base = web.standardizedFileURL.path + "/"
         let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .map { String($0.standardizedFileURL.path.dropFirst(base.count)) }
@@ -448,7 +450,7 @@ enum GameKit {
                     && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
             }.sorted()
         guard !files.isEmpty else { return nil }
-        if let strict = strictProblem(in: files, of: web, project: project) { return strict }
+        if modules, GameKit.isGame(project), let strict = strictProblem(in: files, of: web, project: project) { return strict }
         // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
         // it runs in a scratch folder, reading the page's files by their paths.
         let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-check-\(project.id)-\(UUID().uuidString.prefix(8))")

@@ -65,6 +65,18 @@ such build recorded (put there by an earlier Lamp), a change of anything but the
 Reload (`PageCopies.cannot`), and the chat shows its Reload line
 (`Store.placesAwaitReload`).
 
+**As the agent works.** Each change the agent saves goes to what shows the page away from this Mac without waiting for the
+turn's end, and whether or not a Mac copy is open (`Store.publishPages`, beside `autoApply` and on the same pace: a state
+that has held still six seconds, no more often than every fifteen). It does this only where something is there to take
+it: a copy in the wish's room, or a phone page Lamp serves. A copy on a TV or the Xbox joins the room as lamp.js starts,
+whether its page uses the wish or not; an app around a page (an iPhone, an iPad, Android) joins when the page first asks,
+since joining can have the system ask about the local network. The page's scripts are parsed first (`GameKit.codeProblem`)
+and what's sent is held to what was checked (`PageCopies.change`'s `checked`), so a save made meanwhile waits for the next
+round and a copy never gets a half-written file. Each copy goes at its own pace (`PageCopies.put`), one change at a time
+for a wish (`Store.pageToCopiesNow`). Phone/ is published the same way (`TVs.stagePhone`, a whole page in one step), and a
+phone's open page finds the new version itself ("Phones as players" in the devices guide). Builds and installs still wait
+for the turn's end (`placesIdle`), and so does what a copy can't take in place, whose Reload line comes then, once.
+
 **Reload is every place.** Reload, in the app's title bar or the chat's line, puts the change on every place of the wish
 the person has it on and Lamp can reach (`Store.reloadEverywhere`): this Mac, the booted simulator and Lamp's running
 emulator (a copy open there opens again with it; one that isn't is only given it), and each device of the person's Lamp

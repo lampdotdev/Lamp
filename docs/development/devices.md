@@ -565,8 +565,18 @@ beat, its renewal or its link. A run's own callbacks are the run's (`watchPhones
 kept part's stay with the part): the old run's end as it stops (`holdPhones`), a `stop()` from its `dispose` is
 ignored, the new run's hear nothing of players until it's about to draw (`bringPhones`, in `ranAgain`), which calls
 its `onLeave` and `onJoin` with the difference and the present roster, and held buttons stay in `isHeld` while old
-presses and messages are dropped. The game's snapshot keeps which player has which slot. A change of the phone page can't go into the open game as it's played, so it goes in
-with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
+presses and messages are dropped. The game's snapshot keeps which player has which slot. A change of the phone page goes into the open game with its page (`PageLive.put`): the copy
+on the Mac or in the simulator says it can take one (`phone` in its `/app/page/live` ask), Lamp hands it the whole page by
+hash, and `LampPageLive` writes it to a folder of its own and only then swaps it in (`ControllerRuntime.use`), under the
+session that's open. A copy built by an earlier Lamp has the game installed again instead (`pageInPlace`,
+`GamePhones.changed`). A page already open on a phone takes the newer one itself: every page Lamp or the game serves
+starts with its version (`PhonePageServer.marked`, an HTML comment, which also says the host publishes versions), and
+lamp-controller.js reads `lamp-phone.json` every three seconds while it's visible and as it comes back. Once the version
+differs it opens again, keeping the credential, so it's the same player, at a moment nothing is lost: no button or stick
+held, no file on its way, nothing being typed, and the page's own `busy()` says false. A page with `onUpdate` is told
+instead and opens when the person says. It does this once for each version. The socket does go down and come back, so
+the game hears that phone leave and return, unlike a run of its code again in place. An LG TV's and an Xbox's own hosts
+don't mark their pages, so their phones stay on the page they opened until the game is installed there. A copy built by an earlier Lamp that asks Lamp is
 told to update. On an iPhone or iPad the game does the same while it's in front: the page goes in its bundle as
 `Phone/` at the top (`GamePhones.write`: the simulator's bundle in `finishSimulatorBundle`, and the copy Xcode builds
 from in `Devices.stage`, with `Template.withPhoneFolder` in the project), the controller kit is built in with

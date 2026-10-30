@@ -27,7 +27,8 @@ import Foundation
         /// The open copy already has it.
         case unchanged
         /// In, as the page says it went: `swapped` into the running game, `rerun` (its code run again in place, the page,
-        /// renderer and kept parts staying), or `reloading`, each with the player's place kept.
+        /// renderer and kept parts staying), or `reloading`, each with the player's place kept; or `phone`, a change of the
+        /// phone page alone, which the game's own page never hears of.
         case went(String)
         /// Waiting for a pause in the game, or the person's Reload.
         case held
@@ -39,6 +40,15 @@ import Foundation
     private struct Installed: Codable {
         var files: [String: String]
         var native: String
+        /// The version of the phone page in the bundle, "" for none; nil in a record from before pages could change.
+        var phone: String? = nil
+    }
+
+    /// A phone page handed to the copy whole, for its page server to serve in place of the bundle's: each file by its
+    /// hash, under the version phones compare (`ControllerSnapshot.version`).
+    private struct Phone: Codable, Equatable {
+        var version: String
+        var files: [String: String]
     }
 
     /// The change the copy has been given: every file that differs from what it was installed with, by its hash, and
@@ -52,6 +62,8 @@ import Foundation
         /// The page said it holds this change for a pause, and hasn't said it went in since: kept with it, so a Lamp
         /// started again while the game waits still shows Reload.
         var waits: Bool? = nil
+        /// The phone page, when it differs from the bundle's.
+        var phone: Phone? = nil
     }
 
     /// Lamp's launch: a copy that asked an earlier Lamp starts counting again.
@@ -63,6 +75,9 @@ import Foundation
     private var deciding: [Key: (gen: Int, answer: CheckedContinuation<String?, Never>)] = [:]
     private var held: Set<Key> = []
     private var putting: Set<Key> = []
+    /// Copies that said they serve a phone page Lamp hands them (`LampPageLive`, as it asks): one built by an earlier
+    /// Lamp gets the game installed again for a change of it, as before.
+    private var takesPhone: Set<Key> = []
     /// Why the page last said it had to open again, or hold a change for a pause (code that couldn't be swapped in), by
     /// app: for the agent's look, so its next change can be one that swaps.
     private var reasons: [String: String] = [:]
@@ -113,7 +128,8 @@ import Foundation
     func installed(_ project: LampProject, at place: Place) {
         guard Self.takes(project) else { return }
         let key = Key(id: project.id, place: place)
-        let record = Installed(files: Self.hashes(of: Self.web(of: project, at: place), in: project), native: Self.native(project))
+        let record = Installed(files: Self.hashes(of: Self.web(of: project, at: place), in: project), native: Self.native(project),
+                               phone: (try? GamePhones.page(for: project))?.version ?? "")
         installs[key] = record
         given[key] = nil
         held.remove(key)
@@ -160,8 +176,10 @@ import Foundation
         let gone = installed.files.keys.filter { now[$0] == nil }.sorted()
         let changed = Set(now.keys).union(before.keys).filter { now[$0] != before[$0] }
             .filter { $0 != GamePage.deviceFile && $0 != GamePage.buildFile }.sorted()
+        let phone = phonePage(of: project, key, installed: installed)
+        let phoneChanged = phone?.version != lastGiven(project, key)?.phone?.version
         // The copy already has this build: still waiting for a pause when it said so, and otherwise in.
-        guard !changed.isEmpty else { return held.contains(key) ? .held : .unchanged }
+        guard !changed.isEmpty || phoneChanged else { return held.contains(key) ? .held : .unchanged }
         // The files handed over are copied out of the build, which the next change rewrites while the app may still be
         // fetching them.
         let web = Self.web(of: project, at: place), copies = Self.copies(project, place)
@@ -169,14 +187,20 @@ import Foundation
             for (path, hash) in files where AppFile.read(copies.appendingPathComponent(hash), in: project) == nil {
                 try AppFolder.copy(web.appendingPathComponent(path), to: copies.appendingPathComponent(hash), in: project.dir)
             }
+            // The page as it was checked and published, from memory: the folder may have moved on.
+            if let phone, let page = try? GamePhones.page(for: project) {
+                guard page.version == phone.version else { return .cannot }
+                for file in page.files { try AppFolder.write(file.data, to: copies.appendingPathComponent(PageCopies.name(of: file.data)), in: project.dir) }
+            }
         } catch {
             return .cannot
         }
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: copies.path)) ?? [] where !files.values.contains(name) {
+        let kept = Set(files.values).union(phone?.files.values.map { $0 } ?? [])
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: copies.path)) ?? [] where !kept.contains(name) {
             AppFolder.remove(copies.appendingPathComponent(name), in: project.dir)
         }
         let gen = (given[key]?.gen ?? 0) + 1
-        give(Given(gen: gen, files: files, gone: gone, changed: changed), to: key, in: project)
+        give(Given(gen: gen, files: files, gone: gone, changed: changed, phone: phone), to: key, in: project)
         held.remove(key)
         let said = await answer(key, gen: gen)
         switch said {
@@ -184,6 +208,20 @@ import Foundation
         case "held": return .held
         case let state?: return .went(state)
         }
+    }
+
+    /// Whether the copy open at `place` can serve a phone page Lamp hands it, rather than the one in its bundle.
+    func takesPhonePage(_ project: LampProject, at place: Place) -> Bool {
+        let key = Key(id: project.id, place: place)
+        return takesPhone.contains(key) && install(project, key)?.phone != nil
+    }
+
+    /// The phone page the copy is to serve, nil for the one in its bundle: the page published now, where it differs from
+    /// the bundle's and the copy can take it.
+    private func phonePage(of project: LampProject, _ key: Key, installed: Installed) -> Phone? {
+        guard takesPhone.contains(key), let bundled = installed.phone, let page = try? GamePhones.page(for: project),
+              page.version != bundled else { return nil }
+        return Phone(version: page.version, files: Dictionary(page.files.map { ($0.path, PageCopies.name(of: $0.data)) }, uniquingKeysWith: { a, _ in a }))
     }
 
     /// The person pressed Reload for a change the page is holding: it goes in now. False when none is held.
@@ -267,6 +305,7 @@ import Foundation
         guard let place = (body["place"] as? String).flatMap(Place.init(rawValue:)) else { return (404, ["error": "Not found"]) }
         let key = Key(id: project.id, place: place)
         heard[key] = Date()
+        if body["phone"] as? Bool == true { takesPhone.insert(key) } else { takesPhone.remove(key) }
         let after = (body["epoch"] as? String) == epoch ? body["after"] as? Int ?? 0 : 0
         func newer() -> Given? { lastGiven(project, key).flatMap { $0.gen > after ? $0 : nil } }
         func wanted() -> Bool { place == .mac && asking[project.id] != nil }
@@ -286,7 +325,9 @@ import Foundation
         // What its page saved is asked for before anything else: a preview waits on it.
         if wanted() { return (200, ["epoch": epoch, "gen": after, "send": "saved"]) }
         guard let change = newer() else { return (200, ["epoch": epoch, "gen": given[key]?.gen ?? 0]) }
-        return (200, ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.changed, "now": change.now])
+        var answer: [String: Any] = ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.changed, "now": change.now]
+        if let phone = change.phone { answer["phone"] = ["version": phone.version, "files": phone.files] }
+        return (200, answer)
     }
 
     /// One of the files of the change (`/app/page/file`): the copy kept for `place` under the hash the change named,
@@ -294,7 +335,8 @@ import Foundation
     func file(_ body: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let place = (body["place"] as? String).flatMap(Place.init(rawValue:)), let hash = body["hash"] as? String,
               hash.count == 32, hash.allSatisfy(\.isHexDigit),
-              lastGiven(project, Key(id: project.id, place: place))?.files.values.contains(hash) == true,
+              let change = lastGiven(project, Key(id: project.id, place: place)),
+              change.files.values.contains(hash) || change.phone?.files.values.contains(hash) == true,
               let data = AppFile.read(Self.copies(project, place).appendingPathComponent(hash), in: project) else {
             return (404, ["error": "Not found"])
         }
@@ -321,7 +363,7 @@ import Foundation
             marked.waits = state == "held"
             if marked.waits != (change.waits ?? false) { give(marked, to: key, in: project) }
         }
-        if let waiting = deciding[key], gen >= waiting.gen, ["swapped", "rerun", "reloading", "held"].contains(state) {
+        if let waiting = deciding[key], gen >= waiting.gen, ["swapped", "rerun", "reloading", "held", "phone"].contains(state) {
             deciding[key] = nil
             waiting.answer.resume(returning: state)
             return (200, [:])
