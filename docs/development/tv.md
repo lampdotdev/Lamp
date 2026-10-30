@@ -69,6 +69,24 @@ network description; the first scan brings macOS's firewall and local network qu
 reads, pictures and sounds as data), never Lamp's lamp.js or three.js, which the Mac that opens it writes back as it installs them.
 A web app or a screen, whose page is the TV app's with Lamp's app around it, travels its own way (`ScreenFiles`, "Wishes").
 
+A shared TV app is held on the TV to its own files and the exact sites its safety sheet named (`TVNetworkGuard`), by
+rules inside the package, so they hold with Lamp closed. The sites are the app's `NetworkPolicy` as Lamp recorded it when the app
+arrived (`SharedNetwork`, "Wishes"), read only through `TVNetworkGuard.allowedOrigins`: an app made here, or one the
+person let reach every site, packages as before, and one the sheet said "may connect" is held to its named sites alone,
+since a TV can't ask the person about another. Each site is checked as a bare origin before it goes anywhere. Neither TV filters a packaged web app's network from outside the page beyond
+Samsung's manifest, so the rule is the page's Content Security Policy: a meta tag Lamp puts first in every HTML page of
+the package (after the doctype, ahead of anything the page says), and on Samsung the same policy in `config.xml`
+(`tizen:content-security-policy`), its `<access>` list cut from everything to the app's sites and Lamp's, and
+navigation only to the sites' hosts. Frames and workers come only from the app's sites, since one of its own files opened
+as a frame or worker is a document no meta tag reaches. Lamp's own ways out stay open: the gateway at its port and the
+relay at any port by this Mac's names at the time of the build, and the TV's loopback for an LG game's own phone
+service. A policy in the page is weaker than a filter outside it: it doesn't stop the page leaving for another address
+(on LG; Samsung's navigation list covers its pages), WebRTC's own connections, or a DNS lookup a link hint asks for; a
+document of the package that isn't HTML (SVG, XML, XHTML) opened as the whole page carries no meta tag; and a browser
+before Chromium 60 opens a data: document as a whole page with no policy. So the policy goes in on every TV, but only one
+whose browser holds it (`TVNetworkGuard.holds`: Tizen 5 or webOS 5 and later, with a version Lamp has read) counts as
+guarding the app; on an older one Play says so.
+
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
 `Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-pages`
 skill, which the `phone-controllers` skill, offered to every prompt, points to once the agent has weighed whose phones

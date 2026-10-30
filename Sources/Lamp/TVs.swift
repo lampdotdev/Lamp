@@ -250,8 +250,11 @@ enum TVs {
             throw Failure(message: "\(record.name) needs Samsung's permission for this Mac's apps first: sign in to Samsung in its setup.")
         }
         let ids = TVTemplate.tizenIDs(for: project)
+        let guarded = TVNetworkGuard.policy(for: project)
         say("Packaging \(project.name) for \(record.name)…")
-        let package = try await TVPackage.wgt(for: project, staged: staged, duid: duid)
+        // The policy goes in either way, but only a TV whose browser holds a page to it is said to keep the app to its sites.
+        if guarded != nil, !TVNetworkGuard.holds(on: record) { say("\(record.name) is too old to keep \(project.name) to its own sites.") }
+        let package = try await TVPackage.wgt(for: project, staged: staged, duid: duid, guarded: guarded)
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         let data = try Data(contentsOf: package)
         say("Putting \(project.name) on \(record.name)…")
@@ -296,8 +299,12 @@ enum TVs {
         guard FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path) else {
             throw Failure(message: "\(record.name) hasn't let this Mac in yet: enter its Developer Mode passphrase in its setup.")
         }
+        let guarded = TVNetworkGuard.policy(for: project)
         say("Packaging \(project.name) for \(record.name)…")
-        let package = try await TVPackage.ipk(for: project, staged: staged, phones: try LGPhones.service(for: project, on: record))
+        // The policy goes in either way, but only a TV whose browser holds a page to it is said to keep the app to its sites.
+        if guarded != nil, !TVNetworkGuard.holds(on: record) { say("\(record.name) is too old to keep \(project.name) to its own sites.") }
+        let package = try await TVPackage.ipk(for: project, staged: staged, phones: try LGPhones.service(for: project, on: record),
+                                              guarded: guarded)
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         say("Putting \(project.name) on \(record.name)…")
         try await WebOS.install(package, appID: TVTemplate.webOSID(for: project), on: record)
@@ -491,13 +498,22 @@ enum TVPackage {
         return try? Data(contentsOf: out)
     }
 
+    /// What a Samsung package holds before its icon and signatures: the app's files with Lamp's filled in and the
+    /// policy in each page, and Lamp's manifest, never one of the app's.
+    static func wgtFiles(for project: LampProject, staged: URL, guarded: TVNetworkGuard.Policy?) throws -> [(path: String, data: Data)] {
+        var files = try DeviceSupport.fill(self.files(in: staged), for: project).filter { $0.path != "config.xml" && !$0.path.hasSuffix("signature.xml") && $0.path != "signature1.xml" }
+        if let guarded { files = TVNetworkGuard.guarded(files, policy: TVNetworkGuard.tvPage(guarded)) }
+        files.append(("config.xml", Data(TVTemplate.tizenConfig(for: project, guarded: guarded).utf8)))
+        return files
+    }
+
     /// A signed Samsung package (`.wgt`): the app's files, Lamp's config and icon, and the two signatures.
-    static func wgt(for project: LampProject, staged: URL, duid: String) async throws -> URL {
+    /// `guarded`: the shared app's network policy, put in every page and the manifest (`TVNetworkGuard`).
+    static func wgt(for project: LampProject, staged: URL, duid: String, guarded: TVNetworkGuard.Policy?) async throws -> URL {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wgt-\(UUID().uuidString)")
         let tree = work.appendingPathComponent("package")
         try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
-        var files = try DeviceSupport.fill(self.files(in: staged), for: project).filter { $0.path != "config.xml" && !$0.path.hasSuffix("signature.xml") && $0.path != "signature1.xml" }
-        files.append(("config.xml", Data(TVTemplate.tizenConfig(for: project).utf8)))
+        var files = try wgtFiles(for: project, staged: staged, guarded: guarded)
         if let icon = await icon(for: project, size: 512, in: work) { files.removeAll { $0.path == "icon.png" }; files.append(("icon.png", icon)) }
         files.sort { $0.path < $1.path }
         let signatures = try TizenSigning.signatures(for: files, duid: duid)
@@ -516,7 +532,8 @@ enum TVPackage {
     /// An LG package (`.ipk`): an ar archive of the package's version, its control file and its data, as LG's packager makes it.
     /// `phones`: the game's own phone service (`LGPhones`), in the package beside the app, as LG's packager puts an app's
     /// services, with the game's lamp.js naming it.
-    static func ipk(for project: LampProject, staged: URL, phones: LGPhones.Service? = nil) async throws -> URL {
+    /// `guarded`: the shared app's network policy, put in every page (`TVNetworkGuard`).
+    static func ipk(for project: LampProject, staged: URL, phones: LGPhones.Service? = nil, guarded: TVNetworkGuard.Policy? = nil) async throws -> URL {
         let fm = FileManager.default
         let id = TVTemplate.webOSID(for: project)
         let work = fm.temporaryDirectory.appendingPathComponent("lamp-ipk-\(UUID().uuidString)")
@@ -526,7 +543,8 @@ enum TVPackage {
         try fm.createDirectory(at: info, withIntermediateDirectories: true)
         try fm.createDirectory(at: work.appendingPathComponent("control"), withIntermediateDirectories: true)
         var size = 0
-        let filled = DeviceSupport.fill(try files(in: staged), for: project)
+        var filled = DeviceSupport.fill(try files(in: staged), for: project)
+        if let guarded { filled = TVNetworkGuard.guarded(filled, policy: TVNetworkGuard.tvPage(guarded)) }
         // A game whose lamp.js comes from before the service (built by an earlier Lamp, not built since) asks Lamp for its
         // phones, so it goes as it always has, without one.
         let service = filled.first { $0.path == "lamp.js" }.flatMap { LGPhones.names($0.data) ? phones : nil }
