@@ -1,21 +1,22 @@
-"""Edits a recorded showcase take into a reel: a title card, the take with a camera that eases to what the app's
-showcase.json focused on, a cursor that glides to each thing it acted on, the app's voice and the person's where they
-were heard with captions under the window, notifications as banners, waits for the AI at double speed, and an end
-card with the ideas to try. Writes reel.mp4 (1080p, with sound), loop.webp (a silent loop for a README, which can't
+"""Edits a recorded showcase take into a reel: the take filling the frame under Lamp's logo, with a camera
+that eases to what the app's showcase.json focused on, a cursor that glides to each thing it acted on, the app's voice and the person's where they
+were heard with captions under the window, notifications as banners, waits for the AI at double speed, cuts where the
+storyboard marks them, and an end card, Made with Lamp. Writes reel.mp4 (1080p, with sound), loop.webp (a silent loop for a README, which can't
 play a video it holds) and poster.png into the output folder.
 
-    python edit.py <take folder> <app folder> <output folder> [<starter.md>]
+    python edit.py <take folder> <app folder> <output folder> <Lamp's logo> <the site's font>
 
 The take folder is what scripts/showcase-starters.sh leaves: raw.mp4, record.log, events.tsv (LampShowcase's log),
-the voice files it names and showcase.json, whose `reel` may name `title`, `line`, `speaker` (who the app's voice is),
+the voice files it names and showcase.json, whose `reel` may name `speaker` (who the app's voice is),
 `you` (who the person is, "You") and `voice` (macOS's voice for the person's lines, "Samantha")."""
-import json, re, subprocess, sys
+import json, subprocess, sys
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 take, app, outdir = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
-starter = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+logo = Image.open(sys.argv[4]).convert("RGBA")
+site_font = sys.argv[5]
 outdir.mkdir(parents=True, exist_ok=True)
 script = json.loads((take / "showcase.json").read_text())
 reel = script.get("reel", {})
@@ -24,19 +25,12 @@ W, H, FPS = 1920, 1080, 30
 PAPER, INK, ACCENT = (243, 238, 228), (31, 52, 120), (238, 205, 92)
 FONTS = "/System/Library/Fonts"
 def font(name, size): return ImageFont.truetype(f"{FONTS}/{name}", size)
-SERIF = lambda s: font("NewYork.ttf", s)
 SERIF_I = lambda s: font("NewYorkItalic.ttf", s)
 SANS = lambda s: font("SFNS.ttf", s)
 
 # --- what the reel says around the app --------------------------------------------------------------------------
 about = json.loads((app / "lamp-app.json").read_text()) if (app / "lamp-app.json").exists() else {}
-ideas, offer = [], "Make it yours"
-if starter and starter.exists():
-    text = starter.read_text()
-    ideas = [m.group(1).strip() for m in re.finditer(r"^\s*-\s*[\w.]+:\s*(.+)$", text, re.M)]
-    offer = (re.search(r"^offer:\s*(.+)$", text, re.M) or [None, offer])[1]
-title = reel.get("title") or about.get("name") or app.name
-line = reel.get("line") or about.get("description", "")
+title = about.get("name") or app.name
 icon_path = next((p for p in [app / "icon.png", app / ".github/icon/icon.png"] if p.exists()), None)
 icon = Image.open(icon_path).convert("RGBA") if icon_path else None
 
@@ -85,7 +79,7 @@ for a in acts: a["x"], a["y"] = a["r"][0] + a["r"][2] / 2, a["r"][1] + a["r"][3]
 notes = [dict(t=e[0], title=e[2][0], body=e[2][1] if len(e[2]) > 1 else "") for e in events if e[1] == "notification"]
 
 # --- the edit: which part of the take plays when, and how fast --------------------------------------------------
-TITLE, END = 2.8, 4.2
+END = 3.0
 ready = first("ready")
 src_from = max(0.0, (acts[0]["t"] - 1.4) if acts else (ready[0] if ready else 0))
 end = first("end")
@@ -101,15 +95,22 @@ for a, b in sorted(fast):
     if a > t: segments.append((t, a, 1.0))
     segments.append((max(a, t), b, 2.0)); t = b
 segments.append((t, src_to, 1.0))
+# A storyboard's {"mark": "cut"} and the next {"mark": "resume"} leave out what's between them: a hard cut. Never over a voice.
+marks = [(e[0], e[2][0]) for e in events if e[1] == "mark"]
+cuts = [(t, next((u for u, w in marks if w == "resume" and u > t), src_to)) for t, w in marks if w == "cut"]
+for v in voices:
+    if any(v["t"] < y and x < v["t"] + v["dur"] for x, y in cuts):
+        sys.exit(f"A cut would land on what's said at {v['t']:.1f} s: \"{v['caption']}\". Move the storyboard's marks.")
+for x, y in cuts:
+    segments = [part for a, b, speed in segments for part in ((a, min(b, x), speed), (max(a, y), b, speed)) if part[0] < part[1]]
 def out_time(src):
-    o = TITLE
+    o = 0.0
     for a, b, speed in segments:
         if src <= a: return o
         if src < b: return o + (src - a) / speed
         o += (b - a) / speed
     return o
 def src_time(o):
-    o -= TITLE
     for a, b, speed in segments:
         d = (b - a) / speed
         if o < d: return a + o * speed
@@ -119,19 +120,24 @@ VIDEO_END = out_time(src_to)
 TOTAL = VIDEO_END + END
 
 # --- the camera ----------------------------------------------------------------------------------------------------
-BASE = 0.92 * H / SRC_H
+# The window fills the frame, a little past its edges so its rounded corners are left out. A storyboard's window is 16:9;
+# one that isn't has black beside it.
+BASE = min(W / SRC_W, H / SRC_H) * 1.02
 win_w, win_h = SRC_W * BASE, SRC_H * BASE
 win_x, win_y = (W - win_w) / 2, (H - win_h) / 2
 BAND = 200 if captioned else 0
 def place(x, y, w, h, area):
-    """The camera (a rect of the stage) that shows that part of the window as large as fits in `area` of the frame."""
+    """The camera (a rect of the stage) that shows that part of the window as large as fits in `area` of the frame, never
+    so far out or to the side that it shows past the window."""
     ax0, ay0, ax1, ay1 = area
     rw, rh = w * win_w, h * win_h
-    z = min((ax1 - ax0) / rw, (ay1 - ay0) / rh)
+    z = max(1, min((ax1 - ax0) / rw, (ay1 - ay0) / rh))
     cx, cy = win_x + (x + w / 2) * win_w, win_y + (y + h / 2) * win_h
-    return (cx - (ax0 + ax1) / 2 / z, cy - (ay0 + ay1) / 2 / z, W / z, H / z)
-FULL = place(0, 0, 1, 1, (0, 40, W, H - 40))
-REST = place(0, 0, 1, 1, (0, 26, W, H - BAND)) if captioned else FULL
+    cam_w, cam_h = W / z, H / z
+    cam_x, cam_y = cx - (ax0 + ax1) / 2 / z, cy - (ay0 + ay1) / 2 / z
+    def keep(at, size, low, span): return low + (span - size) / 2 if size >= span else max(low, min(at, low + span - size))
+    return (keep(cam_x, cam_w, win_x, win_w), keep(cam_y, cam_h, win_y, win_h), cam_w, cam_h)
+FULL = REST = place(0, 0, 1, 1, (0, 0, W, H))
 def framing(r):
     if r == [0, 0, 1, 1]: return REST
     pad = 0.06
@@ -139,8 +145,8 @@ def framing(r):
     # Never closer than a third of the window, so a button doesn't fill the frame.
     if w < 0.34: x, w = x - (0.34 - w) / 2, 0.34
     if h < 0.24: y, h = y - (0.24 - h) / 2, 0.24
-    return place(x, y, w, h, (80, 36, W - 80, H - BAND - 10))
-keys = [(TITLE, FULL), (TITLE + 1.0, REST)]
+    return place(x, y, w, h, (0, 0, W, H - BAND))
+keys = [(0.0, FULL)]
 for e in events:
     if e[1] == "focus":
         o = out_time(e[0])
@@ -157,13 +163,10 @@ def camera(o):
     return keys[-1][1]
 
 # --- drawing --------------------------------------------------------------------------------------------------------
-yy, xx = np.mgrid[0:H, 0:W]
-shade = np.clip(1 - 0.07 * (((xx - W / 2) / (W / 2)) ** 2 + ((yy - H / 2) / (H / 2)) ** 2), 0, 1)
-BG = Image.fromarray((np.full((H, W, 3), PAPER, np.float32) * shade[..., None]).astype(np.uint8)).convert("RGBA")
-PAD = 80
-shadow = Image.new("L", (int(win_w) + PAD * 2, int(win_h) + PAD * 2), 0)
-ImageDraw.Draw(shadow).rounded_rectangle((PAD, PAD + 14, PAD + win_w, PAD + win_h + 14), 28, fill=90)
-shadow = shadow.filter(ImageFilter.GaussianBlur(28))
+BLACK = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+# Lamp's logo in the corner of the recording, half see-through.
+MARK = logo.resize((76, 76), Image.LANCZOS)
+MARK.putalpha(MARK.getchannel("A").point(lambda a: int(a * 0.55)))
 
 def size(d, s, f):
     b = d.textbbox((0, 0), s, font=f); return b[2] - b[0], b[3] - b[1]
@@ -226,33 +229,12 @@ def ring(frame, x, y, k):
 def centered(d, y, text, f, fill):
     d.text(((W - size(d, text, f)[0]) / 2, y), text, font=f, fill=fill)
 
-def title_card(k):
-    img = BG.copy()
-    d = ImageDraw.Draw(img)
-    s = int(300 * (0.94 + 0.06 * ease(min(1, k * 1.5))))
-    if icon: img.alpha_composite(icon.resize((s, s), Image.LANCZOS), (int(W / 2 - s / 2), int(H / 2 - 260 - (s - 300) / 2)))
-    centered(d, H / 2 + 70, title, SERIF(96), (25, 25, 30))
-    for i, l in enumerate(wrap(d, line, SERIF_I(44), 1300)[:2]):
-        centered(d, H / 2 + 200 + i * 56, l, SERIF_I(44), INK)
-    return img
-TITLE_DONE = title_card(1.0)
-
 def end_card():
-    img = BG.copy()
-    d = ImageDraw.Draw(img)
-    if icon: img.alpha_composite(icon.resize((150, 150), Image.LANCZOS), (int(W / 2 - 75), 120))
-    centered(d, 300, offer, SERIF(84), (25, 25, 30))
-    f = SERIF_I(44)
-    for i, idea in enumerate(ideas[:3]):
-        iw = size(d, idea, f)[0]
-        y = 450 + i * 82
-        d.ellipse((W / 2 - iw / 2 - 40, y + 18, W / 2 - iw / 2 - 24, y + 34), fill=ACCENT)
-        centered(d, y, idea, f, INK)
-    label = "Remix it in Lamp  ·  lamp.dev"
-    f3 = SANS(38); sw = size(d, label, f3)[0]
-    y = 450 + max(1, min(3, len(ideas))) * 82 + 60
-    d.rounded_rectangle(((W - sw) / 2 - 36, y, (W + sw) / 2 + 36, y + 80), 40, fill=INK)
-    centered(d, y + 18, label, f3, PAPER)
+    img = BLACK.copy()
+    img.alpha_composite(logo.resize((220, 220), Image.LANCZOS), (int(W / 2 - 110), int(H / 2 - 190)))
+    f = ImageFont.truetype(site_font, 84)
+    f.set_variation_by_axes([600])
+    centered(ImageDraw.Draw(img), H / 2 + 70, "Made with Lamp", f, (255, 255, 255))
     return img
 END_CARD = end_card()
 
@@ -260,17 +242,11 @@ def stage(src, o):
     cam = camera(o)
     z = W / cam[2]
     rx, ry, rw, rh = (win_x - cam[0]) * z, (win_y - cam[1]) * z, win_w * z, win_h * z
-    img = BG.copy()
-    if z < 1.25:
-        sh = shadow.resize((int(shadow.width * z), int(shadow.height * z)))
-        img.paste((40, 30, 20), (int(rx - PAD * z), int(ry - PAD * z)), sh)
+    img = BLACK.copy()
     vx0, vy0, vx1, vy1 = max(0, rx), max(0, ry), min(W, rx + rw), min(H, ry + rh)
     box = ((vx0 - rx) / rw * SRC_W, (vy0 - ry) / rh * SRC_H, (vx1 - rx) / rw * SRC_W, (vy1 - ry) / rh * SRC_H)
-    vw, vh = int(round(vx1 - vx0)), int(round(vy1 - vy0))
-    part = src.resize((vw, vh), Image.LANCZOS, box=box)
-    mask = Image.new("L", (vw, vh), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((rx - vx0, ry - vy0, rx - vx0 + rw, ry - vy0 + rh), 24 * z, fill=255)
-    img.paste(part, (int(round(vx0)), int(round(vy0))), mask)
+    img.paste(src.resize((int(round(vx1 - vx0)), int(round(vy1 - vy0))), Image.LANCZOS, box=box), (int(round(vx0)), int(round(vy0))))
+    img.alpha_composite(MARK, (W - 76 - 36, H - 76 - 36))
     return img, (lambda fx, fy: (rx + fx * rw, ry + fy * rh))
 
 def cursor_at(o, to_out):
@@ -310,13 +286,11 @@ def source(st):
 
 silent = outdir / "reel.silent.mp4"
 writer = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-                           "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", str(silent)], stdin=subprocess.PIPE)
+                           "-c:v", "libx264", "-preset", "slow", "-crf", "24", "-pix_fmt", "yuv420p", str(silent)], stdin=subprocess.PIPE)
 last_video = None
 for i in range(int(TOTAL * FPS)):
     o = i / FPS
-    if o < TITLE:
-        frame = title_card(o / TITLE)
-    elif o < VIDEO_END:
+    if o < VIDEO_END:
         st = src_time(o)
         frame, to_out = stage(source(st), o)
         for a in acts:
@@ -331,7 +305,6 @@ for i in range(int(TOTAL * FPS)):
         for n in notes:
             k = st - n["t"]
             if 0 <= k <= 4.0: banner(frame, n, min(1, k / 0.3, (4.0 - k) / 0.4), ease(min(1, k / 0.4)))
-        if o < TITLE + 0.5: frame = Image.blend(TITLE_DONE, frame, (o - TITLE) / 0.5)
         last_video = frame
     else:
         k = (o - VIDEO_END) / 0.6
@@ -355,13 +328,14 @@ if voices:
 else:
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(silent), "-c", "copy", "-movflags", "+faststart", str(reel_path)], check=True)
     silent.unlink()
-# The loop: from a little before the first voice (or the first action) for about fifteen seconds, or where `reel` says.
+# The loop: from a little before the first voice (or the first action) for about ten seconds, or where `reel` says.
 anchor = min([v["t"] for v in voices] or [acts[0]["t"] if acts else src_from])
-loop_from = reel.get("loopFrom", max(TITLE, out_time(anchor) - 3.5))
-loop_length = min(reel.get("loopLength", 15.0), VIDEO_END - loop_from)
+loop_from = reel.get("loopFrom", max(0.0, out_time(anchor) - 3.5))
+loop_length = min(reel.get("loopLength", 10.0), VIDEO_END - loop_from)
 subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{loop_from:.2f}", "-t", f"{loop_length:.2f}", "-i", str(reel_path),
-                "-vf", "fps=20,scale=960:-1:flags=lanczos", "-c:v", "libwebp_anim", "-quality", "70", "-loop", "0",
+                "-vf", "fps=15,scale=720:-1:flags=lanczos", "-c:v", "libwebp_anim", "-quality", "60", "-loop", "0",
                 str(outdir / "loop.webp")], check=True)
 subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{loop_from + loop_length / 2:.2f}", "-i", str(reel_path),
                 "-frames:v", "1", "-vf", "scale=1280:-1:flags=lanczos", str(outdir / "poster.png")], check=True)
 print(f"{reel_path} ({TOTAL:.1f} s)")
+if TOTAL > 30: print(f"That's over the 30 seconds a reel may last: cut more of it (\"mark\": \"cut\").", file=sys.stderr)

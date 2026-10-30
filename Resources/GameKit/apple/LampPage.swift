@@ -1048,9 +1048,12 @@ final class LampPageBlockedHost: NSObject {
                 return nil   // a shortcut with ⌘ and the like: the app's menus have it
             }
             let hold = min(max(action.amount ?? 0, 0), 10)
+            // A game reads which key it is by `code` (KeyW, Digit1, Space), where the page's forms read `key`.
+            let code = single.map { $0.properties.numericType != nil ? "Digit\($0)" : "Key\(String($0).uppercased())" }
+                ?? (key.key == " " ? "Space" : key.key)
             let fire = """
                 function fire(type) {
-                  var e = new KeyboardEvent(type, { bubbles: true, cancelable: true, key: \(String(reflecting: key.key)) });
+                  var e = new KeyboardEvent(type, { bubbles: true, cancelable: true, key: \(String(reflecting: key.key)), code: \(String(reflecting: code)) });
                   Object.defineProperty(e, 'keyCode', { get: function () { return \(key.code); } });
                   Object.defineProperty(e, 'which', { get: function () { return \(key.code); } });
                   return el.dispatchEvent(e);

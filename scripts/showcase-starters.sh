@@ -26,6 +26,12 @@ if [[ ! -x "$PY/bin/python" ]] || ! "$PY/bin/python" -c "import PIL, numpy" 2>/d
   python3 -m venv "$PY"
   "$PY/bin/pip" -q install pillow numpy
 fi
+# The reel's end card is in the site's font (site/src/styles/global.css).
+FONT=.build/showcase/InterTight.ttf
+if [[ ! -f "$FONT" ]]; then
+  mkdir -p "${FONT:h}"
+  curl -fsSL -o "$FONT" "https://raw.githubusercontent.com/google/fonts/main/ofl/intertight/InterTight%5Bwght%5D.ttf"
+fi
 RECORD=.build/showcase/record
 if [[ ! -x "$RECORD" || scripts/showcase/record.swift -nt "$RECORD" ]]; then
   mkdir -p "${RECORD:h}"
@@ -48,6 +54,11 @@ for folder in "${folders[@]}"; do
   tree="Resources/Starters/$folder/tree"
   board="Resources/Starters/$folder/showcase"
   [[ -f "$board/showcase.json" ]] || { echo "$folder: no showcase/showcase.json, passed over"; continue; }
+  # A storyboard marked cleanMachine shows what's really on the disk it runs on, so it's only for a machine holding
+  # nothing of anyone's (a throwaway VM), which CLEAN_MACHINE=1 says this is.
+  if grep -q '"cleanMachine": *true' "$board/showcase.json" && [[ -z "${CLEAN_MACHINE:-}" ]]; then
+    echo "$folder: shows this machine's real files, passed over (CLEAN_MACHINE=1 on a machine with nothing of anyone's)"; continue
+  fi
   [[ -d "$tree" ]] || { echo "$folder: no tree (scripts/fetch-starters.sh)" >&2; failed=1; continue; }
   WORK="$(mktemp -d -t lamp-showcase)"
   mkdir -p "$WORK/latest"
@@ -58,8 +69,12 @@ for folder in "${folders[@]}"; do
   id="$(sed -n 's/.*<key>CFBundleIdentifier<\/key><string>\([^<]*\)<.*/\1/p' "$app/build.sh" | head -1)"
   sed -i '' "s/${id//./\\.}/$id.showcase/g" "$app/build.sh"
   defaults delete "$id.showcase" >/dev/null 2>&1 || true
+  # What a page saved in the last take (where a game's player was) would open this one.
+  rm -rf "$HOME/Library/WebKit/${id:?}.showcase"
   echo "$folder: building"
-  (cd "$app" && ./build.sh) > "$WORK/build.log" 2>&1 || { echo "$folder: the build failed ($WORK/build.log)" >&2; failed=1; continue; }
+  # A game's page is told its device by whoever builds it; staging has already written the published page's.
+  device="$WORK/pages/$folder/lamp-device.js"
+  (cd "$app" && { [[ ! -f "$device" ]] || export LAMP_PAGE_DEVICE="$(<"$device")"; } && ./build.sh) > "$WORK/build.log" 2>&1 || { echo "$folder: the build failed ($WORK/build.log)" >&2; failed=1; continue; }
   bundle=("$app"/build/*.app(N/[1]))
   take="$WORK/take"
   mkdir -p "$take"
@@ -87,7 +102,7 @@ for folder in "${folders[@]}"; do
     echo "$folder: the script couldn't find: $(grep $'\tmissing\t' "$take/events.tsv" | cut -f3 | paste -sd, -)" >&2
   fi
   echo "$folder: editing"
-  "$PY/bin/python" scripts/showcase/edit.py "$take" "$app" "$tree/.github/showcase" "Resources/Starters/$folder/starter.md" \
+  "$PY/bin/python" scripts/showcase/edit.py "$take" "$app" "$tree/.github/showcase" Resources/AppIcon.png "$FONT" \
     || { echo "$folder: the edit failed" >&2; failed=1; continue; }
   if [[ -n "${KEEP:-}" ]]; then echo "$folder: the take is in $take"; else rm -rf "$WORK"; fi
 done
