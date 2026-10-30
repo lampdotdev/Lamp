@@ -79,7 +79,7 @@ extension ChatLook {
     }
 
     /// Under what waits for setup before it's sent.
-    public static let waitingForSetup = "Starts when Apple's app-building tools finish installing"
+    public static let waitingForSetup = "Starts once Lamp is set up"
     /// Under what waits for the person to press Reload before it's sent (`Store.pause`).
     public static let waitingForReload = "Sent once you press Reload"
 

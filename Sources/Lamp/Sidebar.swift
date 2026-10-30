@@ -465,8 +465,10 @@ final class SidebarServer {
             state.tryOn = tryOn(for: project, busy: busy)
         }
         state.intro = log.isEmpty && (store.queued[project.id] ?? []).isEmpty ? intro(for: project, busy: busy, draft: draft.text) : nil
-        // Only for a wish that needs them: a game or a screen is made without them.
-        if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project) {
+        // Only for a wish that needs them, once they're asked for: a wish that's only being used doesn't, nor is a game
+        // or a screen made with them.
+        if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project)
+            && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) {
             state.banner = SidebarBanner(text: "Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.",
                                          button: store.setup.installRequested ? "Show Installer" : "Install…")
         }

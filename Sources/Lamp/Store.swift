@@ -648,6 +648,8 @@ final class Store: ObservableObject {
 
     func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
     @Published var setup = SetupCheck()
+    /// A request is waiting for what builds, and the desk is asking for it (`SetupView`).
+    @Published var askingForSetup = false
     /// Whether Lamp has really looked at setup yet, with the saved keys in. Before that `setup` can't be gone
     /// by: it starts out assuming everything is in place, and a look made before the keys are read finds no key.
     private let setupLook = FirstLook()
@@ -1139,9 +1141,11 @@ final class Store: ObservableObject {
             setupLook.done()
             openWaitingImport()
         }
-        // During the welcome, Apple's installer waits for the step that explains it.
+        // During the welcome, Apple's installer waits for the step that explains it, and while what builds is still to
+        // be chosen it waits too, so there's one thing to do at a time.
         // Only for a request that waits for them: a Mac that makes only games and screens never needs them.
-        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && waitsForAppleTools { requestBuildTools() }
+        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && setup.hasBuilder
+            && (waitsForAppleTools || waitingImport.count > 0) { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
         prepareStarters()   // the prebuilt ones need no build tools, nor do games and screens
         if setup.ready && !wasReady { await becameReady() }
@@ -2080,6 +2084,21 @@ final class Store: ObservableObject {
         guard let project = selected else { return }
         updateDraft(Draft(text: Agent.findingRequest), for: project)
         SidebarServer.shared.send(project)
+    }
+
+    /// Asks for what builds, on the desk: wishes run without it, so the first request is when it's needed.
+    func askForSetup() {
+        showDesk()
+        askingForSetup = true
+    }
+
+    /// What a shared app waits for before its review can open: what builds, on the desk, then Apple's tools.
+    func askForWhatsMissing() {
+        if !setup.hasBuilder || !setup.hasAgent {
+            askForSetup()
+        } else if !setup.hasBuildTools, !setup.installRequested {
+            requestBuildTools()
+        }
     }
 
     /// The desk's window in front.
@@ -3441,6 +3460,8 @@ final class Store: ObservableObject {
                     alert.informativeText = "Then open the shared app again."
                 }
                 alert.runModal()
+                // Nothing else would ask: no request is waiting in a chat for what this needs.
+                if Onboarding.isDone || welcomeFinished { askForWhatsMissing() }
                 return
             }
             review(file, updating: target)
@@ -3485,6 +3506,9 @@ final class Store: ObservableObject {
     private var importRequest: UUID?
 
     private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
+
+    /// A shared app is kept for its review.
+    var hasWaitingImport: Bool { waitingImport.count > 0 }
 
     /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
     /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a
@@ -3902,7 +3926,11 @@ final class Store: ObservableObject {
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
         let ready = readyFor(project)
         if !ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
-        if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested { requestBuildTools() }
+        if !setup.hasBuilder || !setup.hasAgent {
+            askForSetup()
+        } else if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested {
+            requestBuildTools()
+        }
         let files = message.attachments, pointed = message.pointed
         // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
         // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.

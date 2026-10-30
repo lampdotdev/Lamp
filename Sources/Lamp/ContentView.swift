@@ -17,16 +17,11 @@ struct ContentView: View {
             if !onboarded && !store.welcomeFinished {
                 OnboardingView().ignoresSafeArea()
             } else {
-                Group {
-                    // Only Apple's tools missing (say, still installing after the welcome): Lamp stays usable,
-                    // and anything asked for waits in its chat until they're in.
-                    if store.setup.checked && !store.setup.ready && !(store.setup.hasBuilder && store.setup.hasAgent) {
-                        SetupView()
-                    } else {
-                        main
-                    }
-                }
-                .frame(minWidth: 760, minHeight: 480)
+                // Nothing set up, the desk still opens and its wishes run: what's missing is asked for when a change
+                // needs it, and the request waits in its chat until it's done.
+                main
+                    .frame(minWidth: 760, minHeight: 480)
+                    .sheet(isPresented: settingUp) { SetupView { store.askingForSetup = false } }
             }
         }
         .modifier(StoreDialogs(active: store.selection == nil))
@@ -35,10 +30,16 @@ struct ContentView: View {
         .onAppear { LampWindows.open = openWindow }
     }
 
+    /// Up while a request waits for what builds, and gone once that's chosen, with Apple's tools left to the banner.
+    private var settingUp: Binding<Bool> {
+        Binding(get: { store.askingForSetup && !(store.setup.hasBuilder && store.setup.hasAgent) },
+                set: { store.askingForSetup = $0 })
+    }
+
     private var main: some View {
         VStack(spacing: 0) {
             // While they install, or while a request waits for them: games and screens are made without them.
-            if store.setup.checked && !store.setup.hasBuildTools && (store.setup.installRequested || store.waitsForAppleTools) { BuildToolsBanner() }
+            if store.setup.checked && !store.setup.hasBuildTools && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) { BuildToolsBanner() }
             WishDesk()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
