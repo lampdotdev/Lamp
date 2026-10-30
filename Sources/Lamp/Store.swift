@@ -776,6 +776,9 @@ final class Store: ObservableObject {
         var applying: Task<Void, Never>?
         var applyingSources = ""
         var autoApplied = 0
+        /// The change being put in is a game's page, built by that step itself (`autoApply`): its build doesn't wait
+        /// for the step it's part of.
+        var steppingPage = false
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
@@ -8196,7 +8199,7 @@ final class Store: ObservableObject {
         owner?.building = true
         defer { owner?.building = false }
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
-        await owner?.applying?.value
+        if owner?.steppingPage != true { await owner?.applying?.value }
         await owner?.warming?.value
         log(project, .status, "Building…")
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
@@ -8462,7 +8465,7 @@ final class Store: ObservableObject {
                 }
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
-                      let current = current(project), LiveReload.eligible(current),
+                      let current = current(project), LiveReload.eligible(current) || stepsPage(current),
                       isRunning(current), !Runtime.waitsForReload(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false
@@ -8474,6 +8477,16 @@ final class Store: ObservableObject {
                 tried = now
                 let saved = seenAt
                 turn.applyingSources = now
+                if stepsPage(current) {
+                    turn.applying = Task { [weak self] in
+                        guard let self else { return }
+                        defer { turn.applying = nil; turn.steppingPage = false }
+                        turn.steppingPage = true
+                        await stepPage(current, in: turn, saved: saved)
+                    }
+                    await turn.applying?.value
+                    continue
+                }
                 turn.applying = Task { [weak self] in
                     guard let self else { return }
                     defer { turn.applying = nil }
@@ -8515,6 +8528,30 @@ final class Store: ObservableObject {
                 await turn.applying?.value
             }
         }
+    }
+
+    /// A game whose page is open on this Mac takes each change the agent saves the same way, once it compiles: the page
+    /// is built (a TypeScript game bundled, which fails on what doesn't) and put into the open game (`pageInPlace`), which
+    /// swaps it in or runs the game's code again from where the player is, the smoke over the window until it's on
+    /// screen. Not waiting for the agent to look: a step whose modules don't parse is left alone until the next save,
+    /// and one that compiles but fails as it runs opens the page again from the snapshot, as a change at the turn's end
+    /// would. What can't go into the open page at all waits for the turn's end, as before.
+    private func stepsPage(_ project: LampProject) -> Bool {
+        PageLive.takes(project) && PageLive.shared.isOpen(project, at: .mac)
+    }
+
+    private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
+        // Still being written, or broken: tried again once it changes.
+        guard GameKit.codeProblem(project) == nil else { return }
+        guard await build(project) == nil, turns[project.id] === turn, !turn.stopped, let current = current(project) else { return }
+        guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {
+            AppTransition.end(current)
+            return
+        }
+        guard turns[project.id] === turn, !turn.stopped else { return }
+        turn.autoApplied += 1
+        log(current, .status, "Put the change into \(current.name)")
+        log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
     }
 
     /// Reload pressed while a request's agent works on the app (`reloadWaiting`): the change held for it goes in as soon

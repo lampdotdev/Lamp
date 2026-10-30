@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import JavaScriptCore
 
 /// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js, or with Phaser for a 2D game
 /// (`web/lamp-phaser.js` over the runtime), and played through Lamp's game runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
@@ -429,6 +430,57 @@ enum GameKit {
             if let data = try? Data(contentsOf: file) { hasher.update(data: data) }
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Why the game's own modules in Web/ wouldn't load as written (the first one with a syntax error, and where), or
+    /// nil: what a change the agent is still writing goes into the open game by (`Store.autoApply`). Lamp's own files
+    /// and the libraries beside the page are left out; a game bundled from TypeScript is checked by its bundling instead.
+    /// JavaScriptCore checks a script's syntax but not a module's, so each module is checked as a script: its imports
+    /// taken out, its exports unwrapped and its body inside an async function, so `await` at its top reads as it would.
+    static func codeProblem(_ project: LampProject) -> String? {
+        guard !compilesSource(project) else { return nil }
+        let web = project.dir.appendingPathComponent(webFolder)
+        let base = web.standardizedFileURL.path + "/"
+        let context = JSContext()
+        for case let url as URL in FileManager.default.enumerator(at: web, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
+            let path = String(url.standardizedFileURL.path.dropFirst(base.count))
+            guard ["js", "mjs"].contains(url.pathExtension.lowercased()), !path.hasPrefix("three/"), !path.hasPrefix("phaser/"),
+                  !path.hasPrefix("rapier/"), !(path.hasPrefix("lamp") && !path.contains("/")),
+                  let context, let data = AppFile.read(url, in: project) else { continue }
+            var exception: JSValueRef?
+            let text = JSStringCreateWithCFString(scriptForm(of: String(decoding: data, as: UTF8.self)) as CFString)
+            defer { JSStringRelease(text) }
+            if JSCheckScriptSyntax(context.jsGlobalContextRef, text, nil, 0, &exception) { continue }
+            let error = JSValue(jsValueRef: exception, in: context)
+            let line = (error?.objectForKeyedSubscript("line")?.toInt32() ?? 1) - 1   // the wrapper's first line
+            return "\(path):\(max(1, line)): \(error?.toString() ?? "a syntax error")"
+        }
+        return nil
+    }
+
+    private static let moduleToScript: [(NSRegularExpression, String)] = [
+        (#"(?m)^[ \t]*import\s+[\s\S]*?\bfrom\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+        (#"(?m)^[ \t]*import\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+        (#"(?m)^[ \t]*export\s*\*\s*(as\s+[\w$]+\s*)?from\s*(['"])[^'"\n]+\2\s*;?"#, ""),
+        (#"(?m)^[ \t]*export\s*\{[^}]*\}\s*(from\s*(['"])[^'"\n]+\2)?\s*;?"#, ""),
+        (#"(?m)^([ \t]*)export\s+default\s+"#, "$1void "),
+        (#"(?m)^([ \t]*)export\s+(?=(async\s+)?function|class|const|let|var)"#, "$1"),
+        (#"\bimport\.meta\b"#, "({ url: '' })"),
+    ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
+
+    /// A module as a script with the same syntax, its lines where they were (one line down).
+    static func scriptForm(of module: String) -> String {
+        var text = module as NSString
+        for (pattern, template) in moduleToScript {
+            // What's taken out leaves its line breaks, so an error's line is the module's own.
+            for match in pattern.matches(in: text as String, range: NSRange(location: 0, length: text.length)).reversed() {
+                let found = text.substring(with: match.range)
+                let put = template.isEmpty ? String(repeating: "\n", count: found.filter { $0 == "\n" }.count)
+                    : pattern.replacementString(for: match, in: text as String, offset: 0, template: template)
+                text = text.replacingCharacters(in: match.range, with: put) as NSString
+            }
+        }
+        return "'use strict'; (async () => {\n" + (text as String) + "\n});"
     }
 
     static func compilesSource(_ project: LampProject) -> Bool {

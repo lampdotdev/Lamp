@@ -475,7 +475,14 @@ a change of its page goes into the open game instead (`PageLive`, below), and an
 capabilities.json) reopens it, held for Reload while the person has it open. On the Mac it's made
 from Lamp's player (below) unless it has Swift of its own.
 
-A change to a game while it's played. The app around the page on the Mac and in the simulator (`LampPageLive` in
+A change to a game while it's played. While the agent works, each change it saves goes into the game open on this Mac
+as soon as it compiles, not waiting for the agent to look or for the turn to end (`Store.stepPage`, from the
+`autoApply` loop that does the same for a Mac app: the saved files read every two seconds, tried once they hold still).
+The game's own modules are first checked for syntax (`GameKit.codeProblem`: JavaScriptCore checks a script's syntax,
+not a module's, so each is checked as a script, its imports taken out and its body in an async function; a game
+bundled from TypeScript is checked by its bundling), then the page is built and put in as a turn's end puts it in
+(`pageInPlace`). A step that doesn't parse waits for the next save; one that parses but fails as it runs opens the page
+again from the snapshot, as it would at the turn's end. The app around the page on the Mac and in the simulator (`LampPageLive` in
 `LampPage.swift`) asks Lamp what has changed (`/app/page/live`, held up to 25 s, asked again at once; never on a phone,
 whose copy takes a change through the wish's room, as every copy on another device does: "A page's change in every open
 copy" in the kinds-of-app guide). When a build's page differs from what that copy was installed with
