@@ -206,7 +206,7 @@ while the AI answers, a hard cut for each `{"mark": "cut"}` to the next `{"mark"
 loop.webp, poster.png), which `publish-starters.sh` puts up with the other pictures. The app comes to the front
 for the minute a take lasts, since a window behind others is drawn with gray controls. Code of a starter's own that
 reads the person's world (its microphone, camera, files) asks `LampShowcase` while it's on, in its repository like
-any change to it. Watch the reel before publishing it: example content only, as for the preview. Lamp's bundle
+any change to it. A starter that shows what's really on the disk has no script to follow: its storyboard says `"cleanMachine": true`, and the script passes it over unless `CLEAN_MACHINE=1` says the machine holds nothing of anyone's (a throwaway VM), so a reel of it never shows a person's files. Watch the reel before publishing it: example content only, as for the preview. Lamp's bundle
 leaves the storyboards and reels out (build.sh).
 
 **Changing a starter.** Its repository is the starter; Lamp pins a commit of it. A change is best made in Lamp Dev,

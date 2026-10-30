@@ -54,6 +54,11 @@ for folder in "${folders[@]}"; do
   tree="Resources/Starters/$folder/tree"
   board="Resources/Starters/$folder/showcase"
   [[ -f "$board/showcase.json" ]] || { echo "$folder: no showcase/showcase.json, passed over"; continue; }
+  # A storyboard marked cleanMachine shows what's really on the disk it runs on, so it's only for a machine holding
+  # nothing of anyone's (a throwaway VM), which CLEAN_MACHINE=1 says this is.
+  if grep -q '"cleanMachine": *true' "$board/showcase.json" && [[ -z "${CLEAN_MACHINE:-}" ]]; then
+    echo "$folder: shows this machine's real files, passed over (CLEAN_MACHINE=1 on a machine with nothing of anyone's)"; continue
+  fi
   [[ -d "$tree" ]] || { echo "$folder: no tree (scripts/fetch-starters.sh)" >&2; failed=1; continue; }
   WORK="$(mktemp -d -t lamp-showcase)"
   mkdir -p "$WORK/latest"
