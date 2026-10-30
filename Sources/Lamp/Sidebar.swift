@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import Combine
 import Security
+import os
 import LampSidebarKit
 
 /// The chat inside a Mac app's own window. The app shows it beside its content when its 🪄 is clicked
@@ -39,6 +40,7 @@ enum Sidebar {
         guard applies(to: project), let program else { return }
         try fm.createDirectory(at: appex.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
         try fm.copyItem(at: program, to: appex.appendingPathComponent("Contents/MacOS/LampSidebar"))
+        let remix = GitHubRepo.remixOrigin(for: project)
         let info: [String: Any] = [
             "CFBundleExecutable": "LampSidebar",
             "CFBundleIdentifier": bundleID(for: project),
@@ -57,12 +59,16 @@ enum Sidebar {
             "LampApp": project.id,
             // Where Lamp listens for it.
             "LampPort": Int(Edition.sidebarPort),
-            // For a Mac without Lamp (`RemixPanel`): which app Lamp is, the wish's line, what could be changed, and the
-            // wish's Share Link when it has one.
+            // For a Mac without Lamp (`RemixPanel`): which app Lamp is, the wish's line, what could be changed, the
+            // wish's Share Link when it has one, and the repository it was put on, at the commit last pushed, which a
+            // remix starts from a copy of (`GitHubRepo.remixOrigin`: public, and this version). Not a starter's: a copy
+            // may have been changed since.
             "LampHost": Edition.bundleID,
             "LampAbout": AppDescription.description(of: project) ?? "",
             "LampSuggestions": (RemixSuggestions.load(project) ?? []).map(\.plist),
             "LampShareLink": WishLink.kept(for: project)?.url.absoluteString ?? "",
+            "LampRepository": remix.map { if case .repository(let url, _) = $0 { url } else { "" } } ?? "",
+            "LampCommit": remix.map { if case .repository(_, let commit) = $0 { commit ?? "" } else { "" } } ?? "",
         ]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: appex.appendingPathComponent("Contents/Info.plist"))
@@ -96,27 +102,88 @@ enum Sidebar {
 
     // MARK: Which extension is the real one
 
+    /// What Lamp does to tell a sidebar it signed from anything else, as it happens: each hash kept and why one
+    /// couldn't be, and each connection turned away with the check it failed. A chat that never comes up beside its
+    /// app is a connection refused over and over, and only these lines say which check refused it. Read with
+    /// `log show --predicate 'subsystem == "<Lamp's bundle id>" AND category == "sidebar"'`.
+    static let log = Logger(subsystem: Edition.bundleID, category: "sidebar")
+
+    /// How many hashes are kept for each app: a running copy may be from a build or two before.
+    static let keptHashes = 4
+
     /// The code hashes of the extensions Lamp signed for each app, newest last: the extension in a running copy
     /// may be from the build before. Kept in Lamp's own folder, never the app's, which the app could change.
     private static var hashesURL: URL { Edition.supportFolder.appendingPathComponent("sidebar-hashes.json") }
     private static var hashes: [String: [String]] = {
-        (try? JSONDecoder().decode([String: [String]].self, from: Data(contentsOf: hashesURL))) ?? [:]
+        guard FileManager.default.fileExists(atPath: hashesURL.path) else { return [:] }
+        do {
+            let read = try JSONDecoder().decode([String: [String]].self, from: Data(contentsOf: hashesURL))
+            log.notice("hashes read: \(read.count, privacy: .public) apps from \(hashesURL.path, privacy: .public)")
+            return read
+        } catch {
+            log.error("hashes unreadable, starting empty: \(String(describing: error), privacy: .public)")
+            return [:]
+        }
     }()
+
+    /// The hash macOS gives a signature (its cdhash), as the hex a requirement names it by.
+    private static func hex(of info: CFDictionary?) -> String? {
+        ((info as? [String: Any])?[kSecCodeInfoUnique as String] as? Data).map { $0.map { String(format: "%02x", $0) }.joined() }
+    }
 
     /// After signing: the hash of what was signed, the one thing a process can't fake about what it runs.
     static func remember(_ project: LampProject, signed app: URL) {
         let appex = extensionURL(in: app)
+        guard FileManager.default.fileExists(atPath: appex.path) else {
+            log.notice("remember \(project.id, privacy: .public): no extension in \(app.path, privacy: .public)")
+            return
+        }
         var code: SecStaticCode?
+        let created = SecStaticCodeCreateWithPath(appex as CFURL, [], &code)
+        guard created == errSecSuccess, let code else {
+            log.error("remember \(project.id, privacy: .public): SecStaticCodeCreateWithPath \(created, privacy: .public) for \(appex.path, privacy: .public)")
+            return
+        }
         var info: CFDictionary?
-        guard FileManager.default.fileExists(atPath: appex.path),
-              SecStaticCodeCreateWithPath(appex as CFURL, [], &code) == errSecSuccess, let code,
-              SecCodeCopySigningInformation(code, [], &info) == errSecSuccess,
-              let hash = (info as? [String: Any])?[kSecCodeInfoUnique as String] as? Data else { return }
-        let hex = hash.map { String(format: "%02x", $0) }.joined()
+        let read = SecCodeCopySigningInformation(code, [], &info)
+        guard read == errSecSuccess, let hex = hex(of: info) else {
+            log.error("remember \(project.id, privacy: .public): SecCodeCopySigningInformation \(read, privacy: .public), no hash, for \(appex.path, privacy: .public)")
+            return
+        }
         var list = (hashes[project.id] ?? []).filter { $0 != hex }
         list.append(hex)
-        hashes[project.id] = Array(list.suffix(4))
-        try? JSONEncoder().encode(hashes).write(to: hashesURL)
+        let dropped = list.dropLast(keptHashes)
+        hashes[project.id] = Array(list.suffix(keptHashes))
+        log.notice("""
+            remember \(project.id, privacy: .public): \(hex, privacy: .public) from \(appex.path, privacy: .public), \
+            kept \(hashes[project.id] ?? [], privacy: .public), dropped \(Array(dropped), privacy: .public)
+            """)
+        do {
+            try JSONEncoder().encode(hashes).write(to: hashesURL)
+        } catch {
+            log.error("remember \(project.id, privacy: .public): couldn't save hashes: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Why each sidebar process was last turned away, and how often since, so one refused twice a second is
+    /// described once and then counted rather than written down each time.
+    @MainActor private static var refusals: [pid_t: (reason: String, count: Int)] = [:]
+
+    @MainActor private static func refuse(_ pid: pid_t, _ reason: String) {
+        let last = refusals[pid]
+        let count = last?.reason == reason ? last!.count + 1 : 1
+        refusals[pid] = (reason, count)
+        if count == 1 || count % 20 == 0 {
+            log.error("refused sidebar pid \(pid, privacy: .public) (\(count, privacy: .public) times): \(reason, privacy: .public)")
+        }
+    }
+
+    /// When a process started, to set beside when its app was swapped in and opened.
+    private static func started(_ pid: pid_t) -> String {
+        var info = proc_bsdinfo()
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { return "?" }
+        let date = Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000)
+        return ISO8601DateFormatter.string(from: date, timeZone: .current, formatOptions: [.withInternetDateTime, .withFractionalSeconds])
     }
 
     /// The app whose extension, as Lamp signed it, is on the other end of a connection; nil for anything else.
@@ -126,18 +193,59 @@ enum Sidebar {
         var peer = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
         guard withUnsafeMutablePointer(to: &peer, { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(socket, $0, &length) } }) == 0,
-              peer.sin_addr.s_addr == inet_addr("127.0.0.1"),
-              let pid = PeerProcess.find(connectedFrom: UInt16(bigEndian: peer.sin_port), to: Edition.sidebarPort,
-                                         path: { $0.hasSuffix("/LampSidebar.appex/Contents/MacOS/LampSidebar") }) else { return nil }
+              peer.sin_addr.s_addr == inet_addr("127.0.0.1") else {
+            log.error("refused a connection: not from this Mac's own address (errno \(errno, privacy: .public))")
+            return nil
+        }
+        let port = UInt16(bigEndian: peer.sin_port)
+        guard let pid = PeerProcess.find(connectedFrom: port, to: Edition.sidebarPort,
+                                         path: { $0.hasSuffix("/LampSidebar.appex/Contents/MacOS/LampSidebar") }) else {
+            log.error("refused a connection from port \(port, privacy: .public): no sidebar process holds it")
+            return nil
+        }
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let path = proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : "?"
+        let seen = "\(path), started \(started(pid))"
         var code: SecCode?
-        guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: pid] as CFDictionary, [], &code) == errSecSuccess, let code else { return nil }
-        return Store.shared.projects.first { project in
+        let guest = SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: pid] as CFDictionary, [], &code)
+        guard guest == errSecSuccess, let code else {
+            refuse(pid, "SecCodeCopyGuestWithAttributes \(guest) for \(seen)")
+            return nil
+        }
+        // The hash the process runs, for the log: what it's checked against is the kernel's, through the requirement.
+        var running: String?
+        var staticCode: SecStaticCode?
+        if SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode {
+            var info: CFDictionary?
+            if SecCodeCopySigningInformation(staticCode, [], &info) == errSecSuccess { running = hex(of: info) }
+        }
+        var statuses: [String] = []
+        let found = Store.shared.projects.first { project in
             (hashes[project.id] ?? []).contains { hex in
                 var requirement: SecRequirement?
-                return SecRequirementCreateWithString("cdhash H\"\(hex)\"" as CFString, [], &requirement) == errSecSuccess
-                    && SecCodeCheckValidity(code, [], requirement) == errSecSuccess
+                guard SecRequirementCreateWithString("cdhash H\"\(hex)\"" as CFString, [], &requirement) == errSecSuccess else { return false }
+                let status = SecCodeCheckValidity(code, [], requirement)
+                // Only a hash the process could be running says much when it fails: the rest fail by design.
+                if status != errSecSuccess, hex == running || status != errSecCSReqFailed {
+                    statuses.append("\(project.id) \(hex): SecCodeCheckValidity \(status)")
+                }
+                return status == errSecSuccess
             }
         }
+        guard let found else {
+            // The apps whose extension is the one this process runs from, with the hashes kept for them.
+            let owners = Store.shared.projects.filter { project in
+                path.hasPrefix(extensionURL(in: project.installedURL).resolvingSymlinksInPath().path)
+                    || path.hasPrefix(extensionURL(in: project.installedURL).path)
+            }
+            let allowed = owners.map { "\($0.id) [\((hashes[$0.id] ?? []).joined(separator: ", "))]" }.joined(separator: "; ")
+            let checks = statuses.isEmpty ? "" : "; " + statuses.joined(separator: "; ")
+            refuse(pid, "\(seen) runs \(running ?? "an unreadable hash"), not one kept; kept for its app: \(allowed.isEmpty ? "none" : allowed)\(checks)")
+            return nil
+        }
+        refusals[pid] = nil
+        log.notice("accepted sidebar pid \(pid, privacy: .public) as \(found.id, privacy: .public): \(seen, privacy: .public) runs \(running ?? "?", privacy: .public)")
+        return found
     }
 }
 
@@ -166,7 +274,7 @@ final class SidebarServer {
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
             .merge(with: WishLinkCards.shared.objectWillChange).merge(with: PublishCards.shared.objectWillChange)
-            .merge(with: GitHubRepoCards.shared.objectWillChange).sink { [weak self] _ in
+            .merge(with: GitHubRepoCards.shared.objectWillChange).merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
@@ -183,10 +291,12 @@ final class SidebarServer {
             close(socket)
             return
         }
-        let connection = Connection(socket: socket, projectID: project.id, server: self)
+        // A wish's Mac app in a folder of its own shows the wish's chat, which is the only one it has.
+        let connection = Connection(socket: socket, projectID: Store.shared.wish(of: project).id, appID: project.id, server: self)
         connections[ObjectIdentifier(connection)] = connection
         MagicPanel.shared.follow(project.id)
         MagicPanel.shared.chatOpenedInApp(project)
+        MagicPanel.shared.chatPlaced(connection.projectID)
         connection.push(force: true)
     }
 
@@ -197,11 +307,12 @@ final class SidebarServer {
         if !connections.values.contains(where: { $0.projectID == id }) {
             dictations.removeValue(forKey: id)?.cancel()
             listening[id] = nil
-            // The app went in the middle of a turn (the person quit it, or it crashed): the turn's progress, its
-            // questions and Stop come up in Lamp's panel rather than nowhere. A reopen for a change brings its chat
-            // back beside the new copy before then.
-            if Store.shared.busy.contains(id), let project = Store.shared.projects.first(where: { $0.id == id }) {
-                MagicPanel.shared.showChatAfterQuit(project)
+            // The app went in the middle of a turn (the person quit it, or it crashed), or went because it moved off
+            // the Mac (to a TV, another device): the chat comes up in Lamp's panel rather than nowhere. A reopen for a
+            // change brings its chat back beside the new copy before then, and a plain quit leaves it closed (`ChatReturn`).
+            MagicPanel.shared.chatLeftApp(id)
+            if let project = Store.shared.projects.first(where: { $0.id == id }) {
+                MagicPanel.shared.showChatAfterQuit(project, because: Store.shared.busy.contains(id) ? .turnGoing : .appLeft)
             }
         }
     }
@@ -233,6 +344,13 @@ final class SidebarServer {
         local.projectID = projectID
         locals[projectID] = local
         local.push()
+    }
+
+    /// A wish's chat opened from the desk on one of its panels (Wish Info): what the bar's buttons open, kept until the
+    /// chat is shown, which reads it as it connects.
+    func show(_ panel: SidebarPanel, for project: LampProject) {
+        panels[project.id] = panel
+        scheduleUpdate()
     }
 
     private func scheduleUpdate() {
@@ -307,9 +425,9 @@ final class SidebarServer {
             guard let line = log.first(where: { $0.id == state.lines[index].id }),
                   let message = Talk.waiting(on: line, in: waiting) else { continue }
             state.lines[index].takeBack = message.id
-            state.lines[index].waitingForSetup = store.setup.ready ? nil : true
+            state.lines[index].waitingForSetup = store.readyFor(project) ? nil : true
         }
-        state.waitingForSetup = !store.setup.ready
+        state.waitingForSetup = !store.readyFor(project)
         state.waitingForReload = store.queueWaitsForReload(in: project) ? true : nil
         state.approval = store.approvals[project.id].map {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look, request: $0.request,
@@ -335,6 +453,7 @@ final class SidebarServer {
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
                                          hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
             toolbar.canPublish = Publish.canPublish(project) && made ? true : nil
+            toolbar.canContribute = Contribute.canContribute(project) && made ? true : nil
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
             // A wish with no app at all has nothing to play.
@@ -346,7 +465,10 @@ final class SidebarServer {
             state.tryOn = tryOn(for: project, busy: busy)
         }
         state.intro = log.isEmpty && (store.queued[project.id] ?? []).isEmpty ? intro(for: project, busy: busy, draft: draft.text) : nil
-        if store.setup.checked && !store.setup.hasBuildTools {
+        // Only for a wish that needs them, once they're asked for: a wish that's only being used doesn't, nor is a game
+        // or a screen made with them.
+        if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project)
+            && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) {
             state.banner = SidebarBanner(text: "Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.",
                                          button: store.setup.installRequested ? "Show Installer" : "Install…")
         }
@@ -357,19 +479,30 @@ final class SidebarServer {
             let versions = versions(for: project, busy: busy)
             state.versions = versions.list
             state.hasEarlierVersions = versions.more
-        case .info: state.info = AppInfoView.sections(for: project, models: AppModels.load(project), store: store)
+        case .info:
+            state.info = AppInfoView.sections(for: project, models: AppModels.load(project), store: store,
+                                              changedFromOriginal: changedFromOriginal(project, busy: busy, lines: log.count))
         case nil: break
         }
         state.sharing = sharing.removeValue(forKey: project.id)
         if let card = WishLinkCards.shared.card(for: project), card.inSidebar { state.wishLink = wishLink(card, of: project) }
         if let card = PublishCards.shared.card(for: project) { state.publish = PublishCards.shared.wire(card, of: project) }
         if let card = GitHubRepoCards.shared.card(for: project) { state.repo = GitHubRepoCards.shared.wire(card, of: project) }
+        if let card = ContributeCards.shared.card(for: project) { state.contribute = ContributeCards.shared.wire(card, of: project) }
         return state
     }
 
-    /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window.
+    /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window, the
+    /// wish's own or its one Mac app in a folder (`Store.chatApp`).
     static func besideItsApp(_ project: LampProject, place: WishPlace?) -> Bool {
-        project.holdsApp && project.destination == .mac && project.hasMac && (place ?? .window) == .window
+        onTheMac(project) && (place ?? .window) == .window
+    }
+
+    /// Whether the wish's chat app opens on this Mac, whatever its place there (a window, the menu bar): one that moved
+    /// to a TV or another device doesn't, and its chat has nowhere beside it to be.
+    static func onTheMac(_ project: LampProject) -> Bool {
+        let app = Store.shared.chatApp(of: project)
+        return app.holdsApp && app.destination == .mac && app.hasMac
     }
 
     /// Where each chat was being read, the first line in view, or none at its end (`SidebarCommand.scrolled`).
@@ -473,6 +606,25 @@ final class SidebarServer {
     private var panels: [String: SidebarPanel] = [:]
     /// The wish's file after Share…, until it's been sent.
     private var sharing: [String: SidebarSharing] = [:]
+
+    /// Whether each wish has changed since it arrived, for its info panel's credits, read again (it asks git) when a turn
+    /// starts or ends and when the chat changes.
+    private var originals: [String: (key: String, changed: Bool)] = [:]
+
+    private func changedFromOriginal(_ project: LampProject, busy: Bool, lines: Int) -> Bool {
+        let key = "\(busy) \(lines)"
+        let known = originals[project.id]?.changed ?? false
+        if originals[project.id]?.key != key {
+            originals[project.id] = (key, known)
+            Task { [weak self] in
+                let changed = await Store.shared.original(toStartAgain: project) != nil
+                guard let self, self.originals[project.id]?.key == key else { return }
+                self.originals[project.id] = (key, changed)
+                if changed != known { self.scheduleUpdate() }
+            }
+        }
+        return known
+    }
 
     /// What the toolbar knows of each app's history, read again as Lamp's window reads it: when a turn starts or ends
     /// and when the chat changes.
@@ -772,7 +924,7 @@ final class SidebarServer {
                 case .reload:
                     let queued = Store.shared.reloadWhenFree.contains(project.id)
                     var card = SidebarLine(id: line.id, kind: .action,
-                                           text: queued ? ReloadLine.queued(project.name) : ReloadLine.text(project.name), gap: gap)
+                                           text: queued ? ReloadLine.queued(project.name) : Store.shared.reloadLine(project), gap: gap)
                     card.symbol = "arrow.clockwise"
                     card.button = "Reload"
                     card.prominent = true
@@ -814,6 +966,15 @@ final class SidebarServer {
                         card.declineButton = OldCopyLine.keep
                         card.button = OldCopyLine.remove
                     }
+                    out.append(card)
+                case .newerOriginal:
+                    let done = NewerOriginalLine.isDone(line.text)
+                    var card = SidebarLine(id: line.id, kind: .action, text: NewerOriginalLine.title(done: done), gap: gap)
+                    card.symbol = NewerOriginalLine.symbol
+                    card.button = done ? nil : NewerOriginalLine.button
+                    // A prominent card with no button draws an empty one.
+                    card.prominent = !done
+                    card.disabled = !done && Store.shared.busy.contains(project.id)
                     out.append(card)
                 case .keepOpening:
                     // What Lamp does now, whatever was pressed before: turned off in Settings, the card offers it again.
@@ -1086,6 +1247,7 @@ final class SidebarServer {
                 Task { await store.answerOldCopy(project, line: line.id, remove: true) }
                 return
             }
+            if line.kind == .newerOriginal { return store.updateFromOriginal(project, opening: false) }
             if line.kind == .keepOpening {
                 store.keepPhoneAppsOpening(true, for: project)
                 return pushNow()
@@ -1210,11 +1372,19 @@ final class SidebarServer {
             case .setPrivate(let value): cards.setPrivate(project, value)
             case .setLicense(let value): cards.setLicense(project, value)
             }
+        case .contribute(let command):
+            let cards = ContributeCards.shared
+            switch command {
+            case .open: cards.open(project)
+            case .send: cards.send(project)
+            case .fix: cards.fix(project)
+            case .openRequest: cards.openRequest(project)
+            case .copy: cards.copy(project)
+            case .close: cards.close(project)
+            }
         case .infoAction(let action):
             AppInfoView.perform(action, for: project) { tab in
-                UserDefaults.standard.set(tab, forKey: "settingsTab")
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                SettingsMenu.show(tab: tab)
             }
             scheduleUpdate()
         case .tryOn(let id):
@@ -1239,7 +1409,7 @@ final class SidebarServer {
             // anything else, an app built before the chat could go beside it included, is opened as Play opens it.
             let beside = Self.besideItsApp(project, place: histories[project.id]?.value?.place)
             Task {
-                if beside, FileManager.default.fileExists(atPath: project.installedURL.path), await MagicPanel.chatsInApp(project) {
+                if beside, FileManager.default.fileExists(atPath: store.chatApp(of: project).installedURL.path), await MagicPanel.chatsInApp(project) {
                     return store.change(project)
                 }
                 store.openWish(project)
@@ -1304,6 +1474,8 @@ final class SidebarServer {
     fileprivate final class Connection {
         let fd: Int32
         let projectID: String
+        /// The app whose window this chat is in: the wish's own, or one of its apps in a folder, which pointing reaches.
+        let appID: String
         weak var server: SidebarServer?
         private var source: DispatchSourceRead?
         private var buffer = Data()
@@ -1319,9 +1491,10 @@ final class SidebarServer {
         /// Which shape of the chat the sidebar reads (`SidebarCommand.hello`); 1 until it says.
         fileprivate var version = 1
 
-        init(socket: Int32, projectID: String, server: SidebarServer) {
+        init(socket: Int32, projectID: String, appID: String, server: SidebarServer) {
             fd = socket
             self.projectID = projectID
+            self.appID = appID
             self.server = server
             // A sidebar that went away mid-write mustn't end Lamp.
             var on: Int32 = 1
@@ -1355,6 +1528,11 @@ final class SidebarServer {
                     push(force: true)
                     // A starter's first chat: what it offers to change arrives once the chat is there to see.
                     Store.shared.offerStarterChanges(projectID, after: 0.9)
+                } else if case .point = command, let app = Store.shared.projects.first(where: { $0.id == appID }), app.isPart {
+                    // Pointing is at the window this chat is beside, not whichever app stands for the wish.
+                    MagicPanel.shared.point(in: app, fromLamp: false)
+                } else if case .pointAgain = command, let app = Store.shared.projects.first(where: { $0.id == appID }), app.isPart {
+                    MagicPanel.shared.pointAgain(in: app)
                 } else {
                     server?.handle(command, from: projectID)
                 }
@@ -1363,7 +1541,10 @@ final class SidebarServer {
 
         @MainActor func push(force: Bool) {
             guard !outbox.isHolding else { waiting = true; return }
-            guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
+            guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else {
+                Sidebar.log.error("nothing sent to the sidebar of \(self.appID, privacy: .public): no wish \(self.projectID, privacy: .public)")
+                return
+            }
             var state = server.state(for: project)
             // A sidebar from before first builds were drawn as their parts, and before Agent Details' output, can read
             // neither, and would drop the whole chat: it gets each part's lines as lines, as it showed them.
@@ -1423,12 +1604,17 @@ final class SidebarServer {
                 sentDraft = state.draft
                 sentDraftVersion = state.draftVersion
             }
-            guard let data = SidebarWire.encode(state), force || data != last else { return }
+            guard let data = SidebarWire.encode(state) else {
+                Sidebar.log.error("nothing sent to the sidebar of \(self.appID, privacy: .public): its chat couldn't be encoded")
+                return
+            }
+            guard force || data != last else { return }
             last = data
             outbox.send(data)
         }
 
         @MainActor private func end() {
+            Sidebar.log.notice("sidebar of \(self.appID, privacy: .public) closed its connection")
             outbox.close()
             source?.cancel()
             source = nil

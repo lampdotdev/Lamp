@@ -176,9 +176,16 @@ struct Integration: Codable, Hashable {
         var launch: [IntegrationAction]?
         /// Ends in a request whose answer is kept as the picture (`keep: "picture"`).
         var look: [IntegrationAction]?
+        /// Ends in a request whose answer is the app's screen as text (`keep: "screen"`): the tree of what it shows, as
+        /// the device describes it (a Roku's `/query/app-ui`), which `look_at_app` and `use_app` give beside the picture.
+        var screen: [IntegrationAction]?
         /// Run once per key, with `{key}` the device's name for it from `keys`.
         var use: [IntegrationAction]?
         var logs: [IntegrationAction]?
+        /// Whether the app just launched is running, its last request's `expect` asking (with `until`, for a few
+        /// seconds): Lamp launches again while it isn't, for a device that answers a launch before it can open the app
+        /// (an Xbox just done installing shows its own "not ready yet" instead).
+        var running: [IntegrationAction]?
         /// Ends the app on the device, run before an update replaces it (a device can fail to open a package installed
         /// over its running copy): with the values of the copy that's there.
         var stop: [IntegrationAction]?
@@ -299,8 +306,8 @@ struct Request: Codable, Hashable {
     /// Over HTTPS, to a device that serves its own certificate (Xbox's Device Portal): Lamp trusts the certificate the
     /// first time and holds the device to it after (`DeviceTLS`).
     var https: Bool?
-    /// "picture": the answer is the screen's picture (in a bridge's `look`). "log": the answer is the app's log (in a
-    /// bridge's `log`). "key": the answer is a key the device gives this Mac to sign in to it over SSH, kept in Lamp's
+    /// "picture": the answer is the screen's picture (in a bridge's `look`). "screen": the answer is the screen as text
+    /// (in a bridge's `screen`). "log": the answer is the app's log (in a bridge's `log`). "key": the answer is a key the device gives this Mac to sign in to it over SSH, kept in Lamp's
     /// folder (in a setup step's `run`).
     var keep: String?
     /// Asks again every two seconds, up to this many seconds, while the device answers 204 (still working): for a
@@ -308,12 +315,17 @@ struct Request: Codable, Hashable {
     var poll: Int?
     /// What the answer must say for the step to count as done; otherwise the step fails with the answer's words.
     var expect: Expect?
+    /// Asks again every two seconds, up to this many seconds, until the answer says what `expect` asks: for a device
+    /// that's done with an install before the app is really there (an Xbox lists a package a while after saying so).
+    var until: Int?
     /// A setting changed only for its sequence: the name of the JSON field holding the setting's value in the device's
     /// answer to a GET of the same path. Lamp reads it before sending, and once the sequence is over (for a bridge's
     /// install, once the app has been launched after it), whether it went through or not, sends back
     /// `{"<field>": "<what it was>"}` the same way (Xbox's "treat apps as games" while a game is installed).
     var restore: String?
 
+    /// A `json` path may have `*` for every element of a list ("InstalledPackages.*.PackageFullName"): the answer then
+    /// says what's asked when any of them does. `equals` and `contains` may hold Lamp's values (`{packageFullName}`).
     struct Expect: Codable, Hashable {
         var json: String?
         var xml: String?
@@ -481,7 +493,7 @@ enum IntegrationCheck {
         case object([String: Shape]), array(Shape), map, leaf
         static let request: Shape = .object(["method": .leaf, "https": .leaf, "port": .leaf, "path": .leaf, "headers": .map, "body": .leaf, "form": .map,
                                              "auth": .object(["digest": .leaf, "user": .leaf, "password": .leaf]), "keep": .leaf,
-                                             "poll": .leaf, "restore": .leaf, "expect": .object(["json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf])])
+                                             "poll": .leaf, "until": .leaf, "restore": .leaf, "expect": .object(["json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf])])
         static let action: Shape = .object([
             "http": request, "probe": .leaf, "stream": .object(["port": .leaf]),
             "ssh": .object(["port": .leaf, "user": .leaf, "command": .leaf, "explanation": .leaf]),
@@ -504,7 +516,7 @@ enum IntegrationCheck {
                                          "tcp": .leaf, "field": .leaf, "signedIn": .leaf])), "model": .leaf,
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
-            "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
+            "bridge": .object(["install": .array(action), "launch": .array(action), "running": .array(action), "look": .array(action), "screen": .array(action),
                                "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map,
                                "lacks": .array(.leaf), "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf])]),
             "app": appKind,
@@ -622,23 +634,31 @@ enum IntegrationCheck {
 
         // Bridge
         if let bridge = integration.bridge {
-            let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("look", bridge.look), ("use", bridge.use),
+            let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("running", bridge.running), ("look", bridge.look), ("screen", bridge.screen), ("use", bridge.use),
                                                                ("logs", bridge.logs), ("stop", bridge.stop), ("log", bridge.log), ("remove", bridge.remove),
                                                                ("type", bridge.type)]
             for (name, sequence) in sequences {
                 for (n, action) in (sequence ?? []).enumerated() {
                     problems += actionProblems(action, at: "bridge.\(name)[\(n)]", fields: fields, steps: steps, inBridge: true)
                     if action.vendorSignIn != nil { say("bridge.\(name)[\(n)]: a sign-in is a setup step, never part of a bridge.") }
-                    if let keep = action.http?.keep, !(keep == "picture" && name == "look") && !(keep == "log" && name == "log") {
-                        say("bridge.\(name)[\(n)].http.keep: only look keeps an answer, as the picture, and log, as the log.")
+                    if let keep = action.http?.keep, !(keep == "picture" && name == "look") && !(keep == "log" && name == "log")
+                        && !(keep == "screen" && name == "screen") {
+                        say("bridge.\(name)[\(n)].http.keep: only look keeps an answer, as the picture, screen, as the screen as text, and log, as the log.")
                     }
                 }
             }
             if let look = bridge.look, !look.contains(where: { $0.http?.keep == "picture" }) {
                 say("bridge.look must have a request with keep \"picture\": its answer is the picture.")
             }
+            if let screen = bridge.screen, !screen.contains(where: { $0.http?.keep == "screen" }) {
+                say("bridge.screen must have a request with keep \"screen\": its answer is the screen as text.")
+            }
             if let log = bridge.log, !log.contains(where: { $0.http?.keep == "log" }) {
                 say("bridge.log must have a request with keep \"log\": its answer is the log.")
+            }
+            if let running = bridge.running {
+                if bridge.launch == nil { say("bridge.running checks the app launch opened, so it needs bridge.launch.") }
+                if running.last?.http?.expect == nil { say("bridge.running must end in a request whose expect says the app is running.") }
             }
             if bridge.use != nil, (bridge.keys ?? [:]).isEmpty { say("bridge.use needs keys: Lamp's names for the remote's keys to the device's.") }
             for (key, name) in bridge.keys ?? [:] where !isID(key) || name.unicodeScalars.contains(where: { !Placeholders.safe.contains($0) }) || name.isEmpty {
@@ -903,18 +923,24 @@ enum IntegrationCheck {
                 problems += placeholderProblems(auth.password, at: "\(at).auth.password", place: .auth, fields: fields, steps: steps)
             }
         }
-        if let keep = request.keep, !["picture", "log", "key"].contains(keep) { problems.append("\(at).keep can only be \"picture\", \"log\" or \"key\".") }
+        if let keep = request.keep, !["picture", "screen", "log", "key"].contains(keep) { problems.append("\(at).keep can only be \"picture\", \"screen\", \"log\" or \"key\".") }
         if let restore = request.restore {
             if restore.range(of: #"^[A-Za-z0-9_]{1,64}$"#, options: .regularExpression) == nil { problems.append("\(at).restore must be the name of a JSON field.") }
             if !["PUT", "POST"].contains(request.method?.uppercased() ?? "GET") || request.body == nil {
                 problems.append("\(at).restore is for a PUT or POST with a body that changes a setting.")
             }
-            if request.keep != nil || request.poll != nil { problems.append("\(at).restore changes a setting: it neither keeps nor polls.") }
+            if request.keep != nil || request.poll != nil || request.until != nil { problems.append("\(at).restore changes a setting: it neither keeps nor polls.") }
         }
         if let poll = request.poll, !(2...600).contains(poll) { problems.append("\(at).poll is seconds, 2 to 600.") }
         if let expect = request.expect {
             if (expect.json == nil) == (expect.xml == nil) { problems.append("\(at).expect reads the answer with exactly one of json or xml.") }
             if (expect.equals == nil) == (expect.contains == nil) { problems.append("\(at).expect needs exactly one of equals or contains.") }
+            if expect.xml?.contains("*") == true { problems.append("\(at).expect: * for every element of a list is for a json path.") }
+            problems += placeholderProblems(expect.equals ?? expect.contains ?? "", at: "\(at).expect", place: .shown, fields: fields, steps: steps)
+        }
+        if let until = request.until {
+            if !(2...600).contains(until) { problems.append("\(at).until is seconds, 2 to 600.") }
+            if request.expect == nil { problems.append("\(at).until asks again until the answer says what expect asks, so it needs expect.") }
         }
         return problems
     }

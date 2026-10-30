@@ -20,10 +20,17 @@ struct BuildStamp: Equatable {
     /// A fingerprint of `LampWish`, on an app that carries it: one built with an earlier block is built again when it's
     /// opened from Lamp, so the "out of date" its wish's other apps and its own other copies show for it goes once it is.
     var wish: String? = nil
+    /// The version of Lamp's player a game's or a screen's Mac copy was copied from (`GameKit.playerVersion`, which
+    /// build.sh writes into the copy), or nil for one that was compiled: a copy made by another player, or compiled
+    /// where this Lamp's player would do, or the reverse, is made again when it's opened from Lamp.
+    var player: String? = nil
+    /// A Mac bundle's stamp, the only kind the player makes.
+    var mac = false
 
     private static let lampKey = "LampVersion"
     private static let supportKey = "LampSupportVersion"
     private static let wishKey = "LampWishVersion"
+    private static let playerKey = "LampPlayerVersion"
 
     /// What this Lamp stamps on an app of several in a wish, beside `current`.
     static let currentWish = SHA256.hash(data: Data(Template.lampSupportSwift.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
@@ -38,17 +45,20 @@ struct BuildStamp: Equatable {
 
     /// The stamp on a built app, or nil when there's no app there. An app without a stamp reads as empty.
     static func read(_ app: URL) -> BuildStamp? {
-        guard let info = NSDictionary(contentsOf: infoPlist(of: app)) else { return nil }
-        return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String, wish: info[wishKey] as? String)
+        let url = infoPlist(of: app)
+        guard let info = NSDictionary(contentsOf: url) else { return nil }
+        return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String, wish: info[wishKey] as? String,
+                          player: info[playerKey] as? String, mac: url.path.hasSuffix("/Contents/Info.plist"))
     }
 
     /// The stamp on a build in the app's folder, read as `AppFile` reads: the agent's commands write that folder, and
     /// a link left at the build's Info.plist would be followed, a pipe there would keep Lamp waiting as it starts.
     static func read(_ app: URL, in project: LampProject) -> BuildStamp? {
-        guard let data = AppFile.read(app.appendingPathComponent("Contents/Info.plist"), in: project)
-                ?? AppFile.read(app.appendingPathComponent("Info.plist"), in: project),
+        let mac = AppFile.read(app.appendingPathComponent("Contents/Info.plist"), in: project)
+        guard let data = mac ?? AppFile.read(app.appendingPathComponent("Info.plist"), in: project),
               let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
-        return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String, wish: info[wishKey] as? String)
+        return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String, wish: info[wishKey] as? String,
+                          player: info[playerKey] as? String, mac: mac != nil)
     }
 
     /// Where an app's stamp is read: a Mac app's installed copy, in Lamp's own apps folder; an app with no Mac half
@@ -94,7 +104,14 @@ struct BuildStamp: Equatable {
     /// Out of date for this app: built by a Lamp whose app code differs, or, for an app that carries `LampWish`, whose
     /// `LampWish` does.
     func isOutdated(for project: LampProject) -> Bool {
-        isOutdated || (Template.carriesWish(project) && wish != Self.currentWish)
+        isOutdated || (Template.carriesWish(project) && wish != Self.currentWish) || playerOutdated(for: project)
+    }
+
+    /// A page's Mac copy made another way than this Lamp would make it now: by another player, or compiled where the
+    /// player would do (a game an earlier Lamp compiled), or copied where it's compiled now (Swift of its own added).
+    func playerOutdated(for project: LampProject) -> Bool {
+        guard mac, GameKit.hostsPage(project), let current = GameKit.playerVersion else { return false }
+        return GameKit.usesPlayer(project) ? player != current : player != nil
     }
 
     /// What built the app, to follow "built with": "Lamp 0.2.0", "an older version of Lamp".

@@ -87,7 +87,7 @@ enum AndroidFiles {
     }
 
     /// Kotlin and Java sit in folders named after their package: app/src/main/kotlin/a/b/X.kt.
-    private static func movedPath(_ relative: String, from old: String, to new: String) -> String {
+    static func movedPath(_ relative: String, from old: String, to new: String) -> String {
         let oldPath = old.replacingOccurrences(of: ".", with: "/"), newPath = new.replacingOccurrences(of: ".", with: "/")
         for root in ["/kotlin/", "/java/"] where relative.contains(root + oldPath + "/") {
             return relative.replacingOccurrences(of: root + oldPath + "/", with: root + newPath + "/")
@@ -98,7 +98,7 @@ enum AndroidFiles {
     /// The id Android installs the app under is this Mac's for the app, whatever the sender's said and however
     /// they said it. Set by a block of its own at the end of the file, which Gradle runs after the sender's, so
     /// nothing of theirs is rewritten (a one-line `defaultConfig { … }` keeps its other settings and its braces).
-    private static func settingApplicationID(in text: String, to id: String) -> String {
+    static func settingApplicationID(in text: String, to id: String) -> String {
         text + (text.hasSuffix("\n") ? "" : "\n")
             + "\n// Set by Lamp when the app was opened from a shared file: the id Lamp installs and opens it by.\n"
             + "android { defaultConfig { applicationId = \"\(id)\" } }\n"

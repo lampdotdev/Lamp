@@ -67,7 +67,7 @@ final class SharingWishTests: XCTestCase {
         let found = Sharing.inspect(package)
         XCTAssertTrue(found.files.map(\.name).contains("Web/app.js"))
         XCTAssertTrue(found.files.map(\.name).contains("iPhone/Sources/Pad.swift"))
-        XCTAssertTrue(found.detected.map(\.label).contains("Connects to the internet"))
+        XCTAssertTrue(found.detected.map(\.label).contains("Connects to example.invalid"), "\(found.detected.map(\.label))")
         let request = Sharing.reviewRequest(name: package.name, description: nil, notes: nil, files: found.files, web: true,
                                             parts: ["the iPhone app in iPhone/"])
         XCTAssertTrue(request.system.contains("the iPhone app in iPhone/"))

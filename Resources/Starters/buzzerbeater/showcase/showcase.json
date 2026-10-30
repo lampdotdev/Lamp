@@ -1,0 +1,11 @@
+{
+  "window": {
+    "width": 960,
+    "height": 540
+  },
+  "steps": [
+    {
+      "wait": 16
+    }
+  ]
+}

@@ -1,16 +1,20 @@
 # Builds Lamp on every pull request with the Xcode the release is built with (.github/xcode-version), so code that
-# only a newer Xcode accepts is caught here rather than when a release is tagged, and runs the regression tests as
-# a second check. No signing and no release secrets. The runner is GitHub's `xcode-27` image (macOS 27, Xcode 27),
-# chosen on purpose while it's a preview: it's the Xcode the team builds and generates apps with.
+# only a newer Xcode accepts is caught here rather than when a release is tagged. The regression tests take about
+# twenty minutes of a macOS runner, and GitHub runs only a few of those at a time for the organization, so they run
+# each night on main and when started by hand (Actions → Mac build → Run workflow), not on every pull request. No signing and no release secrets. The runner is Blacksmith's macOS 27 machine (an M4, Xcode 27),
+# on trial against GitHub's `xcode-27` image for speed and cost; releases and nightlies stay on GitHub's for now.
 name: Mac build
 
-# On every pull request, whatever it touches: main's ruleset requires the build and test checks, and a check that
-# never reports would hold a pull request forever.
+# On every pull request, whatever it touches: main's ruleset requires the build check, and a check that never reports
+# would hold a pull request forever.
 on:
   pull_request:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
 
 concurrency:
-  group: mac-build-${{ github.event.pull_request.number }}
+  group: mac-build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -18,15 +22,24 @@ permissions:
 
 jobs:
   build:
-    runs-on: xcode-27
+    if: github.event_name == 'pull_request'
+    runs-on: blacksmith-6vcpu-macos-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
         run: |
-          sudo xcode-select -s "/Applications/Xcode_$(cat .github/xcode-version).app"
+          # The release's Xcode, found by its version rather than its folder's name, which differs between machines:
+          # building with any other would let code through that the release's compiler rejects.
+          wanted="$(cat .github/xcode-version)"
+          for app in /Applications/Xcode*.app; do
+            if [ "$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null)" = "$wanted" ]; then
+              sudo xcode-select -s "$app"; break
+            fi
+          done
           xcodebuild -version
+          xcodebuild -version | head -1 | grep -qx "Xcode $wanted" || { echo "::error::This machine has no Xcode $wanted:"; ls -d /Applications/Xcode*.app; exit 1; }
 
       - name: Cache Swift packages and build
         uses: actions/cache@v4
@@ -38,15 +51,24 @@ jobs:
         run: swift build
 
   test:
-    runs-on: xcode-27
+    if: github.event_name != 'pull_request'
+    runs-on: blacksmith-6vcpu-macos-27
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
         run: |
-          sudo xcode-select -s "/Applications/Xcode_$(cat .github/xcode-version).app"
+          # The release's Xcode, found by its version rather than its folder's name, which differs between machines:
+          # building with any other would let code through that the release's compiler rejects.
+          wanted="$(cat .github/xcode-version)"
+          for app in /Applications/Xcode*.app; do
+            if [ "$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null)" = "$wanted" ]; then
+              sudo xcode-select -s "$app"; break
+            fi
+          done
           xcodebuild -version
+          xcodebuild -version | head -1 | grep -qx "Xcode $wanted" || { echo "::error::This machine has no Xcode $wanted:"; ls -d /Applications/Xcode*.app; exit 1; }
 
       - name: Cache Swift packages and build
         uses: actions/cache@v4
@@ -54,7 +76,20 @@ jobs:
           path: .build
           key: mac-test-${{ hashFiles('.github/xcode-version', 'Package.resolved') }}
 
+      - name: Fetch the starters
+        # Each starter's tree is its repository at the commit Resources/Starters/<folder>/starter.md pins.
+        run: scripts/fetch-starters.sh
+
+      - name: Bug report checks
+        # These standalone checks live outside the Swift package's regression test target.
+        run: scripts/test-bug-report.sh
+
+      - name: Phone prerequisite checks
+        # These checks also live outside the Swift package and need no phone or Apple account.
+        run: python3 scripts/check-phone-tools.py
+
       - name: Regression tests
-        # About a quarter of an hour on a fast Mac. The suites that need a key, a device or the live cases skip
-        # themselves when those aren't there.
-        run: swift test
+        # Each test in a process of its own, several at once: most of the suite waits on compilers, sockets and apps it
+        # starts rather than on the processor, so it takes a few minutes instead of twenty. The suites that need a key,
+        # a device or the live cases skip themselves when those aren't there.
+        run: swift test --parallel --num-workers 6

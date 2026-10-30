@@ -1,0 +1,14 @@
+{
+  "window": { "width": 1200, "height": 675 },
+  "steps": [
+    { "wait": 1 },
+    { "action": "click", "target": "Carry Over" },
+    { "wait": 2 },
+    { "action": "click", "target": "Not done: Send the proposal to Maya" },
+    { "wait": 2 },
+    { "action": "click", "target": "Not done: Book train tickets for Saturday" },
+    { "wait": 2 },
+    { "action": "click", "target": "Day going great" },
+    { "wait": 3 }
+  ]
+}

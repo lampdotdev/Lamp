@@ -1,35 +1,24 @@
 // {{NAME}}: not made yet. The same card a new app shows (a hammer, its name, "Lamp is making this game.") on the
 // game's background, so the window is plainly Lamp waiting rather than a game that looks broken. The game replaces
-// all of it.
+// all of it, keeping its shape: this file only puts the parts together, world.js builds the world (and builds it
+// again in place when it changes), and each part that changes as the game is played is a class in a module of its own
+// that takes its changes while the game runs (making.js; lamp-game.js, "Changes while it's played"). A change that
+// can't be swapped in runs this file again in place, keeping what it keeps: the renderer and its compiled shaders, and
+// the world until world.js changes (lamp-game.js, "Running the game's code again").
 import * as THREE from 'three';
-import { game } from './lamp-game.js';
+import { game, hot } from './lamp-game.js';
+import { World } from './world.js';
+import { Making } from './making.js';
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1d2a44);
-const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 10);
-
-const style = document.createElement('style');
-style.textContent = `
-  .lamp-making { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; gap: 12px; pointer-events: none; z-index: 5; color: #fff;
-    font-family: -apple-system, system-ui, sans-serif; }
-  .lamp-making svg { width: 64px; height: 64px; color: rgba(255, 255, 255, 0.55); }
-  .lamp-making h1 { margin: 0; font-size: 34px; font-weight: 700; }
-  .lamp-making p { margin: 0; font-size: 20px; color: rgba(255, 255, 255, 0.55); }`;
-const making = document.createElement('div');
-making.className = 'lamp-making';
-making.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">'
-    + '<g transform="rotate(40 12 12)"><rect x="10.8" y="8.5" width="2.4" height="13" rx="1.2"/>'
-    + '<path d="M7 3.5h8.5l2.5 2.2v2.8H7z"/></g></svg>'
-    + '<h1></h1><p>Lamp is making this game.</p>';
-making.querySelector('h1').textContent = '{{NAME}}';
-document.head.append(style);
-document.body.append(making);
+const live = hot(import.meta);
+const renderer = live.keep('renderer', () => new THREE.WebGLRenderer({ antialias: true }));
+const world = live.keep('world', () => new World());
+const making = new Making(document.title);
 
 game({
     renderer,
-    frame() {
-        renderer.render(scene, camera);
+    frame(f) {
+        making.update(f.dt);
+        renderer.render(world.scene, world.camera);
     },
 });

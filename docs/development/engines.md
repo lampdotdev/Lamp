@@ -19,7 +19,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `make_art`, `assets`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `connectors`, `lampify`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -32,7 +32,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `connectors`, `lampify`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the
@@ -43,7 +43,7 @@ A capability given to one engine must be given to all of them that can take it, 
   with the request. `Memory.brief` adds them once per conversation and again only when the notes were
   changed by someone else, going by what `.lamp/notes-shown.json` says that engine's conversation last knew;
   most requests carry nothing. A conversation its engine has compacted is told again (pi's and Claude Code's parsers report
-  `.compacted`; Codex doesn't say, so its conversations are told again every few requests), and the person can switch it off (`Memory.isOn`, on by default, the checkbox at the top of Settings → Memory): off, there are no notes tools, rule or summaries, and Settings neither reads nor lists the notes. On, Settings lists only the notes that hold something (`MemorySettings.listing`), with one "Nothing yet" row when none do; Add Notes starts a set Lamp hasn't, as a menu, or a button naming the one place left. The switch keeps the key it had as an experiment that was off by default (`experimentMemory`), so whoever chose then keeps their choice and only someone who never chose gets the default.
+  `.compacted`; Codex doesn't say, so Lamp sees it in Codex's file after the run, and its conversations are told again every few requests besides), and the person can switch it off (`Memory.isOn`, on by default, the checkbox at the top of Settings → Memory): off, there are no notes tools, rule or summaries, and Settings neither reads nor lists the notes. On, Settings lists only the notes that hold something (`MemorySettings.listing`), with one "Nothing yet" row when none do; Add Notes starts a set Lamp hasn't, as a menu, or a button naming the one place left. The switch keeps the key it had as an experiment that was off by default (`experimentMemory`), so whoever chose then keeps their choice and only someone who never chose gets the default.
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
   When to think of saving is said in the rule (`Agent.memoryRules`): at the end of each request, without waiting to be told to remember, and nothing when nothing lasting came up; an instruction for the one request (“don't test it”) is not a preference and isn't noted. No second call to a model decides it.
   A save that changes what the notes say leaves a receipt in the chat (`NoteReceipt`, a `.noted` line, logged in `Store.notes` for every engine): one line that opens to the lines added and removed, and Undo (`Store.undoNote`), which takes that save back out even when the notes have changed since. What was taken back is told to the agent with its next request (`Memory.tookBack`, beside the summaries), so the conversation that learned it doesn't note it again: each engine keeps its own conversation about an app, so each one is told (`Memory.Undone`). Undoing a later save never brings back a line taken back on an earlier receipt. An Undo that leaves notes neither as they were before the save nor as they are now gives them a summary made from their own lines (`NoteReceipt.summary(of:)`): the summary is all the agent is told, so it must be true of what is left.
@@ -55,7 +55,7 @@ A capability given to one engine must be given to all of them that can take it, 
   repair Lamp asks for later in it, a build's errors or a crash, which sends no request), the newest kept when there
   are more than fit. When it last ran is read from what each engine already leaves (Claude Code's and Codex's conversation
   file, rewritten as each run starts; pi's session file), so no new record is kept; a conversation that is only now
-  beginning, an ended one included (`Store.forgetConversation`), is given the chat from its start.
+  beginning, an ended one included (`Store.forgetConversation`, `Conversation.setAside`), is given the chat from its start.
 - **Skills** (`Skills`, `Resources/skills`): guidance only some requests need lives in a skill, not in the system
   prompt, so the prompt keeps what nearly every request uses. A skill is a folder with a `SKILL.md` in the Agent
   Skills format (a one-line `name` and `description` between `---` lines, then the instructions), copied into
@@ -72,7 +72,7 @@ A capability given to one engine must be given to all of them that can take it, 
   it loads its own skills for coding work; Codex's `skills.bundled.enabled=false` its own. Codex runs outside Lamp's sandbox, and
   it reads the person's own skills in `~/.agents/skills` at every start, which no setting of Codex's turns off): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
-  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones, its page runs on the game runtime or draws with three.js or Phaser, it imports SpriteKit, it uses one of those named skills' blocks or frameworks, or has a share extension), Lamp names it at
+  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones, its page runs on the game runtime or draws with three.js or Phaser, it imports SpriteKit, it uses one of those named skills' blocks or frameworks, or has a share extension), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
   conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
@@ -83,20 +83,42 @@ A capability given to one engine must be given to all of them that can take it, 
   every turn of every request reads the prompt, whether its app needs that or not. The prompt keeps at most a
   short rule that names the skill. A skill gives the agent reasons and examples to choose with, never a rule that
   chooses for it: what can't be judgment (what a device can run) is Lamp's to check, in code.
-- **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
+- **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`, `assets` with `show`): the conversation is sent whole with
   every request, so its pictures add up until the provider refuses the request (Anthropic takes 30 MB of images
   in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy
   (`Previews.forAgent`, under `.lamp/runtime/previews`, through `Store.agentPictures`), never the file itself, and
   as bytes Lamp read (`Store.pictureData`: pi's extension gets them with the answer, never a path to read):
-  the screenshots and the art stay as they are for the person and the app. A screenshot's copy keeps its pixels,
-  since `use_app`'s points are pixels in the picture at the scale it was taken; art is shrunk to 1280 px. Lamp
-  writes the copies unconfined, so their folder and file are checked like `Store.artDestination` checks art. pi's extension (`keepsPicturesFew` in
-  `lamp-tools.ts`) then takes the older pictures out of what the model is sent after each turn, with pi's
+  the screenshots and the art stay as they are for the person and the app. The copies are JPEG at 0.6
+  (`Previews.agentQuality`). A screenshot's copy keeps its pixels, since `use_app`'s points are pixels in the picture
+  at the scale it was taken, so a Mac window is taken at no more than 1024 px on its long side (`LampRuntime.scale(of:)` in
+  LampSupport.swift), which still reads its words; art is shrunk to 1024 px. Lamp
+  writes the copies unconfined, so their folder and file are checked like `Store.artDestination` checks art. Only the
+  newest few pictures stay in what each engine sends: pi's extension (`keepsPicturesFew` in
+  `lamp-tools.ts`) takes the older ones out, with pi's
   context edits (the session file keeps them), and when a request is refused as too big all the same it drops
-  every picture and sends once more. Claude Code and Codex compact on their own by tokens, which the small
-  copies keep ahead of the byte limit. When a request is still refused (`Agent.isRequestTooLarge`), the turn
-  says so in plain words and the conversation ends (`Store.forgetConversation`): the next request starts a
-  fresh one rather than failing the same way.
+  every picture and sends once more. Claude Code and Codex can't drop a picture, so Lamp does it in their own files
+  before resuming them (`Conversation.keepPicturesFew`): once a conversation holds more than 12, all but the newest 6
+  become a line saying a picture was taken out, in the engine's own spelling, the rest of the file left as it was.
+  pi's extension goes by the same numbers (and a byte budget besides). In a batch, not each turn, for every engine,
+  since each change to a conversation's beginning costs its cached copy at the provider.
+- **How big a conversation grows** (`Conversation`): every engine sends its whole conversation with each request, so a
+  wish worked on for days grows past what one request can carry (about 32 MB at Anthropic) long before a model with a
+  million tokens fills its window and compacts. So every engine compacts at `Conversation.compactAt` (200k tokens):
+  Claude Code by `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (it compacts a little under the window it's given), Codex by
+  `model_auto_compact_token_limit`, and pi by Lamp's extension (`compactsEarly`, from `LAMP_COMPACT_TOKENS`), which
+  has pi's own compaction do it. Claude Code's `compact_boundary` and pi's `compaction_end` are `.compacted`, and Codex's
+  is found in its file after the run; nothing of it shows in the chat, and the notes are told again. Each run's size
+  before and after (the context its last request took, the pictures still sent and their bytes, the file, how often it
+  compacted) is a line in `conversations.log` in Lamp's logs folder (`Conversation.note`). Lamp Dev takes
+  `LAMP_COMPACT_TOKENS` from its own environment to try a compaction quickly (Claude Code takes no window under 100k;
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers it further). When a request fails all the same in a way a smaller
+  conversation would get past (`Conversation.isTooBigToSend`: refused for its size, the prompt too long, or the
+  connection cut or the provider failing while a large conversation went out), Lamp sets that engine's conversation
+  aside (`Conversation.setAside`: its id moves to `.lamp/set-aside`, the conversation stays where the engine keeps it,
+  nothing is deleted), says so in the chat ("Started a fresh conversation for <wish>: the last one had grown too large
+  to send") and sends the request once more in a fresh one, told the wish's APP.md (`Conversation.freshNote`) and the
+  chat so far (`CatchUp`). If that fails too, the turn says so in plain words. Start Over sets every
+  engine's conversation aside the same way ("Start Over" in the desk guide).
 - **Messages sent while the agent works**: they wait in line for the next turn as one group, and the person chooses
   whether it goes now. The group sits close together under one caption at its latest message, with Send Now (Send
   All Now for several) beside it (`ChatLook.QueuedRow`, `QueuedPlace`, in both chats; `Store.canSendNow`), which hands
@@ -156,6 +178,10 @@ A capability given to one engine must be given to all of them that can take it, 
   every engine reports the call a moment after the look began, and its fixed word would cover each stage after it
   (building, installing, opening, looking at the app, watching it move); when the look ends it's "Thinking". No clock
   is shown beside the activity, in the chat or a first build's chapters: the turn's whole time is its "Worked for…".
+- **A failed request is said once**, as the error card a run's failure makes (`Store.runAgent`,
+  `Provider.friendlyError`), with the engine's own words in Agent Details. An engine's failure never reaches the chat
+  as a message: Claude Code words one as a message from the model, marked with `error`, and its parser drops that line
+  because the `result` line says the same; pi's and Codex's parsers have only their failure events to read.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Lamp's providers are Claude Code, ChatGPT Codex, OpenRouter (pi builds through it; its key is the only one
   Lamp keeps, `Provider.keyProviders`) and Native Mac AI (`LocalModels`: Lamp's own model servers, never another
@@ -185,6 +211,31 @@ A capability given to one engine must be given to all of them that can take it, 
   Before adding a capability, a way to make one better, or a new offer, read `design/setup-card/README.md`:
   when an offer is worth making, how the card and Settings rows are built, and how to write their copy (for
   someone who has never heard of a key or a model, never naming providers, routes or APIs).
+- **An app's own agent loop** (`LampAI.act` in Web/lamp.js, `/ai/act`, `Sources/Lamp/AppAct.swift`): the page
+  runs its own tools and keeps the turn; each `/ai/act` request is one step carrying everything so far (the request,
+  the tools' argument shapes, every earlier call with its result) and gets back the next calls or the reply, with the
+  route's id, which the page sends back so the whole turn stays on one route. The gateway keeps nothing between steps,
+  so it holds only what one request can: tool names and shapes (`reply` is Lamp's own), unique call ids, at most
+  `AppAct.maxCalls` calls per answer checked against their shapes (a call that doesn't fit is asked for again once,
+  then answered as a reply that says it couldn't), and a reply-only step once three are behind it. The turn's writes,
+  its deadline and cancel are the page's: it runs reads together and writes one after another, each `check`ed right
+  before it runs, stops at the deadline in every layer (the step's request, `send`'s retries) and drops an answer that
+  comes after a cancel. Only OpenRouter answers: tools with `require_parameters` and `tool_choice` "auto" ("none" for
+  the reply-only step), since the Anthropic models there take nothing stronger, so words without a call are the reply.
+  A question back may carry `choices` from `reply` (two to four short plain-text answers, checked by `AppAct.choices`
+  and again in lamp.js); words without a call carry none.
+  Every other route answers 501 with a sentence saying so; Claude Code and Codex would take a JSON plan through their
+  `--json-schema`/`--output-schema` paths, a GGUF model through `response_format`, and mlx_lm.server has neither.
+  `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
+  the page lets the route through and the app's route can take it.
+- **Hearing for apps** (`LampAI.hear` in Web/lamp.js, `/ai/hear`, `Sources/Lamp/AppHear.swift`): the page's host
+  records (`LampVoice`, devices guide) and the page sends a WAV in base64; the gateway checks it is 16 kHz mono 16-bit
+  PCM, 0.3 to 15 seconds, with exactly the header the hosts write and nothing more, before anything is paid for, then transcribes it with
+  `elevenlabs/scribe-v2` through OpenRouter with `no_verbatim`, the key staying on the Mac and OpenRouter's reported
+  `usage.cost` recorded as the app's. No key is a 501 with `needs: text`. lamp.js and the Android host try each way to
+  the Mac once, not again after a moment, and each recording carries its id (`op`): the same recording arriving again
+  at the same running Lamp within five minutes is transcribed and charged once (an in-memory answer per app). A timeout on the device may still have been paid for. `isAvailable('hear')` asks the
+  route itself, as `act`'s does.
 - **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
   its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
   `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the

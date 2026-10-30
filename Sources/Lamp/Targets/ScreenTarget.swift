@@ -18,14 +18,16 @@ extension Target {
                            tryOnHelp: { _ in "Where it's shown: this Mac, an iPhone or iPad, an Android tablet, photo frame or TV, a Samsung or LG TV, or your Xbox" },
                            place: { _ in .window }),
         guidance: Guidance(prompt: Agent.screenPrompt(for:),
-                           changeRules: { _ in Agent.Rules.screenEdit + Agent.Rules.tvFrameworks + Agent.Rules.screenDesign + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.tvTry },
+                           // The web app's own design rule, not a TV's 1920x1080, with the shapes read off the request's device line: an app is
+                           // given its kind before `make_app_for` sets its places, so its places here may not be the ones asked for.
+                           changeRules: { _ in Agent.Rules.screenEdit + Agent.Rules.tvFrameworks + Agent.Rules.screenDesign(nil) + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.screenTry },
                            skills: { [] },
                            elsewhere: { _ in "- On the person's TV, iPad, Android tablet, photo frame or Google TV, or Xbox: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI" }),
         recipe: Recipe(language: .web, fill: ScreenKit.fill, ownedFiles: ScreenKit.write(for:), support: ScreenKit.write(for:),
                        isMade: ScreenKit.isMade, scaffolded: { dir, _ in ScreenKit.isMade(dir) },
                        // Sources/ too: the Swift that answers the page's calls of the device is the agent's (Native.swift).
                        sources: { _ in [TVTemplate.webFolder, "Sources", "icon.json"] },
-                       inputs: { _ in ScreenKit.stamp },
+                       inputs: { ScreenKit.stamp + GameKit.playerInput(for: $0) },
                        builtURL: { project in
                            project.onTV ? TVs.stagingFolder(for: project).appendingPathComponent("web/index.html")
                                : project.onDevice ? DeviceApps.packageURL(for: project)
@@ -35,12 +37,13 @@ extension Target {
                        marker: ScreenKit.marker,
                        // Its folder holds a TV app's page and script: it's asked whether it's a screen first.
                        refines: .tv,
-                       shareRefusal: "Lamp doesn't share screens yet."),
+                       // Its page and the Swift beside it travel in a shared file (`ScreenFiles`); the copy is a screen too.
+                       shareRefusal: nil),
         part: Part(folder: "Screen", family: "screen", word: "screen", menu: ("Screen", "tv.inset.filled"), rules: { Agent.screenPrompt(part: $0, alone: $1) },
                    // How its places are given beside the wish's other apps, and how it reaches them.
                    wishRule: Agent.Rules.screenAmongApps) { dir, wish in
             AppFile.read(dir.appendingPathComponent(ScreenKit.marker), inFolder: wish, last: 1) != nil
         },
         setup: .none,
-        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true }, installFolder: "Screens", looksInTVPreview: true)
+        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true }, changesAreWeb: { _ in true }, installFolder: "Screens", looksInTVPreview: true)
 }

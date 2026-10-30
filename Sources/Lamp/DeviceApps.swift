@@ -12,6 +12,10 @@ enum DeviceApps {
     /// and its device back with it (`Template.platform(fromPackageIn:)`).
     static let marker = ".lamp-device"
 
+    /// The most Lamp packages and sends to a device as one app: a game with its models, textures and sounds. It's its
+    /// own limit, not the cap on a device's answers (`DeviceHTTP.limit`), and is held in memory as it's wrapped and sent.
+    static let packageLimit = 1 << 30
+
     /// The integration a folder's code was written for, read off its marker.
     static func integrationID(in dir: URL) -> String? {
         (try? String(contentsOf: dir.appendingPathComponent(marker), encoding: .utf8))?.trimmed.nilIfEmpty
@@ -165,7 +169,7 @@ enum DeviceApps {
             AppFolder.remove(zip, in: project.dir)
             try await GameKit.build(project, for: .xbox, started: started)
             guard let data = AppFile.read(zip, in: project), !data.isEmpty else { throw Failure(message: "The game's build left nothing to package.") }
-            guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The game is bigger than Lamp sends to a device.") }
+            guard data.count <= packageLimit else { throw Failure(message: "The game is bigger than Lamp sends to a device (\(packageLimit >> 30) GB).") }
             try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
             try wrapMSIX(data, for: project, entry: .program("App.exe"))
             return
@@ -186,7 +190,7 @@ enum DeviceApps {
         guard let data = AppFile.read(output, inFolder: source), !data.isEmpty else {
             throw Failure(message: "The package step ran but left nothing at \(declared.output).")
         }
-        guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
+        guard data.count <= packageLimit else { throw Failure(message: "The package is bigger than Lamp sends to a device (\(packageLimit >> 30) GB).") }
         if let page, declared.output.lowercased().hasSuffix(".zip") { try GamePage.check(payload: try MSIX.files(inZip: data), for: page) }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
@@ -259,7 +263,7 @@ enum DeviceApps {
     /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
     private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start) throws {
         var files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
-        if entry == .webHost { files = try WebHost.payload(files) }
+        if entry == .webHost { files = try WebHost.payload(files, phone: try GamePhones.xboxPage(for: project)) }
         let folder = buildFolder(for: project)
         let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
         var identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
@@ -281,11 +285,17 @@ enum DeviceApps {
 
     // MARK: On the device
 
-    /// The device the app goes on: the one chosen under Try On, else the only one its integration found.
+    /// The device the app goes on: the one chosen under Try On, else the only one of its integration's that's set up.
+    /// One only found is never taken for the person's on its own: it may be a neighbor's, and is set up when chosen.
+    /// A chosen one since forgotten is still the choice while it's on the network (Play sets it up again first); gone
+    /// from both, the choice falls to the only one set up, as if none had been made.
     @MainActor static func device(for project: LampProject, among devices: [Device]) -> Device? {
         let mine = devices.filter { $0.integration == project.deviceIntegration && $0.integration != nil }
-        if let id = project.device { return mine.first { $0.id == id } ?? Integrations.kept(id).map { Integrations.device(from: $0, onNetwork: false) } }
-        return mine.count == 1 ? mine.first : nil
+        if let id = project.device, let chosen = mine.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }) {
+            return chosen
+        }
+        let setUp = mine.filter(\.isSetUp)
+        return setUp.count == 1 ? setUp.first : nil
     }
 
     /// The remote's keys the integration names, Lamp's names first.
@@ -306,14 +316,19 @@ enum DeviceApps {
     /// Puts the package on the device and opens it: the bridge's install, then its launch, with its log read into the
     /// app's from the moment before the install, so what the device says of the package is in it.
     /// `stillWanted` is asked before each thing that changes the device, so a Stop meanwhile leaves it as it was.
-    static func install(_ project: LampProject, on device: Device, log: FileHandle?,
-                        stillWanted: @escaping @MainActor () -> Bool = { true }) async throws -> Run {
+    /// `waiting` is told when Lamp waits on the device to finish installing it.
+    /// `opens` false puts the app there without opening it (Reload for a device the app isn't open on): the copy running
+    /// there isn't ended and nothing is launched.
+    static func install(_ project: LampProject, on device: Device, log: FileHandle?, opens: Bool = true,
+                        stillWanted: @escaping @MainActor () -> Bool = { true },
+                        waiting: @escaping @MainActor () -> Void = {}) async throws -> Run {
         guard let integration = integration(for: project), let bridge = integration.bridge, let install = bridge.install else {
             throw Failure(message: "\(device.name)'s integration doesn't say how an app goes on it.")
         }
-        let runner = IntegrationRunner(integration: integration, device: device, onLog: { line in
+        var runner = IntegrationRunner(integration: integration, device: device, onLog: { line in
             log?.write(Data((line + "\n").utf8))
         })
+        runner.onWaiting = { Task { @MainActor in waiting() } }
         let run = Run(device: device)
         // The app opened by this install asks for its token, which isn't in its package, over the network: Lamp listens
         // there from now on, and after, for as long as the app is on a device (`wentOnADevice`).
@@ -336,7 +351,7 @@ enum DeviceApps {
         // A Roku's installer waits on a developer channel that's still running until the upload times out, so a package
         // that isn't wrapped (one copy on the device, whichever app it is) is always ended first.
         let running = integration.app?.declared?.wrap == nil ? values(project) : installedValues(project, on: device)
-        if let stop = bridge.stop, !stop.isEmpty, let running {
+        if opens, let stop = bridge.stop, !stop.isEmpty, let running {
             _ = try? await runner.run(stop, extra: running)
         }
         // A setting the install changes for itself (an Xbox's "treat apps as games") stays changed until the app has been
@@ -353,18 +368,16 @@ enum DeviceApps {
                 remember(project, on: device, pending: false)
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
-                if let launch = bridge.launch, !launch.isEmpty {
-                    // A device that has only just taken an update can refuse to open it for a while (an Xbox answers
-                    // 0x80073D00, 0x8D160120 or 0x80070002 to a launch right after an install over a copy it ended, for up
-                    // to ten seconds or so while that copy's web view lets go): asked again a little later, a few times.
-                    var refused = 0
-                    while true {
-                        do { _ = try await runner.run(launch, extra: values(project), changed: changed); break }
-                        catch let failure as IntegrationRunner.Failure where refused < 4 {
-                            refused += 1
-                            try? await Task.sleep(for: .seconds(4))
-                            guard await stillWanted() else { throw failure }
-                        }
+                if opens, let launch = bridge.launch, !launch.isEmpty {
+                    // A device only just done installing can refuse the launch, or take it and not open the app yet:
+                    // launched again until it's seen running (`IntegrationRunner.open`).
+                    do {
+                        try await runner.open(launch, running: bridge.running, extra: values(project), changed: changed, stillWanted: stillWanted)
+                    } catch let notOpened as IntegrationRunner.NotOpened {
+                        if let refused = notOpened.refused { log?.write(Data((refused + "\n").utf8)) }
+                        throw Failure(message: notOpened.launched
+                            ? "The \(integration.name) is still finishing installing \(project.name), or it closed as it opened. Try again in a moment."
+                            : stillInstalling(project, on: integration))
                     }
                 }
                 break
@@ -374,12 +387,18 @@ enum DeviceApps {
             } catch {
                 await runner.putBack(changed)
                 run.end()
+                // Lamp stopped waiting while the device was still installing it: that, plainly, for a moment later.
+                if (error as? IntegrationRunner.Failure)?.stillWorking == true { throw Failure(message: stillInstalling(project, on: integration)) }
                 throw error
             }
         }
         await runner.putBack(changed)
         if let claimsKey { WishClaims.shared.renew(project.id, from: claimsKey) }
         return run
+    }
+
+    private static func stillInstalling(_ project: LampProject, on integration: Integration) -> String {
+        "The \(integration.name) is still finishing installing \(project.name). Try again in a moment."
     }
 
     /// The device's screen, from the bridge's look.
@@ -390,6 +409,12 @@ enum DeviceApps {
         let outcome = try await IntegrationRunner(integration: integration, device: device).run(look, extra: values(project))
         guard let picture = outcome.picture, NSImage(data: picture) != nil else { throw Failure(message: "\(device.name) sent no picture of its screen.") }
         return picture
+    }
+
+    /// The app's screen as text, through the bridge's `screen`; nil when the integration has none.
+    static func screen(_ project: LampProject, on device: Device) async throws -> String? {
+        guard let integration = integration(for: project), let screen = integration.bridge?.screen, !screen.isEmpty else { return nil }
+        return try await IntegrationRunner(integration: integration, device: device).run(screen, extra: values(project)).screen
     }
 
     /// Presses one of the remote's keys by Lamp's name for it, through the bridge's use.
@@ -661,11 +686,9 @@ extension Agent.Rules {
                 }
             case .three:
                 let folder = "./" + DeviceSupport.pagePath(entry.path, page: DeviceApps.previewFolder(for: project)) + "/"
-                rule += "\(entry.path) is three.js r\(DeviceSupport.threeRevision), the 3D library, with its addons (controls, loaders, "
-                    + "geometries, postprocessing, utils): put the import map `<script type=\"importmap\">{ \"imports\": { \"three\": "
-                    + "\"\(folder)three.module.js\", \"three/addons/\": \"\(folder)addons/\" } }</script>` in index.html before a "
-                    + "`<script type=\"module\">`, then `import * as THREE from 'three'` and addons from 'three/addons/…'. Use it for "
-                    + "anything 3D, never another engine or one from the network. "
+                rule += "\(entry.path) is three.js r\(DeviceSupport.threeRevision) with its addons (controls, loaders, geometries, "
+                    + "postprocessing, utils), which this page reaches at `\(folder)`; this page has no game runtime, Phaser bridge or Rapier. "
+                    + "For anything 3D, read the 3d-game skill with `read_skill` before writing it, and load the library from that folder. "
             }
         }
         return rule + "Once something is saved, only ever add to it: a new field gets a default where it's read.\n"
@@ -696,6 +719,11 @@ extension Agent.Rules {
             if integration?.bridge?.type?.isEmpty == false { rule += "`type` with `text` types into a keyboard on its screen once one has focus. " }
         }
         if integration?.bridge?.look == nil { rule += "Its integration has no way to picture its screen, so ask the person what they see. " }
+        if integration?.bridge?.screen != nil {
+            return rule + "Both also give you the screen as text, as the \(name) describes it: the tree of the app's nodes, with what each "
+                + "shows, where it is and which one has focus. Read it to check text and focus the picture is too small for. There is no "
+                + "pointer: try the app the way the person will, with the keys.\n"
+        }
         return rule + "There is no screen as text and no pointer: try the app the way the person will, with the keys.\n"
     }
 }

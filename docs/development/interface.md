@@ -26,6 +26,13 @@ parts), check:
 - **A card's buttons are one size**: the size Allow and Don't Allow are (`.cardButtons()`), on every card,
   the main one prominent; never the small size, which in the wand's narrow panel was too slight to find.
   Where they don't fit beside a card's words they go under them (`ChatLook.OfferCard`).
+- **One set of colors.** The desk, the welcome and the chat draw from `Paper` (LampSidebarKit): ink on warm paper, as
+  on lamp.dev, and cream ink on night paper when the Mac is dark (nothing forces either look), and the six stripes only for what's Lamp's own (the welcome's band, a remix's line to its original).
+  A new screen takes its colors and its two buttons (`PaperButtonStyle`) from there, never the system's accent.
+  The welcome's hello is a SceneKit stage behind its words (`WelcomeScene`; SceneKit, as Lamp still runs on macOS 14):
+  the stripes come down a wall and along the floor, three starters float over them as thin rounded slabs that lean a
+  little toward the pointer, the words coming in with them, and Get Started moves the camera right as the next step slides in,
+  the slabs fading and the stripes kept at the frame's left. With Reduce Motion it's all there at once and still.
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
   (`Engine.title`: "ChatGPT", "Claude": what people call them, not the coding tools' names), never a literal.
 
@@ -46,7 +53,7 @@ that reads `Store` in its drawing can't be listed: split it first.
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
 Providers**, the four providers in one list, with their sign-ins, key and downloads (other tabs' menus
-end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does, and whether usage counts go to the Lamp team; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (`ExperimentalSettings.hasAny`; now Apps in Chrome and publishing games as web pages, in Lamp Dev only).
+end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does, and whether usage counts go to the Lamp team; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (`ExperimentalSettings.hasAny`; now publishing games as web pages, in Lamp Dev only).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),
@@ -62,7 +69,9 @@ anything that's the same for every app and already in Settings.
 
 - **Credits first.** A wish built on someone else's work starts with Credits: what it's based on and its license,
   what else it uses, and the wishes it was remixed from (`AppInfoView.creditsSection`), with one button to the page of
-  the work it's based on. A wish with none has no such section.
+  the work it's based on. A wish with none has no such section. Its buttons act on where the wish came from: Check for
+  Updates… (Update from the Original for a starter's copy, which follows the starter this Lamp ships rather than its
+  repository), and Start Over for a wish changed since it arrived (its "Your copy" row says so).
 - **Read-only.** A thing that can be changed is changed in Settings: each section ends in one small button
   that opens the tab where it's chosen ("Configure Providers…", "Building Settings…"). The only exception is
   undoing what an app was left with by an earlier Lamp ("Use Settings' Choices", shown only when there is

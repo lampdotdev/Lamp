@@ -11,14 +11,17 @@ import Foundation
 /// - `tools-fail`: as `tools`, but the first install closes halfway with nothing installed; trying again works.
 /// - `xcode`: the full Xcode app and every step of setting it up for iPhone apps (below), and the icon
 ///   tools that come with it.
+/// - `git`: git, which a Mac without the Command Line Tools doesn't have: a game or a screen is then made with no
+///   versions, which it gets once git is back (`Versions.hasGit`).
 /// - `watch`: any Apple Watch simulator to open an iPhone app's watch app on, and the watchOS to make one.
 /// - any other word: a command Lamp looks for on the PATH (`uv`, `mflux-generate`, `mlx_lm.server`), and for
 ///   `claude` and `codex` the copies in the Claude and ChatGPT apps too, so Lamp uses its own copy (or
 ///   downloads it) as on a Mac without them.
 /// - `bare`: all of the above that a Mac straight out of the box doesn't have.
 ///
-/// It fools only Lamp's checks: anything that runs `swift` or `xcrun` still finds the real ones. A release
-/// build ignores it.
+/// It fools only Lamp's checks: anything that runs `swift` or `xcrun` still finds the real ones, except an app's build,
+/// which with `tools` runs with no developer folder (`buildEnvironment`), so one that would compile fails as it would
+/// on a bare Mac, and a game or a screen copied from Lamp's player shows it needs none. A release build ignores it.
 enum Pretend {
     static let bare: Set<String> = ["tools", "xcode", "claude", "codex", "uv", "mflux-generate", "mlx_lm.server"]
     static let installSeconds: TimeInterval = 30
@@ -34,6 +37,10 @@ enum Pretend {
     }()
 
     static func isMissing(_ thing: String) -> Bool { missing.contains(thing.lowercased()) }
+
+    /// What an app's build runs with while the Command Line Tools are pretended missing: a developer folder that isn't
+    /// there, so `swift` and `xcrun` stop rather than find the real tools.
+    static var buildEnvironment: [String: String] { toolsMissing ? ["DEVELOPER_DIR": "/var/empty/no-developer-tools"] : [:] }
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var installStarted: Date?

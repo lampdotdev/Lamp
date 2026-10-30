@@ -33,6 +33,7 @@ struct BugReportTests {
             (ErrorMessages.appDoesNotBuild, "The app failed to build."),
             (ErrorMessages.restoreFailed, "Returning to an earlier version failed."),
             (ErrorMessages.providerBusy, "The AI provider rate-limited the request."),
+            (ErrorMessages.connectionFailed, "The connection to the AI failed."),
             (ErrorMessages.localServerUnreachable, "The local model server could not be reached."),
             (ErrorMessages.openFailed(privateDetail), "The app could not be opened."),
             (ErrorMessages.installFailed(privateDetail), "The app could not be installed."),
@@ -69,7 +70,7 @@ struct BugReportTests {
         precondition(BugReport.errorSummary("Your OpenRouter key or sign-in didn't work. Check it in Lamp → Settings (⌘,).") == "The AI key or sign-in did not work.")
         precondition(BugReport.errorSummary("Sorry, I couldn't get that change working. Try describing it differently, or press Undo.") == "The app failed to build.")
         precondition(BugReport.errorSummary("The AI is busy right now. Wait a minute and try again.") == "The AI provider rate-limited the request.")
-        precondition(BugReport.errorSummary("Couldn't reach the local model server. Check Settings → Providers → Native Mac AI.") == "The local model server could not be reached.")
+        precondition(BugReport.errorSummary("Couldn't reach the local model server. Check Settings → AI Providers → Native Mac AI.") == "The local model server could not be reached.")
         precondition(BugReport.errorSummary("Lamp couldn't go back to how the app was before that message, so nothing was sent.") == "Returning to an earlier version failed.")
 
         let bounded = draft(activity: [.request] + Array(repeating: .tool, count: 19) + [.error])

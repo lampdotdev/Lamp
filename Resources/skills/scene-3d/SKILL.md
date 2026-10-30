@@ -1,12 +1,12 @@
 ---
 name: scene-3d
-description: 3D in a Mac app made natively, in Swift (RealityKit through LampSceneView) - a world to move through, a room, a thing to turn over and handle, a toy, or a 3D game the person asked to be native, and RealityKit's own physics for things that fall, roll, stack and collide. A 3D game is made web with three.js by default (the 3d-game skill). Read before writing or changing 3D in Swift on the Mac.
+description: 3D in a Mac app made natively, in Swift (RealityKit through LampSceneView) - a world to move through, a room, a thing to turn over and handle, a toy, or a 3D game the person asked to be native, and RealityKit's own physics for things that fall, roll, stack and collide. A 3D game is made web by default (the game and 3d-game skills). Read before writing or changing 3D in Swift on the Mac.
 ---
 
 # 3D scenes
 
-This is 3D in a Mac app made natively. A 3D game is made web with three.js by default, on the Mac as elsewhere (the
-3d-game skill); it's made here only when the person asked for a native game, or it's a Mac app already made in Swift.
+This is 3D in a Mac app made natively. A 3D game is made web by default, on the Mac as elsewhere (the game and
+3d-game skills); it's made here only when the person asked for a native game, or it's a Mac app already made in Swift.
 
 3D scenes (a world to move through, a room, a thing to turn over and handle): RealityKit through LampSceneView, from Sources/LampScene.swift, which Lamp adds to an app whose code imports RealityKit (the app then needs macOS 15). `LampSceneView(sky:camera:props:build:update:)`: sky `.day`, `.sunset`, `.overcast`, `.night`, `.studio`; camera `.orbit(target:distance:)`, `.chase("entity name")`, `.firstPerson()`, `.fixed(position:lookAt:)` or `.manual`; `build` adds entities to `scene.root`; `update(scene, dt)` runs every frame, with `scene.isDown(.w)` for keys. In a file that imports RealityKit, SwiftUI's `Scene` must be written `SwiftUI.Scene`.
 
@@ -22,6 +22,6 @@ Each prop that matters goes in `props` by name, and look_at_app with `prop` show
 
 LampSceneView already avoids RealityKit's flicker; keep it that way: no sun shadows (they make the whole picture flicker; `lampShadow` instead), and flat things laid on others (roads, markings, decals, a sign's writing) a few centimeters above them, never at the same height. After big changes, look_at_app with `motion`.
 
-A model code can't reasonably make can come from a free CC0 library (Kenney, Poly Haven) as .glb: download it into Assets/, turn it into USD with `usdextract -o Assets/Name file.glb` (part of macOS), and load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`.
+A model code can't reasonably make can come ready-made from the `assets` tool (the assets skill), which fetches the .glb into Assets/<pack>/ and credits it: turn it into USD with `usdextract -o Assets/Name Assets/<pack>/name.glb` (part of macOS), and load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`.
 
 A real place (a town to drive, a campus, a neighborhood) is built from map data: open the maps skill too.

@@ -1,5 +1,6 @@
 #!/bin/zsh
-# Builds build/Lamp Dev.app, the development build (FLAVOR=release: Lamp.app, the one people install).
+# Builds build/Lamp Dev.app, the development build (FLAVOR=release: Lamp.app, the one people install; FLAVOR=nightly:
+# Lamp Nightly.app, the one made from every change merged).
 #
 # Local builds are signed with a self-signed "Forge Local Signing" identity (see scripts/signing-identity.sh).
 # Releases set SIGN_IDENTITY to a Developer ID certificate (see release.sh): everything is then signed with
@@ -68,10 +69,13 @@ fi
 
 # Which Lamp this is (see Sources/Lamp/Edition.swift). A build from source is "Lamp Dev": its own name,
 # icon, bundle id, folders, ports and URL scheme, so it lives beside the Lamp you installed without
-# touching it. release.sh sets FLAVOR=release.
+# touching it. release.sh sets FLAVOR=release, or FLAVOR=nightly for "Lamp Nightly": a release in everything but
+# its name, icon, folders and update feed, made from every change merged (.github/workflows/nightly.yml).
 FLAVOR="${FLAVOR:-dev}"
 if [ "$FLAVOR" = release ]; then
   NAME="Lamp"; BUNDLE_ID="dev.lamp.host"; SCHEME="lamp"; HANDLER_RANK="Owner"
+elif [ "$FLAVOR" = nightly ]; then
+  NAME="Lamp Nightly"; BUNDLE_ID="dev.lamp.host.nightly"; SCHEME="lamp-nightly"; HANDLER_RANK="Owner"
 else
   # A worktree's build is an instance of its own (scripts/instance.sh): "Lamp Dev <name>", with its own bundle
   # id, folders, ports and scheme, so builds from two worktrees run side by side (Edition.instance).
@@ -83,7 +87,7 @@ fi
 # Lamp Dev builds unoptimized, which is several times faster to compile: it's built again and again while a change is
 # checked, often by several worktrees at once. Lamp itself, the one people install, is always optimized.
 # CONFIG=release ./build.sh optimizes Lamp Dev too, to see how it runs for people.
-if [ "$FLAVOR" = release ]; then CONFIG=release; else CONFIG="${CONFIG:-debug}"; fi
+if [ "$FLAVOR" != dev ]; then CONFIG=release; else CONFIG="${CONFIG:-debug}"; fi
 swift build -c "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/Lamp"
 APP="${BUILD_DIR:-build}/$NAME.app"
@@ -104,7 +108,7 @@ if [ ! -x "$XWIN" ]; then
     echo "Building xwin $XWIN_VERSION…"
     PATH="$PATH:$HOME/.cargo/bin" cargo install xwin --version "$XWIN_VERSION" --locked --root "vendor/xwin-$XWIN_VERSION" --quiet \
       || { echo "xwin didn't build" >&2; exit 1; }
-  elif [ "$FLAVOR" = release ]; then
+  elif [ "$FLAVOR" != dev ]; then
     echo "A release needs xwin, which is built with Rust's cargo: install Rust (rustup.rs) first." >&2
     exit 1
   else
@@ -113,35 +117,36 @@ if [ ! -x "$XWIN" ]; then
 fi
 # Lamp's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
 # plus the compiled Icon Composer icon that macOS 26 draws in Liquid Glass.
+SPARKLE_KEYS='<key>SUPublicEDKey</key><string>/CAEd8+y31zAUX1M2jdBf+0plXRw1Bv5IEdrX6r6irA=</string>
+  <key>SUEnableAutomaticChecks</key><true/>'
 if [ "$FLAVOR" = release ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
   cp Resources/Assets.car "$APP/Contents/Resources/Assets.car"
   ICON_NAME_KEY='<key>CFBundleIconName</key><string>AppIcon</string>'
-  UPDATE_KEYS='<key>SUFeedURL</key><string>https://updates.lamp.dev/appcast.xml</string>
-  <key>SUPublicEDKey</key><string>/CAEd8+y31zAUX1M2jdBf+0plXRw1Bv5IEdrX6r6irA=</string>
-  <key>SUEnableAutomaticChecks</key><true/>'
+  UPDATE_KEYS="<key>SUFeedURL</key><string>https://updates.lamp.dev/appcast.xml</string>
+  $SPARKLE_KEYS"
 else
-  # The same icon with a DEV banner across it, so the two Lamps tell apart in the Dock. Made once per
-  # change of the source icon (no Liquid Glass variant: the classic icon is enough to tell them apart).
-  DEV_ICON="${BUILD_DIR:-build}/AppIcon-Dev.icns"
+  # The same icon with DEV (or NIGHTLY) written on its paper, so the Lamps tell apart in the Dock. Made
+  # once per change of the source icon (no Liquid Glass variant: the classic icon is enough to tell them apart).
+  BAND=DEV; [ "$FLAVOR" = nightly ] && BAND=NIGHTLY
+  DEV_ICON="${BUILD_DIR:-build}/AppIcon-$BAND.icns"
   if [ ! -f "$DEV_ICON" ] || [ Resources/AppIcon.png -nt "$DEV_ICON" ] || [ scripts/dev-icon.swift -nt "$DEV_ICON" ]; then
-    swift scripts/dev-icon.swift Resources/AppIcon.png "$DEV_ICON"
+    swift scripts/dev-icon.swift Resources/AppIcon.png "$DEV_ICON" "$BAND"
   fi
   cp "$DEV_ICON" "$APP/Contents/Resources/AppIcon.icns"
   ICON_NAME_KEY=''
-  UPDATE_KEYS=''   # a development build never updates itself
+  if [ "$FLAVOR" = nightly ]; then
+    # Lamp Nightly updates itself from its own feed: every nightly, never a release.
+    UPDATE_KEYS="<key>SUFeedURL</key><string>https://updates.lamp.dev/nightly/appcast.xml</string>
+  $SPARKLE_KEYS"
+  else
+    UPDATE_KEYS=''   # a development build never updates itself
+  fi
 fi
 # The relay between TV apps and their phones (ControllerRelay): a process of its own, so a game's messages and files
 # never pass through Lamp's.
 mkdir -p "$APP/Contents/Helpers"
 cp "$(dirname "$BIN")/LampRelay" "$APP/Contents/Helpers/LampRelay"
-# One generic browser companion, installed through Lamp's setup guide, never generated per app.
-if [ "$FLAVOR" = dev ]; then
-  mkdir -p "$APP/Contents/Helpers" "$APP/Contents/Resources/BrowserCompanion"
-  xcrun swiftc -O -target arm64-apple-macos14 experiments/browser-connector/NativeHost.swift -o "$APP/Contents/Helpers/BrowserNativeHost"
-  cp -R experiments/browser-connector/extension "$APP/Contents/Resources/BrowserCompanion/"
-  cp experiments/browser-connector/extension-id.txt "$APP/Contents/Resources/BrowserCompanion/"
-fi
 # Quick Look for shared .lampapp files: the app's icon as their thumbnail, and its picture when Space is pressed.
 # macOS shows Quick Look only from sandboxed extensions in an app it knows, so they live in Lamp's PlugIns.
 for EXT in LampThumbnail:thumbnail LampPreview:preview; do
@@ -181,18 +186,27 @@ done
 cp "$(dirname "$BIN")/LampSidebar" "$APP/Contents/Resources/LampSidebar"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 install -m 755 Resources/lamp-approve.sh "$APP/Contents/Resources/lamp-approve.sh"
-cp Resources/lamp-tools.ts Resources/lamp-tools.json "$APP/Contents/Resources/"
+cp Resources/lamp-tools.ts Resources/lamp-tools.json Resources/asset-catalog.json "$APP/Contents/Resources/"
 rm -rf "$APP/Contents/Resources/skills" && cp -R Resources/skills "$APP/Contents/Resources/skills"   # guidance the agent opens with read_skill (Skills)   # the agent's tools: pi's extension and the registry both it and the MCP endpoint read
 cp Resources/vendors.xz "$APP/Contents/Resources/"   # network hardware makers by address prefix, from the IEEE's registry (Vendors, scripts/update-vendors.sh)
 rm -rf "$APP/Contents/Resources/Devices" && if [[ -d Resources/Devices ]]; then cp -R Resources/Devices "$APP/Contents/Resources/Devices"; fi   # the device integrations Lamp ships (Integrations)
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
-cp -R Resources/Onboarding "$APP/Contents/Resources/"
-cp -R Resources/Starters "$APP/Contents/Resources/"   # the wishes Lamp comes with (Starters.swift)
+# The wishes Lamp comes with (Starters.swift): each one's tree is its repository at the commit starter.md pins, fetched
+# here (never committed), and copied without the fetch's own git history, nor each one's reel and what records it,
+# which only its repository shows (scripts/showcase-starters.sh).
+scripts/fetch-starters.sh
+rm -rf "$APP/Contents/Resources/Starters" && rsync -a --exclude '.git' --exclude '/*/showcase/' --exclude '/*/tree/.github/showcase/' \
+  Resources/Starters/ "$APP/Contents/Resources/Starters/"
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as three.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what a game is written against, and its hosts (GameKit.swift)
+# The controller kit a game on the Mac runs its own phones with (GameKit.controllerKit): Lamp's relay and phone-page
+# server, the same Swift as LampRelayKit, as one file the player and every compiled game build into themselves, so a
+# game's phones never need Lamp.
+scripts/controller-kit.sh "$APP/Contents/Resources/GameKit/apple/LampControllerKit.swift"
 rm -rf "$APP/Contents/Resources/WebHost" && cp -R Resources/WebHost "$APP/Contents/Resources/WebHost"   # the program that shows an Xbox web app in WebView2 (WebHost.swift)
+rm -rf "$APP/Contents/Resources/LGPhones" && cp -R Resources/LGPhones "$APP/Contents/Resources/LGPhones"   # the service an LG game runs its own phones with (LGPhones.swift)
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
@@ -200,13 +214,6 @@ tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 mkdir -p "$APP/Contents/Resources/llama"
 tar xzf "$LLAMA_TARBALL" -C "$APP/Contents/Resources/llama" --strip-components 1 \
   --include "llama-$LLAMA_BUILD/llama-server" --include "llama-$LLAMA_BUILD/LICENSE" --include "llama-$LLAMA_BUILD/*.dylib"
-# Apps in Chrome (Lamp Dev only): an app serves its sidebar page at a name of its own under .localhost, and Lamp's
-# preview of it loads that page and checks it's the app's. macOS lets an app use plain http to localhost but not to
-# names under it without saying so here.
-SIDEBAR_ATS=""
-if [ "$FLAVOR" = dev ]; then
-  SIDEBAR_ATS='<key>NSAppTransportSecurity</key><dict><key>NSExceptionDomains</key><dict><key>localhost</key><dict><key>NSIncludesSubdomains</key><true/><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict></dict></dict>'
-fi
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -243,7 +250,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSLocalNetworkUsageDescription</key><string>Lamp finds your TVs and phones on your network and puts your apps on them.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Lamp turns your dictation into text for the prompt box.</string>
   <key>NSAppleEventsUsageDescription</key><string>Lamp lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
-  $SIDEBAR_ATS
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>$BUNDLE_ID</string>
     <key>CFBundleURLSchemes</key><array><string>$SCHEME</string></array>
@@ -272,14 +278,22 @@ else
   QUIET=/dev/null
 fi
 # Signs one item. codesign's routine chatter stays quiet for local builds, but a failure always says what
-# went wrong, instead of the script stopping silently partway.
+# went wrong, instead of the script stopping silently partway. A release's signature carries a secure timestamp from
+# Apple's server, which now and then doesn't answer in time: that's tried again, a few seconds later, rather than failing
+# a build that's half an hour along.
 sign() {
-  local output
-  if ! output="$("${SIGN[@]}" "$@" 2>&1)"; then
+  local output tries=1
+  while ! output="$("${SIGN[@]}" "$@" 2>&1)"; do
+    if [[ "$output" == *timestamp* && $tries -lt 4 ]]; then
+      echo "Apple's timestamp server didn't answer for ${@[-1]}; trying again (${tries} of 3)." >&2
+      sleep $((tries * 5))
+      tries=$((tries + 1))
+      continue
+    fi
     echo "$output" >&2
     echo "Couldn't sign ${@[-1]} with \"$SIGN_ID\". For an unsigned build to try things out: SIGN_IDENTITY=- ./build.sh" >&2
     return 1
-  fi
+  done
   [[ -n "$output" ]] && echo "$output" >$QUIET
   return 0
 }
@@ -294,10 +308,52 @@ SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
 sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
 sign "$APP/Contents/Frameworks/Sparkle.framework"
-if [ "$FLAVOR" = dev ]; then sign "$APP/Contents/Helpers/BrowserNativeHost"; fi
 sign "$APP/Contents/Helpers/LampRelay"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"
+# Lamp's player (GameKit.playerSources, Resources/GameKit/apple/LampPlayer.swift): the Mac app around a game's or a
+# screen's page, compiled once here and copied for every one Lamp makes, so a game opens in a second and with none of
+# Apple's tools. Lamp writes its Swift (what it writes into a game, with nothing of one game in it) and names it by its
+# contents; a development build keeps it in .build/player under that name and the compiler's, and builds it again only
+# when either changes. A release builds it afresh.
+# Not an .app, so the system never lists it as an app of its own. Before the starters, which a game's prebuild copies.
+PLAYER_SOURCES="$(mktemp -d)"
+"$APP/Contents/MacOS/$NAME" --player-sources "$PLAYER_SOURCES"
+PLAYER_VERSION="$(cat "$PLAYER_SOURCES/version")"
+PLAYER_KEY=$( { echo "$PLAYER_VERSION"; xcrun swiftc --version 2>&1; xcrun --show-sdk-version; echo "${SDKROOT:-}"; } | shasum | cut -c1-16 )
+PLAYER=".build/player/$PLAYER_KEY/LampPlayer.bundle"
+if [ "$FLAVOR" != dev ] || [ ! -d "$PLAYER" ]; then
+  echo "Building Lamp's player…"
+  PLAYER_FLAGS=(-c release --package-path "$PLAYER_SOURCES" -Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker "$PLAYER_SOURCES/restrict")
+  : > "$PLAYER_SOURCES/restrict"   # dyld ignores DYLD_INSERT_LIBRARIES for it, as for every app Lamp builds (GameKit.webBuildSh)
+  swift build "${PLAYER_FLAGS[@]}"
+  PLAYER_BIN="$(swift build "${PLAYER_FLAGS[@]}" --show-bin-path)/LampPlayer"
+  rm -rf .build/player
+  PARTIAL="$PLAYER.partial"
+  mkdir -p "$PARTIAL/Contents/MacOS"
+  cp "$PLAYER_BIN" "$PARTIAL/Contents/MacOS/LampPlayer"
+  # It names the SDK it was really built with, as a game's own build does, so macOS draws it as that SDK does.
+  if SDKVER="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null)" \
+    && MINOS="$(otool -l "$PARTIAL/Contents/MacOS/LampPlayer" | awk '/minos/ {print $2; exit}')" && [ -n "$MINOS" ]; then
+    xcrun vtool -set-build-version macos "$MINOS" "$SDKVER" -replace -output "$PARTIAL/Contents/MacOS/LampPlayer" "$PARTIAL/Contents/MacOS/LampPlayer" >/dev/null 2>&1 || true
+  fi
+  cat > "$PARTIAL/Contents/Info.plist" <<PLAYERPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>LampPlayer</string>
+  <key>CFBundleIdentifier</key><string>dev.lamp.player</string>
+  <key>CFBundleName</key><string>LampPlayer</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LampPlayerVersion</key><string>$PLAYER_VERSION</string>
+</dict></plist>
+PLAYERPLIST
+  mv "$PARTIAL" "$PLAYER"
+fi
+rm -rf "$PLAYER_SOURCES" "$APP/Contents/Resources/LampPlayer.bundle"
+cp -R "$PLAYER" "$APP/Contents/Resources/LampPlayer.bundle"
+sign "$APP/Contents/Resources/LampPlayer.bundle"
 # Lamp ships the starters already built (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would, with
 # this checkout's LampSupport, once Lamp's own parts are signed and before Lamp is: the stamp on what Lamp builds
 # (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and zipped beside its
@@ -308,16 +364,16 @@ sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/Lamp
 # shipped built. Asked, it keeps them in .build/prebuilt-starters under a key of what they're made from: the starters,
 # that code, the edition and the compiler; a build that finds them there only stamps them for itself
 # (--restamp-starters).
-DEFAULT_PREBUILD=0; [ "$FLAVOR" = release ] && DEFAULT_PREBUILD=1
+DEFAULT_PREBUILD=0; [ "$FLAVOR" != dev ] && DEFAULT_PREBUILD=1
 if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
   STARTERS="$APP/Contents/Resources/Starters"
   KEY=$( {
     echo "$FLAVOR"; xcrun swiftc --version 2>&1; xcrun --show-sdk-version
     find Resources/Starters Sources/Lamp/Template*.swift Sources/Lamp/Connectors.swift Sources/Lamp/Starters.swift \
-      Sources/Lamp/PrebuiltStarters.swift Sources/Lamp/Edition.swift -type f ! -name '.DS_Store' ! -name Prebuilt.zip ! -path '*/Prebuilt/*' | LC_ALL=C sort | xargs shasum
+      Sources/Lamp/PrebuiltStarters.swift Sources/Lamp/Edition.swift -type f ! -name '.DS_Store' ! -name Prebuilt.zip ! -path '*/Prebuilt/*' ! -path '*/.git/*' | LC_ALL=C sort | xargs shasum
   } | shasum | cut -c1-16 )
   CACHE=".build/prebuilt-starters/$KEY"
-  if [ "$FLAVOR" != release ] && [ -d "$CACHE" ]; then
+  if [ "$FLAVOR" = dev ] && [ -d "$CACHE" ]; then
     echo "Using the starters built before ($KEY)…"
     for cached in "$CACHE"/*(N/); do
       rm -rf "$STARTERS/${cached:t}/Prebuilt"
@@ -327,7 +383,7 @@ if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
   else
     echo "Building the starters Lamp ships…"
     PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --prebuild-starters
-    if [ "$FLAVOR" != release ]; then
+    if [ "$FLAVOR" = dev ]; then
       rm -rf .build/prebuilt-starters
       mkdir -p "$CACHE.partial"
       for prebuilt in "$STARTERS"/*/Prebuilt(N/); do cp -R "$prebuilt" "$CACHE.partial/${prebuilt:h:t}"; done

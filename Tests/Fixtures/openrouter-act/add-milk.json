@@ -1,0 +1,39 @@
+{
+ "recorded": "2026-10-27",
+ "model": "anthropic/claude-sonnet-5.5",
+ "note": "Two answers of anthropic/claude-sonnet-5.5 through OpenRouter, tool_choice auto, require_parameters: the first step of \"Add milk\" and the step after its result.",
+ "call": {
+  "role": "assistant",
+  "content": null,
+  "refusal": null,
+  "reasoning": null,
+  "tool_calls": [
+   {
+    "type": "function",
+    "index": 0,
+    "id": "toolu_01VvKHyqThrNS9yvywbcrtm8",
+    "function": {
+     "name": "addGrocery",
+     "arguments": "{\"name\": \"milk\"}"
+    }
+   }
+  ]
+ },
+ "reply": {
+  "role": "assistant",
+  "content": null,
+  "refusal": null,
+  "reasoning": null,
+  "tool_calls": [
+   {
+    "type": "function",
+    "index": 0,
+    "id": "toolu_01Ma6VNgCKdQtgCJJ1jnWgdt",
+    "function": {
+     "name": "reply",
+     "arguments": "{\"text\": \"I added Milk to your shopping list, under Dairy.\", \"ask\": false}"
+    }
+   }
+  ]
+ }
+}

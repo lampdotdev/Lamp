@@ -16,6 +16,12 @@ struct LampApp: App {
             if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag) { PrebuiltStarters.runFromCommandLine() }
             if CommandLine.arguments.contains(PrebuiltStarters.restampFlag) { PrebuiltStarters.restampFromCommandLine() }
         }
+        // Each starter as the repository it's put in on GitHub (`scripts/publish-starters.sh`).
+        if ProcessInfo.processInfo.environment["STAGE_STARTERS"] == "1", CommandLine.arguments.contains(StarterRepos.commandLineFlag) {
+            StarterRepos.stageFromCommandLine()
+        }
+        // And the player every game and screen on the Mac is a copy of, compiled by build.sh from the Swift this writes.
+        if CommandLine.arguments.contains(GameKit.playerSourcesFlag) { GameKit.writePlayerSourcesFromCommandLine() }
     }
 
     var body: some Scene {
@@ -35,10 +41,12 @@ struct LampApp: App {
     }
 }
 
-/// The menu bar's commands. They observe the store themselves, so whether Duplicate or Copy Wish File can be chosen
+/// The menu bar's commands. They observe the store themselves, so whether Duplicate… or Copy Wish File can be chosen
 /// follows the selection without the scene around them being built again for every change (see `LampApp.store`).
 struct LampCommands: Commands {
     @ObservedObject var store: Store
+    @ObservedObject private var deskPick = DeskPick.shared
+    private var duplicating: LampProject? { store.commandTarget(deskPick: deskPick.target) }
 
     var body: some Commands {
         AboutCommands()
@@ -51,8 +59,10 @@ struct LampCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Import Shared Wish…") { store.chooseImport() }
                 .keyboardShortcut("o")
-            Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
-                .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
+            Button("Open from GitHub…") { store.chooseRepository() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+            Button("Duplicate…") { if let project = duplicating { Task { await store.remix(project) } } }
+                .disabled(duplicating.map { !store.canDuplicate($0) } ?? true)
         }
         CommandGroup(after: .pasteboard) {
             // The same as Share ▸ Copy Wish File in the toolbar; here so the shortcut the Help lists exists.
@@ -104,18 +114,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Generated apps call back with lamp://edit?app=<slug> (⇧⌘E inside the app).
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
-            // An app's sidebar started Lamp, or its Reload button: what the person is doing is in that app, so Lamp's
-            // own window stays out of the way. Opened already, it stays as it was. The Dock icon brings it back.
-            let forSidebar = urls.contains { $0.scheme == Edition.urlScheme && ($0.host == "sidebar" || $0.host == "reload") }
+            // An app's sidebar started Lamp, or its Reload button, or its chat asked for Lamp's panel: what the person
+            // is doing is in that app, so Lamp's own window stays out of the way. Opened already, it stays as it was. The Dock icon brings it back.
+            let forSidebar = urls.contains { $0.scheme == Edition.urlScheme && ($0.host == "sidebar" || $0.host == "reload" || $0.host == "chat") }
             if forSidebar, Date().timeIntervalSince(launched) < 5, Onboarding.isDone { MagicPanel.keepMainWindowHidden() }
             urls.forEach(Store.shared.handle(url:))
         }
     }
 
-    /// The Dock icon shows Lamp's window, also when it was put away for an app's sidebar.
+    /// The Dock icon shows the desk whenever it isn't on screen: put away for an app's sidebar, minimized, or closed,
+    /// whatever else of Lamp's is open (Settings, a chat panel, a preview), since the desk is where everything starts.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         MainActor.assumeIsolated {
-            if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
+            if !LampWindows.deskShown { Store.shared.showDesk() }
         }
         return true
     }

@@ -19,6 +19,17 @@ the part it governs. Only a rule that every change must follow belongs here.
   copy of an engine runs is decided only in `EngineInstall.path(for:)`. Before opening a PR that touches any of
   this, check each engine's `case` in `Agent.run` and its parser, and say in the PR description which engines you
   tried. Details: [engines](docs/development/engines.md).
+- **Keep guidance consistent wherever it appears.** Keep each policy or library recipe in one authoritative place;
+  other guidance points to it. Which library an app or game is built with, and how to use it, is a skill's (in
+  `Resources/skills`): tool descriptions in `Resources/lamp-tools.json` and the prompts and kind guidance in
+  `Sources/Lamp` say what to make and which skill to read, without choosing a library. Exact file paths, ownership
+  declarations ("Web/three/ is Lamp's") and support facts supplied at run time (a folder and the version in it) may
+  name a library without choosing one. When the authoritative source changes, update any affected references and
+  remaining summaries in the same PR: tool descriptions, prompts, skills, and relevant comments and development docs.
+  Before opening the PR, use `git grep` for both the old wording and related terms, and inspect each match in
+  context: the test is that nothing contradicts the source, not that a name never appears. Preserve accurate narrower
+  exceptions and historical descriptions; never use a blind replacement. Report any external documentation that also
+  needs updating.
 - **Approvals and privacy hold for every engine.** Shell commands go through `/agent/approve` whichever engine runs
   them, and file access outside the app's folder is checked the same way (`Privacy.verdict`); a command never skips
   approval because it looks like a read. Lamp's own commands over what's in an app's folder run in the app's
@@ -70,7 +81,7 @@ Read the guide for the part you're changing before you change it. A section name
 
 | Guide | Read it when the change touches |
 | --- | --- |
-| [engines](docs/development/engines.md) | Keep the agent harnesses in step: `Engines.swift`, `EngineInstall`, the tools in `lamp-tools.json` and the MCP endpoint, prompt rules, memory, switching engines, skills, pictures shown to the agent, queued messages, tool names in the chat, models, what answers apps, using other apps |
+| [engines](docs/development/engines.md) | Keep the agent harnesses in step: `Engines.swift`, `EngineInstall`, the tools in `lamp-tools.json` and the MCP endpoint, prompt rules, memory, switching engines, skills, pictures shown to the agent, how big a conversation grows, queued messages, tool names in the chat, models, what answers apps, using other apps |
 | [chat](docs/development/chat.md) | How the agent talks: `Talk`, cards, `ask`, `progress`, the chat's timeline, its activity line and folded steps; the chat's one screen (`ChatScreen`, `SidebarState`) and Lamp's chat panel (`ChatPanel`, `SetupSheet`) |
 | [approvals and privacy](docs/development/approvals-and-privacy.md) | `/agent/approve`, `Privacy`, the sandbox, file access outside an app's folder, data snapshots |
 | [desk](docs/development/desk.md) | The desk, Lamp's only window: wishes as icons, opening a wish, starters and their checks |
@@ -82,7 +93,7 @@ Read the guide for the part you're changing before you change it. A section name
 | [TV](docs/development/tv.md) | TV apps |
 | [wishes](docs/development/wishes.md) | Wishes of more than one app: parts, plans, how a wish's apps reach each other |
 | [Apple services](docs/development/apple-services.md) | iCloud, Apple Health, work while an iPhone app is closed, photos, location, weather, music and the home |
-| [generated apps](docs/development/generated-apps.md) | Generated apps: Lamp's owned files, `Template.swift`, permission reasons, `use_app` and handover, the wand and the chat beside an app, Chrome's sidebar, quitting, `capabilities.json` |
+| [generated apps](docs/development/generated-apps.md) | Generated apps: Lamp's owned files, `Template.swift`, permission reasons, `use_app` and handover, the wand and the chat beside an app, quitting, `capabilities.json` |
 | [live changes](docs/development/live-reload.md) | A change going into an open app: `LiveReload`, `LiveSlots`, the live copy, statics, removed properties and files, the live cases |
 | [app extensions](docs/development/app-extensions.md) | 3D scenes and games, widgets, Home Screen widgets and Live Activities, Apple Watch, App Intents, share extensions and Spotlight |
 | [services](docs/development/services.md) | Services the person already uses: sign-in on the service's page, personal tokens, open data, the app's secrets |

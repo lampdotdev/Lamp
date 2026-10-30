@@ -1,4 +1,4 @@
-// The everyday situations the homepage's first-idea section asks about, shared by the page and the server.
+// The everyday situations the ideas page's first-idea section asks about, shared by the page and the server.
 // Each belongs to a shape: something done by hand that an app could do instead. Visitors never see the shapes
 // named; they decide which situations come next and tell the model what the visitor meant. Life away from
 // work counts as much as work: most people's first app is for home, family or a hobby, so the shapes cover

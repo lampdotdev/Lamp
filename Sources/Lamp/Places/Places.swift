@@ -61,7 +61,7 @@ struct Place: Equatable {
     /// The same for its `noNative`: the device runs its own apps, but Lamp has no recipe that builds one there yet.
     var noRecipeYet = false
     /// The make a game, and an app, on this device alone get when the person names none (`defaultMake`): a game is a
-    /// page with three.js wherever Lamp has a host for one; an app is the device's own code on a Mac, a phone or a
+    /// page on Lamp's game runtime wherever Lamp has a host for one; an app is the device's own code on a Mac, a phone or a
     /// tablet, and a page on a TV or a console. Always a make the row runs (`PlacesTests`).
     var gameDefault: Make = .web
     var appDefault: Make = .native
@@ -98,7 +98,7 @@ struct Place: Equatable {
     func runs(_ make: Make) -> Bool { reach(make) != nil }
 }
 
-/// Lamp's hosts for a page, one per web engine. Every kind whose app is a page (a three.js game, a screen) goes wherever
+/// Lamp's hosts for a page, one per web engine. Every kind whose app is a page (a web game, a screen) goes wherever
 /// one of these is (`Places.pagePlaces`), from the same files, and nowhere else: a device with no web engine Lamp can
 /// reach (the Apple TV, the Apple Watch, a Roku) has no row with a host, and a page there needs a native version.
 enum PageHost: String, Equatable {
@@ -248,10 +248,18 @@ enum Places {
 
     /// The person's own devices Lamp knows of, each with its row, for the device line (`DeviceNote`): empty when it knows
     /// of none.
+    /// Those Lamp only found on the network are said apart, with their rows still: they may be a neighbor's, and an app
+    /// goes on one only once it's set up.
     static func known(_ devices: [Device]) -> String {
-        let named = devices.compactMap { device in row(for: device).map { "\(device.name) (\($0.name))" } }
-        guard !named.isEmpty else { return "" }
-        return "The person's own devices Lamp knows of: " + named.joined(separator: ", ") + "."
+        func named(_ devices: [Device]) -> [String] { devices.compactMap { device in row(for: device).map { "\(device.name) (\($0.name))" } } }
+        let mine = named(devices.filter(\.isSetUp)), possible = named(devices.filter { !$0.isSetUp })
+        var said: [String] = []
+        if !mine.isEmpty { said.append("The person's own devices Lamp knows of: " + mine.joined(separator: ", ") + ".") }
+        if !possible.isEmpty {
+            said.append("Found on the network but not set up with Lamp, so they may not be the person's: " + possible.joined(separator: ", ")
+                        + ". An app goes on one of these only once the person sets it up.")
+        }
+        return said.joined(separator: " ")
     }
 
     // MARK: Checking a request

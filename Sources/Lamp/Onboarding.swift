@@ -1,15 +1,23 @@
 import SwiftUI
 import AppKit
+import LampSidebarKit
 
-/// The first-launch welcome: what Lamp is and getting set up, then the desk, where the wishes Lamp comes
-/// with (`Starters`) are waiting to be used and changed. A wish brought from the site skips the hello and is
-/// made once setup is done. It lives in the main window, dressed up without the usual window chrome, and the
+/// The first-launch welcome: what Lamp is, then the desk, where the wishes Lamp comes with (`Starters`) are waiting
+/// to be used before anything is set up; the first change asked for asks for setup (`Store.askForSetup`). A starter
+/// brought from the site opens at once, and a wish brought from the site, which has to be made, goes on to setup and
+/// is made once that's done. It lives in the main window, dressed up without the usual window chrome, and the
 /// window grows into Lamp itself at the end.
 enum Onboarding {
     static let key = "onboarded"
     /// A wish from the site and how far the welcome got. Saved, so that quitting during setup, or losing the
     /// window while away at an installer or a sign-in in the browser, comes back to setup with the wish intact.
     static let ideaKey = "welcomeIdea"
+    /// A remix from the site (a starter and the request), kept until the welcome hands over to the desk, which opens it.
+    static let remixKey = "welcomeRemix"
+    static var keptRemix: Wish.Remix? {
+        get { UserDefaults.standard.data(forKey: remixKey).flatMap { try? JSONDecoder().decode(Wish.Remix.self, from: $0) } }
+        set { UserDefaults.standard.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: remixKey) }
+    }
     static let stepKey = "welcomeStep"
     /// When the welcome was first shown, for how long it took (`Analytics`).
     static let startedKey = "welcomeStarted"
@@ -29,8 +37,7 @@ enum Onboarding {
 }
 
 private enum Step: Int, CaseIterable {
-    // The numbers are the backdrop's pictures (`LampBackdrop`): setup keeps the one it had when a step for
-    // the first idea came between.
+    // Saved by number (`Onboarding.stepKey`), so a welcome left at setup by an earlier Lamp opens there again.
     case hello = 0, setup = 2
 
     /// Where the welcome opens: at setup if that's where it was left, otherwise from the start.
@@ -42,13 +49,12 @@ private enum Step: Int, CaseIterable {
     }
 }
 
-/// Lamp's colors: near-black ink on a warm white page, where the porcelain lamp behind the welcome sits.
+/// Lamp's colors (`Paper`): dark ink on warm paper, as on lamp.dev.
 private enum Palette {
-    static let ground = Color(nsColor: LampBackdrop.page)
-    static let accent = Color(red: 0.2, green: 0.19, blue: 0.18)
-    static let accentDeep = Color(red: 0.08, green: 0.075, blue: 0.07)
-    static let ink = Color(red: 0.11, green: 0.10, blue: 0.10)
-    static let card = Color.white.opacity(0.72)
+    static let ground = Paper.page
+    static let accent = Paper.ink
+    static let ink = Paper.ink
+    static let card = Paper.card
 }
 
 struct OnboardingView: View {
@@ -66,12 +72,15 @@ struct OnboardingView: View {
         ZStack {
             ZStack {
                 switch step {
-                case .hello: HelloStep { go(to: .setup) }
+                // Setup is for what has to be made: with no wish from the site, the desk comes next.
+                case .hello: HelloStep { if prompt.trimmed.isEmpty { finish() } else { go(to: .setup) } }
                 case .setup: SetupStep(back: { go(to: .hello) }, start: finish)
                 }
             }
             .id(step)
-            .transition(.asymmetric(insertion: .stage(from: forward ? 1 : -1), removal: .stage(from: forward ? -1 : 1)))
+            // With Reduce Motion a step fades in its place, as the stage behind it doesn't move either.
+            .transition(reduceMotion ? .opacity
+                        : .asymmetric(insertion: .stage(from: forward ? 1 : -1), removal: .stage(from: forward ? -1 : 1)))
             .opacity(leaving ? 0 : 1)
             .scaleEffect(leaving ? 1.03 : 1)
         }
@@ -79,8 +88,8 @@ struct OnboardingView: View {
         .background {
             ZStack {
                 Palette.ground
-                LampBackdrop(step: step.rawValue)
-                // Behind the later steps' content the lamp fades into the page, so it never competes with it.
+                WelcomeScene(atHello: step == .hello)
+                // Behind the later steps' content the stage fades into the page, so it never competes with it.
                 LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Palette.ground.opacity(0.425), location: 0.24),
                                        .init(color: Palette.ground.opacity(0.425), location: 0.76), .init(color: .clear, location: 1)],
                                startPoint: .leading, endPoint: .trailing)
@@ -97,7 +106,6 @@ struct OnboardingView: View {
         .ignoresSafeArea()
         .toolbarBackground(.hidden, for: .windowToolbar)
         .navigationTitle("")
-        .environment(\.colorScheme, .light)
         .tint(Palette.accent)
         .background(WindowReader { window = $0 })
         .onChange(of: window) { if let window { Chrome.hide(window) } }
@@ -109,6 +117,7 @@ struct OnboardingView: View {
             Analytics.capture(.welcomeStep, ["step": "\(step)"])
         }
         .onChange(of: store.arrivedWish) { arrive(animated: true) }
+        .onChange(of: store.arrivedRemix) { arrive(animated: true) }
         // Menus can be rebuilt at any moment, so Settings is set again at each update while the welcome is up: off
         // until it's finished. The welcome stays on screen a moment after that, fading out, and an update then must
         // leave Settings on, or ⌘, stays dead until Lamp is opened again.
@@ -121,20 +130,44 @@ struct OnboardingView: View {
         forward = next.rawValue > step.rawValue
         UserDefaults.standard.set(next.rawValue, forKey: Onboarding.stepKey)
         Analytics.capture(.welcomeStep, ["step": "\(next)", "back": !forward])
-        withAnimation(.spring(response: 0.6, dampingFraction: 0.88)) { step = next }
+        // As long and as eased as the camera's move along the stage, so the step rides with it; a short fade where the
+        // person asked for less motion.
+        withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : .easeInOut(duration: 0.9)) { step = next }
     }
 
     /// Takes a wish from the site: one its link brought or, the first time the welcome is ever shown, one its
     /// Download button left on the clipboard. That one look is all Lamp takes by itself.
+    /// A remix (a starter's, with a request) is there to be tried, so it goes straight to the desk and opens; one of a
+    /// repository goes to the store, which keeps it for after the welcome as any repository opened then.
     private func arrive(animated: Bool) {
         var found = store.arrivedWish
         if found != nil { store.arrivedWish = nil }
+        var remix = store.arrivedRemix
+        if remix != nil { store.arrivedRemix = nil }
         let defaults = UserDefaults.standard
-        if found == nil, !defaults.bool(forKey: Wish.lookedKey) {
+        if found == nil, remix == nil, !defaults.bool(forKey: Wish.lookedKey) {
             defaults.set(true, forKey: Wish.lookedKey)
-            if prompt.trimmed.isEmpty, case .wish(let text) = Wish.look() { found = text }
+            if prompt.trimmed.isEmpty {
+                switch Wish.look() {
+                case .wish(let text): found = text
+                case .remix(let copied) where Store.starter(named: copied) != nil: remix = copied
+                case .remix(let copied): store.take(remix: copied)
+                default: break
+                }
+            }
         }
-        if let found { receive(found, animated: animated) }
+        if let remix {
+            Onboarding.keptRemix = remix
+            // A moment for the window to be found, on the launch a link or the clipboard brought it to: it's what
+            // grows into Lamp's size.
+            Task {
+                try? await Task.sleep(for: .seconds(0.1))
+                finish()
+            }
+        } else if let found {
+            Onboarding.keptRemix = nil
+            receive(found, animated: animated)
+        }
     }
 
     /// Goes on to setup with the wish, with no hello in between: they have already said what they want, and
@@ -154,6 +187,7 @@ struct OnboardingView: View {
 
     /// Fades the welcome out and grows the window into Lamp's desk, with a wish from the site started there.
     private func finish() {
+        guard !leaving else { return }
         withAnimation(.easeIn(duration: 0.3)) { leaving = true }
         Task {
             try? await Task.sleep(for: .seconds(0.3))
@@ -178,7 +212,15 @@ struct OnboardingView: View {
             // Once Lamp's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
-            store.openWaitingImport()
+            // A shared app opened during the welcome waits for setup, which nothing else asks for now.
+            if !store.openWaitingImport(), store.hasWaitingImport { store.askForWhatsMissing() }
+            // A remix from the site: the desk's own copy of its starter, just put there, opened with the request in
+            // its box for them to send.
+            if let remix = Onboarding.keptRemix {
+                Onboarding.keptRemix = nil
+                if let starter = Store.starter(named: remix) { store.openCopy(of: starter, request: remix.text) }
+                return
+            }
             // Without a wish from the site, the desk is where they land: Lamp's own wishes are there to use.
             guard !idea.isEmpty else { return }
             store.create(fromWelcome: true)
@@ -205,42 +247,59 @@ struct OnboardingView: View {
 
 // MARK: - Steps
 
-/// 1. What Lamp is, over the lamp itself: software that keeps changing for the person.
+/// 1. What Lamp is, as lamp.dev says it: remixable software, over the stage of a few of the things it comes with.
 private struct HelloStep: View {
     let next: () -> Void
     @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
-                Text("Software that changes\nwhenever you do.")
-                    .font(.system(size: 54, weight: .bold))
-                    .tracking(-1.2)
-                    .multilineTextAlignment(.center)
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // A line each, set tight: lines this large read as one block with their usual spacing halved.
+                    VStack(alignment: .leading, spacing: -22) {
+                        ForEach(["Make", "remixable", "software."], id: \.self) { Text($0) }
+                    }
+                    .font(.system(size: 92, weight: .heavy))
+                    .tracking(-3.6)
                     .foregroundStyle(Palette.ink)
+                    .fixedSize()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Make remixable software.")
+                    .accessibilityAddTraits(.isHeader)
                     .reveal(shown, delay: 0.1)
-                Text("Start with one of ours or your own idea. Change anything, any time, even while you're using it.")
-                    .font(.system(size: 19))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 620)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 12)
-                    .reveal(shown, delay: 0.2)
-                BigButton(title: "Get Started", action: next)
-                    .keyboardShortcut(.defaultAction)
-                    .padding(.top, 30)
-                    .reveal(shown, delay: 0.35, rise: 8)
+                    Text("Start from scratch or from something someone made. Change it live. Run it on the things you already own.")
+                        .font(.system(size: 19))
+                        .foregroundStyle(Paper.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 22)
+                        .reveal(shown, delay: 0.2)
+                    BigButton(title: "Get Started", action: next)
+                        .keyboardShortcut(.defaultAction)
+                        .padding(.top, 30)
+                        .reveal(shown, delay: 0.35, rise: 8)
+                }
+                .frame(maxWidth: 470, alignment: .leading)
+                .padding(.leading, 84)
+                // The stage behind is on this side: the stripes and the boxes (`WelcomeScene`).
+                Spacer(minLength: 0)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        // A moment after appearing, once the window has its size.
+        // As the boxes start down behind them, the first time; a moment after appearing, once the window has its size,
+        // when it's already there or nothing moves.
         .task {
-            try? await Task.sleep(for: .seconds(0.15))
+            let first = !wordsShown && !reduceMotion
+            wordsShown = true
+            try? await Task.sleep(for: .seconds(first ? WelcomeStage.arrival : 0.15))
             shown = true
         }
     }
 }
+
+/// The hello's words have been shown this launch: back from setup, they don't wait for the stage again.
+@MainActor private var wordsShown = false
 
 /// 2. Apple's tools, and what builds the apps.
 private struct SetupStep: View {
@@ -378,6 +437,7 @@ private struct ToolsCard: View {
                         store.requestBuildTools()
                         Analytics.capture(.welcomeToolsInstall, ["by": "button"])
                     }
+                    .buttonStyle(PaperButtonStyle(.ink))
                 }
             }
         }
@@ -416,7 +476,7 @@ private struct InlineButton: View {
 
     var body: some View {
         Button(title, action: action)
-            .buttonStyle(.bordered).controlSize(.small)
+            .buttonStyle(PaperButtonStyle(.outline, height: 24))
     }
 }
 
@@ -497,7 +557,7 @@ private struct BuilderCard: View {
             if !installed, let failure = downloads.failure[which] {
                 Text(failure).font(.system(size: 13)).foregroundStyle(Color.orange)
                 Spacer()
-                Button("Try Again") { downloads.start(which) }
+                Button("Try Again") { downloads.start(which) }.buttonStyle(PaperButtonStyle(.outline))
             } else if !installed {
                 ProgressView(value: downloads.progress[which] ?? 0).frame(width: 120)
                 Text("Getting \(name) ready…").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -511,7 +571,7 @@ private struct BuilderCard: View {
                 Text("Finish signing in to \(app) in your browser…").font(.system(size: 13)).foregroundStyle(.secondary)
                 Spacer()
                 // A sign-in page opened in the wrong browser profile or for the wrong account can't be finished.
-                Button("Cancel") { EngineSignIn.cancelSignIn(which) }
+                Button("Cancel") { EngineSignIn.cancelSignIn(which) }.buttonStyle(PaperButtonStyle(.outline))
             } else if signedIn[which] == nil {
                 ProgressView().controlSize(.small)
                 Text("Checking your \(app) sign-in…").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -521,7 +581,7 @@ private struct BuilderCard: View {
                 Text(problem ?? "Sign in so \(name) can build.\(which == .claude ? " It needs a paid Claude plan." : "")")
                     .font(.system(size: 13)).foregroundStyle(problem == nil ? Color.secondary : Color.orange)
                 Spacer()
-                Button("Sign In…") { signIn(which) }
+                Button("Sign In…") { signIn(which) }.buttonStyle(PaperButtonStyle(.ink))
             }
         }
         .padding(.top, 2)
@@ -700,12 +760,13 @@ private struct LampAgentOptions: View {
                 Spacer()
                 if let progress = local.progress[spec.id] {
                     ProgressView(value: progress).frame(width: 100)
-                    Button("Cancel") { local.cancel(spec.id) }
+                    Button("Cancel") { local.cancel(spec.id) }.buttonStyle(PaperButtonStyle(.outline))
                 } else {
                     Button("Download") {
                         local.download(spec)
                         Analytics.capture(.welcomeModelDownload, ["model": spec.id])
                     }
+                    .buttonStyle(PaperButtonStyle(.ink))
                 }
             }
             if let error = local.errors[spec.id] {
@@ -732,17 +793,24 @@ private struct LampAgentOptions: View {
     @ViewBuilder
     private func keyField(name: String, url: String, save: @escaping () -> Void) -> some View {
         HStack(spacing: 10) {
+            // A field as the desk draws one: paper, with a thin ink edge.
             SecureField("Paste your \(name) key", text: $key)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(Paper.card, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
                 .onSubmit(save)
                 .onChange(of: key) { problem = nil }
             if checkingKey {
                 ProgressView().controlSize(.small)
             } else {
                 Button("Save", action: save).disabled(key.trimmed.isEmpty)
+                    .buttonStyle(PaperButtonStyle(.ink))
             }
             Link("Get a key", destination: URL(string: url)!)
-                .font(.system(size: 13, weight: .medium))
+                .buttonStyle(PaperButtonStyle(.outline))
         }
         if let problem {
             Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(.orange)
@@ -762,8 +830,8 @@ private struct Radio<Content: View>: View {
             Button(action: action) {
                 HStack(spacing: 8) {
                     ZStack {
-                        Circle().strokeBorder(selected ? Palette.accent : .black.opacity(0.25), lineWidth: selected ? 5 : 1)
-                            .background(Circle().fill(.white))
+                        Circle().strokeBorder(selected ? Palette.accent : Palette.ink.opacity(0.25), lineWidth: selected ? 5 : 1)
+                            .background(Circle().fill(Palette.card))
                     }
                     .frame(width: 16, height: 16)
                     Text(title).font(.system(size: 13.5, weight: selected ? .semibold : .regular)).foregroundStyle(Palette.ink)
@@ -800,10 +868,10 @@ private struct Option<Logo: View>: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected || hovering ? Color.white : Color.white.opacity(0.6),
+            .background(selected || hovering ? Palette.card : Palette.card.opacity(0.6),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(selected ? Palette.accent : .black.opacity(0.08), lineWidth: selected ? 1.5 : 1))
+                .strokeBorder(selected ? Palette.accent : Palette.ink.opacity(0.08), lineWidth: selected ? 1.5 : 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -842,7 +910,7 @@ private struct Card<Content: View>: View {
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Palette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.black.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.ink.opacity(0.06)))
             .shadow(color: .black.opacity(0.04), radius: 14, y: 6)
     }
 }
@@ -894,17 +962,15 @@ private struct BigButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Paper.onInk)
                 .padding(.horizontal, 30).frame(height: 46)
                 .background(
-                    Capsule().fill(LinearGradient(colors: [Palette.accent, Palette.accentDeep], startPoint: .top, endPoint: .bottom))
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Palette.accent)
                 )
-                .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                .shadow(color: Palette.accentDeep.opacity(enabled ? (hovering ? 0.4 : 0.28) : 0), radius: hovering ? 16 : 10, y: 6)
-                .scaleEffect(hovering && enabled ? 1.03 : 1)
+                .offset(y: hovering && enabled ? -2 : 0)
                 .opacity(enabled ? 1 : 0.35)
-                .contentShape(Capsule())
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -915,9 +981,10 @@ private struct BigButton: View {
 // MARK: - Motion
 
 private extension AnyTransition {
-    /// A step slides in from the side it's coming from, sharpening out of a blur.
+    /// A step slides in from the side it's coming from, far and with the camera behind it (`WelcomeStage.look`), as if
+    /// it were further along the same stage.
     static func stage(from side: CGFloat) -> AnyTransition {
-        .modifier(active: StageModifier(offset: 60 * side, blur: 14, opacity: 0),
+        .modifier(active: StageModifier(offset: 520 * side, blur: 0, opacity: 0),
                   identity: StageModifier(offset: 0, blur: 0, opacity: 1))
     }
 }
@@ -958,6 +1025,35 @@ enum SettingsMenu {
             if !on, item.action != nil { item.action = nil }
         }
     }
+
+    /// Opens Settings on a tab, in front of whatever the person is using, from wherever it's asked: a sheet of Lamp's
+    /// own, the chat beside another app, a menu. Sending `showSettingsWindow:` down the responder chain does nothing
+    /// when Lamp isn't the app in front (the chat beside an app is another app's), so Lamp comes forward and its own
+    /// Settings menu item is pressed, as the person would; while the welcome holds Settings back, nothing opens.
+    @MainActor static func show(tab: String? = nil) {
+        if let tab { UserDefaults.standard.set(tab, forKey: "settingsTab") }
+        NSApp.activate()
+        guard let menu = NSApp.mainMenu?.items.first?.submenu,
+              let index = menu.items.firstIndex(where: { $0.title.hasPrefix("Settings") && $0.action != nil }) else { return }
+        menu.performActionForItem(at: index)
+        // The window takes a moment to exist the first time. macOS lets Lamp come forward only when the app in front hands
+        // it over, which the app around the chat doesn't, so the window is put in front of it regardless: the person's
+        // next click in it makes Lamp the app in front, as a setup sheet's does.
+        var tries = 0
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                tries += 1
+                if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.contains("Settings") == true && $0.isVisible }) {
+                    NSApp.activate()
+                    window.makeKeyAndOrderFront(nil)
+                    window.orderFrontRegardless()
+                } else if tries < 25 {
+                    return
+                }
+                timer.invalidate()
+            }
+        }
+    }
 }
 
 /// Hands back the window a view is in.
@@ -992,7 +1088,6 @@ private enum Chrome {
         window.titleVisibility = .hidden
         window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
-        window.appearance = NSAppearance(named: .aqua)
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(button)?.isHidden = true
         }
@@ -1024,7 +1119,6 @@ private enum Chrome {
         window.title = saved.name
         window.titlebarSeparatorStyle = .automatic
         window.isMovableByWindowBackground = saved.movable
-        window.appearance = nil
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(button)?.isHidden = false
         }

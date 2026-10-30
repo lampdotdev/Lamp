@@ -2,6 +2,8 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
+A game drawn on Lamp's game runtime goes its own way: a change of its page goes into the open game by the page itself (`PageLive`; "Games" in the devices guide), on the Mac and in the simulator alike, and none of what follows applies to it.
+
 Whether the change was asked for beside the app or in Lamp's panel, a change goes into the open app without a restart when it can (`LiveReload`). The
 Mac app, or the Mac half of an app for both while Try On points at this Mac, is
 built live (a widget or share extension is built from the same copy, and a change to one reopens the app): build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with each `var body: some View` wrapped
@@ -179,7 +181,8 @@ what each message points at, its files copied aside as a request waiting for set
 since the held build outlives Lamp too; Undo, an earlier version and a request sent again drop it
 (`Store.dropPausedRequest`). A file the agent wrote in the moment before Lamp ended it that doesn't build is neither
 saved nor installed, as after any build that fails, and its errors ride with the carry-on request (`Store.carry`). Only
-the Reload button reloads the app, or Lamp for the person once they've stepped away: with no input on the Mac for
+the Reload button reloads the app (and with it every other place of the wish the person has it on and Lamp can reach:
+"Reload is every place" in the kinds-of-app guide), or Lamp for the person once they've stepped away: with no input on the Mac for
 three minutes (`AwayReloads.after`, the window server's own count, so no permission is asked for) while a request's
 change waits for it, Lamp presses it and says so in the chat (`Store.reloadIfAway`). A turn still at work puts it in
 between its steps; once the turn is over (paused, the agent asking for Reload in its reply, or the Reload put off until

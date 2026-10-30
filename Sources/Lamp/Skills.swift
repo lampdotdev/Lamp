@@ -58,13 +58,12 @@ enum Skills {
     /// a look of Lamp's kinds (Mac, iPhone, both). The menu bar is the Mac half's, a desktop widget a Mac app's alone
     /// (an app for both has the iPhone half's widgets), and the phone's hardware, its widgets and the watch the iPhone
     /// half's. 3D scenes need a Mac app on a Mac that can run RealityView, and a real place from map data is built as
-    /// one. The Chrome sidebar's page is offered where the prompt has the sidebar's rule. An Android app's design is
-    /// offered to its prompt alone. `device-integrations` isn't
+    /// one. An Android app's design is offered to its prompt alone. `device-integrations` isn't
     /// listed: every prompt's rule for devices (`Agent.deviceRules`) names it. What every kind is offered (`everywhere`)
     /// comes first.
-    static func offered(_ platform: Platform, sidebar: Bool = false) -> [String] {
+    static func offered(_ platform: Platform) -> [String] {
         // Every kind but a device's carries `LampWish`, for its wish's other apps and its own copies on other devices.
-        everywhere + platform.target.guidance.skills() + (platform == .device ? [] : ["wish-links"]) + (sidebar ? ["chrome-sidebar"] : [])
+        everywhere + platform.target.guidance.skills() + (platform == .device ? [] : ["wish-links"])
     }
 
     /// The skills the devices an app is on offer it (`Place.skills`: the TV rows' tv-design), for any kind of app and
@@ -97,9 +96,10 @@ enum Skills {
     }
 
     /// The skills every prompt offers, whatever the app is now: how an app is made (web or native) and on which
-    /// devices, games of every kind, 2D games and 3D in a page, web apps, and phones as controllers are the agent's to choose for
-    /// any request, so their guidance can't wait for the app to be of a kind that has them.
-    static let everywhere = ["web-or-native", "game", "2d-game", "3d-game", "web-app", "phone-controllers", "more-apps"]
+    /// devices, games of every kind and their screens, 2D games and 3D in a page, ready-made models, art and sounds, web apps,
+    /// and phones as controllers are the agent's to choose for any request, so their guidance can't wait for the app to
+    /// be of a kind that has them.
+    static let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
     /// and not a rule and a line: the building blocks, AI in the app, the person's accounts, App Intents, share
@@ -134,7 +134,7 @@ enum Skills {
     /// app (still Lamp's placeholder) is about to be given its kind, so it's told how the kinds look.
     /// A wish's other parts (`parts`) each bring their kind's rules, which apply as long as the wish has the part.
     static func applying(to project: LampProject, parts: [LampProject] = []) -> [(name: String, because: String)] {
-        let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.hasMac) + named(project.platform)
+        let offered = offered(project.platform) + named(project.platform)
         var found: [(name: String, because: String)] = parts.map { part in
             (Parts.skill(of: part), "this wish has \(Parts.name(of: part)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.address(of: part, among: (project.holdsApp ? [project] : []) + parts))\" in look_at_app and use_app)")
         }
@@ -142,7 +142,6 @@ enum Skills {
         else if appSwift(of: project, matches: #"\bLampWish\b|\bLampStore\.shared"#) { found.append(("wish-links", "its code uses LampWish or LampStore.shared")) }
         if !project.makesNoApp, DevicePermissions.reachesDevices(project) { found.append(("device-control", "its code reaches the person's devices")) }
         if offered.contains("app-kinds"), !project.makesNoApp, Template.isScaffold(project) { found.append(("app-kinds", "it's a new app, still to be given its kind")) }
-        if offered.contains("chrome-sidebar"), Template.hasSidebarPage(project) { found.append(("chrome-sidebar", "it has a sidebar page in Chrome")) }
         if offered.contains("menu-bar"), appSwift(of: project, matches: #"\bLampMenuBar\b"#) { found.append(("menu-bar", "its code uses LampMenuBar")) }
         if offered.contains("mac-widgets"), Template.hasWidget(project) { found.append(("mac-widgets", "it has a widget in Widget/")) }
         if offered.contains("iphone-widgets"), Template.hasWidget(project) { found.append(("iphone-widgets", "it has widgets or Live Activities in Widget/")) }
@@ -158,9 +157,13 @@ enum Skills {
         if offered.contains("share-extension"), Template.hasShare(project) { found.append(("share-extension", "it has a share extension in Share/")) }
         if offered.contains("scripting"), appSwift(of: project, matches: #"\bLampScript\b"#) { found.append(("scripting", "its code uses LampScript")) }
         if offered.contains("game"), let why = gameUse(project) { found.append(("game", why)) }
+        if offered.contains("game-ui"), let why = gameUse(project) { found.append(("game-ui", why)) }
         if offered.contains("3d-game"), pageCode(of: project, matches: threeImport) { found.append(("3d-game", "its page draws with three.js")) }
         if offered.contains("2d-game"), let why = twoDimensionalUse(project) { found.append(("2d-game", why)) }
         if offered.contains("icloud-sync"), appSwift(of: project, matches: #"\bLampSync\b"#) { found.append(("icloud-sync", "its code uses LampSync")) }
+        if offered.contains("assets"), Credits.load(project).upstream.contains(where: { $0.files?.isEmpty == false }) {
+            found.append(("assets", "it uses ready-made assets brought in with the assets tool"))
+        }
         return found
     }
 
@@ -176,7 +179,10 @@ enum Skills {
         let sources = project.dir.appendingPathComponent("Sources")
         let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
         return files.contains { file in
+            // Lamp's own Swift says nothing of what the app does: a page's app carries the code for phones as players
+            // (LampControllerKit.swift), which names LampNetwork in every game.
             file.pathExtension == "swift" && !["LampSupport.swift", Template.sceneSupportFile].contains(file.lastPathComponent)
+                && !GameKit.ownSwift.contains(file.lastPathComponent)
                 && ((try? String(contentsOf: file, encoding: .utf8))?.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil)
         }
     }

@@ -29,6 +29,18 @@ struct Credits: Codable, Equatable {
         var license: String?
         /// Where its license text is in the wish: "Web/LICENSE-slop-newyork".
         var licenseFile: String?
+        /// Its other license and notice files, each kept as it came ("Licenses/owner/name/NOTICE"): they go wherever
+        /// `licenseFile` goes, so a project under two licenses, or with a NOTICE beside its license, keeps them all.
+        var noticeFiles: [String]? = nil
+        /// The project the wish was made from, as against the libraries and assets it uses: the one whose updates the
+        /// wish follows (`AppUpdates.route`). At most one source says so.
+        var adapted: Bool? = nil
+        /// The files of it in the wish, for work brought in a file at a time (a model, a sprite sheet, a texture: the
+        /// `assets` tool's), so what each file is and whose it is can be told from the credits.
+        var files: [String]? = nil
+
+        /// Every file of its terms the wish keeps: its license, then the others.
+        var termsFiles: [String] { (licenseFile.map { [$0] } ?? []) + (noticeFiles ?? []) }
     }
 
     /// A wish this one was made from.
@@ -38,6 +50,13 @@ struct Credits: Codable, Equatable {
         var starter: String?
         /// The shared wish's identity (`Sharing.identity`), for one that came in a shared file.
         var wish: String?
+        /// Where the wish lives, https only: its repository on GitHub, written as it's put there (`GitHubRepo`) or
+        /// opened from there (`RepoImport`), so a remix of a remix links each repository.
+        var url: String?
+        /// The commit of that repository this wish has: the one it was opened from (`RepoImport`), the last one merged
+        /// in (`Upstream`), or the last one Put on GitHub pushed. The base the next update is merged against and the
+        /// parent a contribution goes back on top of; shown nowhere.
+        var commit: String?
     }
 
     /// A picture made with AI, by its path in the wish.
@@ -152,24 +171,56 @@ struct Credits: Codable, Equatable {
             guard let newer = other.upstream.first(where: { $0.sameWork(as: source) }) else { continue }
             result.upstream[index] = Source(name: newer.name, author: newer.author ?? source.author, url: newer.url ?? source.url,
                                             commit: newer.commit ?? source.commit, license: newer.license ?? source.license,
-                                            licenseFile: newer.licenseFile ?? source.licenseFile)
+                                            licenseFile: newer.licenseFile ?? source.licenseFile,
+                                            noticeFiles: newer.noticeFiles ?? source.noticeFiles, adapted: newer.adapted ?? source.adapted,
+                                            files: Self.union(source.files, newer.files))
         }
-        for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameWish(as: remix) }) { result.remixOf.append(remix) }
+        for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameLink(as: remix) }) { result.remixOf.append(remix) }
+        // A link both have keeps the address it has, or takes the one the newer file gives; its commit is the newer
+        // file's when that names one (an update merged in moves it on), else what was known.
+        for (index, remix) in result.remixOf.enumerated() {
+            guard let newer = other.remixOf.first(where: { $0.sameLink(as: remix) }) else { continue }
+            if remix.url == nil, let url = newer.url { result.remixOf[index].url = url }
+            if let commit = newer.commit { result.remixOf[index].commit = commit }
+        }
         for picture in other.generated where !result.generated.contains(picture) { result.generated.append(picture) }
         return result.checked
     }
 
+    /// Two lists of files as one, each once, in the order first seen; nil when both are.
+    private static func union(_ one: [String]?, _ other: [String]?) -> [String]? {
+        guard one != nil || other != nil else { return nil }
+        var result = one ?? []
+        for file in other ?? [] where !result.contains(file) { result.append(file) }
+        return result
+    }
+
     /// The chain with one more wish at its end. The same wish shared again (an update, a second share) stays one link,
     /// named as it's called now, and only when it's already the last: a wish that came back after another took it on
-    /// is a link of its own.
+    /// is a link of its own. A link that knows where the wish lives keeps that, and its commit, when the share names
+    /// no place (a wish opened from its repository and shared on as a file). Put somewhere else (a wish opened from
+    /// one repository and put on the person's own), the wish gets a second link, so the chain still names where it
+    /// came from: that's what an update is merged from and a contribution goes back to (`origin`).
     func remixed(from remix: Remix) -> Credits {
         var result = self
-        if let last = result.remixOf.last, last.sameWish(as: remix) {
-            result.remixOf[result.remixOf.count - 1] = remix
+        if let last = result.remixOf.last, last.sameLink(as: remix) {
+            var link = remix
+            if link.url == nil { link.url = last.url }
+            if link.commit == nil { link.commit = last.commit }
+            result.remixOf[result.remixOf.count - 1] = link
         } else {
             result.remixOf.append(remix)
         }
         return result.checked
+    }
+
+    /// Where the wish came from, when that's a repository: the last link naming one that isn't the wish's own (where
+    /// Put on GitHub put it, `own`). Nil for a wish that came from a starter or a file, or lives only where it was made.
+    func origin(own: String?) -> Remix? {
+        remixOf.last { link in
+            guard let url = link.url else { return false }
+            return own.map { Source.plain(url) != Source.plain($0) } ?? true
+        }
     }
 
     // MARK: What a person reads
@@ -182,8 +233,21 @@ struct Credits: Codable, Equatable {
         source.author.map { "\(source.name) by \($0)" } ?? source.name
     }
 
-    /// "Based on Slop New York by Mr.doob": the work the wish is built on, which is the first one recorded.
-    var basedOn: String? { upstream.first.map { "Based on " + Self.line(for: $0) } }
+    /// The work the wish is built on: the one marked as the project it was made from (`Source.adapted`), else the first
+    /// with no mark either way, as credits from before the mark have it. A work marked as only used (`adapted: false`, a
+    /// library or an asset) is never what the wish is built on, so a wish that only uses things has no basis.
+    var basis: Source? { upstream.first { $0.adapted == true } ?? upstream.first { $0.adapted == nil } }
+
+    /// The works with the one the wish is built on first, as they're shown.
+    var basisFirst: [Source] {
+        guard let basis, let index = upstream.firstIndex(of: basis) else { return upstream }
+        var ordered = upstream
+        ordered.remove(at: index)
+        return [basis] + ordered
+    }
+
+    /// "Based on Slop New York by Mr.doob": the work the wish is built on.
+    var basedOn: String? { basis.map { "Based on " + Self.line(for: $0) } }
 
     /// The page Credits.html in a Mac app's bundle, which the standard About window shows under the app's name: each
     /// work it's based on, linked where it lives, with its license, then the wishes it was remixed from.
@@ -194,15 +258,18 @@ struct Credits: Codable, Equatable {
                 .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
         var lines: [String] = []
-        for (index, source) in upstream.enumerated() {
+        // Only the work it's built on is "Based on": a wish that only uses a library or assets is based on none of them.
+        for (index, source) in basisFirst.enumerated() {
             let name = source.url.map { "<a href=\"\(escaped($0))\">\(escaped(source.name))</a>" } ?? escaped(source.name)
             let by = source.author.map { " by \(escaped($0))" } ?? ""
             let license = source.license.map { " (\(escaped($0)))" } ?? ""
-            lines.append((index == 0 ? "Based on " : "Uses ") + name + by + license)
+            lines.append((index == 0 && basis != nil ? "Based on " : "Uses ") + name + by + license)
         }
         if !generated.isEmpty { lines.append(Self.generatedLine(generated.count)) }
         if !remixOf.isEmpty {
-            lines.append("Remixed from " + remixOf.map { escaped($0.name) + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: ", then "))
+            lines.append("Remixed from " + remixOf.map { remix in
+                (remix.url.map { "<a href=\"\(escaped($0))\">\(escaped(remix.name))</a>" } ?? escaped(remix.name)) + (remix.starter != nil ? " (Lamp)" : "")
+            }.joined(separator: ", then "))
         }
         return """
             <!doctype html><html><head><meta charset="utf-8"><style>
@@ -219,6 +286,7 @@ struct Credits: Codable, Equatable {
 
     static let maxEntries = 32
     static let maxPictures = 500
+    static let maxFiles = 500
     static let maxText = 100
 
     /// Only entries Lamp can show as they are: one plain line for each name, an https address, a commit that's a
@@ -260,7 +328,11 @@ struct Credits: Codable, Equatable {
         let name = (path as NSString).lastPathComponent
         let upper = name.uppercased()
         let ext = (name as NSString).pathExtension.lowercased()
-        return ["LICENSE", "LICENCE", "COPYING", "NOTICE"].contains(where: upper.hasPrefix) && ["", "txt", "md"].contains(ext)
+        // An extension is a format ("LICENSE.md") or the license's own name ("COPYING.LESSER", "LICENSE.APACHE2"): short,
+        // letters and digits, never a kind of file that runs.
+        return ["LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE"].contains(where: upper.hasPrefix)
+            && ext.count <= 10 && ext.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+            && !["sh", "command", "app", "js", "py", "rb", "pl", "swift", "html", "htm"].contains(ext)
     }
 
     static func validPath(_ value: String?) -> String? {
@@ -273,8 +345,11 @@ struct Credits: Codable, Equatable {
 extension Credits.Source {
     var checked: Credits.Source? {
         guard let name = Credits.text(name) else { return nil }
+        let notices = (noticeFiles ?? []).compactMap(Credits.validPath)
+        let files = Array((files ?? []).compactMap(Credits.validPath).prefix(Credits.maxFiles))
         return Credits.Source(name: name, author: Credits.text(author), url: Credits.validURL(url), commit: Credits.validCommit(commit),
-                              license: Credits.validLicense(license), licenseFile: Credits.validPath(licenseFile))
+                              license: Credits.validLicense(license), licenseFile: Credits.validPath(licenseFile),
+                              noticeFiles: notices.isEmpty ? nil : notices, adapted: adapted, files: files.isEmpty ? nil : files)
     }
 
     /// The same work: the same address, or for one with none, the same name.
@@ -283,7 +358,7 @@ extension Credits.Source {
         return name.lowercased() == other.name.lowercased()
     }
 
-    private static func plain(_ url: String) -> String {
+    static func plain(_ url: String) -> String {
         var url = url.lowercased()
         while url.hasSuffix("/") { url.removeLast() }
         if url.hasSuffix(".git") { url.removeLast(4) }
@@ -296,12 +371,20 @@ extension Credits.Remix {
         guard let name = Credits.text(name) else { return nil }
         let starter = starter.flatMap(Credits.text).flatMap { $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" } ? $0 : nil }
         let wish = wish.flatMap { UUID(uuidString: $0.trimmed)?.uuidString }
-        return Credits.Remix(name: name, starter: starter, wish: wish)
+        return Credits.Remix(name: name, starter: starter, wish: wish, url: Credits.validURL(url), commit: Credits.validCommit(commit))
     }
 
     func sameWish(as other: Credits.Remix) -> Bool {
         if let wish, let theirs = other.wish { return wish == theirs }
         if let starter, let theirs = other.starter { return starter == theirs }
         return wish == nil && other.wish == nil && starter == nil && other.starter == nil && name == other.name
+    }
+
+    /// The same wish at the same place: one link. The same wish at another place is a link of its own (a remix opened
+    /// from one repository and put on another), so where it came from stays on the chain.
+    func sameLink(as other: Credits.Remix) -> Bool {
+        guard sameWish(as: other) else { return false }
+        guard let url, let theirs = other.url else { return true }
+        return Credits.Source.plain(url) == Credits.Source.plain(theirs)
     }
 }

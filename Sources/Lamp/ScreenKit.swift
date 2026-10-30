@@ -10,8 +10,9 @@ import Foundation
 /// On the Mac, an iPhone and an iPad it's Lamp's common app around a page (`GameKit/apple/LampWebApp.swift`, with
 /// LampPage.swift and LampSupport.swift), given the screen's address. The page fills whatever it's shown on, as a web page fills a
 /// browser; one made at a fixed 1920x1080 (its viewport says so, `fillsAnyShape`) is zoomed to the window instead. On Android it's Lamp's Android app around the page, on a Samsung or LG TV the TV app's own way there (`TVs`),
-/// and on the Xbox the integration's web app ("xbox-one"). Wherever it's shown, the agent looks at it in the TV preview
-/// on the Mac (`Target.looksInTVPreview`), at any shape it asks for (`look_at_app`'s `shape`), so it never waits for a build of the Mac app to see a change.
+/// and on the Xbox the integration's web app ("xbox-one"). The agent looks at it in its window on this Mac when it has one
+/// (`Store.pageOnMac`), where a change of the page goes in as it's saved, and in the preview on the Mac
+/// (`Target.looksInTVPreview`) at any other shape it asks for (`look_at_app`'s `shape`) or where nothing on this Mac shows it.
 ///
 /// A web app made now (`Platform.webApp`, `make_app_for`'s `kind` "app" with `made` "web") is written the same way,
 /// with what's its own (`Page`): its marker, its own address and so its own saved data, and the folder it's installed
@@ -93,7 +94,9 @@ enum ScreenKit {
         // On Android: Lamp's Android app around the page, as a game's.
         if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
         try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
-        try Template.write(buildSh, to: "build.sh", for: project, executable: true)
+        // What the player's copy is told it is: the kind's address, and the fixed canvas a page made at one has.
+        let played = GameKit.playerPlist(game: false, scheme: page.scheme, canvas: fillsAnyShape(project) ? nil : (1920, 1080))
+        try Template.write(buildSh.replacingOccurrences(of: "{{PLAYER_PLIST}}", with: played), to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
         try Template.write(page.says, to: page.marker, for: project)
         // On Android: Lamp's Android app around the page, as a game's.
@@ -120,7 +123,7 @@ enum ScreenKit {
     /// Every path Lamp owns in a screen or a web app.
     static func paths(for project: LampProject) -> [String] {
         let page = page(for: project.platform)
-        return [TVTemplate.supportFile, page.swift, "Sources/LampPage.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", page.marker]
+        return [TVTemplate.supportFile, page.swift, "Sources/LampPage.swift", "Sources/LampControllerKit.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", page.marker]
             + GameAndroid.paths(for: project)
     }
 
@@ -181,7 +184,7 @@ enum ScreenKit {
 
     A web app built and changed with Lamp: a page in Web/ (HTML, CSS and JavaScript) shown full screen, filling whatever
     it's shown on. It's a Mac app shown in its own window, and goes on an iPhone, an iPad, an Android device, a Samsung
-    or LG TV or an Xbox too once it's put there. Lamp looks at it in its TV preview on the Mac.
+    or LG TV or an Xbox too once it's put there. Lamp looks at it in its window on the Mac, and in a preview at other shapes.
 
     ## What it does
     Nothing yet: fresh scaffold.
@@ -214,7 +217,7 @@ enum ScreenKit {
         let hosts: String = [screenPage, webAppPage].map { page in
             (GameKit.webApp(scheme: page.scheme, canvas: nil) ?? "") + (GameKit.webApp(scheme: page.scheme, canvas: (1920, 1080)) ?? "")
         }.joined()
-        let rest: String = (GameKit.page?.text ?? "") + buildSh + packageSwift
+        let rest: String = (GameKit.page?.text ?? "") + (GameKit.controllerKit?.text ?? "") + buildSh + packageSwift
         return hosts + rest + TVTemplate.lampJS + GameAndroid.stamp
     }
 }
@@ -225,26 +228,26 @@ extension Agent {
     /// The rules for a screen: the TV app's rules for the page (it's the same page), with where it's shown in the
     /// request's device line (`Rules.screenPlaces`), since a place may be given at any time.
     static func screenPrompt(for project: LampProject) -> String {
-        let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.screenDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
-                     Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
+        let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.screenDesign(project.openPlaces), Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
+                     Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.screenLogs, Rules.screenTry, Rules.appMd, Rules.audience,
                      Skills.index(Skills.offered(.screen)), Rules.begin, Rules.finish]
         return (Rules.screenHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
-            .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again in the TV preview")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "puts the change into its window on this Mac")
     }
 
     /// The rules for a screen that's one of a wish's apps, in a folder of its own: the screen's own, for the files
     /// there, without those about the wish as a whole.
     static func screenPrompt(part folder: String, alone: Bool = false) -> String {
-        let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.screenDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
-                     Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
+        let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.screenDesign(nil), Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
+                     Rules.webSound, Rules.screenLogs, Rules.screenTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
                      Skills.index(Skills.offered(.screen))]
         return (Rules.partHeader("a web app, a page in Web/ shown full screen, at home on the Mac and shown on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
-            .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again in the TV preview")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "puts the change into its window on this Mac")
     }
 }
 
@@ -254,8 +257,8 @@ extension Agent.Rules {
     full screen, the same page wherever it's shown, filling the screen it's on. Its home is the person's Mac, \
     where it's an app in its own window; it's shown on any other device that takes a page (make_app_for's table of \
     devices) once it's put there. You try \
-    it in the TV preview on this Mac, the same page with a remote's keys, at any shape. The request's device line says \
-    where it's shown: never say it's on a device it isn't on. Read APP.md first for context.
+    it in its window on this Mac, the one the person sees, and in a preview on this Mac at any other shape. The \
+    request's device line says where it's shown: never say it's on a device it isn't on. Read APP.md first for context.
     """
 
     static var screenEdit: String { """
@@ -269,11 +272,13 @@ extension Agent.Rules {
     wish's own folder), `kind` "app", `made` "web" and `devices` every device it's to be on ("mac", "ipad", "android", \
     "android-tv", "tv"…: a page goes wherever the table of devices gives a web host); it stays the same app, with its \
     saves, and the wish's other apps stay as they are.
+    \(pageCopies)
     """ }
 
     /// How a screen looks: like a TV app's page (`tvDesign`), but filling whatever it's shown on rather than a fixed
-    /// 1920x1080, and looked at in several shapes.
-    static let screenDesign = """
+    /// 1920x1080, and looked at in the shapes of the places it's shown (`places`, or nil to read them off the request's
+    /// device line): a Mac web app is never sent to look at itself as a TV, a frame and a phone.
+    static func screenDesign(_ places: [Destination]?) -> String { """
     - Design for a screen glanced at from across a room that fills whatever it's on: a 16:9 TV, a Mac window of any \
     size, a photo frame, an iPad either way up, a phone. Lay it out as a responsive web page, never as a fixed canvas \
     scaled like a picture: CSS grid and flexbox that share out the space, type and spacing sized from the screen (a unit \
@@ -284,10 +289,74 @@ extension Agent.Rules {
     narrow screen a stacked column may scroll. Text easy to read from a few meters, headings much larger, high \
     contrast. Everything is reached with a remote's arrows and OK as well as by touch and the mouse: what has focus \
     must be unmistakable, focus moves the way the layout looks, targets are large, and nothing needs hover. Before you \
-    finish, look at it in several shapes with `look_at_app`'s `shape`: "1920x1080" (a TV), "1280x800" (a photo frame), \
-    "820x1180" (an iPad upright) and "390x844" (a phone). A page whose viewport is `width=1920` (a screen made before \
-    screens filled any shape) is zoomed whole instead and looked at only as a TV: make it fill any shape when it's to \
-    go on a phone, an iPad or a frame, starting with its viewport (`width=device-width, initial-scale=1`).
+    finish, look at it in the places it's shown, and only those: \(shapesToLook(places)). When it's put somewhere \
+    new, look at it in that place's shapes too. A page whose viewport \
+    is `width=1920` (a screen made before screens filled any shape) is zoomed whole instead and looked at only as a TV: \
+    make it fill any shape when it's to go on a phone, an iPad or a frame, starting with its viewport \
+    (`width=device-width, initial-scale=1`).
+    """ }
+
+    /// The shapes a screen is looked at in for each place it's shown, as `look_at_app`'s `shape` takes them.
+    static func screenShapes(_ place: Destination) -> [(shape: String, what: String)] {
+        switch place {
+        // The Mac's shape is its window as the person has it, looked at without `shape` (`macLook`).
+        case .mac: []
+        case .ios: [("820x1180", "an iPad upright"), ("390x844", "an iPhone")]
+        case .android: [("390x844", "an Android phone"), ("1280x800", "an Android tablet or photo frame")]
+        case .androidTV, .tv, .device: [("1920x1080", "a TV")]
+        }
+    }
+
+    /// The shapes to look at in before finishing: those of the places given, each once; with none given, each place's,
+    /// for the places the request's device line names.
+    static func shapesToLook(_ places: [Destination]?) -> String {
+        guard let places, !places.isEmpty else {
+            let all: [(String, [Destination])] = [("an iPhone or iPad", [.ios]), ("an Android device", [.android]), ("a TV or an Xbox", [.tv])]
+            return "for each place the request's device line names: the Mac " + macLook + "; " + all.map { name, place in
+                name + " with `look_at_app`'s `shape` " + place.flatMap(screenShapes).map { "\"\($0.shape)\"" }.joined(separator: " and ")
+            }.joined(separator: "; ")
+        }
+        var shapes: [(shape: String, what: String)] = []
+        for (shape, what) in places.flatMap(screenShapes) {
+            if let at = shapes.firstIndex(where: { $0.shape == shape }) { shapes[at].what += " or " + what } else { shapes.append((shape, what)) }
+        }
+        let others = shapes.isEmpty ? [] : ["with `look_at_app`'s `shape` " + shapes.map { "\"\($0.shape)\" (\($0.what))" }.joined(separator: ", ")]
+        return ((places.contains(.mac) ? ["on the Mac " + macLook] : []) + others).joined(separator: "; ")
+    }
+
+    /// How a screen is looked at on the Mac: in its own window, at the size the person has it.
+    static let macLook = "without `shape` (its window, at the size the person has it)"
+
+    /// What `make_app_for` says once a web app's places are set: the shapes to look at it in, from the places it has now,
+    /// since the change rules it was given with its kind were written before they were (`Store.change`).
+    static func screenPlaced(_ project: LampProject) -> String {
+        (ScreenKit.fillsAnyShape(project)
+            ? "It's the same page everywhere, filling each screen; before you finish, look at it with `look_at_app`'s `shape` in the "
+                + "shapes of its places: \(shapesToLook(project.openPlaces)). "
+            : "It's the same page everywhere, laid out at 1920x1080 and scaled to each screen. ") + screenPlaces(project)
+    }
+
+    /// How a screen is tried: in its window on this Mac, or in the preview at another shape (`Store.pageOnMac`).
+    static let screenTry = """
+    - `look_at_app` shows you the page in its window on this Mac, the one the person sees: it opens it when Try On \
+    points at the Mac, and a change of the page goes into the open window as you save, with what the person saved \
+    kept. With `shape`, or when nothing on this Mac shows it (it's only on a TV or the Xbox), it's shown in the \
+    preview instead, a window of Lamp's running the page in this Mac's browser, which starts from a copy of what the \
+    Mac window saved: what you do there stays there. `use_app` acts where you last looked: it presses the remote's \
+    keys (up, down, left, right, enter, back, play, pause, red, green, yellow, blue, 0-9; in the window on this Mac, \
+    escape is back), clicks with a target or x and y, types into a field, and waits. Both give you the screen as \
+    text: every focusable thing and piece of text with an id, its name, what it holds, whether it has focus, and \
+    where it is. Try it the way the person will, with the keys as well as the pointer: a TV has no pointer. Neither \
+    reaches a TV, a phone or the Xbox, so say where you tried it when you tell the person. To see whether something \
+    moves, look, then `use_app` with a wait, and compare where it is. In anything animated, keep the work done for \
+    each frame small.
+    """
+
+    static let screenLogs = """
+    - Beyond `look_at_app` and `use_app`, you can't watch the page run, but Lamp saves what its console prints \
+    (console.log, warnings, errors and uncaught exceptions with their line) in .lamp/runtime/log.txt for the latest \
+    opening, in its window on this Mac or in the preview. When the user says something doesn't work, read the log \
+    before guessing. When Lamp mentions a screenshot of the app, that is what the user was looking at.
     """
 
     /// Where a screen is shown, for the request's device line.

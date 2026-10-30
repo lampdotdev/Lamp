@@ -226,6 +226,9 @@ enum Integrations {
         for keptOne in kept() where !found.contains(where: { $0.id == keptOne.id }) {
             found.append(device(from: keptOne, onNetwork: false))
         }
+        // Said of each afresh: one remembered from a few minutes ago may have been set up, or forgotten, since.
+        let keptIDs = Set(kept().map(\.id))
+        for index in found.indices { found[index].kept = keptIDs.contains(found[index].id) }
         for index in found.indices {
             if var keptOne = kept(found[index].id), keptOne.address != found[index].address, found[index].connected {
                 keptOne.address = found[index].address ?? keptOne.address
@@ -320,7 +323,9 @@ enum Integrations {
                             name: await read(identity.name) ?? "\(integration.maker) \(model)", os: identity.os,
                             osVersion: await read(identity.osVersion) ?? "", reach: .network)
         device.integration = integration.id
+        device.what = integration.kind
         device.address = address
+        device.kept = kept(id) != nil
         if var keptOne = kept(id) {
             keptOne.name = device.name
             keptOne.osVersion = device.osVersion
@@ -330,11 +335,14 @@ enum Integrations {
     }
 
     static func device(from kept: Kept, onNetwork: Bool) -> Device {
-        var device = Device(id: kept.id, kind: .other, maker: integration(kept.integration)?.maker ?? "", model: model(of: kept), modelID: kept.modelID,
+        let known = integration(kept.integration)
+        var device = Device(id: kept.id, kind: .other, maker: known?.maker ?? "", model: model(of: kept), modelID: kept.modelID,
                             name: kept.name, os: kept.os, osVersion: kept.osVersion, reach: .network)
         device.integration = kept.integration
+        device.what = known?.kind
         device.address = kept.address
         device.connected = onNetwork
+        device.kept = true
         return device
     }
 
@@ -399,10 +407,24 @@ struct IntegrationRunner {
     var send: (Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer = {
         try await DeviceHTTP.send($0, to: $1, values: $2, pins: $3)
     }
+    /// Told each time Lamp waits on the device to finish something it was sent (asking again, or launching again), for
+    /// the activity line.
+    var onWaiting: (@Sendable () -> Void)?
+    /// How long Lamp waits between asking the device again; tests don't.
+    var pause: (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
 
     struct Failure: LocalizedError {
         let message: String
+        /// The device was still at it when Lamp stopped waiting: a moment later it may be done.
+        var stillWorking = false
         var errorDescription: String? { message }
+    }
+
+    /// An app the device never opened after it was launched again and again: it refused each launch, or took one and
+    /// never ran the app (`launched`). `refused` is what the device said the last time it refused.
+    struct NotOpened: Error {
+        let launched: Bool
+        let refused: String?
     }
 
     /// The device turned the sign-in away: waiting or going on won't mend it, the person has to type it again.
@@ -414,6 +436,8 @@ struct IntegrationRunner {
     /// What a sequence gave back: a picture from a look, a stream that's running.
     struct Outcome {
         var picture: Data?
+        /// The app's screen as text, from a bridge's `screen` (`keep: "screen"`).
+        var screen: String?
         /// The app's log, from a bridge's `log` (`keep: "log"`).
         var log: String?
         var streams: [DeviceStream] = []
@@ -564,16 +588,18 @@ struct IntegrationRunner {
                         changed.restores.append(Restore(request: request, was: was, values: values))
                     }
                 }
+                var asked = Date()
                 var answer = try await transfer(request, values: values, files: files)
                 // A device still working on what it was sent says so with 204 until it's done.
                 if let poll = request.poll {
                     let until = Date().addingTimeInterval(TimeInterval(min(max(poll, 2), 600)))
                     while answer.status == 204, Date() < until {
                         try await Task.sleep(for: .seconds(2))
+                        asked = Date()
                         answer = try await transfer(request, values: values, files: files)
                     }
                     // Still working when the time is up is no answer: the step didn't finish.
-                    if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.") }
+                    if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.", stillWorking: true) }
                 }
                 cookies.merge(answer.cookies) { $1 }
                 if request.auth != nil, answer.status == 401 { throw Rejected() }
@@ -583,14 +609,29 @@ struct IntegrationRunner {
                     throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path)" + (said.isEmpty ? "." : ": " + said))
                 }
                 if let expect = request.expect {
-                    let value = DeviceHTTP.value(json: expect.json, xml: expect.xml, in: answer) ?? ""
-                    let met = expect.equals.map { value.caseInsensitiveCompare($0) == .orderedSame } ?? expect.contains.map { value.localizedCaseInsensitiveContains($0) } ?? true
-                    guard met else {
-                        throw Failure(message: "\(device.name) said: " + DeviceApps.plain(answer.text))
+                    // Asked again while the answer doesn't say it yet, for up to `until` seconds, counting the time each
+                    // request took as well as each pause.
+                    var spent = Date().timeIntervalSince(asked)
+                    while try !Self.meets(expect, answer, values) {
+                        guard let until = request.until, spent < Double(until) else {
+                            if request.until != nil {
+                                throw Failure(message: "\(device.name) still wasn't ready at \(request.path) after \(request.until ?? 0) seconds.", stillWorking: true)
+                            }
+                            throw Failure(message: "\(device.name) said: " + DeviceApps.plain(answer.text))
+                        }
+                        onWaiting?()
+                        try await pause(2)
+                        asked = Date()
+                        answer = try await transfer(request, values: values, files: files)
+                        spent += 2 + Date().timeIntervalSince(asked)
+                        // The answer that says it may set or change a cookie the next request sends back.
+                        cookies.merge(answer.cookies) { $1 }
+                        guard answer.ok else { throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path).") }
                     }
                 }
                 switch request.keep {
                 case "picture": outcome.picture = answer.body
+                case "screen": outcome.screen = String(decoding: answer.body.prefix(512 << 10), as: UTF8.self)
                 case "log": outcome.log = String(decoding: answer.body.suffix(256 << 10), as: UTF8.self)
                 case "key":
                     let file = DeviceFolder.deviceKey(device.id)
@@ -628,6 +669,47 @@ struct IntegrationRunner {
             }
         }
         return outcome
+    }
+
+    /// Whether an answer says what `expect` asks, of any element where its path has `*`.
+    static func meets(_ expect: Request.Expect, _ answer: DeviceHTTP.Answer, _ values: [String: String]) throws -> Bool {
+        let found = expect.json.map { DeviceHTTP.jsonValues($0, in: answer.body) } ?? expect.xml.map { [DeviceHTTP.xml($0, in: answer.body) ?? ""] } ?? []
+        if let equals = expect.equals {
+            let wanted = try Placeholders.fill(equals, values, in: .shown)
+            return found.contains { $0.caseInsensitiveCompare(wanted) == .orderedSame }
+        }
+        if let contains = expect.contains {
+            let wanted = try Placeholders.fill(contains, values, in: .shown)
+            return found.contains { $0.localizedCaseInsensitiveContains(wanted) }
+        }
+        return true
+    }
+
+    /// Opens an app just put on the device: `launch`, and then, where the bridge says how (`running`), a check that it's
+    /// running. A device only just done installing a package can refuse to open it (an Xbox answers 0x8D160120,
+    /// 0x80073D00 or 0x80070002 for a while, longer when the copy it replaced was open) or take the launch and show its
+    /// own "not ready yet" instead; so a refused launch is asked again after a pause that grows, and one that didn't
+    /// open is launched again, until `tries` launches have gone. Throws `NotOpened` when it never opened.
+    func open(_ launch: [IntegrationAction], running: [IntegrationAction]?, extra: [String: String], changed: ChangedSettings? = nil,
+              tries: Int = 8, stillWanted: @escaping @MainActor () -> Bool = { true }) async throws {
+        var launched = false, refused: String?, wait = 2.0
+        for attempt in 1...max(tries, 1) {
+            do {
+                _ = try await run(launch, extra: extra, changed: changed)
+                launched = true
+                guard let running, !running.isEmpty else { return }
+                do { _ = try await run(running, extra: extra, changed: changed); return }
+                catch is Failure {}
+            } catch let failure as Failure {
+                refused = failure.message
+            }
+            guard attempt < tries else { break }
+            onWaiting?()
+            try await pause(wait)
+            wait = min(wait * 2, 8)
+            guard await stillWanted() else { throw Failure(message: "Stopped.") }
+        }
+        throw NotOpened(launched: launched, refused: refused)
     }
 
     /// One request of a sequence. Without a package it goes through `send`, as a check's do, so tests can answer for a

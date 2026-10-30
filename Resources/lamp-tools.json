@@ -2,18 +2,10 @@
   {
     "name": "look_at_app",
     "label": "Look at the app",
-    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. For an iPhone app it also lists the screen as text: each control and piece of text with its name, what it holds and the point to tap it. While the app is open, what you save goes into it by itself when it can; a look is quick (only the files you changed are compiled, and the whole build goes on in the background) and shows you what the person sees, so look as soon as there's something to see, and after each part of a change with several. It says how long it took. With `sidebar`, it shows a Mac app's sidebar in Chrome instead of its windows, drawn by Lamp as Chrome draws it, as text and a picture, and says whether `page` fits the app's browser.json. For a Mac app, `motion` watches the window for a couple of seconds instead and says what changed from frame to frame and whether anything flickers; `prop` shows one of a 3D scene's props on its own, from four sides. A change goes into the open app as it runs, so `reopen` is for what only a fresh launch shows (how long it takes to open, code run once at the start): it closes the app the usual way and opens it again, or, while the person has the app open, asks them first with a Reload button. Never end the app's process yourself. For a game it plays the game in a preview on this Mac instead, and `on_device` opens it where Try On points (its window on this Mac, the simulator, the Android emulator or the Xbox).",
+    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. For an iPhone app it also lists the screen as text: each control and piece of text with its name, what it holds and the point to tap it. While the app is open, what you save goes into it by itself when it can; a look is quick (only the files you changed are compiled, and the whole build goes on in the background) and shows you what the person sees, so look as soon as there's something to see, and after each part of a change with several. It says how long it took. For a Mac app, `motion` watches the window for a couple of seconds instead and says what changed from frame to frame and whether anything flickers; `prop` shows one of a 3D scene's props on its own, from four sides. A change goes into the open app as it runs, so `reopen` is for what only a fresh launch shows (how long it takes to open, code run once at the start): it closes the app the usual way and opens it again, or, while the person has the app open, asks them first with a Reload button. Never end the app's process yourself. For a game it plays the game in a hidden preview on this Mac instead, and what it plays goes into the person's open game too, so look once what you've saved is whole; `on_device` opens it where Try On points (its window on this Mac, the simulator, the Android emulator or the Xbox). A screen or web app is looked at in its window on this Mac, the one the person sees, and in a preview on this Mac at another `shape`.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "sidebar": {
-          "description": "Show the app's sidebar in Chrome instead of its windows (an app with browser.json)",
-          "type": "boolean"
-        },
-        "page": {
-          "description": "With sidebar: the https address of a real page to open beside it. Lamp reads it as Chrome's sidebar would for a button that reads the page",
-          "type": "string"
-        },
         "motion": {
           "type": "boolean",
           "description": "Watch the window for about two seconds: what moves, and whether anything flickers."
@@ -28,7 +20,7 @@
         },
         "shape": {
           "type": "string",
-          "description": "For a screen: the width and height in CSS pixels to show its page at, as a device would, such as \"1920x1080\" (a TV), \"1280x800\" (a photo frame), \"820x1180\" (an iPad upright) or \"390x844\" (a phone). It stays at that shape for later looks."
+          "description": "For a screen or web app: the width and height in CSS pixels to show its page at, as another device would, such as \"1920x1080\" (a TV), \"1280x800\" (a photo frame), \"820x1180\" (an iPad upright) or \"390x844\" (a phone). It's shown in a preview on this Mac beside the person's window, starting from a copy of that window's data, and stays at that shape for later looks in it; leave it out to look at the window on this Mac."
         },
         "part": {
           "type": "string",
@@ -49,7 +41,7 @@
   {
     "name": "use_app",
     "label": "Use the app",
-    "description": "Only when the person asks you to try the app. Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows you what each action did, whether anything changed, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text (from look_at_app or use_app) lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is. Say what to act on with `target`: an id or the exact name from that list. A click presses a button, switch, link or choice itself, so it can't miss; `type` with a target puts the text into that field in place of what it held, or sets a slider; `key` with a target goes to that thing (up and down step a slider or stepper). Prefer targets. Use x and y (pixels in the latest picture of the front window; aim at the middle) only for what the list doesn't have: a drawing, a canvas, a chart, a game board. In a Mac app, `key` with `amount` holds the key down that many seconds, as a game's controls need (hold W, then look); `drag` presses, moves to to_x and to_y and lets go: a slider's knob, something dragged on a canvas, a drawer or a lever in a 3D scene. Use it to check that something works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing without a target go to whatever has keyboard focus. Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). `menu` does the same for the menu bar: without `item` it lists every command, with `item` like \"File > Export…\" it picks one. `bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a menu instead, it lists it, and `item` picks from it; if a click on the icon switches something on and off, it says so and lists the right-click menu, and `item` set to \"click\" clicks the icon. When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. The system's save panel can only be answered with return (save where it says) or escape. It can't drag. The person sees each action happen and can take the app back at any moment: then the rest are dropped, it says how far it got, and use_app is off until their next message. It uses the app as last built: after editing code, call look_at_app first so your changes are built and open. If it says nothing changed, a click by point most likely missed: use a target from the screen as text, or look at the picture and aim again, before changing any code. In an iPhone app the actions tap, type, scroll and swipe on the simulator's screen, by target or at x and y in the picture; `type` replaces what the tapped field holds; a swipe on a row uncovers its actions, which `item` then taps; `right_click` is a long press; there are no menus, and the keys are return, escape, home and lock (to see widgets and Live Activities). In an app for a device Lamp reaches through its integration (a Roku), only `key` with the remote's keys the rules name, `type` with `text` where the rules say it types, and `wait`. In an Xbox game, the controller in the preview: `stick`, `button` and `wait`, as the rules say. With `sidebar`, the actions are on the app's sidebar in Chrome as Lamp draws it (see look_at_app): click a button or type into a field by target, or wait; a button that reads the page gets the text of `page`, and one that reads a selection gets `selection`. `menu` chooses the app's right-click item on `page`, as the person would in Chrome: the page's `lamp.onMenu` handler runs and may read the page once.",
+    "description": "Only when the person asks you to try the app, except a game in its hidden preview, which you play yourself to check your work. Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows you what each action did, whether anything changed, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text (from look_at_app or use_app) lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is. Say what to act on with `target`: an id or the exact name from that list. A click presses a button, switch, link or choice itself, so it can't miss; `type` with a target puts the text into that field in place of what it held, or sets a slider; `key` with a target goes to that thing (up and down step a slider or stepper). Prefer targets. Use x and y (pixels in the latest picture of the front window; aim at the middle) only for what the list doesn't have: a drawing, a canvas, a chart, a game board. In a Mac app, `key` with `amount` holds the key down that many seconds, as a game's controls need (hold W, then look); `drag` presses, moves to to_x and to_y and lets go: a slider's knob, something dragged on a canvas, a drawer or a lever in a 3D scene. Use it to check that something works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing without a target go to whatever has keyboard focus. Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). `menu` does the same for the menu bar: without `item` it lists every command, with `item` like \"File > Export…\" it picks one. `bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a menu instead, it lists it, and `item` picks from it; if a click on the icon switches something on and off, it says so and lists the right-click menu, and `item` set to \"click\" clicks the icon. When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. The system's save panel can only be answered with return (save where it says) or escape. It can't drag. The person sees each action happen and can take the app back at any moment: then the rest are dropped, it says how far it got, and use_app is off until their next message. It uses the app as last built: after editing code, call look_at_app first so your changes are built and open. If it says nothing changed, a click by point most likely missed: use a target from the screen as text, or look at the picture and aim again, before changing any code. In an iPhone app the actions tap, type, scroll and swipe on the simulator's screen, by target or at x and y in the picture; `type` replaces what the tapped field holds; a swipe on a row uncovers its actions, which `item` then taps; `right_click` is a long press; there are no menus, and the keys are return, escape, home and lock (to see widgets and Live Activities). In an app for a device Lamp reaches through its integration (a Roku), only `key` with the remote's keys the rules name, `type` with `text` where the rules say it types, and `wait`. In a game, the controller in the preview: `stick`, `button` and `wait`, as the rules say. A game on Lamp's web runtime with a phone page: `phone` on an action does it on that page instead, joined to the game in the same play and held sideways: `click` (`amount` holds it), `press` and `release` (a finger left down, then lifted), `drag`, `type`, `rotate` (`direction` up for upright, left or right for sideways), `link` (`item` lost, away or back) and `wait`. The phone-pages skill says more.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -71,20 +63,28 @@
                   "wait",
                   "swipe",
                   "stick",
-                  "button"
+                  "button",
+                  "press",
+                  "release",
+                  "rotate",
+                  "link"
                 ],
                 "type": "string"
+              },
+              "phone": {
+                "description": "In a game with a phone page: do this on the phone page, not the controller. target is then a CSS selector or the words on a thing; x and y are pixels in the phone page's picture.",
+                "type": "boolean"
               },
               "target": {
                 "description": "What to act on: an id (\"b2\") or the exact name of a thing in the screen as text. click, double_click, right_click, type, key, scroll. Leave out to use x and y. stick: left or right.",
                 "type": "string"
               },
               "amount": {
-                "description": "scroll: points, positive scrolls down; wait: seconds; key, in a Mac app: seconds to hold the key down (a game's controls), up to 10; stick and button: seconds held",
+                "description": "scroll: points, positive scrolls down; wait: seconds; key, in a Mac app: seconds to hold the key down (a game's controls), up to 10; stick and button: seconds held; click, press and drag on a phone page: seconds held",
                 "type": "number"
               },
               "item": {
-                "description": "click, right_click, menu, bar_icon: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items.",
+                "description": "click, right_click, menu, bar_icon: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items. link, on a phone page: lost, away or back.",
                 "type": "string"
               },
               "key": {
@@ -111,15 +111,15 @@
                   "up",
                   "down"
                 ],
-                "description": "swipe: which way the finger moves (iPhone apps: left on a row shows its swipe actions, which `item` then picks)"
+                "description": "swipe: which way the finger moves (iPhone apps: left on a row shows its swipe actions, which `item` then picks); rotate, on a phone page: up, left or right"
               },
               "to_x": {
                 "type": "number",
-                "description": "drag, in a Mac app: where it ends, pixels from the picture's left (it starts at the target, or at x and y)"
+                "description": "drag, in a Mac app or on a phone page: where it ends, pixels from the picture's left (it starts at the target, or at x and y; on a phone page, with neither, it moves the finger `press` left down)"
               },
               "to_y": {
                 "type": "number",
-                "description": "drag, in a Mac app: where it ends, pixels from the picture's top"
+                "description": "drag, in a Mac app or on a phone page: where it ends, pixels from the picture's top"
               }
             },
             "required": [
@@ -130,18 +130,6 @@
           "maxItems": 30,
           "minItems": 1,
           "type": "array"
-        },
-        "sidebar": {
-          "description": "Act on the app's sidebar in Chrome instead of its window",
-          "type": "boolean"
-        },
-        "page": {
-          "description": "With sidebar: the https address of the page beside it, whose text a button that reads the page gets",
-          "type": "string"
-        },
-        "selection": {
-          "description": "With sidebar: the passage selected on that page, for a button that reads a selection",
-          "type": "string"
         },
         "part": {
           "type": "string",
@@ -395,9 +383,68 @@
     }
   },
   {
+    "name": "assets",
+    "label": "Assets",
+    "description": "Lamp's index of free, ready-made 3D models (buildings, vehicles, characters with animations, nature, props), 2D sprite sheets, tilesets, UI pieces, icons, tileable textures, sound effects and music loops, by people who publish them for anyone to use (CC0, or CC-BY with credit). With `find` it lists what fits your words, best first, leaving out what's too heavy for the slowest place the app is shown; `show` adds their pictures (sounds have none) in one numbered sheet, to judge their style together. With `fetch` it brings the chosen ones into the app (Web/assets/ for a game or another page, the packaged assets for an Android app, else Assets/), checked, made lighter where a picture is too big for that place, and credited in credits.json for you. Nothing is loaded from the network while the app runs. Look here before writing a game's sounds or music in code. Read the assets skill before choosing between these and making things yourself.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "find": {
+          "type": "string",
+          "description": "What you're looking for, in a few plain words: \"taxi\", \"low-poly tree\", \"platformer player\", \"brick wall texture\", \"coin pickup\", \"relaxed menu music\"."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "any",
+            "model",
+            "building",
+            "vehicle",
+            "character",
+            "nature",
+            "prop",
+            "2d",
+            "sprites",
+            "tileset",
+            "ui",
+            "icons",
+            "texture",
+            "sound",
+            "music"
+          ],
+          "description": "Only this kind: `model` is any 3D kind, `2d` any flat one, `sound` a short effect, `music` a loop."
+        },
+        "show": {
+          "type": "boolean",
+          "description": "With `find`: also show the found assets' pictures, numbered as listed."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "With `find`: how many to list (default 12, at most 30)."
+        },
+        "fetch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The ids `find` listed, to bring into the app (at most 40 at a time)."
+        },
+        "part": {
+          "type": "string",
+          "description": "For a wish of more than one app: which one they're for, by its device (\"iphone\", \"tv\", \"mac\") or its folder (\"mac2\", \"roku\"). Needed then; left out only when the wish has one app."
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Finding cars for the streets\", \"Bringing in the town's buildings\"."
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
     "name": "offer_setup",
     "label": "Offer setup",
-    "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now. Capability browser offers connecting Lamp to Chrome, for a Mac app with a sidebar there.",
+    "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -406,8 +453,7 @@
           "enum": [
             "text",
             "decisions",
-            "pictures",
-            "browser"
+            "pictures"
           ],
           "type": "string"
         },
@@ -434,7 +480,7 @@
   {
     "name": "make_app_for",
     "label": "Change devices",
-    "description": "Gives the wish its first app, changes the one `app` names, or with `another` asks to add one more. `kind` is what it is: \"game\" or \"app\" (any other app). `made` is how it's made: \"web\" (a page shown by a host of Lamp's on each device) or \"native\" (each device's own code); a game and an app may each be either. `devices` are every device that app is to be on from now on. Which kind and devices fit the wish is yours to choose: who will use it and on whose devices, and what it must do. When the person names no make, take the table's default: a game is web, with three.js, wherever Lamp has a host for a page, and native elsewhere; an app on one Mac, iPhone or iPad, or Android phone or tablet is native, and on a TV or a console web; one app asked for across several devices is web where every one takes a page. A make the person names is theirs wherever Lamp can build it, devices Lamp found never add a device or change the make by themselves, and an app the wish has is never converted to follow a default (the web-or-native skill). A game played with phones as its controllers on a Samsung or LG TV is, for now, `kind` \"app\" with `made` \"web\" and `devices` \"tv\": only the TV app's page takes phones as players (the phone-controllers skill). What each device can run, and how a build gets onto it: {{PLACES}} A make Lamp can't build on a device is refused with its reason. Of the devices listed, the first whose word names one kind of device of several in its row (\"iphone\" or \"ipad\", \"apple-tv\", \"vision-pro\") is the one Try On opens the app on; list none of those to leave where it opens as it is. The devices of one native code (the table gives each one's) are one native app. Once the wish has an app (made or still to be made), say which call this is. To change one, including when the person changed their mind or wants something else in its place (\"never mind, make it a timer instead\"), give its folder in `app`: it's changed in place and keeps its folder, its saved data and its place among the wish's apps. To add one more app of a kind the wish doesn't have beside them (an Android app beside a Mac app), give `another: true`, only once the person chose that when you asked them with `ask` (the more-apps skill): it goes in a folder of its own. Two apps of one kind (two Mac apps) can't be in one wish yet, and a device's own app is one per wish: those are refused, nothing changed. A call with neither is refused, and so is one with both. The wish's other apps are never touched: take one away only with remove_app, when the person asked for that or agreed. The wish keeps its name, chat and history either way. Lamp checks this Mac can build it, writes its build files and keeps the data; the reply says how to adapt the code and gives a new app's rules, which you then follow in the same request.",
+    "description": "Gives the wish its first app, changes the one `app` names, or with `another` asks to add one more. `kind` is what it is: \"game\" or \"app\" (any other app). `made` is how it's made: \"web\" (a page shown by a host of Lamp's on each device) or \"native\" (each device's own code); a game and an app may each be either. `devices` are every device that app is to be on from now on. Which kind and devices fit the wish is yours to choose: who will use it and on whose devices, and what it must do. When the person names no make, take the table's default: a game is web wherever Lamp has a host for a page (the game skill says what it's drawn with), and native elsewhere; an app on one Mac, iPhone or iPad, or Android phone or tablet is native, and on a TV or a console web; one app asked for across several devices is web where every one takes a page. A make the person names is theirs wherever Lamp can build it, devices Lamp found never add a device or change the make by themselves, and an app the wish has is never converted to follow a default (the web-or-native skill). A game played with phones as its controllers is a game: it takes phones as players on the Mac, a Samsung or LG TV and the Xbox (the phone-controllers skill). What each device can run, and how a build gets onto it: {{PLACES}} A make Lamp can't build on a device is refused with its reason. Of the devices listed, the first whose word names one kind of device of several in its row (\"iphone\" or \"ipad\", \"apple-tv\", \"vision-pro\") is the one Try On opens the app on; list none of those to leave where it opens as it is. The devices of one native code (the table gives each one's) are one native app. Once the wish has an app (made or still to be made), say which call this is. To change one, including when the person changed their mind or wants something else in its place (\"never mind, make it a timer instead\"), give its folder in `app`: it's changed in place and keeps its folder, its saved data and its place among the wish's apps. To add one more app of a kind the wish doesn't have beside them (an Android app beside a Mac app), give `another: true`, only once the person chose that when you asked them with `ask` (the more-apps skill): it goes in a folder of its own. Two apps of one kind (two Mac apps) can't be in one wish yet, and a device's own app is one per wish: those are refused, nothing changed. A call with neither is refused, and so is one with both. The wish's other apps are never touched: take one away only with remove_app, when the person asked for that or agreed. The wish keeps its name, chat and history either way. Lamp checks this Mac can build it, writes its build files and keeps the data; the reply says how to adapt the code and gives a new app's rules, which you then follow in the same request.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -508,6 +554,29 @@
     }
   },
   {
+    "name": "rename_app",
+    "label": "Rename the wish",
+    "description": "Gives the wish a new name, the way Rename on Lamp's desk does: on the desk, in the chat, on its installed apps and in their window titles, saved as a version of its own so Undo in the chat's toolbar gives the old name back. Its bundle ID stays, so the app keeps its settings and saved data. Call it whenever the person asks for a new name (\"call it Sprout\"), before changing anything else: a name written only into the app's code or headings leaves Lamp, the desk and the installed app under the old one. Only when they asked for it.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The new name, as the person gave it"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
     "name": "connectors",
     "label": "Connectors",
     "description": "Lists the services an app can connect to: the person's own accounts (Notion, Linear, Airtable, GitHub, Home Assistant and more) and open data (weather, exchange rates, food products), or, with service set, how to build on one. Call it before writing code for a service the person uses that the accounts on this device can't reach, or for weather, exchange rates or food data.",
@@ -518,6 +587,40 @@
         "service": {
           "type": "string",
           "description": "A connector's id from the list"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
+    "name": "lampify",
+    "label": "Lampify",
+    "description": "Gives an app made from someone's project on GitHub what a Lamp app has that the project doesn't (read the github-projects skill first): Lamp gets its own untouched copy of the project at one commit (with the person's GitHub sign-in for a private one), credits that commit in credits.json, keeps every license and notice file in Licenses/, makes the manifest (lamp-app.json) as sharing makes it, opens the result again as Lamp's importer does, and answers with what's still missing. Call it before copying any of the project's code or assets, and again when the app is done. It never moves on to a newer commit by itself: pass the commit it pinned on every later call.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The project's address on GitHub: https://github.com/owner/name, with /tree/<branch, tag or commit> for one that isn't its default branch"
+        },
+        "commit": {
+          "type": "string",
+          "description": "The full commit your clone is at (`git rev-parse HEAD`), or the one lampify pinned; left out only the first time, when Lamp pins the address's commit"
+        },
+        "adapted": {
+          "type": "boolean",
+          "description": "true (the default) for the project the app is made from, whose updates it follows; false for a library or assets it uses"
+        },
+        "read_only": {
+          "type": "boolean",
+          "description": "true only to read a project your own git clone can't reach (a private one): Lamp fetches it and gives its copy's path, crediting nothing"
         },
         "doing": {
           "type": "string",
@@ -659,7 +762,7 @@
   {
     "name": "progress",
     "label": "Progress",
-    "description": "Tells the person in one short line how the work is going, while they wait: what's now in the app and what's next, e.g. “The layout's in. Now the timer itself.” Shown in the chat at once as a message that stays, so it never repeats another line or your last message. Call it as each pass of a longer piece of work begins and before a step that takes a while (painting pictures, a big build). Never for each file, and never for the end: that's your last message.",
+    "description": "Tells the person in one short line how the work is going, while they wait: what's now in the app and what's next, e.g. “The layout's in. Now the timer itself.” Shown in the chat at once as a message that stays, so it never repeats another line or your last message. Call it as each pass of a longer piece of work begins and before a step that takes a while (painting pictures, a big build). In a game open on the person's Mac, a line is also what puts what you've saved into their game, with the line as what changed (a look at the game puts in what it plays too): post one when there's something they'd see. Never for each file, and never for the end: that's your last message.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

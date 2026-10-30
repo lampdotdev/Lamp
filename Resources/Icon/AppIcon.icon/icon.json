@@ -1,73 +1,33 @@
 {
   "fill": {
-    "automatic-gradient": "srgb:1.00000,1.00000,1.00000,1.00000"
+    "automatic-gradient": "srgb:0.94902,0.92549,0.85490,1.00000"
   },
-  "fill-specializations": [
-    {
-      "appearance": "dark",
-      "value": {
-        "automatic-gradient": "srgb:0.10980,0.10196,0.09412,1.00000"
-      }
-    }
-  ],
   "groups": [
     {
       "layers": [
         {
-          "name": "middle",
-          "image-name": "middle.svg",
-          "glass": true,
-          "fill": {
-            "automatic-gradient": "srgb:1.00000,0.83922,0.41961,1.00000"
-          },
-          "blend-mode": "normal"
+          "name": "sheet",
+          "image-name": "sheet.png",
+          "glass": true
         }
       ],
       "shadow": {
-        "kind": "layer-color",
-        "opacity": 0.5
+        "kind": "neutral",
+        "opacity": 0.6
       },
       "translucency": {
-        "enabled": true,
-        "value": 0.4
-      },
-      "specular": true,
-      "lighting": "individual"
-    },
-    {
-      "layers": [
-        {
-          "name": "outer",
-          "image-name": "outer.svg",
-          "glass": true,
-          "fill": {
-            "automatic-gradient": "srgb:1.00000,0.54118,0.10980,1.00000"
-          },
-          "blend-mode": "normal"
-        }
-      ],
-      "shadow": {
-        "kind": "layer-color",
-        "opacity": 0.5
-      },
-      "translucency": {
-        "enabled": true,
+        "enabled": false,
         "value": 0.5
       },
       "specular": true,
-      "lighting": "individual"
+      "lighting": "combined"
     },
     {
       "layers": [
         {
-          "name": "ring2",
-          "image-name": "ring2.svg",
-          "glass": true,
-          "fill": {
-            "automatic-gradient": "srgb:0.79608,0.78039,0.75686,1.00000"
-          },
-          "blend-mode": "normal",
-          "opacity": 0.9
+          "name": "stripes",
+          "image-name": "stripes.png",
+          "glass": false
         }
       ],
       "shadow": {
@@ -75,35 +35,11 @@
         "opacity": 0.5
       },
       "translucency": {
-        "enabled": true,
-        "value": 0.6
+        "enabled": false,
+        "value": 0.5
       },
-      "specular": true,
-      "lighting": "individual"
-    },
-    {
-      "layers": [
-        {
-          "name": "ring1",
-          "image-name": "ring1.svg",
-          "glass": true,
-          "fill": {
-            "automatic-gradient": "srgb:0.87059,0.85882,0.83922,1.00000"
-          },
-          "blend-mode": "normal",
-          "opacity": 0.8
-        }
-      ],
-      "shadow": {
-        "kind": "none",
-        "opacity": 0.5
-      },
-      "translucency": {
-        "enabled": true,
-        "value": 0.7
-      },
-      "specular": true,
-      "lighting": "individual"
+      "specular": false,
+      "lighting": "combined"
     }
   ],
   "supported-platforms": {

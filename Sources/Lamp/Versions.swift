@@ -31,7 +31,8 @@ struct AppVersion: Identifiable, Hashable {
     var isLampNote: Bool {
         ["Undid “", "Restored to “", "Rename to "].contains { message.hasPrefix($0) }
             || ["Scaffold", "Imported from a shared file", "Updated from a shared file",
-                "Before updating from a shared file", "Fix a crash on launch"].contains(message)
+                "Before updating from a shared file", "Before bringing in an update", "Merged the latest from GitHub",
+                "Merged a newer shared file", "Fix a crash on launch"].contains(message)
     }
     var shortID: String { String(id.prefix(8)) }
 }
@@ -52,14 +53,16 @@ enum Versions {
     /// what the agent's own commands are: it runs under the same sandbox (`Sandbox`), confined to the app's
     /// folder. Nothing in the history has to be trusted, checked or cleaned, and nothing the agent does with
     /// git has to be refused.
-    static func git(_ command: String, cwd: URL, env: [String: String] = [:],
+    static func git(_ command: String, cwd: URL, env: [String: String] = [:], started: (@MainActor (Process) -> Void)? = nil,
                     onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
+        guard hasGit else { return noGit }
         guard let confined = confined(command, in: cwd) else { return unconfined }
-        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, login: false, onLine: onLine)
+        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, login: false, started: started, onLine: onLine)
     }
 
     /// The same, for the one caller that can't await (the migration, at launch).
     static func gitBlocking(_ command: String, cwd: URL) -> Subprocess.Result {
+        guard hasGit else { return Subprocess.Result(status: noGit, output: "", errors: "", timedOut: false) }
         guard let confined = confined(command, in: cwd) else {
             return Subprocess.Result(status: unconfined, output: "", errors: "", timedOut: false)
         }
@@ -68,6 +71,24 @@ enum Versions {
 
     /// What a git command returns when the sandbox couldn't be set up: it isn't run loose instead.
     static let unconfined: Int32 = 126
+
+    /// What it returns on a Mac with no git: a game or a screen is made before Apple's tools are there, and git is one of
+    /// them, so its versions wait for them. Never run then: /usr/bin/git without the tools opens Apple's installer.
+    static let noGit: Int32 = 127
+
+    /// Whether a real git is on this Mac (the Command Line Tools', Xcode's or Homebrew's), looked for without running
+    /// the shim, and not looked for again once found.
+    nonisolated(unsafe) private static var gitFound = false
+    static var hasGit: Bool {
+        if Pretend.isMissing("git") { return false }
+        if gitFound { return true }
+        let fm = FileManager.default
+        var places = ["/Library/Developer/CommandLineTools/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+        let select = Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10)
+        if select.ok, !select.output.trimmed.isEmpty { places.append(select.output.trimmed + "/usr/bin/git") }
+        gitFound = places.contains { fm.isExecutableFile(atPath: $0) }
+        return gitFound
+    }
 
     /// The command as it is run: under the profile the agent's commands get for this folder, with the
     /// person's own git files that live elsewhere in the home folder opened for reading.
@@ -382,6 +403,15 @@ enum Versions {
     }
 
     /// Files changed since the last version, by a turn that was stopped or didn't finish.
+    /// The version the wish's files are, when they're all saved in it: nil while anything is unsaved (a stopped turn's
+    /// changes), since then the files are no version at all. Waits for git, for what must say exactly what's exported.
+    nonisolated static func savedVersion(of dir: URL) -> String? {
+        let status = gitBlocking("git status --porcelain -- . ':!\(Attachments.folder)'", cwd: dir)
+        guard status.ok, status.output.trimmed.isEmpty else { return nil }
+        let head = gitBlocking("git rev-parse HEAD", cwd: dir)
+        return head.ok ? Credits.validCommit(head.output.trimmed) : nil
+    }
+
     static func hasUnsavedChanges(_ project: LampProject) async -> Bool {
         var output = ""
         _ = await git("git status --porcelain -- . ':!\(Attachments.folder)'", cwd: project.dir) { output += $0 }
@@ -495,6 +525,48 @@ enum Versions {
         Note from Lamp: before this message, the user updated this app from a newer version of it that \
         someone shared with them. Its code, files and description were replaced, so they may no longer match \
         what you remember from this conversation: read them again before editing.
+        """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
+    /// What the agent hears with the request Lamp sends when the latest of a wish was merged into it by git
+    /// (`Upstream.merge`) and some files conflicted: which files hold markers, what the markers mean, how to read each
+    /// side, and how to settle them. Written in place of any other note, since that request is the next one.
+    static func rememberConflicts(_ project: LampProject, files: [String], from place: String) {
+        let list = files.map { "- \($0)" }.joined(separator: "\n")
+        let note = """
+
+
+        Note from Lamp: the user chose to bring in the latest version of this wish from \(place). Lamp merged it into \
+        the wish's files with git: what changed only upstream and what changed only here is already in place. These \
+        files changed in the same places on both sides and hold conflict markers (`<<<<<<< HEAD` begins what this wish \
+        had, `=======` divides it from what came from upstream, `>>>>>>> \(Upstream.ref)` ends it):
+        \(list)
+        Settle each one: bring in what changed upstream and keep what was changed here. Settle it yourself when what the \
+        person wants is clear (a fix upstream to code they didn't touch, a change here that upstream merely moved); ask \
+        them with the ask tool only where it isn't, then go on. `git show HEAD:<path>` is a file as this wish had it \
+        before the merge, and `git show \(Upstream.ref):<path>` is it as it is upstream. Leave no marker behind: the app \
+        has to build. credits.json is already updated by Lamp: leave it. When it's all in, tell the person what came in \
+        and what you kept of theirs.
+        """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
+    /// What the agent hears with the request that brings in an update of the project a wish was made from
+    /// (`AppUpdates.note`), in place of any other note, since that request is the next one.
+    static func rememberAdaptedUpdate(_ project: LampProject, note: String) {
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
+    /// Remembers that the latest of the wish was merged in by git with nothing left to settle, so the agent reads the
+    /// files again on the next request.
+    static func rememberMerged(_ project: LampProject, from place: String) {
+        let note = """
+
+
+        Note from Lamp: before this message, the user brought in the latest version of this wish from \(place). Lamp \
+        merged it into the wish's files with git, keeping what was changed here, and saved the result as a version. The \
+        files may no longer match what you remember from this conversation: read them again before editing.
         """
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }

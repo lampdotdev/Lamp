@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please don't open a public issue for a security problem. Report it privately through GitHub's
-[private vulnerability reporting](https://github.com/RooCodeInc/Lamp/security/advisories/new) on this repo.
+[private vulnerability reporting](https://github.com/lampdotdev/Lamp/security/advisories/new) on this repo.
 <!-- TODO (maintainers): add a security contact email here once one exists, e.g. security@lamp.dev. -->
 
 Say what you found, how to reproduce it, and what it lets someone do. We'll acknowledge the report within a

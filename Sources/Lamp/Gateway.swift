@@ -28,6 +28,8 @@ final class Gateway: @unchecked Sendable {
         var type = "text/plain; charset=utf-8"
         var body = Data()
         var location: String?
+        /// What a phone's browser holds a phone page to (`PhonePagePolicy`).
+        var policy: String?
     }
 
     private var listener: NWListener?
@@ -201,7 +203,8 @@ final class Gateway: @unchecked Sendable {
     private func respond(_ connection: NWConnection, page: Page, head: Bool) {
         let reason = HTTPURLResponse.localizedString(forStatusCode: page.status).capitalized
         let location = page.location.map { "Location: \($0)\r\n" } ?? ""
-        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)"
+        let policy = page.policy.map { "Content-Security-Policy: \($0)\r\n" } ?? ""
+        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)\(policy)"
             + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n").utf8)
         if !head { response.append(page.body) }
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
@@ -573,9 +576,12 @@ enum AppAI {
 
     /// One-shot answer from an external coding agent, using the user's own sign-in (and so their subscription).
     /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
-    private static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
-                                  system: String, model: String, schema: [String: Any]? = nil,
-                                  timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
+    /// `sealed` takes Codex's own tools away too (commands, web search, connectors, sub-agents) and refuses any
+    /// approval, for a caller whose answer decides what an app does next (`AppAct`): Claude Code's `--restricted`
+    /// with no tools already leaves it nothing to run.
+    static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
+                          system: String, model: String, schema: [String: Any]? = nil,
+                          timeLimit: TimeInterval? = nil, sealed: Bool = false) async throws -> (String, Double) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -620,9 +626,12 @@ enum AppAI {
                 env["LAMP_MODEL"] = model
                 modelArg = "-m \"$LAMP_MODEL\" "
             }
+            // Every key here is one of Codex's documented settings; --ignore-user-config already leaves out the
+            // person's MCP servers.
+            let seal = sealed ? #"-c approval_policy="never" -c features.shell_tool=false -c features.unified_exec=false -c web_search="disabled" -c features.apps=false -c features.multi_agent=false -c tools.view_image=false "# : ""
             command = """
             "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-              -s read-only -c hooks={} -c model_reasoning_effort="low" \(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
+              -s read-only -c hooks={} -c model_reasoning_effort="low" \(seal)\(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
             """
         case .pi:
             throw Failure(message: noTextRoute, needs: .text)
@@ -668,11 +677,14 @@ enum AppAI {
     }
 
     /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.
-    private static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
-                                            system: String, model: String, schema: [String: Any]? = nil) async throws -> (String, Double) {
+    /// `timeout` is for a caller with a deadline of its own; otherwise a model has time to load first.
+    /// `templateArgs` go to the model's chat template (llama.cpp's `chat_template_kwargs`).
+    static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
+                                    system: String, model: String, schema: [String: Any]? = nil,
+                                    timeout: TimeInterval = 600, templateArgs: [String: Any]? = nil) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 600   // local models may need to load first
+        request.timeoutInterval = timeout
         if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var messages: [[String: Any]] = []
@@ -683,6 +695,7 @@ enum AppAI {
         messages.append(["role": "user", "content": content])
         var body: [String: Any] = ["model": model, "messages": messages]
         if let schema { body["response_format"] = ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": schema]] }
+        if let templateArgs { body["chat_template_kwargs"] = templateArgs }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
@@ -1228,7 +1241,7 @@ enum AppAI {
         throw Failure(message: "The AI didn't answer.")
     }
 
-    private static func stripFences(_ text: String) -> String {
+    static func stripFences(_ text: String) -> String {
         var t = text.trimmed
         if t.hasPrefix("```") {
             t = String(t.drop(while: { $0 != "\n" }).dropFirst())
