@@ -2,7 +2,7 @@
 name: Transcriber
 offer: Make Transcriber yours
 repository: https://github.com/lampdotdev/transcriber
-commit: 5a6029a852048fa0e57fa773965d8dbf6e91bacd
+commit: f425b88dc92e41250fd6e2850a539638e3625496
 tweaks:
   - bubble.left.and.bubble.right: Show transcripts as chat bubbles
   - envelope: Email me the action items
