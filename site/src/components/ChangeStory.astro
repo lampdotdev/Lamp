@@ -5,7 +5,7 @@
 // learns to listen (a new way in: said aloud, "point for Maya" scores), gains a round timer that it can start when
 // asked aloud (something it does), and loses two players who dropped out (a change to what's in it).
 // Each change goes in the way it does in Lamp: colored light rises from the bottom of the window while it's made,
-// then a band of white sweeps up with the new version behind it. It isn't a recording: the steps come quicker than
+// then the stripes roll up on the slant with the new version behind them. It isn't a recording: the steps come quicker than
 // they would, and the chat shows only what was asked and what came of it.
 // The window is drawn in its own width (cqw), so it's the same picture at every size. Without motion, the finished
 // app sits beside the whole chat.
@@ -118,8 +118,12 @@ const scoreOf = (player: Player, index: number) => player.score + (player.name =
     </p>
     <!-- While a change is made: light in the stripes' colors rising from the bottom edge. -->
     <div data-glow class="pointer-events-none absolute inset-x-0 bottom-0 h-[40%] opacity-0 transition-opacity duration-700 [background:radial-gradient(60%_90%_at_20%_100%,rgba(31,138,74,0.55),transparent_70%),radial-gradient(50%_80%_at_50%_100%,rgba(210,55,120,0.5),transparent_70%),radial-gradient(60%_90%_at_80%_100%,rgba(240,138,28,0.55),transparent_70%)] blur-[3cqw]"></div>
-    <!-- As it goes in: a band of white sweeping up, a soft shadow just ahead of it. -->
-    <div data-band class="pointer-events-none absolute inset-x-0 top-full h-[24%] opacity-0 [background:linear-gradient(to_bottom,rgba(0,0,0,0),rgba(0,0,0,0.06)_25%,rgba(255,255,255,0.95)_45%,#fff_55%,rgba(255,255,255,0))]"></div>
+    <!-- As it goes in: the stripes rolling up on the slant, placed by the script. -->
+    <div data-band class="pointer-events-none absolute inset-0 overflow-hidden opacity-0">
+      <div data-slant class="absolute top-1/2 left-1/2">
+        {["#1f8a4a", "#7cbf3a", "#f6b81c", "#f08a1c", "#e2402a", "#d23778"].map((color) => <div data-stripe class="absolute inset-x-0 bottom-0 h-0" style={`background:${color}`}></div>)}
+      </div>
+    </div>
   </div>
 
   <!-- Lamp's chat beside the app, as in Lamp: what's asked on the right in red, what Lamp says on the left. It
@@ -221,18 +225,32 @@ const scoreOf = (player: Player, index: number) => player.score + (player.name =
     const seen = () => (onScreen ? Promise.resolve() : new Promise<void>((resolve) => { wake = resolve; }));
     const pause = async (ms: number) => { await seen(); await new Promise((resolve) => setTimeout(resolve, ms)); await seen(); };
 
-    // The new version is uncovered from the bottom up, behind the band, which travels with its edge.
+    // The stripes roll up as in Lamp (`LampTransition.Look`): round a drum whose near half is the window, so each
+    // widens to the middle and thins again, and all six cover the window at the middle of the roll, when the new
+    // version takes the old one's place.
     const wipe = async (index: number) => {
-      const next = states[index];
-      const timing = { duration: 950, easing: "cubic-bezier(0.55, 0, 0.25, 1)", fill: "forwards" as const };
-      next.style.visibility = "visible";
+      const slant = band.querySelector<HTMLElement>("[data-slant]")!;
+      const stripes = [...band.querySelectorAll<HTMLElement>("[data-stripe]")];
+      const duration = 1100, steps = 40, angle = Math.PI / 6, share = Math.PI / stripes.length;
+      const { offsetWidth: width, offsetHeight: height } = band;
+      const across = width * Math.sin(angle) + height * Math.cos(angle);
+      slant.style.width = `${width * Math.cos(angle) + height * Math.sin(angle)}px`;
+      slant.style.height = `${across}px`;
+      slant.style.transform = "translate(-50%, -50%) rotate(-30deg)";
+      const edge = (at: number) => ((1 - Math.cos(Math.min(Math.max(at, 0), Math.PI))) / 2) * across;
       band.style.opacity = "1";
-      const uncover = next.animate([{ clipPath: "inset(100% 0 0 0)" }, { clipPath: "inset(0 0 0 0)" }], timing);
-      band.animate([{ top: "88%" }, { top: "-12%" }], timing);
       glow.style.opacity = "0";
-      await uncover.finished;
+      const rolls = stripes.map((stripe, place) => stripe.animate(
+        Array.from({ length: steps + 1 }, (_, step) => {
+          const roll = (2 * Math.PI * step) / steps;
+          const bottom = edge(roll - (place + 1) * share), top = edge(roll - place * share);
+          return { bottom: `${bottom}px`, height: `${top > bottom ? top - bottom + 1 : 0}px` };
+        }),
+        { duration },
+      ));
+      setTimeout(() => only(index), duration / 2);
+      await Promise.all(rolls.map((roll) => roll.finished));
       band.style.opacity = "0";
-      only(index);
     };
 
     // Once it listens, someone at the table talks to it: what's said shows as it's heard, then happens.
