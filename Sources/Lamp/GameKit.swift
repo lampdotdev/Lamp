@@ -557,9 +557,11 @@ enum GameKit {
             + "--banner '// Lamp builds this from src/ before every build and look: change src/, never this folder.' "
             + "&& cd \"$LAMP_APP\" && /bin/rm -rf \(Sandbox.quoted(compiledFolder)) && /bin/cp -Rp \"$LAMP_SCRATCH/app\" \(Sandbox.quoted(compiledFolder))"
         var output: [String] = []
+        // Off the network: a Bun macro (`with { type: 'macro' }`) is the game's code run here at build time, with no command
+        // check and before any preview holds it, and Bun's --no-macros doesn't stop one. A build fetches nothing.
         let status = await Sandbox.run(command, for: project, cwd: project.dir,
                                        env: ["LAMP_SCRATCH": scratch.path, "LAMP_APP": project.dir.path],
-                                       opening: [scratch.path], reading: [bun.deletingLastPathComponent().path]) { output.append($0) }
+                                       opening: [scratch.path], reading: [bun.deletingLastPathComponent().path], offline: true) { output.append($0) }
         guard status == 0 else {
             throw Failure(message: (["The game's TypeScript doesn't build:"] + output.suffix(30)).joined(separator: "\n"))
         }
@@ -1053,15 +1055,16 @@ enum GameKit {
                       phone: result["phone"] as? PhonePreview.Report)
     }
 
-    /// What a web game's preview is held to: a shared game's rules, or for a game that declares the local network no
-    /// network at all, so that using it in the preview can't press a device of the person's (`DevicePermissions`).
+    /// What a web game's preview is held to: for a game that declares the local network no network at all, shared or not
+    /// (the sites of a shared game's rules may be on the home network), so that using it in the preview can't press a
+    /// device of the person's (`DevicePermissions`); otherwise a shared game's rules.
     static func previewPolicy(_ project: LampProject) -> NetworkPolicy? {
-        SharedNetwork.policy(for: project) ?? (previewHeldBack(project) ? NetworkPolicy() : nil)
+        previewHeldBack(project) ? NetworkPolicy() : SharedNetwork.policy(for: project)
     }
 
     /// Whether the preview reaches no network because of what the game declares.
     static func previewHeldBack(_ project: LampProject) -> Bool {
-        engine(project) == .web && SharedNetwork.policy(for: project) == nil && DevicePermissions.reachesDevices(project)
+        engine(project) == .web && DevicePermissions.reachesDevices(project)
     }
 
     /// The name a picture of the phone page has beside the game's picture of that moment.

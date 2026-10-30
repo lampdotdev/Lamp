@@ -74,6 +74,20 @@ final class GamePhonePreviewTests: XCTestCase {
         XCTAssertGreaterThan(heard.count, 0, "the unheld page should have been heard, or this proves nothing")
     }
 
+    /// What a TypeScript game's build runs under: a Bun macro is the game's code run at build time, so this is what keeps a
+    /// declared game's build from pressing a device before the preview is there to hold it.
+    func testAnOfflineCommandReachesNoNetwork() async throws {
+        let (listener, port, heard) = try await listen()
+        defer { listener.cancel() }
+        let project = LampProject(id: "pad", name: "Pad", exe: "Pad", dir: try folder(), platform: .game)
+        let request = "/usr/bin/curl -s -m 3 -o /dev/null http://127.0.0.1:\(port)/keypress/Home"
+        _ = await Sandbox.run(request, for: project, offline: true) { _ in }
+        XCTAssertEqual(heard.count, 0, "an offline command reached the network")
+        _ = await Sandbox.run(request, for: project) { _ in }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertGreaterThan(heard.count, 0, "the same command should be heard online, or this proves nothing")
+    }
+
     private final class Heard: @unchecked Sendable {
         private let lock = NSLock()
         private var value = 0
