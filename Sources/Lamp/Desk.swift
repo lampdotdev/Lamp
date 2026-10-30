@@ -1334,7 +1334,7 @@ extension Store {
             NSAlert(error: refused).runModal()
             return
         }
-        fetching(starter, alerting: true) { [self] starter in
+        fetching(starter, asking: "duplicate", alerting: true) { [self] starter in
             guard let copy = put(starter: starter) else {
                 NSAlert(error: refused).runModal()
                 return
@@ -1348,7 +1348,7 @@ extension Store {
     /// from the site copies one (`put(starter:)`), then opened as Open opens any wish, asking `request` of it when there
     /// is one, and handed to `opened`. So a starter waits on disk only as Lamp ships it, never as a second wish.
     func open(starter: Starters.Starter, asking request: String = "", opened: @escaping @MainActor (LampProject) -> Void = { _ in }) {
-        fetching(starter) { [self] starter in
+        fetching(starter, asking: "open:" + request) { [self] starter in
             guard let copy = put(starter: starter) else {
                 NSAlert(error: Sharing.ImportError("Lamp couldn't open \(starter.name).")).runModal()
                 return
