@@ -562,7 +562,7 @@ enum AppAI {
                                        schema: json ? schema : nil, timeLimit: timeLimit)
         case .localModel(_, let model):
             let base = try await LocalModels.shared.ensureServer(for: model)
-            return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
+            return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey,
                                                  prompt: prompt, images: images, system: system, model: model, schema: json ? schema : nil)
         }
     }
@@ -849,6 +849,7 @@ enum AppAI {
             let prompt = "<|im_start|>system\nYou are a decision engine. You read a record and answer one question about it by choosing exactly one option. Reply with a single letter.<|im_end|>\n"
                 + "<|im_start|>user\n\(user)<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nAnswer:"
             var request = URLRequest(url: URL(string: "\(base)/v1/completions")!)
+            request.setValue("Bearer \(LocalModels.apiKey)", forHTTPHeaderField: "Authorization")
             request.httpMethod = "POST"
             request.timeoutInterval = 600
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

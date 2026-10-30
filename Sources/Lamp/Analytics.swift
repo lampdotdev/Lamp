@@ -1,7 +1,8 @@
 import Foundation
 
 /// Usage counts sent to PostHog while Lamp is alpha software, so the team can see where people get stuck:
-/// how far the welcome gets, and whether a new app reaches its first run. There's no switch for it yet.
+/// how far the welcome gets, and whether a new app reaches its first run. On unless the person turns it off in
+/// Settings → Memory (`switchKey`); off, nothing is sent or logged.
 ///
 /// Each event is a name from `Event` with a few properties from fixed lists (a step, a kind of app, an
 /// engine, an outcome). Never anything typed, a request, an app's name, a path or a key. Anonymous: the id is
@@ -41,6 +42,11 @@ enum Analytics {
     static let projectKey = "phc_myM5viZtYmsj8K9kPJzzmh7uvSpUtGcjYiDVJyVYZUaN"
     static let endpoint = URL(string: "https://us.i.posthog.com/i/v0/e/")!
 
+    /// The person's switch: "Send usage counts to the Lamp team" in Settings → Memory. On until turned off.
+    static let switchKey = "usageCounts"
+    static let onByDefault = true
+    static func isOn(in defaults: UserDefaults = .standard) -> Bool { defaults.object(forKey: switchKey) as? Bool ?? onByDefault }
+
     private static var sends: Bool { !Edition.isDev && !projectKey.isEmpty }
     private static let logs = ProcessInfo.processInfo.environment["LAMP_ANALYTICS_LOG"] == "1"
 
@@ -54,7 +60,7 @@ enum Analytics {
     }
 
     static func capture(_ event: Event, _ properties: [String: Any] = [:]) {
-        guard sends || logs else { return }
+        guard isOn(), sends || logs else { return }
         let body = payload(event, properties, id: installID, at: Date())
         if logs { NSLog("Analytics: %@ %@", event.rawValue, String(describing: properties)) }
         guard sends, let data = try? JSONSerialization.data(withJSONObject: body) else { return }

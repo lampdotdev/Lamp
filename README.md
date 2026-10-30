@@ -101,8 +101,8 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
 - **Help → Lamp Help (⌘/)** is an offline guide to all of this. **Help → Report a Bug…** prepares a report to review
   before it's sent to the Lamp team through lamp.dev; it includes Lamp's version, macOS version, the engine and
   activity labels, never log text, keys, chat or app code. Website setup is in [site/BUG_REPORTS.md](site/BUG_REPORTS.md).
-- **Usage counts** go to PostHog while Lamp is alpha software: each step of the welcome, and each new wish from the
-  request to its first run (`Sources/Lamp/Analytics.swift` lists every event). They carry fixed words only (a step,
+- **Usage counts** go to PostHog while Lamp is alpha software, unless **Send usage counts to the Lamp team** is turned
+  off in Settings → Memory: each step of the welcome, and each new wish from the request to its first run (`Sources/Lamp/Analytics.swift` lists every event). They carry fixed words only (a step,
   a kind of app, an engine, an outcome), never text, names, paths or keys, under a random id made on the Mac and with
   no person profile. Lamp Dev sends nothing; `LAMP_ANALYTICS_LOG=1` prints what it would send.
 - Apps are signed with Lamp's local certificate ("Lamp App Signing", made in Lamp's own keychain the first time and

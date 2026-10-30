@@ -30,7 +30,7 @@ struct InstalledModel: Identifiable, Hashable {
 /// Models that run on this Mac. Downloads go into the shared Hugging Face cache
 /// (~/.cache/huggingface/hub, the same layout the `hf` CLI and Local use), and Lamp also picks up models
 /// already there or in Local's folder:
-/// - GGUF models run on llama.cpp's server (router mode on 127.0.0.1:47812), which gets a folder of symlinks into
+/// - GGUF models run on llama.cpp's server (router mode on 127.0.0.1:47812, behind `apiKey`), which gets a folder of symlinks into
 ///   the cache, so nothing is copied. The server isn't in Lamp's bundle: it's fetched the first time a GGUF model is
 ///   downloaded or picked (`LlamaInstall`), with the model's own progress, or on its own (`getServer`).
 /// - MLX models (e.g. ones downloaded for Local) run on `mlx_lm.server` (127.0.0.1:47813) when it's installed.
@@ -513,6 +513,21 @@ final class LocalModels: ObservableObject {
     nonisolated static var baseURL: String { "http://127.0.0.1:\(port)" }
     nonisolated static var mlxBaseURL: String { "http://127.0.0.1:\(mlxPort)" }
 
+    /// The key llama-server takes (`--api-key`), so that only Lamp and pi, which hold it, can use the person's model: the
+    /// server answers any origin with CORS headers, so without one any page in a browser on this Mac could, and so could
+    /// any program. Kept in Lamp's own folder, which the agent's commands can't read, and the same from one launch to the
+    /// next, since a server a previous Lamp left running keeps the key it started with (`ensureLlama` reuses one that
+    /// answers). A server from before there was a key takes any. The router's workers, one per loaded model on a port
+    /// of its own, take it from the environment (`ensureLlama`). mlx_lm.server has no key to give.
+    nonisolated static let apiKey: String = {
+        let url = Edition.supportFolder.appendingPathComponent("local-model-key")
+        if let kept = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !kept.isEmpty { return kept }
+        let made = UUID().uuidString + UUID().uuidString
+        try? FileManager.default.createDirectory(at: Edition.supportFolder, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: url.path, contents: Data(made.utf8), attributes: [.posixPermissions: 0o600])
+        return made
+    }()
+
     /// Starts whichever server runs this model, waits until it answers, and returns its base URL.
     @discardableResult
     func ensureServer(for id: String) async throws -> String {
@@ -549,8 +564,13 @@ final class LocalModels: ObservableObject {
         rebuildRouter()
         let process = Process()
         process.executableURL = binary
-        process.arguments = ["--models-dir", Self.routerDir.path, "--jinja", "--host", "127.0.0.1",
+        process.arguments = ["--models-dir", Self.routerDir.path, "--jinja", "--host", "127.0.0.1", "--api-key", Self.apiKey,
                              "--port", String(Self.port), "-ngl", "999", "-c", String(Self.contextSize)]
+        // The router runs each loaded model in a worker of its own, on a loopback port of its own, and leaves the key
+        // out of the worker's arguments; the worker inherits the environment, and reads the key from there.
+        var env = ProcessInfo.processInfo.environment
+        env["LLAMA_API_KEY"] = Self.apiKey
+        process.environment = env
         process.standardOutput = logFile("llama-server.log")
         process.standardError = process.standardOutput
         process.standardInput = FileHandle.nullDevice
@@ -625,7 +645,7 @@ final class LocalModels: ObservableObject {
         let gguf = installed.filter { $0.format == .gguf }
         if !gguf.isEmpty {
             providers[Builder.localProvider] = [
-                "baseUrl": "\(Self.baseURL)/v1", "api": "openai-completions", "apiKey": "local",
+                "baseUrl": "\(Self.baseURL)/v1", "api": "openai-completions", "apiKey": Self.apiKey,
                 "models": gguf.map { ["id": $0.id, "contextWindow": Self.contextSize,
                                       "input": $0.vision ? ["text", "image"] : ["text"]] as [String: Any] },
             ]
