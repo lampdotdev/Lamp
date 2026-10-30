@@ -11823,7 +11823,13 @@ final class Store: ObservableObject {
         // Only the staged copy's own files: no step up, nothing hidden, no empty name, nothing that isn't a plain file.
         guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") && !$0.contains("\0") }) else { return missing }
         guard let file = TVs.phoneFile(names, in: TVs.phoneFolder(for: project)),
-              let data = try? Data(contentsOf: file) else { return missing }
+              var data = try? Data(contentsOf: file) else { return missing }
+        // A shared app's page is held to its sites on the phone as its TV page is on the TV (`TVNetworkGuard`), with the
+        // relay at the name the phone reached this Mac by.
+        if TVNetworkGuard.isPage(file.lastPathComponent), let policy = TVNetworkGuard.policy(for: project),
+           let name = host.flatMap({ URLComponents(string: "http://" + $0)?.percentEncodedHost }) {
+            data = TVNetworkGuard.guarded(data, policy: TVNetworkGuard.phonePage(policy, relayHost: name))
+        }
         return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: data)
     }
 

@@ -75,7 +75,9 @@ enum TVTemplate {
         String((Edition.appBundlePrefix + project.id).lowercased().map { $0.isLetter || $0.isNumber || $0 == "." ? $0 : "-" })
     }
 
-    static func tizenConfig(for project: LampProject) -> String {
+    /// Samsung's manifest. What it lets the app reach is all of the network for an app made here, and only its own
+    /// sites and Lamp for a shared one (`TVNetworkGuard`).
+    static func tizenConfig(for project: LampProject, guarded policy: TVNetworkGuard.Policy?) -> String {
         let ids = tizenIDs(for: project)
         let name = project.name.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
         return """
@@ -87,7 +89,7 @@ enum TVTemplate {
                 <icon src="icon.png"/>
                 <name>\(name)</name>
                 <tizen:profile name="tv-samsung"/>
-                <access origin="*" subdomains="true"/>
+                \(TVNetworkGuard.tizenManifest(policy))
                 <tizen:privilege name="http://tizen.org/privilege/internet"/>
                 <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
                 <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
