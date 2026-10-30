@@ -230,7 +230,7 @@ no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPoli
 or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`). A copy of the wish
 (a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A host elsewhere (a TV, an Xbox,
 Android, a phone's controller page) holds a shared page only once it reads `SharedNetwork.policy(for:)` and enforces the
-same `NetworkPolicy`. The Xbox doesn't yet, so a shared app held to its sites is kept off it (`SharedNetwork.keptOffXbox`). Swift of the sender's beside the page (Sources/Native.swift or any other Swift there) runs in the app's
+same `NetworkPolicy`. Swift of the sender's beside the page (Sources/Native.swift or any other Swift there) runs in the app's
 process, where no page rule reaches, and can turn the page's guard off too (the person's choices are kept in the app's
 defaults): such an app isn't held to its sites at all, its page included. Its Swift isn't switched off, since the page's
 calls of the device depend on it; the sheet says "Has Swift that can reach any site" instead (`Sharing.ownSwift`). The rest of the sender's code is read in full: in requests of at most
