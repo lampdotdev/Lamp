@@ -361,7 +361,7 @@ from GitHub… on a project that isn't a wish offers Make App, a new wish whose 
 A wish whose chain names where it came from is updated as it was opened
 (`AppInfoView.updateFromRepository`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
 which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that
-waits for setup, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's
+waits for the welcome, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's
 copy or a second copy made with Keep Both is the one updated). A wish unchanged since it arrived
 (`Store.changedSinceArrival`: its files are the last version Lamp saved as an arrival, and nothing is unsaved; looked
 at again once the update owns the wish, since a turn may have run while the review waited) takes the new code in

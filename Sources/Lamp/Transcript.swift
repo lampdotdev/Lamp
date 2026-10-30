@@ -593,7 +593,7 @@ enum Transcript {
     /// Without the offers to draw an icon that have nothing left to offer: the icon was drawn or designed
     /// again, or icons are no longer drawn by hand. A line that stayed would say what's no longer so.
     @MainActor static func withoutSpentOffers(_ lines: [LogLine], dir: URL) -> [LogLine] {
-        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget || $0.kind == .iphoneSetup || $0.kind == .reload }) else { return lines }
+        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget || $0.kind == .iphoneSetup || $0.kind == .reload || $0.kind == .needsBuilder }) else { return lines }
         let project = Store.shared.projects.first { $0.dir == dir }
         return lines.filter { line in
             switch line.kind {
@@ -603,6 +603,8 @@ enum Transcript {
             // The offer to set up iPhone apps, while the app is still only a Mac app; for one of a wish's other apps,
             // while the wish still waits for it.
             case .iphoneSetup: IPhoneSetupLine.shows(line.text, for: project)
+            // What builds asked for, while nothing does and a request waits for it.
+            case .needsBuilder: BuilderLine.shows(for: project)
             // Reload, while the change it's for still waits: the last such line only, under the latest change.
             // A wish's line is for its other parts' changes too.
             case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload)

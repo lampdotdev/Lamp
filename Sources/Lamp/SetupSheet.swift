@@ -62,6 +62,15 @@ private struct SetupSheetView: View {
     var body: some View {
         let project = store.projects.first { $0.id == projectID }
         let line = store.logs[projectID]?.first { $0.id == lineID }
+        if line?.kind == .needsBuilder {
+            SetupView(later: done)
+                .onChange(of: store.setup.hasBuilder && store.setup.hasAgent) { _, set in if set { done() } }
+        } else {
+            card(project, line)
+        }
+    }
+
+    private func card(_ project: LampProject?, _ line: LogLine?) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             if let project, let line {
                 switch line.kind {
