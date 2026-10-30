@@ -1380,7 +1380,7 @@ function keep(path, key, build, options = {}) {
     // What the build starts as it runs belongs to the part. An async build's later work can't be told from other code
     // that runs while it waits, so of what's started meanwhile only what's the part's own stays with it: listeners on
     // the part (its object, its canvas, an element inside it) and a worker or sound context that is the part or one of
-    // its values. The rest (a timer above all) is watched as the game's.
+    // its values. The rest is watched as the game's: a part that runs a timer starts it before its first await.
     keeping++;
     let value;
     try { value = build(); } finally { keeping--; }
