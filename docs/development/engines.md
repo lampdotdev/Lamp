@@ -194,7 +194,7 @@ A capability given to one engine must be given to all of them that can take it, 
   sign-in with its state, not what it's used for: that's in the menus that choose it. Decisions
   (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
   through OpenRouter, to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
-  bundled llama-server; `decideLocally` does what the model's serving shim does: one forward pass per
+  llama-server (fetched when first needed, `LlamaInstall`); `decideLocally` does what the model's serving shim does: one forward pass per
   question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
   apps (`decideByText`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
 - **What answers apps, and offering better** (`Sources/Lamp/Capabilities.swift`): `AppAI.resolve(capability,

@@ -9,7 +9,12 @@ Tools if needed.
 `release.sh` runs `build.sh` with a Developer ID identity, which switches signing to hardened runtime with
 a secure timestamp. Nested code is signed first:
 
-- llama.cpp's server and libraries (`Resources/llama/`)
+- llama.cpp's server and libraries: not in the app any more. `build.sh` signs them and zips them into `dist/assets`
+  (`Lamp-llama-<build>-<version>.zip`), `release.sh` notarizes that zip on its own, and it goes up on the release
+  beside the DMG; the bundle pins its address, size and SHA-256 (`Resources/llama.json`), and Lamp fetches it the first
+  time a local model needs it, checking each program and library for Lamp's own signature before running it
+  (`LlamaInstall.swift`). A build from source does the same with its own zip (`build/assets`, by file), kept in
+  `.build/llama` while the llama.cpp build and the signing identity are the same.
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
   JIT needs `allow-jit` and friends under hardened runtime
 - Lamp's player (`Resources/LampPlayer.bundle`), the Mac app every game and screen is a copy of: `build.sh` compiles

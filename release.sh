@@ -34,7 +34,7 @@ echo "Signing as: $SIGN_IDENTITY"
 # 1. Build + sign the app (hardened runtime, entitlements, secure timestamp)
 rm -rf "$DIST" && mkdir -p "$DIST"
 # Builds into dist/, not build/, so a release never replaces the Lamp you run day to day. What Lamp fetches when it's
-# needed rather than carrying it (the starters' prebuilt apps) goes into dist/assets, to go up beside the DMG.
+# needed rather than carrying it (llama.cpp, the starters' prebuilt apps) goes into dist/assets, to go up beside the DMG.
 FLAVOR="$FLAVOR" BUILD_DIR="$DIST/build" ASSETS_DIR="$DIST/assets" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
 # The build folder also holds what build.sh made on the way (a nightly's icon), so it goes whole, not with rmdir.
 mv "$DIST/build/$NAME.app" "$DIST/" && rm -rf "$DIST/build"
@@ -53,6 +53,10 @@ if [[ "${SKIP_NOTARIZE:-}" != 1 ]]; then
   notarize "$DIST/Lamp-notarize.zip"
   rm "$DIST/Lamp-notarize.zip"
   xcrun stapler staple "$DIST/$NAME.app"
+  # llama.cpp, which Lamp fetches from the release when a local model is first used (LlamaInstall.swift): notarized on
+  # its own, as programs that run outside the app. A loose program or library can't carry a stapled ticket, so
+  # Gatekeeper finds it online, should it ever look.
+  for asset in "$DIST"/assets/*-llama-*.zip(N); do notarize "$asset"; done
 fi
 
 # 3. Package as a DMG with a drag-to-Applications layout: Lamp, an arrow and Applications over the night
