@@ -51,11 +51,12 @@ export function isDmgName(name) {
 
 /**
  * Whether a name is one of the files a Lamp fetches from its own release when it needs them, rather than carrying them:
- * a starter's prebuilt app (Lamp-Starter-<starter>-<version>.zip, Lamp-Nightly-Starter-… for the nightly). Lamp's
- * bundle pins each by size and hash, so this only says which files the release may hand out.
+ * a starter's prebuilt app (Lamp-Starter-<starter>-<version>.zip, Lamp-Nightly-Starter-… for the nightly) and llama.cpp
+ * (Lamp-llama-<build>-<version>.zip). Lamp's bundle pins each by size and hash, so this only says which files the
+ * release may hand out.
  */
 export function isFetchedName(name) {
-  return /^(Lamp|Lamp-Nightly)-Starter-[a-z0-9-]+-[0-9][0-9A-Za-z.+-]*\.zip$/.test(name);
+  return /^(Lamp|Lamp-Nightly)-(Starter-[a-z0-9-]+|llama-b[0-9]+)-[0-9][0-9A-Za-z.+-]*\.zip$/.test(name);
 }
 
 /** The release's sparkle.json (version, signature, length), written by the release workflow. */

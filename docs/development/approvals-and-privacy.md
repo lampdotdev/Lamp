@@ -105,7 +105,9 @@ A capability given to one engine must be given to all of them that can take it, 
   with `AppFolder` (never through a link). They're data: a model, a picture, an atlas's XML; nothing is run, opened or
   made executable, and an archive is read by Lamp for the files the index names, never unpacked. No command runs, so
   there's nothing to approve; what the agent fetches with its own commands is still judged as fetching (#830).
-- **What Lamp fetches for itself** (`StarterDownloads`, `Downloads`): a starter's tree comes from its repository's
+- **What Lamp fetches for itself** (`StarterDownloads`, `LlamaInstall`, `Downloads`): llama.cpp's server and libraries
+  come from Lamp's own release at the size and SHA-256 the bundle pins, and each program and library is checked for the
+  certificate that signed Lamp, once unpacked and again before the server starts; a starter's tree comes from its repository's
   archive at the pinned commit and is used only when it hashes, as git hashes a tree, to the tree the commit object in
   Lamp's bundle names, and that object hashes to the pin; a starter's prebuilt app comes from Lamp's own release and is
   used only at the size and SHA-256 the bundle pins and once it's signed with the certificate that signed Lamp itself

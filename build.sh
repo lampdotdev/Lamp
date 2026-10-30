@@ -33,7 +33,9 @@ case "$(uname -m)" in
 esac
 PI_TARBALL="vendor/pi-$PI_VERSION-darwin-$PI_ARCH.tar.gz"
 
-# llama.cpp's server runs downloaded models on this Mac (MIT, github.com/ggml-org/llama.cpp).
+# llama.cpp's server runs downloaded models on this Mac (MIT, github.com/ggml-org/llama.cpp). Lamp doesn't carry it:
+# it's signed here and zipped as an asset of the release (below), which Lamp fetches the first time a local model is
+# downloaded or picked (LlamaInstall.swift).
 LLAMA_BUILD="b11346"
 case "$(uname -m)" in
   arm64)  LLAMA_ARCH="arm64"; LLAMA_SHA256="25cefd22cf708a14eacea623327a2320fa07493a29b4c37bf3376623de581553" ;;
@@ -222,10 +224,20 @@ rm -rf "$APP/Contents/Resources/LGPhones" && cp -R Resources/LGPhones "$APP/Cont
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
-# Only the server and its libraries (symlinks kept), not llama.cpp's other tools.
-mkdir -p "$APP/Contents/Resources/llama"
-tar xzf "$LLAMA_TARBALL" -C "$APP/Contents/Resources/llama" --strip-components 1 \
-  --include "llama-$LLAMA_BUILD/llama-server" --include "llama-$LLAMA_BUILD/LICENSE" --include "llama-$LLAMA_BUILD/*.dylib"
+# What Lamp fetches when it's needed rather than carrying it goes into the assets folder, which the release puts on
+# GitHub beside the DMG, each file named by edition and version and pinned in the bundle by address, size and SHA-256:
+# llama.cpp (here), and the starters' prebuilt apps (at the end). A build from source points at its own files.
+ASSETS="${${ASSETS_DIR:-${BUILD_DIR:-build}/assets}:A}"   # absolute: the zips are made from inside other folders
+if [ "$FLAVOR" = release ]; then
+  ASSET_STEM="Lamp"; ASSET_BASE="https://updates.lamp.dev/download/v$APP_VERSION"
+elif [ "$FLAVOR" = nightly ]; then
+  ASSET_STEM="Lamp-Nightly"; ASSET_BASE="https://updates.lamp.dev/download/nightly"
+else
+  ASSET_STEM="Lamp-Dev"; ASSET_BASE="file://${ASSETS// /%20}"
+fi
+mkdir -p "$ASSETS"
+# The pin of one asset, as Lamp reads it (Downloads.Pinned).
+pinned() { echo "{\"url\": \"$ASSET_BASE/${1:t}\", \"sha256\": \"$(shasum -a 256 "$1" | cut -d' ' -f1)\", \"size\": $(stat -f%z "$1")}"; }
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -309,10 +321,28 @@ sign() {
   [[ -n "$output" ]] && echo "$output" >$QUIET
   return 0
 }
-# Nested code first (pi's native module, llama.cpp's libraries and server, pi), then the app.
+# Nested code first (pi's native module, pi), then the app.
 find "$APP/Contents/Resources/pi" -name '*.node' -print0 | while IFS= read -r -d '' item; do sign "$item"; done
-find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -print0 |
-  while IFS= read -r -d '' item; do sign "$item"; done
+# llama.cpp: only the server and its libraries (symlinks kept), not its other tools, signed as Lamp is (which Lamp
+# checks before running them) and zipped as llama-<build>/. A build from source keeps its zip while the build and the
+# signing identity are the same, so its pin, and the copy a Lamp Dev already fetched, hold across rebuilds.
+LLAMA_ASSET="$ASSETS/$ASSET_STEM-llama-$LLAMA_BUILD-$APP_VERSION.zip"
+LLAMA_KEY=$( { echo "$LLAMA_BUILD $LLAMA_SHA256 $SIGN_ID"; shasum build.sh; } | shasum | cut -c1-16 )
+LLAMA_CACHED=".build/llama/$LLAMA_KEY.zip"
+rm -f "$ASSETS/$ASSET_STEM"-llama-*.zip(N)
+if [ "$FLAVOR" = dev ] && [ -f "$LLAMA_CACHED" ]; then
+  cp "$LLAMA_CACHED" "$LLAMA_ASSET"
+else
+  LLAMA_WORK="$(mktemp -d)"
+  tar xzf "$LLAMA_TARBALL" -C "$LLAMA_WORK" \
+    --include "llama-$LLAMA_BUILD/llama-server" --include "llama-$LLAMA_BUILD/LICENSE" --include "llama-$LLAMA_BUILD/*.dylib"
+  find "$LLAMA_WORK/llama-$LLAMA_BUILD" -type f \( -name '*.dylib' -o -name 'llama-server' \) -print0 |
+    while IFS= read -r -d '' item; do sign "$item"; done
+  (cd "$LLAMA_WORK" && ditto -c -k --norsrc --keepParent "llama-$LLAMA_BUILD" "$LLAMA_ASSET")
+  rm -rf "$LLAMA_WORK"
+  if [ "$FLAVOR" = dev ]; then rm -rf .build/llama && mkdir -p .build/llama && cp "$LLAMA_ASSET" "$LLAMA_CACHED"; fi
+fi
+echo "{\"build\": \"$LLAMA_BUILD\", \"asset\": $(pinned "$LLAMA_ASSET")}" > "$APP/Contents/Resources/llama.json"
 sign "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi"
 sign "$APP/Contents/Resources/LampSidebar"
 if [ -f "$APP/Contents/Resources/bin/xwin" ]; then sign "$APP/Contents/Resources/bin/xwin"; fi
@@ -380,15 +410,7 @@ sign "$APP/Contents/Resources/LampPlayer.bundle"
 DEFAULT_PREBUILD=0; [ "$FLAVOR" != dev ] && DEFAULT_PREBUILD=1
 if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
   BUILT=".build/prebuilt-out"
-  ASSETS="${${ASSETS_DIR:-${BUILD_DIR:-build}/assets}:A}"   # absolute: the zips are made from inside other folders
-  if [ "$FLAVOR" = release ]; then
-    ASSET_STEM="Lamp"; ASSET_BASE="https://updates.lamp.dev/download/v$APP_VERSION"
-  elif [ "$FLAVOR" = nightly ]; then
-    ASSET_STEM="Lamp-Nightly"; ASSET_BASE="https://updates.lamp.dev/download/nightly"
-  else
-    ASSET_STEM="Lamp-Dev"; ASSET_BASE="file://${ASSETS// /%20}"
-  fi
-  rm -rf "$BUILT" && mkdir -p "$BUILT" "$ASSETS"
+  rm -rf "$BUILT" && mkdir -p "$BUILT"
   rm -f "$ASSETS/$ASSET_STEM"-Starter-*.zip(N)
   export LAMP_STARTERS_FOLDER="$PWD/Resources/Starters"   # the checkout's starters, with their trees
   KEY=$( {
@@ -424,9 +446,7 @@ if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
     done
     ASSET="$ASSET_STEM-Starter-$starter-$APP_VERSION.zip"
     (cd "$prebuilt:h" && ditto -c -k --norsrc --keepParent Prebuilt "$ASSETS/$ASSET")
-    cat > "$STARTERS/$starter/listing/prebuilt.json" <<PREBUILT
-{"url": "$ASSET_BASE/$ASSET", "sha256": "$(shasum -a 256 "$ASSETS/$ASSET" | cut -d' ' -f1)", "size": $(stat -f%z "$ASSETS/$ASSET")}
-PREBUILT
+    pinned "$ASSETS/$ASSET" > "$STARTERS/$starter/listing/prebuilt.json"
   done
   rm -rf "$BUILT"
 fi

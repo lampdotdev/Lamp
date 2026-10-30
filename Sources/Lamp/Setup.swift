@@ -711,6 +711,8 @@ struct BuildingSettings: View {
                 // The model is saved under its provider before the provider changes, so the change reads it back.
                 Builder.piProvider = parts[1]
                 Builder.piModel = parts[2]
+                // A GGUF model picked to run here: what runs it comes now, rather than with the first request.
+                if parts[1] == Builder.localProvider, LocalModels.model(parts[2])?.format == .gguf { LocalModels.shared.getServer() }
                 provider = parts[1]
                 model = parts[2]
                 engine = Engine.pi.rawValue
@@ -1996,6 +1998,7 @@ private struct LocalAISheet: View {
         let inUse = decides ? AppAI.decisionRoute(for: nil)?.provider == "local"
                             : Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == model.id
         let needsMLX = model.format == .mlx && LocalModels.mlxServerPath == nil
+        let needsServer = model.format == .gguf && !local.serverInstalled
         return HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
@@ -2008,11 +2011,20 @@ private struct LocalAISheet: View {
                     .font(.caption).foregroundStyle(.secondary)
                 if needsMLX { Text("Needs a one-time install before it can run.").font(.caption).foregroundStyle(.orange) }
                 if needsMLX, let error = tools.errors[.mlx] { Text(error).font(.caption).foregroundStyle(.red) }
+                if needsServer { Text("Needs a one-time download before it can run.").font(.caption).foregroundStyle(.orange) }
+                if needsServer, let error = local.errors[LocalModels.serverID] { Text(error).font(.caption).foregroundStyle(.red) }
             }
             Spacer()
             if needsMLX {
                 if tools.installing.contains(.mlx) { ProgressView().controlSize(.small) }
                 else { Button("Install") { installMLX() } }
+            } else if needsServer {
+                if let progress = local.progress[LocalModels.serverID] {
+                    ProgressView(value: progress).frame(width: 90)
+                    Button("Cancel") { local.cancel(LocalModels.serverID) }
+                } else {
+                    Button("Download") { local.getServer() }
+                }
             } else if !inUse {
                 if decides {
                     Button("Use for Decisions") {

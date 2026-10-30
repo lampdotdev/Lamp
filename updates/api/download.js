@@ -3,7 +3,7 @@
 // "latest" is the newest published release with a DMG, for the website's Download button. The nightly's DMGs are
 // served by its tag ("nightly") and the file's name (/download/nightly/Lamp-Nightly-0.26.0+3.dmg), since the release
 // keeps its last few and Lamp Nightly's feed names the one it signed; "latest" never is a nightly. Without a name,
-// the newest DMG. The files a Lamp fetches from its own release when it needs them (a starter's prebuilt app,
+// the newest DMG. The files a Lamp fetches from its own release when it needs them (llama.cpp, a starter's prebuilt app,
 // `isFetchedName`) are served the same way, by their release's tag and their name.
 import { REPO, dmgAssets, github, isDmgName, isFetchedName, isNightly, releases } from "../lib/github.js";
 
