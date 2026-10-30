@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import JavaScriptCore
+import LampRelayKit
 
 /// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js, or with Phaser for a 2D game
 /// (`web/lamp-phaser.js` over the runtime), and played through Lamp's game runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
@@ -941,6 +942,7 @@ enum GameKit {
         var printed: [String]
         var stats: String?
         var sound: String?   // what the game played and how loud the mix came out
+        var phone: PhonePreview.Report?
     }
 
     /// Plays the script in the preview: the game from its start, saves cleared, pictures where the script says.
@@ -989,16 +991,30 @@ enum GameKit {
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         try write(for: project)
         try await compileSource(project)
-        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(webFolder)) \"$LAMP_TO\""
+        // The phone page comes too, for the preview's phone (`PhonePreview`).
+        let phoneFolder = Sandbox.quoted(TVTemplate.phoneFolder), phone = phonePreviewFolder(project)
+        try? fm.removeItem(at: phone)
+        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(webFolder)) \"$LAMP_TO\" && if [ -e \(phoneFolder) ] || [ -L \(phoneFolder) ]; then /bin/cp -Rp \(phoneFolder) \"$LAMP_PHONE\"; fi"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the game's files.") }
         var output: [String] = []
-        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": page.path], login: false) { output.append($0) }
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": page.path, "LAMP_PHONE": phone.path], login: false) { output.append($0) }
         guard status == 0 else { throw Failure(message: "Lamp couldn't copy the game's files.\n\n" + output.suffix(4).joined(separator: "\n")) }
-        let linked = ([page] + (fm.enumerator(at: page, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
-            .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
-        if linked {
+        func holdsLink(_ folder: URL) -> Bool {
+            ([folder] + (fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
+                .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        }
+        if holdsLink(page) {
             try? fm.removeItem(at: page)
             throw Failure(message: "Web/ holds a shortcut to another file. Put the file itself in its place.")
+        }
+        if holdsLink(phone) {
+            try? fm.removeItem(at: phone)
+            throw Failure(message: "Some of the phone page's files are shortcuts to other files. Put the files themselves in their place.")
+        }
+        // Lamp's files beside it, as a phone is served them; the port is never dialed, the preview's socket being a stand-in.
+        if fm.fileExists(atPath: phone.appendingPathComponent("index.html").path) {
+            try Data(TVTemplate.phoneControllerJS.utf8).write(to: phone.appendingPathComponent("lamp-controller.js"))
+            try Data(#"{"port":1,"app":"preview"}"#.utf8).write(to: phone.appendingPathComponent("lamp-relay.json"))
         }
         guard fm.fileExists(atPath: page.appendingPathComponent("index.html").path) else { throw Failure(message: "The game has no Web/index.html.") }
         // The preview is played on this Mac, so its page is told it's the Mac's.
@@ -1010,7 +1026,7 @@ enum GameKit {
     @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
-        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: SharedNetwork.policy(for: project)) else {
+        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project), phone: phonePreviewFolder(project)) else {
             throw Failure(message: "The game didn't start in the preview, or ran for more than two minutes without finishing the play: "
                 + "check that Web/index.html loads it and that game() is called once, and look for an error in what it logged.")
         }
@@ -1028,8 +1044,37 @@ enum GameKit {
             let url = folder.appendingPathComponent("pictures/\(name).png")
             try AppFolder.write(png, to: url, in: project.dir)
             pictures.append(url)
+            guard let phone = drawn[phonePicture + name] else { continue }
+            let beside = folder.appendingPathComponent("pictures/\(phonePicture + name).png")
+            try AppFolder.write(phone, to: beside, in: project.dir)
+            pictures.append(beside)
         }
-        return Played(pictures: pictures, printed: logs, stats: result["stats"] as? String, sound: result["sound"] as? String)
+        return Played(pictures: pictures, printed: logs, stats: result["stats"] as? String, sound: result["sound"] as? String,
+                      phone: result["phone"] as? PhonePreview.Report)
+    }
+
+    /// What a web game's preview is held to: a shared game's rules, or for a game that declares the local network no
+    /// network at all, so that using it in the preview can't press a device of the person's (`DevicePermissions`).
+    static func previewPolicy(_ project: LampProject) -> NetworkPolicy? {
+        SharedNetwork.policy(for: project) ?? (previewHeldBack(project) ? NetworkPolicy() : nil)
+    }
+
+    /// Whether the preview reaches no network because of what the game declares.
+    static func previewHeldBack(_ project: LampProject) -> Bool {
+        engine(project) == .web && SharedNetwork.policy(for: project) == nil && DevicePermissions.reachesDevices(project)
+    }
+
+    /// The name a picture of the phone page has beside the game's picture of that moment.
+    static let phonePicture = "phone-"
+
+    /// Why the game's phone page can't be played in the preview, nil when it can.
+    static func phonePreviewProblem(_ project: LampProject) -> String? {
+        guard engine(project) == .web, !ownsLoop(project) else { return "Only a game on Lamp's web runtime has its phone page in the preview." }
+        let stagedOrOwn = [phonePreviewFolder(project), project.dir.appendingPathComponent(TVTemplate.phoneFolder)]
+        guard stagedOrOwn.contains(where: { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) }) else {
+            return "This game has no phone page: put one in Phone/index.html."
+        }
+        return nil
     }
 
     /// The script for `use_app`'s actions on the controller, or why one can't be played. Each action ends with a picture.
@@ -1037,6 +1082,14 @@ enum GameKit {
         var lines: [String] = [], said: [String] = []
         var number = shot
         for action in actions {
+            if action["phone"] as? Bool == true {
+                let moves = phoneMoves(action)
+                if let problem = moves.problem { return (lines, said, problem) }
+                number += 1
+                lines += moves.lines + ["shot \(number)"]
+                said += moves.said.map { [$0] } ?? []
+                continue
+            }
             let kind = action["action"] as? String ?? ""
             let seconds = min(max(action["amount"] as? Double ?? (kind == "button" ? 0.1 : 1), 1.0 / 60), 60)
             var hold = Hold(frames: max(1, Int((seconds * 60).rounded())))

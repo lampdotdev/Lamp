@@ -31,15 +31,20 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     /// The order they were taken in: only the latest are kept, which are the ones a look or a use asks for.
     private var taken: [String] = []
     private var finished: CheckedContinuation<[String: Any]?, Never>?
+    /// The game's phone page, once a play's first step on it opens it (`PhonePreview`), from the copy in `phoneFolder`.
+    private var phone: PhonePreview?
+    private var phoneFolder: URL?
 
     /// Plays the script and hands back what it drew and said, or nil when the page never got to the end of it (it
     /// didn't start, or ran for more than two minutes: a whole city takes about half a minute to build out of sight).
     /// A shared game (`policy`) is held to what it's held to as an app (`SharedNetwork`), and is never kept warm: its
-    /// policy is set up afresh with each play.
-    static func play(_ staged: URL, script: [String], for id: String, policy: NetworkPolicy? = nil) async -> (pictures: [String: Data], result: [String: Any])? {
+    /// policy is set up afresh with each play. Nor is a play with the phone page (`phone`, its copy): a game's phones
+    /// join from a fresh start, which a page played again in place doesn't give them.
+    static func play(_ staged: URL, script: [String], for id: String, policy: NetworkPolicy? = nil, phone: URL? = nil) async -> (pictures: [String: Data], result: [String: Any])? {
+        let phoned = script.contains { $0.hasPrefix("phone ") }
         if let kept = warm[id] {
             warm[id] = nil
-            if policy == nil, let played = await kept.again(staged, script: script) {
+            if policy == nil, !phoned, let played = await kept.again(staged, script: script) {
                 keep(kept, for: id, after: played.result)
                 return played
             }
@@ -48,10 +53,13 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         let preview = WebGamePreview()
         preview.files.policy = policy
         preview.files.own = "lamp-game://app"
+        preview.phoneFolder = phoneFolder(phone, if: phoned)
         guard let result = await preview.run(staged, script: script) else { preview.close(); return nil }
-        if policy == nil { keep(preview, for: id, after: result) } else { preview.close() }
+        if policy == nil, !phoned { keep(preview, for: id, after: result) } else { preview.close() }
         return (preview.pictures, result)
     }
+
+    private static func phoneFolder(_ folder: URL?, if phoned: Bool) -> URL? { phoned ? folder : nil }
 
     /// Kept open after a play that ended cleanly, closed once it has waited `keptFor` with no look.
     private static func keep(_ preview: WebGamePreview, for id: String, after result: [String: Any]) {
@@ -100,6 +108,8 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     private func close() {
         webView?.stopLoading()
         webView = nil
+        phone?.close()
+        phone = nil
     }
 
     /// The staged page's files by their path in it, each by a hash of its contents, to tell what a look changed.
@@ -163,29 +173,58 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
             configuration.afterScreenUpdates = true
             webView.takeSnapshot(with: configuration) { [weak self] image, _ in
                 MainActor.assumeIsolated {
-                    if let self, let image, let png = Self.png(image) {
-                        self.pictures[name] = png
-                        self.taken.append(name)
-                        // A long play's earliest pictures go: every use plays it all again, and asks only for its own.
-                        while self.taken.count > 16 { self.pictures[self.taken.removeFirst()] = nil }
+                    if let self, let image, let png = Self.png(image, width: GameKit.width, height: GameKit.height) { self.keep(png, as: name) }
+                    guard let self, let phone = self.phone else { return replyHandler(true, nil) }
+                    Task { @MainActor in
+                        if let png = await phone.picture() { self.keep(png, as: GameKit.phonePicture + name) }
+                        replyHandler(true, nil)
                     }
-                    replyHandler(true, nil)
                 }
             }
             return
         }
+        if let step = body["phone"] as? [String: Any] {
+            Task { @MainActor in
+                replyHandler(await self.phoneStep(step, inbox: body["inbox"] as? String ?? "[]", hosted: body["hosted"] as? Bool ?? false), nil)
+            }
+            return
+        }
         replyHandler(true, nil)
-        if body["done"] as? Bool == true { end(body) }
+        guard body["done"] as? Bool == true else { return }
+        guard let phone else { return end(body) }
+        Task { @MainActor in
+            var result = body
+            result["phone"] = await phone.report()
+            end(result)
+        }
     }
 
-    /// The picture at the game's own size, 1920x1080, whatever the screen's scale.
-    private static func png(_ image: NSImage) -> Data? {
-        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: GameKit.width, pixelsHigh: GameKit.height, bitsPerSample: 8,
+    /// One step on the phone page, from the game's play: the first opens it. Nil tells the play there's no phone.
+    private func phoneStep(_ step: [String: Any], inbox: String, hosted: Bool) async -> String? {
+        if phone == nil {
+            guard let phoneFolder else { return nil }
+            let opening = PhonePreview()
+            guard await opening.open(phoneFolder) else { return nil }
+            phone = opening
+        }
+        return await phone?.step(step, inbox: inbox, hosted: hosted)
+    }
+
+    private func keep(_ png: Data, as name: String) {
+        pictures[name] = png
+        taken.append(name)
+        // A long play's earliest pictures go: every use plays it all again, and asks only for its own.
+        while taken.count > 16 { pictures[taken.removeFirst()] = nil }
+    }
+
+    /// The picture at the size given, whatever the screen's scale: the game's own, 1920x1080, or the phone page's.
+    static func png(_ image: NSImage, width: Int, height: Int) -> Data? {
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
                                          samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
         else { return nil }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        image.draw(in: NSRect(x: 0, y: 0, width: GameKit.width, height: GameKit.height))
+        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
         NSGraphicsContext.restoreGraphicsState()
         return rep.representation(using: .png, properties: [:])
     }

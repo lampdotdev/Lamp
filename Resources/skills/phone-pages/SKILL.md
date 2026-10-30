@@ -24,6 +24,24 @@ pad.send({ ready: true });                       // JSON to the TV app, 16 KB at
 
 Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped. The number comes from the TV app once it's there (`onPlayer`), so show the state until then.
 
+`pad.button`, `pad.axis` and `pad.send` return false when nothing was sent: show that state, never a press that went nowhere.
+
+### A game's controller is held sideways
+
+A page of game controls is made for landscape: two thumbs, movement on the left, the main action on the right, and the player, the link and Back quiet in the middle or along the top. Compose those zones for the game and its verbs; a portrait layout stretched sideways isn't this. A page that isn't game controls (photos, files, a scoreboard, a hand of cards) stays whichever way suits it.
+
+- Lay it out with `viewport-fit=cover` in the viewport tag, `env(safe-area-inset-*)` around the edges and `100dvh` for the height, so a notch and the browser's bars don't sit on a control.
+- Nothing forces a phone sideways. `screen.orientation.lock` works in few browsers and usually only full screen: try it after a tap if you like, handle its failure, and make the page right without it. Never rotate the page with CSS.
+- Joining and typing a name may stay upright, and the keyboard changes the viewport's shape: decide what `@media (orientation: …)` shows from the game's phase too, so a keyboard never hides the name field behind "turn your phone".
+- Held upright during play, keep the player and the link on screen, show a themed "Turn your phone sideways", take no play gestures, and offer "Use upright" with a compact layout for someone who can't rotate. Keep Back reachable, and never pause the party for one phone turning.
+- If the phone turns during a press, send every held button's release and zero every active axis, drop the page's own pointer capture and gesture state, and ask for a fresh press. The page keeps track of what's held; never close the link to clear it. Turning back restores the phase as it was, with no new join and no reset.
+
+### Seeing the page
+
+In a game on Lamp's web runtime, you can see and press this page yourself: `use_app` with `phone` true on an action opens the real `Phone/index.html` at 844x390, sideways, joined to the game as a player in the same play, with a picture of it beside the game's, what it sent the game, its words and controls, and what it logged. Tap with `click` by `target` (a selector or the words on it) or x and y; `press`, `release` and `drag` work a held button or a stick; `type` fills a field; `rotate` turns it (`up`, then `left` or `right` for each way round), and works with a finger left down; `link` with `item` `lost`, `away` or `back` drops and restores it. Before you finish, play the whole journey with it: joining, the menu, play, results, the link lost and back, and rotation with a control held.
+
+It's the real page and the real `Lamp.controllers`, but not a real phone: one phone at most, in Mac WebKit, touches made by Lamp, on a link that stands in for the relay (no QR scan, no files, no network, so what it loads must be in `Phone/`). A notch, the browser's bars, the keyboard, tilt and `orientation.lock` aren't there to see, and speed isn't either. Say so when you report it, and ask the person to try it on their phone.
+
 On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game. It starts with a host:
 
 - `Lamp.controllers.start({ host: 'game' })`: the game serves the page and runs the link itself, with no Lamp: on the Mac, an iPhone or iPad while it's in front, an LG TV whose package carries the game's service (webOS 5 on), and the Xbox. Lamp's TV preview has no game host.

@@ -88,6 +88,20 @@ enum DevicePermissions {
             || Skills.appSwift(of: app, matches: #"\b(LampRoku|LampNetwork)\b"#)
     }
 
+    /// Whether `use_app` on the app stays in Lamp's hidden preview whatever the app declares: a game on Lamp's web runtime
+    /// is played there and nowhere else, and that preview is held off the network for such a game (`GameKit.previewPolicy`),
+    /// so it presses nothing of the person's. Phones joining a game declare the local network too, and aren't devices it
+    /// controls. A compiled game's preview is a process of its own that nothing holds, and a page with its own loop goes
+    /// where it was last looked at, so neither is this.
+    static func useStaysInPreview(_ app: LampProject) -> Bool {
+        GameKit.isGame(app) && GameKit.engine(app) == .web && !GameKit.ownsLoop(app)
+    }
+
+    /// Whether a `use_app` call on the app has to name a device the person allowed.
+    static func useNeedsDevice(_ app: LampProject) -> Bool {
+        reachesDevices(app) && !useStaysInPreview(app)
+    }
+
     /// The card: one question, three answers, only the person's to give.
     /// Whether what answers at an address now is set up with Lamp: a set-up device that's away keeps its last address,
     /// which another device may have taken, so it doesn't count.

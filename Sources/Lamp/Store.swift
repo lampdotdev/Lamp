@@ -9794,8 +9794,9 @@ final class Store: ObservableObject {
         if let problem = await buildGamePreview(project, owner: turn) { return (200, ["text": problem]) }
         let script = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
         GameKit.plays[project.id] = script
-        let said = motion ? "Lamp played the game in the preview from its start for two seconds, no one touching the controller; a frame every half second follows, oldest first."
-            : "Lamp played the game in the preview from its start for two seconds, no one touching the controller; the last frame follows."
+        let phone = GameKit.phonePreviewProblem(project) == nil ? " Its phone page is yours to see and press too: `phone` on `use_app`'s actions." : ""
+        let said = (motion ? "Lamp played the game in the preview from its start for two seconds, no one touching the controller; a frame every half second follows, oldest first."
+            : "Lamp played the game in the preview from its start for two seconds, no one touching the controller; the last frame follows.") + phone
         return await playGame(project, script: script, owner: turn, said: said, pictures: Set(script.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }))
     }
 
@@ -9809,8 +9810,10 @@ final class Store: ObservableObject {
         if let problem = moves.problem { return (200, ["text": problem]) }
         if let problem = await buildGamePreview(project, owner: owner) { return (200, ["text": problem]) }
         let script = play + moves.lines
+        if script.contains(where: { $0.hasPrefix("phone ") }), let problem = GameKit.phonePreviewProblem(project) { return (200, ["text": problem]) }
         GameKit.plays[project.id] = script
-        let mine = Set(moves.lines.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) })
+        let shot = moves.lines.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }
+        let mine = Set(shot + shot.map { GameKit.phonePicture + $0 })
         let said = "What happened, played again from the start in the preview with the moves before these:\n" + moves.said.joined(separator: "\n")
             + "\n\nA picture at the end of each follows, oldest first (the last four at most)."
         return await playGame(project, script: script, owner: owner, said: said, pictures: mine)
@@ -9863,6 +9866,8 @@ final class Store: ObservableObject {
         }
         var text = said
         if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
+        if GameKit.previewHeldBack(project) { text += "\n\nThis game declares the local network, so its preview reaches no network at all: nothing there touches the person's devices." }
+        if let phone = played.phone { text += "\n\n" + phone.text(screen: Privacy.sharesPictures, log: Privacy.sharesLog) }
         // It names the game's sound files and comes from what the preview printed: the agent's only when the log is.
         if Privacy.sharesLog, let sound = played.sound { text += "\n\nThe preview's sound, mixed but not played: \(sound)" }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
@@ -9870,7 +9875,10 @@ final class Store: ObservableObject {
         let pictures = Privacy.sharesPictures ? Array(played.pictures.filter { wanted.contains($0.deletingPathExtension().lastPathComponent) }.suffix(4)) : []
         if !Privacy.sharesPictures { text += " " + Privacy.picturesOff }
         else if pictures.isEmpty { text += "\n\nNo picture came out of the preview." }
-        else { text += "\n\n\(pictures.count == 1 ? "The picture is" : "The pictures are") 1920x1080, as the game is drawn everywhere, drawn on this Mac out of sight: where it's played draws the same frames slower or faster." }
+        else {
+            text += "\n\n\(pictures.count == 1 ? "The picture is" : "The pictures are") 1920x1080, as the game is drawn everywhere, drawn on this Mac out of sight: where it's played draws the same frames slower or faster."
+            if played.phone != nil { text += " With each is the phone page at that moment, at the phone's size: its x and y are what `use_app` takes." }
+        }
         return (200, ["text": text, "screenshots": Self.agentPictures(pictures, in: project)])
     }
 
@@ -13028,7 +13036,7 @@ final class Store: ObservableObject {
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
         // An app that controls the person's devices presses on real ones: only on the device the person allowed on Lamp's
         // card, which the call names.
-        if DevicePermissions.reachesDevices(app) {
+        if DevicePermissions.useNeedsDevice(app) {
             let device = (arguments["device"] as? String)?.trimmed ?? ""
             guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
                 return (400, ["error": DevicePermissions.useRefusal])
