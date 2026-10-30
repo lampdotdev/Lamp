@@ -36,6 +36,8 @@ public final class ControllerRuntime: @unchecked Sendable {
     private let holdingPagePort: Bool
     /// The port the pages' rules name, kept through a relay lost so that port can be asked for again.
     private var heldPort: UInt16?
+    /// Whether a page has been served yet: only the very first request is sure to be a document taking the rules it's given.
+    private var served = false
     /// The device's names and addresses, and the host a phone's link carries (nil: on no network a phone can share).
     /// Changed by tests.
     public var hosts: @Sendable () -> Set<String> = { ControllerAddresses.names() }
@@ -170,8 +172,11 @@ public final class ControllerRuntime: @unchecked Sendable {
     }
 
     /// The port the pages' rules name, held from the first document on. One a page already has is kept; any other change
-    /// retires the pages, but a document being served now takes the port it's given.
+    /// retires the pages, but the first document takes the port it's given. A file asked for later may be a picture of
+    /// a page whose rules are already fixed, so a port that comes then retires them too.
     private func hold(forDocument: Bool) -> UInt16? {
+        let first = forDocument && !served
+        served = true
         if let relayPort, relay != nil { return relayPort }
         let promised = heldPort
         let hasPage = FileManager.default.fileExists(atPath: root.appendingPathComponent("index.html").path)
@@ -179,7 +184,7 @@ public final class ControllerRuntime: @unchecked Sendable {
         heldPort = hasPage ? bind(SymmetricKey(size: .bits256), port: promised ?? 0, thisDeviceOnly: true) : nil
         let port = heldPort
         portLock.withLock { sharedHeldPort = port }
-        if port != promised, !(forDocument && promised == nil) { onPagePortMoved() }
+        if port != promised, !first { onPagePortMoved() }
         return port
     }
 

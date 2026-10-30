@@ -723,6 +723,7 @@ enum LampPageGuard {
     /// of Lamp's own the page can't reach (it hears only refusals WebKit made, never ones the page made up).
     @MainActor static func attach(to configuration: WKWebViewConfiguration, scheme: String) {
         guard policy != nil else { return }
+        forgetOldRelays()
         let world = WKContentWorld.world(name: "LampGuard")
         configuration.userContentController.add(LampPageRefused(scheme: scheme), contentWorld: world, name: "lampRefused")
         configuration.userContentController.addUserScript(WKUserScript(source: """
@@ -733,6 +734,16 @@ enum LampPageGuard {
             """, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: world))
         guard current != nil else { return }
         NetworkPolicy.holdBack(configuration.preferences)
+    }
+
+    /// A game's relay was once refused here, and the port the person allowed for it was that launch's alone: what's left
+    /// of those is a port on this device nothing should be able to reach, so it goes, once, for a game that takes phones.
+    private static func forgetOldRelays() {
+        let done = "LampRelayAllowancesForgotten"
+        guard !UserDefaults.standard.bool(forKey: done),
+              let phone = Bundle.main.resourceURL?.appendingPathComponent("Phone/index.html"), FileManager.default.fileExists(atPath: phone.path) else { return }
+        UserDefaults.standard.set(allowed.filter { !$0.hasPrefix("ws://127.0.0.1:") }, forKey: allowedKey)
+        UserDefaults.standard.set(true, forKey: done)
     }
 
     private static let watchers = NSMapTable<WKWebView, LampPageWatcher>.weakToStrongObjects()
@@ -849,7 +860,8 @@ enum LampPageGuard {
               let view = message.webView, let policy = LampPageGuard.current else { return }
         let site = NetworkPolicy.origin(address)
         FileHandle.standardError.write(Data("Lamp blocked this shared app's request to \(site ?? String(address.prefix(200))) (\(said["what"] as? String ?? ""))\n".utf8))
-        guard policy.mayConnect, let site, !shown.contains(site) else { return }
+        // The game's own relay is never offered: an allowance is kept, and that port is this launch's.
+        guard policy.mayConnect, let site, !shown.contains(site), !LampControllers.pageSites.contains(site) else { return }
         shown.insert(site)
         waiting.append(site)
         showNext(over: view)

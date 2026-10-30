@@ -279,6 +279,22 @@ final class SharedNetworkTests: XCTestCase {
         XCTAssertEqual(links?.first?["socket"] as? String, sites[0] + "/")
     }
 
+    /// A later file of a page whose rules are fixed (a picture, a missing file) is no document: a port that comes with
+    /// it isn't in those rules, so the page goes.
+    func testAPortThatComesWithALaterFileRetiresThePage() throws {
+        let (runtime, folder) = try Self.heldRuntime()
+        defer { runtime.stop(); try? FileManager.default.removeItem(at: folder) }
+        let moved = expectation(description: "the page is told to go")
+        runtime.onPagePortMoved = { moved.fulfill() }
+        let page = folder.appendingPathComponent("Phone/index.html")
+        let held = try Data(contentsOf: page)
+        try FileManager.default.removeItem(at: page)
+        XCTAssertEqual(runtime.pageSites(), [], "a game with no phone page holds nothing")
+        try held.write(to: page)   // Lamp hands it one while it's open
+        XCTAssertEqual(runtime.pageSites().count, 1)
+        wait(for: [moved], timeout: 5)
+    }
+
     private static func heldRuntime() throws -> (ControllerRuntime, URL) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("held-relay-\(UUID().uuidString)")
         let phone = folder.appendingPathComponent("Phone")
