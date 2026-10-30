@@ -7,6 +7,9 @@ and `Package.swift` are written afresh before every build (`Template.writeOwnedF
 that fails. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
 Package.swift as a program), so they're replaced rather than checked: nothing the agent's file tools wrote
 into them, with no card, can run. Shared apps never carry them: import writes its own.
+What a shared file says still reaches build.sh: the app's name and its permission reasons. They are never pasted into
+the script's code: `Template.write` sets them in single quotes at the script's top (`Template.shellWords`) and the
+script reads them as variables, so no name runs, ends a heredoc or breaks a quote, and names stay as free as they are.
 Replacing them isn't enough on its own: they sit in the agent's folder, and a command it left running can put
 its own there between Lamp writing them and running them. So the build runs as the agent's commands do, in the
 app's sandbox (`Store.runBuild`, through `Sandbox.run`), and so does everything else Lamp runs over what's in
