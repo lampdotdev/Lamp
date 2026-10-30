@@ -41,7 +41,7 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "device-integrations", "android-design", "phone-controllers",
                                            "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
-                                           "scripting", "game", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
+                                           "scripting", "game", "game-ui", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
                                            "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode",
                                            "roku-developer-mode", "more-apps", "github-projects", "assets"])
         for (name, skill) in shipped {
@@ -58,10 +58,10 @@ final class SkillsTests: XCTestCase {
         if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design"])
                                                        .subtracting(SetupGuides.registrations(shipped).map(\.skill))) }
         XCTAssertTrue(shipped["phone-controllers"]!.body.contains("phone-pages skill"))
-        // How an app is made and on which devices, games, 3D in a page, web apps, phones as controllers, and whether a
+        // How an app is made and on which devices, games and their screens, 3D in a page, web apps, phones as controllers, and whether a
         // request is for one more app or a change to the one the wish has, and someone's project on GitHub, are offered to
         // every kind, first, whatever the app is now.
-        let everywhere = ["web-or-native", "game", "2d-game", "3d-game", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
+        let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
         XCTAssertEqual(Skills.offered(.android), everywhere + ["android-design", "wish-links"])
         XCTAssertEqual(Skills.offered(.tv), everywhere + ["wish-links"])
         XCTAssertEqual(Skills.offered(.device), everywhere)
@@ -263,8 +263,8 @@ final class SkillsTests: XCTestCase {
         XCTAssertFalse(DeviceSupport.usesPhaser(app(.game), page: "Web"), "Phaser goes into a page only once its own files use it")
 
         try "import * as THREE from 'three';\nimport { game } from './lamp-game.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
-        let found = Skills.applying(to: app(.game)).filter { ["game", "3d-game"].contains($0.name) }
-        XCTAssertEqual(found.map(\.name), ["game", "3d-game"])
+        let found = Skills.applying(to: app(.game)).filter { ["game", "game-ui", "3d-game"].contains($0.name) }
+        XCTAssertEqual(found.map(\.name), ["game", "game-ui", "3d-game"])
         XCTAssertEqual(found.first?.because, "its page runs on Lamp's game runtime")
         try "import * as Phaser from 'phaser';\nimport { phaser } from './lamp-phaser.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
         XCTAssertEqual(Skills.applying(to: app(.game)).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.map(\.name), ["game", "2d-game"])
@@ -272,7 +272,7 @@ final class SkillsTests: XCTestCase {
 
         try FileManager.default.removeItem(at: web)
         try source("Scene.swift", "import SpriteKit\n")
-        XCTAssertEqual(Skills.applying(to: app(.iphone)).filter { $0.name == "game" }.map(\.because), ["it's a SpriteKit game"])
+        XCTAssertEqual(Skills.applying(to: app(.iphone)).filter { ["game", "game-ui"].contains($0.name) }.map(\.because), ["it's a SpriteKit game", "it's a SpriteKit game"])
     }
 
     /// A TV app's page brings in three.js by the path of Lamp's copy as well as by the import map's name, in a module
@@ -297,7 +297,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, game-ui, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
     }
 
     func testParsing() {

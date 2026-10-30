@@ -7,7 +7,8 @@ description: Games, 2D or 3D, made either way - what makes one fun and playtesti
 
 A game is something played in real time, rather than used. What follows holds for every game, whichever way it's
 made; each part then names the tools for each make. For a game in 2D, open the 2d-game skill too (Phaser or SpriteKit,
-and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityKit in Swift).
+and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityKit in Swift). Before designing its
+title, menus, level select, HUD, pause or results, read the game-ui skill.
 
 The tools Lamp has for games:
 
@@ -234,8 +235,9 @@ to time. When frames are late, draw less.
 
 Sprites, characters and backgrounds are art from `make_art` or one ready-made pack (the assets skill), all in one
 style, on a transparent background where they move. Shapes and colors made in code, well lit, look better than
-mismatched models. Score, pause and menus are plain
-and large, over the game (SwiftUI over a SpriteView; HTML over the canvas in a page).
+mismatched models. Score, pause and menus are large and easy to read, over the game (SwiftUI over a SpriteView; HTML
+over the canvas in a page), and made for its world: the game-ui skill says which screens a game needs and how to give
+them its theme.
 
 After changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches flicker a
 single picture hides.

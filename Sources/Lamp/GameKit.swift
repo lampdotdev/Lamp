@@ -1213,9 +1213,10 @@ extension Agent.Rules {
 
     static let gameWebKit = """
     - Writing the game: read Web/lamp-game.js first, all of it; it's Lamp's runtime and the whole interface to the \
-    device. Choose 2D or 3D from what the person asked for as you begin, then read the game skill and the 2d-game or \
-    3d-game skill with `read_skill` before writing any of it: they say what the page draws with, how index.html loads \
-    it, how game.js starts the runtime, where the game sets itself up and how each frame runs. index.html loads lamp.js, \
+    device. Choose 2D or 3D from what the person asked for as you begin, then read the game skill, the game-ui skill and \
+    the 2d-game or 3d-game skill with `read_skill` before writing any of it: they say what the page draws with, how \
+    index.html loads it, how game.js starts the runtime, where the game sets itself up, how each frame runs and which \
+    screens it has. index.html loads lamp.js, \
     then the scaffold's import map, then game.js as a module: keep that. The runtime fits the 1920x1080 stage to the \
     window or screen and runs the game's frames about 60 times a second. Never call requestAnimationFrame, setTimeout or \
     setInterval for the game, nor read the clock, Math.random or localStorage: move things by the frame's time and use \
