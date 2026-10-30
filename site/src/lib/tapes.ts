@@ -16,7 +16,7 @@ async function three(): Promise<Three> {
 
 /** A sleeve, as index.astro describes it: the hero's, and each on the shelf. Its front has its screenshot (as a remix
  * changed it), what it is and where it plays, and a "Remix me" that opens the remix dialog with `remix`
- * (`lamp:remix`, RemixDialog.astro); its back, the changes its starter suggests; its spine, the screenshot, the name or
+ * (`lamp:remix`, RemixDialog.astro), or on an original "Try it" and "Remix it" side by side; its back, the changes its starter suggests; its spine, the screenshot, the name or
  * a remix's change, and the stripes. Each place's icon is the `d` of a 256-unit SVG path. */
 export type Sleeve = {
   /** An original, a remix of one (its change written on in marker), or a blank one waiting for an idea. */
@@ -35,6 +35,10 @@ export type Sleeve = {
   tweaks: string[];
   places: { label: string; icon: string }[];
   remix?: string;
+  /** An original's "Try it": the query that opens the dialog to try it (`lamp:try`). */
+  tryIt?: string;
+  /** Where it plays in a browser, which its "Try it" goes to instead, as "Play it". */
+  play?: string;
   /** Where its back's "Download for Mac" goes: the blank sleeve's, whose back is about Lamp. */
   download?: string;
   /** The marker a remix's change is written in. */
@@ -177,9 +181,34 @@ function sleeveSheet(width: number) {
 
 /** The front's "Remix me" button, in the front's units: also where a click on the sleeve opens the remix dialog. */
 const REMIX_BUTTON = { x: 56, y: 1280, w: 688, h: 112 };
+/** An original's two buttons, sharing that place. */
+const TRY_HALF = { ...REMIX_BUTTON, w: 336 };
+const REMIX_HALF = { ...REMIX_BUTTON, x: 408, w: 336 };
+type Button = typeof REMIX_BUTTON;
+const within = (b: Button, x: number, y: number) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
 
-/** `pointed` draws the "Remix me" button outlined, as it is while the pointer is over it. */
-function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined, pointed = false) {
+/** A button printed on the front, with an ink outline around it while it's pointed at. */
+function printed(ctx: CanvasRenderingContext2D, b: Button, words: string, size: number, fill: string, ink: string, pointed: boolean) {
+  if (pointed) {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.roundRect(b.x - 9, b.y - 9, b.w + 18, b.h + 18, 24);
+    ctx.stroke();
+  }
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.roundRect(b.x, b.y, b.w, b.h, 18);
+  ctx.fill();
+  ctx.fillStyle = ink;
+  ctx.textAlign = "center";
+  font(ctx, "900", size, SANS);
+  ctx.fillText(words, b.x + b.w / 2, b.y + b.h / 2 + size * 0.36);
+  ctx.textAlign = "left";
+}
+
+/** `pointed` says which printed button to draw outlined, as it is while the pointer is over it. */
+function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined, pointed?: "try" | "remix") {
   const { canvas, ctx } = sleeveSheet(800);
   ctx.fillStyle = LABEL;
   ctx.fillRect(0, 0, 800, 1448);
@@ -240,25 +269,12 @@ function sleeveFront(sleeve: Sleeve, img: HTMLImageElement | undefined, pointed 
     font(ctx, "700", remix ? 26 : 30, SANS);
     ctx.fillText(place.label, x + 2, plays + icon + 56);
   });
-  // The call to remix it, printed as a button, with an ink outline around it while it's pointed at.
-  if (sleeve.remix) {
-    const b = REMIX_BUTTON;
-    if (pointed) {
-      ctx.strokeStyle = INK;
-      ctx.lineWidth = 7;
-      ctx.beginPath();
-      ctx.roundRect(b.x - 9, b.y - 9, b.w + 18, b.h + 18, 24);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "#c23a20";
-    ctx.beginPath();
-    ctx.roundRect(b.x, b.y, b.w, b.h, 18);
-    ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    font(ctx, "900", 54, SANS);
-    ctx.fillText("Remix me →", b.x + b.w / 2, b.y + 74);
-    ctx.textAlign = "left";
+  // An original can be tried or remixed, side by side; a remix on the shelf is only an idea, so it can only be made.
+  if (sleeve.tryIt) {
+    printed(ctx, TRY_HALF, sleeve.play ? "Play it" : "Try it", 54, INK, "#ffffff", pointed === "try");
+    printed(ctx, REMIX_HALF, "Remix it", 54, "#c23a20", "#ffffff", pointed === "remix");
+  } else if (sleeve.remix) {
+    printed(ctx, REMIX_BUTTON, "Remix me →", 54, "#c23a20", "#ffffff", pointed === "remix");
   }
   return canvas;
 }
@@ -667,7 +683,8 @@ function reelOn(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, box: Thr
  * over the button), and whether a hit on it is on that button. */
 function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sleeve: Sleeve, img: HTMLImageElement | undefined) {
   const spine = s.texture(sleeveSpine(sleeve, img));
-  const [front, frontPointed] = [s.texture(sleeveFront(sleeve, img)), s.texture(sleeveFront(sleeve, img, true))];
+  const [front, frontPointed] = [s.texture(sleeveFront(sleeve, img)), s.texture(sleeveFront(sleeve, img, "remix"))];
+  const frontTry = sleeve.tryIt ? s.texture(sleeveFront(sleeve, img, "try")) : front;
   const [back, backPointed] = [s.texture(sleeveBack(sleeve)), s.texture(sleeveBack(sleeve, true))];
   const faces = [spine, spine, s.flat(INK), s.flat(INK), front, back];
   const box = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(1.05, 1.9, 0.3, 3, 0.025), faces));
@@ -675,31 +692,41 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
   // on its back. `onButton` says whether a hit is on one, and keeps which, for `point` and `press`.
   let side = 4;
   const reel = reelOn(s, THREE, box, sleeve);
-  // Whether the hit last found was on the reel's expand button, printed over the screenshot.
+  // Whether the hit last found was on the reel's expand button, printed over the screenshot, or on "Try it".
   let expanding = false;
+  let trying = false;
   const onButton = (found: ThreeTypes.Intersection | undefined) => {
     const face = found?.face?.materialIndex;
-    expanding = false;
+    expanding = trying = false;
     if (found?.object !== box || !found.uv) return false;
     const [x, y] = [found.uv.x * 800, (1 - found.uv.y) * 1448];
     if (face === 4 && reel?.onExpand(x, y)) return (expanding = true);
+    if (face === 4 && sleeve.tryIt && within(TRY_HALF, x, y)) {
+      side = face;
+      return (trying = true);
+    }
     const has = face === 4 ? !!sleeve.remix : face === 5 && !!sleeve.download;
     if (!has) return false;
-    const b = REMIX_BUTTON;
-    const on = x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+    const on = within(face === 4 && sleeve.tryIt ? REMIX_HALF : REMIX_BUTTON, x, y);
     if (on) side = face;
     return on;
   };
   /** Outlines the button last found, or neither. */
   const point = (on: boolean) => {
-    faces[4] = on && !expanding && side === 4 ? frontPointed : front;
+    faces[4] = on && trying ? frontTry : on && !expanding && side === 4 ? frontPointed : front;
     faces[5] = on && !expanding && side === 5 ? backPointed : back;
     box.material = faces;
   };
   const remix = () => { if (sleeve.remix) document.dispatchEvent(new CustomEvent("lamp:remix", { detail: sleeve.remix })); };
-  /** Does what the button last found does: remix, or download Lamp as the page's own Download links do. */
+  /** Plays it where it plays in a browser, else opens the dialog to try it. */
+  const tryIt = () => {
+    if (sleeve.play) open(sleeve.play, "_blank", "noopener");
+    else if (sleeve.tryIt) document.dispatchEvent(new CustomEvent("lamp:try", { detail: sleeve.tryIt }));
+  };
+  /** Does what the button last found does: remix, try it, or download Lamp as the page's own Download links do. */
   const press = () => {
     if (expanding) return reel?.open();
+    if (trying) return tryIt();
     if (side === 4) return remix();
     const link = Object.assign(document.createElement("a"), { href: sleeve.download! });
     link.dataset.downloadPlace = "shelf";
@@ -757,7 +784,7 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
     ink.opacity = ease(ink.opacity, aimed ? 0.65 : 0, dt, aimed ? 10 : 6);
     arrow.visible = ink.opacity > 0.01;
   };
-  return { box, onButton, point, remix, press, reel, arrow, aim, fade };
+  return { box, onButton, point, remix, tryIt, press, reel, arrow, aim, fade };
 }
 
 // MARK: The hero's sleeve
@@ -897,6 +924,9 @@ export async function mountStack(host: HTMLElement) {
   // For a keyboard, a button for each sleeve that can be remixed opens the remix dialog for it, as its "Remix me" does.
   host.querySelectorAll<HTMLButtonElement>("[data-sleeve]").forEach((button) => {
     button.addEventListener("click", () => items[Number(button.dataset.sleeve)]?.built.remix());
+  });
+  host.querySelectorAll<HTMLButtonElement>("[data-try]").forEach((button) => {
+    button.addEventListener("click", () => items[Number(button.dataset.try)]?.built.tryIt());
   });
 
   let tilt = { x: 0, y: 0 };

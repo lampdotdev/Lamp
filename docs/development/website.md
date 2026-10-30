@@ -11,8 +11,8 @@ read on; elsewhere they sit beside headings (a tab above each), never on a headi
 the making, not the app in use: a plain Mac window changing as it's asked from Lamp's chat beside it
 (`ChangeStory.astro`). New York's sleeve in the hero and the stack of sleeves in "From the shelf" are one sleeve
 (`src/lib/tapes.ts`, filled from `src/lib/starters.ts`), three.js drawn from canvases in the page's fonts: its
-screenshot shown whole (an original's reel playing over it, below), where it plays and a "Remix me" that opens the remix dialog on the front (a remix's change in
-marker there too), what it is and the changes its starter suggests on the back, and the screenshot, the name (or a
+screenshot shown whole (an original's reel playing over it, below), where it plays and, side by side, a "Try it" ("Play it" where it plays in a browser, `page` in `starters.ts`, which goes there) and a "Remix it" that opens the remix dialog on the front (a remix's change in
+marker and a "Remix me" there instead), what it is and the changes its starter suggests on the back, and the screenshot, the name (or a
 remix's change) and the stripes on its spine. On the shelf the sleeves lie flat, spines out, each original with a
 remix of it under it, and a blank one at the bottom whose back is about Lamp, with a Download for Mac; one that's
 clicked stands up as the hero's does. They're lit with soft shadows, lean toward the
@@ -30,7 +30,7 @@ lists are only those a kind of app or a shipped device integration really reache
 menu bar's, are the paper's ink with paper-colored words (the last section's is the stripes' yellow with ink).
 A link from a Remix panel or a repository's README (`?ask=`, with `starter=` or `repo=` and `commit=` when it names
 what it's a copy of, and `from=` where it was pressed) opens the homepage's remix dialog (`RemixDialog.astro`, "Remixing a published page" in the wishes guide), as does the
-hero sleeve's "Remix me" (`lamp:remix`). It's a slab in 3D with real thickness that rises in from the bottom and
+sleeve's "Remix it" (`lamp:remix`), and a sleeve's "Try it" opens it to try the starter (`lamp:try`): "Try" over the name, no box, and the same buttons, with Lamp opening the starter itself, before any setup ("Starters" in the desk guide). It's a slab in 3D with real thickness that rises in from the bottom and
 leans toward the pointer (the tapes behind it hold still while it's open), with the stripes up its left edge, the
 starter's picture and description on the dark on its left (a repository's own picture, its preview or else its icon,
 from raw.githubusercontent.com, `repoPictures`; or a blank label with the name in marker), its title as

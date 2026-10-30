@@ -20,7 +20,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   tape, a repository's own picture or else its name) and the
   request in a box to change, then Open in Lamp on a Mac (a link Lamp opens on a fresh copy with the request waiting in
   its chat) and Download for Mac, which copies the request with Lamp's mark, naming the starter or repository, for
-  Lamp's first open. The ideas page keeps its own card (WishDialog.astro); this one is dressed as the homepage is.
+  Lamp's first open. A sleeve's Try it opens the same dialog for trying a starter (`lamp:try`): no request to write, and
+  the same two ways to Lamp, whose first open offers the starter. The ideas page keeps its own card (WishDialog.astro); this one is dressed as the homepage is.
   It's a slab with real thickness, as the sleeve in the hero is a box: its face is the dialog, with a back and four
   edges behind it in 3D, rising into place from the bottom when it opens and leaning a little toward the pointer.
 -->
@@ -75,7 +76,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   const openLink = q<HTMLButtonElement>("[data-open]"), download = q<HTMLAnchorElement>("[data-download]");
   // The dialog's words as they first are, put back each time it's set up for another remix.
   const first = { status: status.textContent, ask: ask.textContent, download: download.textContent };
-  // The query the dialog is set up for, and what undoes that setup's listeners when it's set up for another.
+  // The query the dialog is set up for, with whether it's to try or to remix, and what undoes that setup's listeners when it's set up for another.
   let shown: string | undefined;
   let setup: AbortController | undefined;
 
@@ -83,9 +84,10 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
   // remix: from the page's own address when it arrives, or from the page itself (the hero sleeve's and the shelf's
   // Remix me send `lamp:remix` with the query a link would carry). The same query again reopens it as it was left;
   // another sets it up afresh.
-  function present(search: string) {
-    if (setup && search === shown) return dialog.showModal();
-    const asked = askFrom(search);
+  function present(search: string, trial = false) {
+    const key = `${trial ? "try" : "remix"}:${search}`;
+    if (setup && key === shown) return dialog.showModal();
+    const asked = trial ? null : askFrom(search);
     const named = remixFrom(search);
     // Only a starter this site knows by its id; the request alone otherwise. Lamp checks the link again.
     const starter = named?.starter ? starters[named.starter] : undefined;
@@ -94,7 +96,9 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     setup?.abort();
     setup = new AbortController();
     const { signal } = setup;
-    shown = search;
+    shown = key;
+    const place = trial ? "try" : "remix";
+    dialog.toggleAttribute("data-try", trial);
     shot.hidden = written.hidden = about.hidden = true;
     shot.removeAttribute("src");
     delete shot.dataset.fit;
@@ -107,11 +111,11 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     dialog.setAttribute("aria-describedby", "remix-from");
     const idea = starter?.name ?? origin?.name ?? "your wish";
 
-    // "Remix", written in by hand, before the name printed on the original and who made it.
+    // "Remix" or "Try", written in by hand, before the name printed on the original and who made it.
     const remixOf = (name: string, maker: string) => {
       const word = document.createElement("span");
       word.className = "remix-word";
-      word.textContent = "Remix";
+      word.textContent = trial ? "Try" : "Remix";
       const credit = document.createElement("span");
       credit.className = "remix-maker";
       credit.textContent = `by ${maker}`;
@@ -153,7 +157,15 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       written.hidden = false;
     }
     text.value = asked ?? "";
-    // Only a wish alone says where it's from and what Lamp will do with it; a remix's title says it already.
+    // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
+    const onMac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
+    if (trial && starter) {
+      const others = Object.keys(starters).length - 1;
+      from.textContent = onMac ? `It opens in Lamp, with ${others} more to try. Nothing to set up.` : "It opens in Lamp, which runs on a Mac.";
+      download.hidden = !onMac;
+    } else download.hidden = false;
+    // Only a wish alone says where it's from and what Lamp will do with it; a remix's title says it already, and
+    // what's left to say when trying one is above.
     by.hidden = !by.textContent;
     from.hidden = !from.textContent;
     if (from.hidden) dialog.removeAttribute("aria-describedby");
@@ -170,8 +182,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       }, { passive: true, signal });
     }
 
-    // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
-    openLink.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
+    openLink.hidden = !onMac;
     const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
     text.addEventListener("input", fit, { signal });
 
@@ -200,7 +211,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       late = 0;
       dialog.removeAttribute("data-missing");
       openLink.textContent = "Open in Lamp";
-      status.textContent = "Opened in Lamp. Your change is waiting in its chat.";
+      status.textContent = trial ? "Opened in Lamp." : "Opened in Lamp. Your change is waiting in its chat.";
     };
     addEventListener("blur", opened, { signal });
     document.addEventListener("visibilitychange", () => { if (document.hidden) opened(); }, { signal });
@@ -212,7 +223,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       let link = origin ? remixLink(origin, text.value) : wishLink(text.value);
       if (!link) return text.focus();
       if (scheme) link = link.replace(/^lamp:/, `${scheme}:`);
-      track("idea_sent", { idea, place: "remix" });
+      track("idea_sent", { idea, place });
       status.textContent = "Opening Lamp…";
       clearTimeout(trying);
       trying = setTimeout(() => {
@@ -221,8 +232,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
         late = Date.now() + 15000;
         dialog.setAttribute("data-missing", "");
         openLink.textContent = "Try again";
-        status.textContent = "Lamp didn't open, so it's probably not on this Mac yet. Download it, and your change will be waiting when it opens.";
-        track("idea_missing", { idea, place: "remix" });
+        status.textContent = `Lamp didn't open, so it's probably not on this Mac yet. Download it, and ${trial ? `${idea} will be there` : "your change will be waiting"} when it opens.`;
+        track("idea_missing", { idea, place });
       }, 2000);
       location.href = link;
     }, { signal });
@@ -231,10 +242,15 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       clearTimeout(trying);
       trying = undefined;
       late = 0;
-      track("idea_download", { idea, place: "remix" });
+      track("idea_download", { idea, place });
       // The download leaves this page where it is, so the copy finishes and the dialog can say what happens next.
       copyWish(text.value, { origin }).then((copied) => {
         download.textContent = "Downloading…";
+        // Nothing to paste when trying: without the mark, the button here still opens it once Lamp's in.
+        if (trial) {
+          status.textContent = copied === "marked" ? `Open Lamp when it's ready, and ${idea} will be there.` : "When Lamp's ready, come back and click Open in Lamp.";
+          return;
+        }
         const ready = starter ? `${starter.name} and your change will be there.` : origin ? "Your remix will be there." : "Your wish will be there.";
         status.textContent = copied === "marked" ? `Open Lamp when it's ready. ${ready}`
           : copied === "plain" ? "Your change is copied. Paste it into Lamp when it's ready."
@@ -248,15 +264,16 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     addEventListener("load", fit, { once: true, signal });
     // Ready to change, with the cursor at the end, where there's a pointer and a keyboard; on a touch screen the
     // keyboard would cover the dialog before it's been read.
-    if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+    if (!trial && matchMedia("(hover: hover) and (pointer: fine)").matches) {
       text.focus({ preventScroll: true });
       text.setSelectionRange(text.value.length, text.value.length);
     }
-    track("idea_opened", { idea, place: "remix" });
+    track("idea_opened", { idea, place });
   }
 
   present(location.search);
   document.addEventListener("lamp:remix", (event) => present((event as CustomEvent<string>).detail));
+  document.addEventListener("lamp:try", (event) => present((event as CustomEvent<string>).detail, true));
 </script>
 
 <style>
@@ -348,6 +365,8 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     width: 100%; min-height: 5.5rem; resize: none; padding: 0.75rem 0.875rem; border-radius: 4px; background: #fffdf6;
     border: 2px solid var(--color-tape); color: var(--color-tape); font-family: var(--font-sans); font-size: 1.125rem; line-height: 1.45;
   }
+  /* Nothing to write when trying it. */
+  .remix-dialog[data-try] :is(.remix-ask, textarea) { display: none; }
   .remix-words textarea::placeholder { color: #8c8577; }
   .remix-words textarea:focus-visible { outline: 3px solid var(--stripe-0); outline-offset: 2px; }
   .remix-buttons { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.25rem; }
