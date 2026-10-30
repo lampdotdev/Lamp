@@ -126,9 +126,10 @@ game that draws with it, and Rapier (https://github.com/dimforge/rapier, the npm
 @dimforge/rapier3d-compat, Apache License 2.0, Copyright 2020 Dimforge EURL), for physics, only into a game that
 imports it.
 
-three.js's addons come with a few small libraries of their own, each licensed in its file's header: fflate, lil-gui,
-meshoptimizer's decoder, potpack, stats.js and tween.js (MIT or ISC), and the EXR loader keeps the notices of the code
-it was ported from.
+three.js's addons also include small libraries from other projects: fflate, lil-gui, meshoptimizer's decoder, potpack,
+stats.js and tween.js (MIT, and ISC for potpack), and an EXR loader ported from other code. Lamp copies them as three.js
+publishes them, so each keeps the license label or notice in its own file, but their full copyright and permission texts
+are not yet beside them in Resources/WebLibraries/three, which carries three.js's license alone.
 
 ## The phone service for LG games
 
