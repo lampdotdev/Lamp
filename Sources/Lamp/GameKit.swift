@@ -581,7 +581,7 @@ enum GameKit {
         guard let resources else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
         let web = engine(project) == .web
         let scaffold = resources.appendingPathComponent(web ? "scaffold-web" : "scaffold")
-        for path in web ? ["\(webFolder)/index.html", "\(webFolder)/game.js"] : ["Game/game.cpp", "Game/scene.glsl"] {
+        for path in web ? ["\(webFolder)/index.html"] + scaffoldCode(web: true) : ["Game/game.cpp", "Game/scene.glsl"] {
             let text = try String(contentsOf: scaffold.appendingPathComponent(path), encoding: .utf8)
             try Template.write(text, to: path, for: project)
         }
@@ -593,13 +593,20 @@ enum GameKit {
         try write(for: project)
     }
 
-    /// Whether the game is still the scaffold: its code is as Lamp wrote it.
+    /// The scaffold's code: what a game that's still the scaffold has as Lamp wrote it.
+    private static func scaffoldCode(web: Bool) -> [String] {
+        web ? ["game.js", "world.js", "making.js"].map { "\(webFolder)/\($0)" } : ["Game/game.cpp"]
+    }
+
+    /// Whether the game is still the scaffold: its code is as Lamp wrote it, every file of it.
     static func isScaffold(_ project: LampProject) -> Bool {
-        let path = engine(project) == .web ? "\(webFolder)/game.js" : "Game/game.cpp"
-        guard let scaffold = resources?.appendingPathComponent((engine(project) == .web ? "scaffold-web/" : "scaffold/") + path),
-              let written = try? String(contentsOf: scaffold, encoding: .utf8),
-              let now = AppFile.text(project.dir.appendingPathComponent(path), in: project) else { return false }
-        return now == written.replacingOccurrences(of: "{{NAME}}", with: project.name)
+        let web = engine(project) == .web
+        return scaffoldCode(web: web).allSatisfy { path in
+            guard let scaffold = resources?.appendingPathComponent((web ? "scaffold-web/" : "scaffold/") + path),
+                  let written = try? String(contentsOf: scaffold, encoding: .utf8),
+                  let now = AppFile.text(project.dir.appendingPathComponent(path), in: project) else { return false }
+            return now == written.replacingOccurrences(of: "{{NAME}}", with: project.name)
+        }
     }
 
     static let webAppMd = """
@@ -611,6 +618,11 @@ enum GameKit {
 
     ## What it does
     Nothing yet: fresh scaffold, a card saying "Lamp is making this game.", for the game to replace.
+
+    ## Code
+    game.js puts the parts together, world.js builds the world (the scene and camera) and builds it again in place
+    when it changes, and making.js (the card) is a part that changes while the game is played: a class in a module
+    ending with `hot(import.meta).accept()`.
 
     """
 
@@ -1151,11 +1163,11 @@ extension Agent.Rules {
     a file (a material from shader source, clones of a model, a level from JSON), give game() `assetChanged(path)`, which \
     makes it again and returns true. A change of code goes into the running game without the page opening again \
     where the game's modules take it: keep the world (the city, the level's geometry, what's slow to build) in a module \
-    that rarely changes, and what changes often (vehicles and their tuning, missions, the HUD's code, enemies, shader \
+    of its own that builds it again in place when it changes, and what changes often (vehicles and their tuning, missions, the HUD's code, enemies, shader \
     settings) in modules that end with `hot(import.meta).accept()` from lamp-game.js, keeping their state in objects of \
     the classes they export; the game skill ("Changes while it's played") says how, and the log says what was swapped \
-    and why a change wasn't. A stylesheet swaps by itself; the HTML, the world's module and the module that starts the \
-    game open the page again from the snapshot. While a match, race or round is on, `busy()` returns true: a change \
+    and why a change wasn't. A stylesheet swaps by itself; the HTML and the module that starts the game open the page \
+    again from the snapshot. While a match, race or round is on, `busy()` returns true: a change \
     that opens the page again waits for the next pause and the person can press Reload. A change of code with no \
     snapshot that can't be swapped starts the game again.
     """
