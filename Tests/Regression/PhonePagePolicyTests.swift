@@ -1,4 +1,5 @@
 import Foundation
+@testable import Lamp
 import LampRelayKit
 import XCTest
 
@@ -39,6 +40,31 @@ final class PhonePagePolicyTests: XCTestCase {
         XCTAssertEqual(policy, "default-src 'none'; script-src 'self' 'unsafe-inline' \(sites); style-src 'self' 'unsafe-inline' \(sites); "
             + "img-src 'self' data: blob: \(sites); media-src 'self' data: blob: \(sites); font-src 'self' data: \(sites); "
             + "connect-src 'self' ws://localhost:\(relayPort) \(sites); worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'")
+    }
+
+    /// A shared app's phone page, as Lamp bundles it, is held to its shared policy's sites (`SharedNetwork`): here Home
+    /// HQ's as `SharedNetworkTests` reads them, which may connect where Lamp couldn't tell, so nothing beyond its one site.
+    /// An app the person made, or let reach every site, reaches any https site.
+    func testASharedAppsPhonePageReachesOnlyItsPolicysSites() async throws {
+        let shared = NetworkPolicy(origins: ["https://geocoding-api.open-meteo.com"], mayConnect: true, ownSwift: true)
+        XCTAssertEqual(PhonePageReach.reach(shared), .only(["https://geocoding-api.open-meteo.com"]))
+        XCTAssertEqual(PhonePageReach.reach(nil), .secureSites)
+        XCTAssertEqual(PhonePageReach.reach(NetworkPolicy(origins: [], unrestricted: true)), .secureSites)
+
+        let page = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<title>Pad</title>".utf8)),
+                                              .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.json(PhonePageReach.reach(shared)))])
+        try page.write(to: folder)
+        let runtime = ControllerRuntime(app: "homehq", page: folder)
+        runtime.hosts = { ["127.0.0.1"] }
+        runtime.linkHost = { "127.0.0.1" }
+        defer { runtime.stop() }
+        let (_, answer) = runtime.startNow()
+        let socket = try XCTUnwrap((answer["links"] as? [[String: Any]])?.first?["socket"] as? String)
+        let relayPort = try XCTUnwrap(URL(string: socket)?.port)
+        let (_, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(try XCTUnwrap(runtime.pagePort))/")!)
+        let policy = try XCTUnwrap((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Security-Policy"))
+        XCTAssertTrue(policy.contains("connect-src 'self' ws://127.0.0.1:\(relayPort) https://geocoding-api.open-meteo.com;"), policy)
+        XCTAssertFalse(policy.contains("https:;") || policy.contains("https: ") || policy.contains("wss:"), "no site beyond the policy's: \(policy)")
     }
 
     func testAPageWithNoReachFileReachesNoSites() {

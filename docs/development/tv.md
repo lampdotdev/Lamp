@@ -121,8 +121,9 @@ Every server of a phone page sends the same rules with it (`PhonePagePolicy`, a 
 (`lamp_controllers.h`), each writing the same words, which `PhonePagePolicyTests` and `check-web-host-controllers.sh`
 hold them to. Nothing is allowed unless it's named: the page's own files; its game's relay, by the name the phone used
 and at the port it listens on as the page is served, and no other address on the network; and the sites the app may
-reach, which `PhonePageReach` reads from the policy for apps shared with the person (only the sites their safety review
-named) and which are any https site for an app made here. Lamp writes those sites beside the page it puts in a game's
+reach, which `PhonePageReach` reads from the shared-app policy (`SharedNetwork.policy(for:)`, under "Wishes of more
+than one app"): only the sites a shared app's safety review named, and any https site for an app made here or one the
+person let reach every site. Sites the person allowed on a device are that device's, so a phone page doesn't get them. Lamp writes those sites beside the page it puts in a game's
 bundle, an LG TV's service or an Xbox package (`lamp-reach.json`, in place of any file of the app's by that name); a
 server that finds none allows no sites. A relay that moved after the page loaded is outside its rules, so
 lamp-controller.js loads the page again, once for each port, keeping the phone's credential, when its socket is refused.

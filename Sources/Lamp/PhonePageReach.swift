@@ -3,15 +3,18 @@ import LampRelayKit
 
 /// The sites an app's phone page may reach beyond its own files and its game's relay (`PhonePagePolicy`), for every
 /// server of one: Lamp's (`Store.phonePage`), and the copy Lamp puts in a game's bundle, an LG TV's service or an Xbox
-/// package (`snapshot`). Which sites an app shared with the person may reach is the shared-app policy's to say, the same
-/// one its other pages are held to; this reads it in one place, so the phone pages follow whatever it decides.
+/// package (`snapshot`). An app shared with the person is held to the sites its safety review named, the same policy its
+/// other pages are held to (`SharedNetwork`); one the person made, or let reach every site, reaches any https site.
 enum PhonePageReach {
-    /// The shared-app policy's answer for an app: nil for one the person made here, else the sites a shared app's pages
-    /// may reach. Until that policy is wired in, every app is taken as the person's own.
-    nonisolated(unsafe) static var sharedSites: (LampProject) -> [String]? = { _ in nil }
-
     static func reach(_ project: LampProject) -> PhonePagePolicy.Reach {
-        sharedSites(project).map { .only($0) } ?? .secureSites
+        reach(SharedNetwork.policy(for: project))
+    }
+
+    /// Sites the person allowed on a device are that device's (the app's own defaults), so a phone page, served from
+    /// elsewhere, has only the review's.
+    static func reach(_ policy: NetworkPolicy?) -> PhonePagePolicy.Reach {
+        guard let policy, policy.restricts else { return .secureSites }
+        return .only(policy.origins)
     }
 
     /// A page's files as a game's bundle, an LG TV or an Xbox package carries it: Lamp's lamp-controller.js and the reach
