@@ -16,6 +16,8 @@ enum Downloads {
 
     /// What's said when a download didn't come: the person's connection, nearly always.
     static let offline = "Couldn't download it. Check your connection."
+    /// What's said when what this Lamp pins isn't there any more (an old nightly's files are removed in time).
+    static let gone = "It isn't available for this version of Lamp any more. Update Lamp, then try again."
     /// What's said when one came and wasn't what Lamp asked for.
     static let refused = "The download wasn't right, so Lamp didn't use it."
 
@@ -41,7 +43,8 @@ enum Downloads {
                 let status = (response as? HTTPURLResponse)?.statusCode
                 guard status == 200 else {
                     try? FileManager.default.removeItem(at: file)
-                    throw Failure(offline, gone: status == 404 || status == 410)
+                    let gone = status == 404 || status == 410
+                    throw Failure(gone ? Downloads.gone : offline, gone: gone)
                 }
                 temp = file
             }
