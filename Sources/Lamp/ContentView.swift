@@ -17,11 +17,10 @@ struct ContentView: View {
             if !onboarded && !store.welcomeFinished {
                 OnboardingView().ignoresSafeArea()
             } else {
-                // Nothing set up, the desk still opens and its wishes run: what's missing is asked for when a change
-                // needs it, and the request waits in its chat until it's done.
+                // Nothing set up, the desk still opens and its wishes run: what's missing is asked for in the chat when a
+                // change needs it, and the request waits there until it's done.
                 main
                     .frame(minWidth: 760, minHeight: 480)
-                    .sheet(isPresented: settingUp) { SetupView { store.askingForSetup = false } }
             }
         }
         .modifier(StoreDialogs(active: store.selection == nil))
@@ -31,12 +30,6 @@ struct ContentView: View {
         }, resigned: { DeskPick.shared.deskIsKey = false }))
         .background(DeskWindowMarker())
         .onAppear { LampWindows.open = openWindow }
-    }
-
-    /// Up while a request waits for what builds, and gone once that's chosen, with Apple's tools left to the banner.
-    private var settingUp: Binding<Bool> {
-        Binding(get: { store.askingForSetup && !(store.setup.hasBuilder && store.setup.hasAgent) },
-                set: { store.askingForSetup = $0 })
     }
 
     private var main: some View {
