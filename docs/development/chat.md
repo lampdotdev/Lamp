@@ -102,6 +102,10 @@ A capability given to one engine must be given to all of them that can take it, 
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
   doesn't ask about layout, colors or names (`Agent.Rules.ask`).
 
+When a conversation starts again, Lamp says so in a line of the chat, as any status: "Started a fresh conversation for
+<wish>: the last one had grown too large to send" when a request couldn't be sent, and, alone in a cleared chat,
+"Started again from the original" (both in `Conversation`; "How big a conversation grows" in the engines guide).
+
 ## The chat's one screen
 
 A wish's chat is one screen, drawn the same wherever it is (`ChatScreen`, in Sources/LampSidebarKit): its bar, the chat

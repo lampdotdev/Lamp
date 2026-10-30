@@ -214,9 +214,10 @@ game is written to keep the player's place through one:
     `hot(import.meta).dispose(data => …)` takes away what a version made at its top level, keeping in `data` what the
     next version reads as `hot(import.meta).data`.
 
-  A stylesheet is swapped by itself. The page opens again, from the snapshot, only where running again can't be done
-  (a change to the import map or to a script that isn't a module, modules that import each other in a circle) or the
-  new code fails as it starts, before its first frame or in its first second. A game bundled from TypeScript is one
+  A stylesheet is swapped by itself. Where running again can't be done (a change to the import map or to a script that
+  isn't a module, modules that import each other in a circle) the change waits for the person's Reload, which opens the
+  page again from the snapshot; so does new code that fails as it starts, before its first frame or in its first
+  second, at once. A game bundled from TypeScript is one
   file, so its changes run it again, and what it keeps is built again with each change.
 - `busy()` is true while a match, race or round is on: a change that runs the code again then waits for the next
   pause, and the person can put it in at once with Reload. A swap goes in at once.

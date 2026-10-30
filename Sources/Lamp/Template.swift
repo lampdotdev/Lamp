@@ -7374,14 +7374,15 @@ enum Template {
                 && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) }
         }
 
-        /// Picture pixels per window point: at most 1400 pixels on the long side, a size models see unscaled.
+        /// Picture pixels per window point: at most 1024 pixels on the long side, a size models see unscaled and read
+        /// a window's words in, at half the bytes and tokens of 1400: every picture is sent again with each request.
         @MainActor
         static func scale(of window: NSWindow) -> CGFloat {
             let size = (window.contentView?.superview ?? window.contentView)?.bounds.size ?? window.frame.size
-            return min(window.backingScaleFactor, 1400 / max(size.width, size.height))
+            return min(window.backingScaleFactor, 1024 / max(size.width, size.height))
         }
 
-        /// The window with its title bar, at most 1400 pixels on the long side. It's the window as the system
+        /// The window with its title bar, at most 1024 pixels on the long side. It's the window as the system
         /// shows it, so video, maps and web pages are in the picture; asking for one's own windows needs no
         /// screen recording permission. If the system has no picture (the app is hidden), the app draws one itself,
         /// which leaves those out.

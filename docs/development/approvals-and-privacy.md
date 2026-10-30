@@ -54,7 +54,8 @@ A capability given to one engine must be given to all of them that can take it, 
   the one before it, none of them a link, and only a plain file read. That's what reaches the agent (what the app
   printed, its screen as text, its answers to Lamp, its pictures and their copies, the app's notes and what was taken
   back from them, the note after a restore), what Lamp writes into the app's code or hands an engine (its secrets,
-  `Template.ownSecret`, and the conversation ids), and what Lamp rewrites in place (the migration, a rename, the
+  `Template.ownSecret`, and the conversation ids, set aside under `.lamp/set-aside` and brought back through `AppFolder`),
+  and what Lamp rewrites in place (the migration, a rename, the
   live layout), which would otherwise bring what a link leads to into the folder. A new such read belongs there. Lamp's own
   writes there around a build go through `AppFolder` on the same terms (see "Generated apps").
   Lamp's adb server and Android emulators (the phone and the TV) run on ports of each Lamp's own (`Edition.androidPorts`), never adb's usual

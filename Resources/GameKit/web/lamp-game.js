@@ -934,7 +934,7 @@ async function apply(change) {
         if (change.pill) showPill();
         return;
     }
-    return startAgain(change, touched ? before : undefined, touched ? roster : undefined);
+    return startAgain(touched ? { ...change, touched } : change, touched ? before : undefined, touched ? roster : undefined);
 }
 
 // A change that can't be swapped in: the game's code runs again in place, keeping the page, the renderer and what the
@@ -942,8 +942,21 @@ async function apply(change) {
 // `roster`, the phones joined as it was taken: the new run hears of any who left since, whose place `state` still has.
 function startAgain(change, state = takeSnapshot(), roster = phonesHere()) {
     const why = canRunAgain(change);
-    if (why) return reopen({ ...change, why: `${change.why}; ${why}` }, state);
+    if (why) return reopenOrHold({ ...change, why: `${change.why}; ${why}` }, state);
     return runAgain(change, state, roster);
+}
+
+// A change that needs the page opened again is held for the person's Reload, never opened under them: the app and the
+// chat show Reload (`held`), and it goes in when they press it (`now`). The code run again in place goes in by itself.
+// Lamp's preview, which nobody watches, opens a new page instead.
+// A swap that already changed the running game (its old version's disposers run, its exports put in) leaves nothing safe
+// to wait in: that opens the page again at once, from where the player was before it.
+function reopenOrHold(change, state) {
+    if (change.now || change.touched || preview) return reopen(change, state);
+    waiting = { ...change, hard: true };
+    log(`Lamp: a change that needs the game opened again (${change.why}) waits for Reload.`);
+    tellHost(change.gen, 'held', change.why);
+    if (change.pill) showPill();
 }
 
 // Opens the page again with the new code, with the player's place kept for the new code to restore: where it is now, or
@@ -964,7 +977,7 @@ function reopen(change, state = takeSnapshot()) {
 let keptAt = 0;
 function live() {
     if (swapGuard && time > swapGuard.until) swapGuard = null;
-    if (waiting && !isBusy()) { const change = waiting; waiting = null; queue = queue.then(() => startAgain(change)).catch(e => log(`Lamp: ${e && e.message || e}`)); }
+    if (waiting && !waiting.hard && !isBusy()) { const change = waiting; waiting = null; queue = queue.then(() => startAgain(change)).catch(e => log(`Lamp: ${e && e.message || e}`)); }
     if (hooks.snapshot && time - keptAt >= 5) { keptAt = time; keepLast(); }
 }
 
@@ -1050,7 +1063,9 @@ function resolve(specifier, from) {
     const prefix = Object.keys(importMap).filter(k => k.endsWith('/') && specifier.startsWith(k)).sort((a, b) => b.length - a.length)[0];
     return prefix ? new URL(importMap[prefix] + specifier.slice(prefix.length), location.href).href : null;
 }
-const importsIn = (text, from) => [...text.matchAll(SPECIFIER)].map(m => pathOf(resolve(m[3], from) || '')).filter(p => p != null && !lampOwn(p));
+// A specifier nothing resolves (a bare name the import map doesn't have) names no file of the game's.
+const importsIn = (text, from) => [...text.matchAll(SPECIFIER)].map(m => resolve(m[3], from)).filter(Boolean).map(pathOf)
+    .filter(p => p != null && !lampOwn(p));
 // The names a module's imports give it, each with the module it comes from: `a`, `b` and `ns` in
 // `import a, { x as b } from './m.js'` and `import * as ns from './n.js'`.
 const BINDINGS = /\bimport\s+([\w$*{}\s,]+?)\s+from\s*(['"])([^'"\n]+)\2/g;
@@ -1058,7 +1073,7 @@ const bindings = new Map();
 function bindingsIn(text, from) {
     const names = new Map();
     for (const m of text.matchAll(BINDINGS)) {
-        const path = pathOf(resolve(m[3], from) || '');
+        const target = resolve(m[3], from), path = target && pathOf(target);
         if (path == null || lampOwn(path)) continue;
         const clause = m[1].replace(/\*\s*as\s+/, '').replace(/[{}]/g, ',');
         for (const part of clause.split(',')) { const name = part.trim().split(/\s+as\s+/).pop(); if (name) names.set(name, path); }
@@ -1368,10 +1383,10 @@ function putClass(C, N) {
 // What the game's code leaves running is watched from the start: listeners it adds (to the window, the document or
 // anything else), timers, sound contexts it makes itself and workers. Each is taken away when the code runs again,
 // unless a part kept it (made while a keep's build ran). A module's own state starts again with it, as on a reload.
-// Running again isn't tried, and the page opens again as before, where the import map or a script that isn't a module
-// changed, Lamp's own files changed, modules import each other in a circle, or the page has no module scripts; and new
-// code that fails as it runs again, before init is done or in its first second, opens the page again from the same
-// snapshot.
+// Running again isn't tried where the import map or a script that isn't a module changed, Lamp's own files changed,
+// modules import each other in a circle, or the page has no module scripts: the change waits for the person's Reload
+// (`reopenOrHold`), which opens the page again from the snapshot. New code that fails as it runs again, before init is
+// done or in its first second, opens the page again at once, from the same snapshot.
 
 let runningAgain = null, loops = 0, fitting = false, pageText = null, watching = false, reopenedFrame = 0;
 // What the game kept, by the module and key it was kept with.
@@ -1508,7 +1523,7 @@ function canRunAgain(change) {
 
 async function runAgain(change, state, roster) {
     const began = performance.now(), why = change.why;
-    const cannot = reason => reopen({ ...change, why: `${why}; ${reason}` }, state);
+    const cannot = reason => reopenOrHold({ ...change, why: `${why}; ${reason}` }, state);
     const paths = (change.changed || []).map(clean);
     let text, page;
     try { text = await readText(pagePath()); page = parse(text); } catch (e) { return cannot('its page couldn\'t be read'); }
@@ -1940,7 +1955,7 @@ function showPill() {
     pill.style.cssText = 'position:fixed;z-index:20;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));'
         + 'padding:8px 16px;border:0;border-radius:18px;background:rgba(20,20,24,.72);color:#fff;font:600 15px -apple-system,system-ui,sans-serif;'
         + '-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)';
-    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = waiting; waiting = null; queue = queue.then(() => startAgain(change)); } };
+    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = { ...waiting, now: true }; waiting = null; queue = queue.then(() => startAgain(change)); } };
     listen(pill, 'pointerdown', press);
     document.body.append(pill);
 }

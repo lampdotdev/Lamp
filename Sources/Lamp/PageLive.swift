@@ -62,6 +62,7 @@ import Foundation
     private var listening: [Key: [(id: UUID, waiter: CheckedContinuation<Void, Never>)]] = [:]
     private var deciding: [Key: (gen: Int, answer: CheckedContinuation<String?, Never>)] = [:]
     private var held: Set<Key> = []
+    private var putting: Set<Key> = []
     /// Why the page last said it had to open again, or hold a change for a pause (code that couldn't be swapped in), by
     /// app: for the agent's look, so its next change can be one that swaps.
     private var reasons: [String: String] = [:]
@@ -141,6 +142,11 @@ import Foundation
     /// installed, and waits (a few seconds at most) for the page to say what it did.
     func put(_ project: LampProject, at place: Place) async -> Outcome {
         let key = Key(id: project.id, place: place)
+        // One change goes into a copy at a time: a look's and a step of the agent's saves (`Store.stepPage`) may come
+        // together, and the page answers one change at a time.
+        while putting.contains(key) { try? await Task.sleep(for: .milliseconds(100)) }
+        putting.insert(key)
+        defer { putting.remove(key) }
         guard Self.takes(project), isOpen(project, at: place), let installed = install(project, key),
               installed.native == Self.native(project) else { return .cannot }
         let now = Self.hashes(of: Self.web(of: project, at: place), in: project)

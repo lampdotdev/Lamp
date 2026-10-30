@@ -81,7 +81,7 @@ Read the guide for the part you're changing before you change it. A section name
 
 | Guide | Read it when the change touches |
 | --- | --- |
-| [engines](docs/development/engines.md) | Keep the agent harnesses in step: `Engines.swift`, `EngineInstall`, the tools in `lamp-tools.json` and the MCP endpoint, prompt rules, memory, switching engines, skills, pictures shown to the agent, queued messages, tool names in the chat, models, what answers apps, using other apps |
+| [engines](docs/development/engines.md) | Keep the agent harnesses in step: `Engines.swift`, `EngineInstall`, the tools in `lamp-tools.json` and the MCP endpoint, prompt rules, memory, switching engines, skills, pictures shown to the agent, how big a conversation grows, queued messages, tool names in the chat, models, what answers apps, using other apps |
 | [chat](docs/development/chat.md) | How the agent talks: `Talk`, cards, `ask`, `progress`, the chat's timeline, its activity line and folded steps; the chat's one screen (`ChatScreen`, `SidebarState`) and Lamp's chat panel (`ChatPanel`, `SetupSheet`) |
 | [approvals and privacy](docs/development/approvals-and-privacy.md) | `/agent/approve`, `Privacy`, the sandbox, file access outside an app's folder, data snapshots |
 | [desk](docs/development/desk.md) | The desk, Lamp's only window: wishes as icons, opening a wish, starters and their checks |
