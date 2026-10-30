@@ -8,14 +8,15 @@ import LampSidebarKit
 /// and the `commit:` of it this Lamp ships, moved on by `scripts/pull-starters.sh`), and `tree/`, that repository at
 /// that commit, fetched by `scripts/fetch-starters.sh` before a build and never committed here: the app's code and
 /// files, APP.md, lamp-app.json (what it is), credits.json, and in `.github/` the pictures (`preview.png`, the picture
-/// the desk shows on hover, and `icon/`, the icon drawn once). A starter goes onto the desk as a repository opens
-/// (`copy`: read as the import reads one, installed as the import installs one), once, on the first launch; the desk lists
-/// every starter under Starter apps, copying one with no untouched copy there only when it's opened (`DeskList.Fresh`).
-/// `scripts/check-starters.sh` type-checks them against this checkout's LampSupport.swift.
-/// A release ships each one built as well (`PrebuiltStarters`), so it's ready before Apple's build tools are.
+/// the desk shows on hover, and `icon/`, the icon drawn once).
+/// Lamp's bundle carries only what the desk lists a starter by (`Listed`, in `listing/` beside starter.md, which
+/// build.sh writes from the tree): the tree itself is fetched when the starter is first opened (`StarterDownloads`),
+/// pinned to the commit, and kept in Lamp's folder. The desk lists every starter under Starter apps, copying one with
+/// no untouched copy there only when it's opened (`DeskList.Fresh`), as a repository opens (`copy`: read as the import
+/// reads one, installed as the import installs one). `scripts/check-starters.sh` type-checks them against this
+/// checkout's LampSupport.swift. A release builds each one too (`PrebuiltStarters`), fetched with it, so it's ready
+/// before Apple's build tools are.
 enum Starters {
-    static let installedKey = "startersInstalled"
-
     struct Starter: Equatable {
         /// Resources/Starters/<folder>: starter.md, and the fetched tree.
         let folder: URL
@@ -57,9 +58,45 @@ enum Starters {
         var symbol: String?
     }
 
-    static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Starters") }
+    /// The starters this Lamp lists: in its bundle, or a checkout's for the build's own runs (`--prebuild-starters`),
+    /// where each one's tree is fetched beside it.
+    static var folder: URL? {
+        if let given = ProcessInfo.processInfo.environment["LAMP_STARTERS_FOLDER"], !given.isEmpty {
+            return URL(fileURLWithPath: given, isDirectory: true)
+        }
+        return Bundle.main.resourceURL?.appendingPathComponent("Starters")
+    }
 
     static let treeFolder = "tree"
+    /// What the bundle carries of each starter beside its starter.md, written by build.sh from the tree.
+    static let listingFolder = "listing"
+
+    /// What the desk lists a starter by before its tree is here, each read from the tree once it is: its line, its
+    /// credits (who made it, its license), its picture and its icon. The commit object (`git cat-file commit`) and the
+    /// prebuilt app's pin come only with the bundle: what a fetch is checked against (`StarterDownloads`). A starter
+    /// whose code uses a 3D scene says so (`scene`), for `runsHere`.
+    enum Listed: String, CaseIterable {
+        case about = "lamp-app.json", credits = "credits.json", preview = "preview.png", icon = "icon.png"
+        case commit, prebuilt = "prebuilt.json", scene
+    }
+
+    /// Where a listed file is: in the tree when it's here (a checkout's, or one fetched), else in the bundle's listing.
+    static func listed(_ file: Listed, of starter: Starter) -> URL {
+        let inTree: URL? = switch file {
+        case .about: starter.tree.appendingPathComponent("lamp-app.json")
+        case .credits: starter.tree.appendingPathComponent(Credits.file)
+        case .preview: starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent("preview.png")
+        case .icon: iconFolder(of: starter).appendingPathComponent("icon.png")
+        case .commit, .prebuilt, .scene: nil
+        }
+        if let inTree, FileManager.default.fileExists(atPath: inTree.path) { return inTree }
+        return starter.folder.appendingPathComponent(listingFolder).appendingPathComponent(file.rawValue)
+    }
+
+    /// Whether the starter's tree is on this Mac: a checkout's, or fetched for it.
+    static func hasTree(_ starter: Starter) -> Bool {
+        FileManager.default.fileExists(atPath: starter.tree.appendingPathComponent("lamp-app.json").path)
+    }
     /// Where a starter's repository keeps the pictures Lamp shows for it: the desk's preview and the drawn icon.
     static let picturesFolder = ".github"
 
@@ -67,19 +104,21 @@ enum Starters {
     static var bundled: [Starter] {
         guard let folder else { return [] }
         let folders = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return folders.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap(read).filter { runsHere($0.tree) }
+        return folders.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap(read).filter(runsHere)
     }
 
     /// Whether a starter runs on this Mac. One with a 3D scene needs macOS 15 (RealityView begins there), so on an
     /// older Mac it isn't put on the desk or offered, rather than greeting someone with a game that won't open; it's
-    /// offered once the Mac is updated (`missing`).
-    static func runsHere(_ tree: URL) -> Bool {
-        Agent.Rules.scenes || !Template.importsRealityKit(tree.appendingPathComponent("Sources"))
+    /// offered once the Mac is updated (`missing`). Before its tree is here, its listing says (`Listed.scene`).
+    static func runsHere(_ starter: Starter) -> Bool {
+        if Agent.Rules.scenes { return true }
+        guard hasTree(starter) else { return !FileManager.default.fileExists(atPath: listed(.scene, of: starter).path) }
+        return !Template.importsRealityKit(starter.tree.appendingPathComponent("Sources"))
     }
 
     /// Where a starter's drawn icon is in its tree (`iconFolder` under the pictures), and its preview.
     static func iconFolder(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(iconFolder) }
-    static func preview(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent("preview.png") }
+    static func preview(of starter: Starter) -> URL { listed(.preview, of: starter) }
     /// Its reel, when one's been recorded (scripts/showcase-starters.sh): reel.mp4, loop.webp and poster.png. Only its
     /// repository has it; Lamp's bundle leaves it out (build.sh).
     static func showcase(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(showcaseFolder) }
@@ -87,12 +126,12 @@ enum Starters {
 
     /// The icon a starter ships with, drawn from its icon.json (`StarterIconsTests`).
     static func icon(of starter: Starter) -> NSImage? {
-        NSImage(contentsOf: iconFolder(of: starter).appendingPathComponent("icon.png"))
+        NSImage(contentsOf: listed(.icon, of: starter))
     }
 
     /// The starter's line saying what it is, from its manifest (the description a shared file carries).
     static func about(_ starter: Starter) -> String? {
-        AppDescription.description(at: starter.tree.appendingPathComponent("lamp-app.json"))
+        AppDescription.description(at: listed(.about, of: starter))
     }
 
     /// Where an app keeps its starter.md once copied: Lamp's, beside meta.json, out of the agent's way.
@@ -144,12 +183,14 @@ enum Starters {
         [file(of: project), suggestionsFile(of: project)].first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// The starter in a folder: its starter.md, with its tree beside it. Nil without a tree (not fetched), which is
-    /// said once, since a build without it ships a starter short.
+    /// The starter in a folder: its starter.md, with its tree beside it (a checkout's) or its listing (the bundle's).
+    /// Nil with neither (not fetched before the build), which is said once, since a build without it ships a starter
+    /// short.
     static func read(_ folder: URL) -> Starter? {
         guard let text = try? String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8),
               let starter = parse(text, folder: folder) else { return nil }
-        guard FileManager.default.fileExists(atPath: starter.tree.appendingPathComponent("lamp-app.json").path) else {
+        let listing = folder.appendingPathComponent(listingFolder).appendingPathComponent(Listed.about.rawValue)
+        guard hasTree(starter) || FileManager.default.fileExists(atPath: listing.path) else {
             NSLog("Lamp: the starter in %@ has no tree: run scripts/fetch-starters.sh", folder.lastPathComponent)
             return nil
         }
@@ -181,7 +222,12 @@ enum Starters {
             }
         }
         guard !name.isEmpty else { return nil }
-        return Starter(folder: folder, tree: folder.appendingPathComponent(treeFolder), name: name, offer: offer, tweaks: tweaks, kind: kind,
+        // A checkout's tree is beside starter.md; the bundle's starters are fetched into Lamp's folder, by commit.
+        var tree = folder.appendingPathComponent(treeFolder)
+        if let commit, !FileManager.default.fileExists(atPath: tree.path) {
+            tree = StarterDownloads.treeFolder(folder.lastPathComponent, commit: commit)
+        }
+        return Starter(folder: folder, tree: tree, name: name, offer: offer, tweaks: tweaks, kind: kind,
                        repository: repository, commit: commit)
     }
 
@@ -248,7 +294,8 @@ enum Starters {
     /// the starter named where it lives and at the commit this Lamp ships on the chain's link (what Update from GitHub…
     /// merges against and Send Changes Back… goes on top of). starter.md goes into .lamp; the drawn icon and the
     /// preview come from the tree's pictures. `package` stands in for the tree when given (a wish on this Mac being
-    /// made a starter, `StarterRepos`).
+    /// made a starter, `StarterRepos`). The tree must be here: the bundle's starters are fetched first
+    /// (`StarterDownloads.fetch`).
     /// `replacing` puts the starter in place of a copy's own files (`Store.bringUp`), as an update replaces a wish's.
     static func copy(_ starter: Starter, into project: LampProject, package given: Sharing.Package? = nil, replacing: Bool = false) throws {
         let fm = FileManager.default

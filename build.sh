@@ -33,7 +33,9 @@ case "$(uname -m)" in
 esac
 PI_TARBALL="vendor/pi-$PI_VERSION-darwin-$PI_ARCH.tar.gz"
 
-# llama.cpp's server runs downloaded models on this Mac (MIT, github.com/ggml-org/llama.cpp).
+# llama.cpp's server runs downloaded models on this Mac (MIT, github.com/ggml-org/llama.cpp). Lamp doesn't carry it:
+# it's signed here and zipped as an asset of the release (below), which Lamp fetches the first time a local model is
+# downloaded or picked (LlamaInstall.swift).
 LLAMA_BUILD="b11346"
 case "$(uname -m)" in
   arm64)  LLAMA_ARCH="arm64"; LLAMA_SHA256="25cefd22cf708a14eacea623327a2320fa07493a29b4c37bf3376623de581553" ;;
@@ -193,11 +195,23 @@ rm -rf "$APP/Contents/Resources/Devices" && if [[ -d Resources/Devices ]]; then 
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 # The wishes Lamp comes with (Starters.swift): each one's tree is its repository at the commit starter.md pins, fetched
-# here (never committed), and copied without the fetch's own git history, nor each one's reel and what records it,
-# which only its repository shows (scripts/showcase-starters.sh).
+# here (never committed). Lamp carries only what the desk lists each one by (Starters.Listed: its line, credits, picture
+# and icon, beside its starter.md), and the commit object, which the tree Lamp fetches when the starter is first opened
+# is checked against (StarterDownloads). A starter whose code uses a 3D scene is marked so, for Starters.runsHere.
 scripts/fetch-starters.sh
-rm -rf "$APP/Contents/Resources/Starters" && rsync -a --exclude '.git' --exclude '/*/showcase/' --exclude '/*/tree/.github/showcase/' \
-  Resources/Starters/ "$APP/Contents/Resources/Starters/"
+STARTERS="$APP/Contents/Resources/Starters"
+rm -rf "$STARTERS"
+for tree in Resources/Starters/*/tree(N/); do
+  starter="${tree:h:t}"; listing="$STARTERS/$starter/listing"
+  mkdir -p "$listing"
+  cp "${tree:h}/starter.md" "$STARTERS/$starter/"
+  cp "$tree/lamp-app.json" "$tree/.github/preview.png" "$tree/.github/icon/icon.png" "$listing/"
+  if [ -f "$tree/credits.json" ]; then cp "$tree/credits.json" "$listing/"; fi
+  git -C "$tree" cat-file commit HEAD > "$listing/commit"
+  if grep -rlsE --include='*.swift' --exclude=LampSupport.swift --exclude=LampScene.swift '^[[:space:]]*(@[[:alnum:]_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' "$tree/Sources" >/dev/null; then
+    : > "$listing/scene"
+  fi
+done
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as three.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what a game is written against, and its hosts (GameKit.swift)
@@ -210,10 +224,20 @@ rm -rf "$APP/Contents/Resources/LGPhones" && cp -R Resources/LGPhones "$APP/Cont
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
-# Only the server and its libraries (symlinks kept), not llama.cpp's other tools.
-mkdir -p "$APP/Contents/Resources/llama"
-tar xzf "$LLAMA_TARBALL" -C "$APP/Contents/Resources/llama" --strip-components 1 \
-  --include "llama-$LLAMA_BUILD/llama-server" --include "llama-$LLAMA_BUILD/LICENSE" --include "llama-$LLAMA_BUILD/*.dylib"
+# What Lamp fetches when it's needed rather than carrying it goes into the assets folder, which the release puts on
+# GitHub beside the DMG, each file named by edition and version and pinned in the bundle by address, size and SHA-256:
+# llama.cpp (here), and the starters' prebuilt apps (at the end). A build from source points at its own files.
+ASSETS="${${ASSETS_DIR:-${BUILD_DIR:-build}/assets}:A}"   # absolute: the zips are made from inside other folders
+if [ "$FLAVOR" = release ]; then
+  ASSET_STEM="Lamp"; ASSET_BASE="https://updates.lamp.dev/download/v$APP_VERSION"
+elif [ "$FLAVOR" = nightly ]; then
+  ASSET_STEM="Lamp-Nightly"; ASSET_BASE="https://updates.lamp.dev/download/nightly"
+else
+  ASSET_STEM="Lamp-Dev"; ASSET_BASE="file://${ASSETS// /%20}"
+fi
+mkdir -p "$ASSETS"
+# The pin of one asset, as Lamp reads it (Downloads.Pinned).
+pinned() { echo "{\"url\": \"$ASSET_BASE/${1:t}\", \"sha256\": \"$(shasum -a 256 "$1" | cut -d' ' -f1)\", \"size\": $(stat -f%z "$1")}"; }
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -297,10 +321,28 @@ sign() {
   [[ -n "$output" ]] && echo "$output" >$QUIET
   return 0
 }
-# Nested code first (pi's native module, llama.cpp's libraries and server, pi), then the app.
+# Nested code first (pi's native module, pi), then the app.
 find "$APP/Contents/Resources/pi" -name '*.node' -print0 | while IFS= read -r -d '' item; do sign "$item"; done
-find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -print0 |
-  while IFS= read -r -d '' item; do sign "$item"; done
+# llama.cpp: only the server and its libraries (symlinks kept), not its other tools, signed as Lamp is (which Lamp
+# checks before running them) and zipped as llama-<build>/. A build from source keeps its zip while the build and the
+# signing identity are the same, so its pin, and the copy a Lamp Dev already fetched, hold across rebuilds.
+LLAMA_ASSET="$ASSETS/$ASSET_STEM-llama-$LLAMA_BUILD-$APP_VERSION.zip"
+LLAMA_KEY=$( { echo "$LLAMA_BUILD $LLAMA_SHA256 $SIGN_ID"; shasum build.sh; } | shasum | cut -c1-16 )
+LLAMA_CACHED=".build/llama/$LLAMA_KEY.zip"
+rm -f "$ASSETS/$ASSET_STEM"-llama-*.zip(N)
+if [ "$FLAVOR" = dev ] && [ -f "$LLAMA_CACHED" ]; then
+  cp "$LLAMA_CACHED" "$LLAMA_ASSET"
+else
+  LLAMA_WORK="$(mktemp -d)"
+  tar xzf "$LLAMA_TARBALL" -C "$LLAMA_WORK" \
+    --include "llama-$LLAMA_BUILD/llama-server" --include "llama-$LLAMA_BUILD/LICENSE" --include "llama-$LLAMA_BUILD/*.dylib"
+  find "$LLAMA_WORK/llama-$LLAMA_BUILD" -type f \( -name '*.dylib' -o -name 'llama-server' \) -print0 |
+    while IFS= read -r -d '' item; do sign "$item"; done
+  (cd "$LLAMA_WORK" && ditto -c -k --norsrc --keepParent "llama-$LLAMA_BUILD" "$LLAMA_ASSET")
+  rm -rf "$LLAMA_WORK"
+  if [ "$FLAVOR" = dev ]; then rm -rf .build/llama && mkdir -p .build/llama && cp "$LLAMA_ASSET" "$LLAMA_CACHED"; fi
+fi
+echo "{\"build\": \"$LLAMA_BUILD\", \"asset\": $(pinned "$LLAMA_ASSET")}" > "$APP/Contents/Resources/llama.json"
 sign "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi"
 sign "$APP/Contents/Resources/LampSidebar"
 if [ -f "$APP/Contents/Resources/bin/xwin" ]; then sign "$APP/Contents/Resources/bin/xwin"; fi
@@ -354,19 +396,23 @@ fi
 rm -rf "$PLAYER_SOURCES" "$APP/Contents/Resources/LampPlayer.bundle"
 cp -R "$PLAYER" "$APP/Contents/Resources/LampPlayer.bundle"
 sign "$APP/Contents/Resources/LampPlayer.bundle"
-# Lamp ships the starters already built (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would, with
+# Lamp's release builds the starters (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would, with
 # this checkout's LampSupport, once Lamp's own parts are signed and before Lamp is: the stamp on what Lamp builds
-# (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and zipped beside its
-# starter's files, so the system never takes it for an app of its own.
+# (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and zipped into the assets
+# folder (ASSETS_DIR), named by edition, starter and version, which the release puts on GitHub beside the DMG; its
+# address, size and SHA-256 go into the starter's listing (prebuilt.json), so Lamp fetches it with the starter's tree
+# and refuses anything else. A build from source points at its own file.
 # A release does it, afresh. Building them takes minutes and what they're made from (the code Lamp writes into every
 # app, above all) changes with most work on Lamp, so a development build leaves them out unless asked
-# (PREBUILD_STARTERS=1): a Lamp Dev without them builds the starters on first launch, out of sight, as before they
-# shipped built. Asked, it keeps them in .build/prebuilt-starters under a key of what they're made from: the starters,
-# that code, the edition and the compiler; a build that finds them there only stamps them for itself
-# (--restamp-starters).
+# (PREBUILD_STARTERS=1): a Lamp Dev without them builds a starter once it's first opened, out of sight. Asked, it keeps
+# them in .build/prebuilt-starters under a key of what they're made from: the starters, that code, the edition and the
+# compiler; a build that finds them there only stamps them for itself (--restamp-starters).
 DEFAULT_PREBUILD=0; [ "$FLAVOR" != dev ] && DEFAULT_PREBUILD=1
 if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
-  STARTERS="$APP/Contents/Resources/Starters"
+  BUILT=".build/prebuilt-out"
+  rm -rf "$BUILT" && mkdir -p "$BUILT"
+  rm -f "$ASSETS/$ASSET_STEM"-Starter-*.zip(N)
+  export LAMP_STARTERS_FOLDER="$PWD/Resources/Starters"   # the checkout's starters, with their trees
   KEY=$( {
     echo "$FLAVOR"; xcrun swiftc --version 2>&1; xcrun --show-sdk-version
     find Resources/Starters Sources/Lamp/Template*.swift Sources/Lamp/Connectors.swift Sources/Lamp/Starters.swift \
@@ -376,27 +422,33 @@ if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
   if [ "$FLAVOR" = dev ] && [ -d "$CACHE" ]; then
     echo "Using the starters built before ($KEY)…"
     for cached in "$CACHE"/*(N/); do
-      rm -rf "$STARTERS/${cached:t}/Prebuilt"
-      cp -R "$cached" "$STARTERS/${cached:t}/Prebuilt"
+      mkdir -p "$BUILT/${cached:t}"
+      cp -R "$cached" "$BUILT/${cached:t}/Prebuilt"
     done
-    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --restamp-starters
+    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --restamp-starters "$BUILT"
   else
     echo "Building the starters Lamp ships…"
-    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --prebuild-starters
+    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --prebuild-starters "$BUILT"
     if [ "$FLAVOR" = dev ]; then
       rm -rf .build/prebuilt-starters
       mkdir -p "$CACHE.partial"
-      for prebuilt in "$STARTERS"/*/Prebuilt(N/); do cp -R "$prebuilt" "$CACHE.partial/${prebuilt:h:t}"; done
+      for prebuilt in "$BUILT"/*/Prebuilt(N/); do cp -R "$prebuilt" "$CACHE.partial/${prebuilt:h:t}"; done
       mv "$CACHE.partial" "$CACHE"
     fi
   fi
-  for prebuilt in "$STARTERS"/*/Prebuilt(N/); do
+  unset LAMP_STARTERS_FOLDER
+  for prebuilt in "$BUILT"/*/Prebuilt(N/); do
+    starter="${prebuilt:h:t}"
+    [ -d "$STARTERS/$starter/listing" ] || continue
     for built in "$prebuilt"/*.app; do
       for extension in "$built"/Contents/PlugIns/*.appex(N); do sign "$extension"; done
       sign "$built"
     done
-    (cd "$prebuilt:h" && rm -f Prebuilt.zip && ditto -c -k --norsrc --keepParent Prebuilt Prebuilt.zip && rm -rf Prebuilt)
+    ASSET="$ASSET_STEM-Starter-$starter-$APP_VERSION.zip"
+    (cd "$prebuilt:h" && ditto -c -k --norsrc --keepParent Prebuilt "$ASSETS/$ASSET")
+    pinned "$ASSETS/$ASSET" > "$STARTERS/$starter/listing/prebuilt.json"
   done
+  rm -rf "$BUILT"
 fi
 sign "${APP_ENTITLEMENTS[@]}" "$APP"
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"

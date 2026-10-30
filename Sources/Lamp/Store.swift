@@ -1117,7 +1117,6 @@ final class Store: ObservableObject {
         for project in projects { discardIfUnused(project.id) }
         // The wishes Lamp comes with don't count: they're there before the welcome is.
         Onboarding.settle(hasApps: projects.contains { !Starters.isStarter($0) })
-        if !Onboarding.isDone { installStarters() }
         // Lamp opens on the desk (`WishDesk`), not on a wish's chat.
         selection = nil
         startGateway()
@@ -1828,7 +1827,7 @@ final class Store: ObservableObject {
     /// The starter a remix names, when this Lamp ships it and it runs here.
     static func starter(named remix: Wish.Remix) -> Starters.Starter? {
         guard case .starter(let id) = remix.from else { return nil }
-        return Starters.bundled.first { $0.folder.lastPathComponent == id && Starters.runsHere($0.tree) }
+        return Starters.bundled.first { $0.folder.lastPathComponent == id && Starters.runsHere($0) }
     }
 
     /// Opens the starter with the request in its box: a copy already on the desk that nothing has been asked of and
@@ -1850,13 +1849,19 @@ final class Store: ObservableObject {
             return draft.text.trimmed.isEmpty && draft.attachments.isEmpty && draft.pointed == nil && draft.replacing == nil
         }
         let reused = copies.first { $0.id == remixApp } ?? copies.first(where: emptyBox)
-        guard let project = reused ?? put(starter: starter) else {
-            NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of \(starter.name).")).runModal()
-            return
+        func opened(_ project: LampProject) {
+            remixApp = project.id
+            open(fromDesk: project)
+            if let request { writeIn(request, for: project) }
         }
-        remixApp = project.id
-        open(fromDesk: project)
-        if let request { writeIn(request, for: project) }
+        if let reused { return opened(reused) }
+        fetching(starter, asking: "copy:" + (request ?? ""), alerting: true) { [self] starter in
+            guard let project = put(starter: starter) else {
+                NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of \(starter.name).")).runModal()
+                return
+            }
+            opened(project)
+        }
     }
 
     /// A remix link Lamp won't open: it names something other than a starter this Lamp ships or a repository on GitHub.
@@ -7367,26 +7372,79 @@ final class Store: ObservableObject {
 
     // MARK: - Starters
 
-    /// The wishes Lamp comes with (`Starters`), copied onto the desk on the first launch. Saved as their first
-    /// version and built afterwards (`prepareStarters`), once Apple's tools are there: git is one of them.
-    private func installStarters() {
-        guard !UserDefaults.standard.bool(forKey: Starters.installedKey) else { return }
-        UserDefaults.standard.set(true, forKey: Starters.installedKey)
-        let made = Starters.bundled.compactMap(add(starter:))
-        guard !made.isEmpty else { return }
-        reload()
-        startersInstall = Task {
-            // Drawn only for a starter shipped without its icon: the others' are on the desk already.
-            for project in made where !Starters.hasShippedIcon(project) {
-                if let spec = Icons.load(project) { await renderIcon(project, spec: spec) }
+    // The wishes Lamp comes with (`Starters`) are listed under the desk's Starter apps from the first launch, and each is
+    // copied onto the desk only when it's first opened or remixed (`fetching`, then `put(starter:)`): Lamp's bundle
+    // holds only what lists them, so copying them all at the first launch would download every one.
+
+    /// Starters being fetched for their first opening, by folder: their row says "Getting it ready…", as for one being
+    /// built (`openWhenReady`).
+    @Published private(set) var fetchingStarters: Set<String> = []
+    /// Starters whose fetch failed, by folder, with what to say: the row says it, and Open tries again.
+    @Published private(set) var starterFetchFailed: [String: String] = [:]
+
+    /// The starter's files (its tree, and its prebuilt app when this Lamp has one), fetched when they aren't on this
+    /// Mac yet (`StarterDownloads`), then `then` with it. Without a connection, the starter's row on the desk says so
+    /// and Open tries again; `alerting` (a remix link, New Copy of the Original: something asked for away from the
+    /// row) says it in an alert too, with Try Again.
+    /// `asking` names what the caller will do with it (Open, a request, a copy): a second ask while it's coming (a
+    /// change sent from the panel after Open, another link) waits for the same download and is answered in turn, and
+    /// one that's already waiting isn't added again, so Try Again on the row doesn't open it twice. What's waiting stays
+    /// through a failure, for the next try; Cancel in the alert lets it go.
+    func fetching(_ starter: Starters.Starter, asking: String = "", alerting: Bool = false,
+                  then: @escaping @MainActor (Starters.Starter) -> Void) {
+        let folder = starter.folder.lastPathComponent
+        let prebuiltHere = StarterDownloads.prebuilt(of: starter) == nil || StarterDownloads.prebuiltArchive(of: starter) != nil
+        if Starters.hasTree(starter), prebuiltHere { return then(starter) }
+        var waiting = fetchWaiters[folder] ?? []
+        // Opening it with a change asked covers opening it plainly: both would make a copy, and one is meant.
+        if asking == "open:", waiting.contains(where: { $0.asking.hasPrefix("open:") }) {
+            if alerting { fetchAlerts.insert(folder) }
+            return fetchAgain(starter)
+        }
+        waiting.removeAll { $0.asking == asking || (asking.hasPrefix("open:") && $0.asking == "open:") }
+        waiting.append((asking, then))
+        fetchWaiters[folder] = waiting
+        if alerting { fetchAlerts.insert(folder) }
+        fetchAgain(starter)
+    }
+
+    /// The starter's download, with whatever waits on it, unless it's under way already.
+    private func fetchAgain(_ starter: Starters.Starter) {
+        let folder = starter.folder.lastPathComponent
+        guard fetchWaiters[folder]?.isEmpty == false, fetchingStarters.insert(folder).inserted else { return }
+        starterFetchFailed[folder] = nil
+        let needsPrebuilt = !setup.hasBuildTools
+        Task {
+            do {
+                try await StarterDownloads.fetch(starter, needsPrebuilt: needsPrebuilt)
+                fetchingStarters.remove(folder)
+                fetchAlerts.remove(folder)
+                for waiting in fetchWaiters.removeValue(forKey: folder) ?? [] { waiting.then(starter) }
+            } catch {
+                fetchingStarters.remove(folder)
+                starterFetchFailed[folder] = error.localizedDescription
+                guard fetchAlerts.remove(folder) != nil else { return }
+                let alert = NSAlert()
+                alert.messageText = "Lamp couldn't get \(starter.name)"
+                alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: "Try Again")
+                alert.addButton(withTitle: "Cancel")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    fetchAlerts.insert(folder)
+                    fetchAgain(starter)
+                } else {
+                    fetchWaiters[folder] = nil
+                }
             }
         }
     }
-    private var startersInstall: Task<Void, Never>?
+    private var fetchWaiters: [String: [(asking: String, then: @MainActor (Starters.Starter) -> Void)]] = [:]
+    /// Starters a caller wants told of a failure in an alert (a link, a menu command), not only on the row.
+    private var fetchAlerts: Set<String> = []
 
-    /// One starter put on the desk from Lamp's bundle, as on the first launch: its files in a new app, saved as
-    /// its first version and built by `prepareStarters`. The caller reloads the desk. Nil when it couldn't be
-    /// written, and then nothing of it is left.
+    /// One starter put on the desk, its files fetched (`fetching`): its files in a new app, saved as its first version
+    /// and built by `prepareStarters`. The caller reloads the desk. Nil when it couldn't be written, and then nothing
+    /// of it is left.
     func add(starter: Starters.Starter) -> LampProject? {
         do {
             let project = try Template.draft(name: uniqueName(starter.name), platform: starter.kind, in: root)
@@ -7407,9 +7465,9 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A starter put on the desk after the first launch (opened from the desk's Starter apps, a remix of one from the site, New
-    /// Copy of the Original): added, shown on the desk, and
-    /// saved and built out of sight like the first launch's (`prepareStarters`).
+    /// A starter put on the desk (opened from the desk's Starter apps, a remix of one from the site, New Copy of the
+    /// Original), once its files are fetched (`fetching`): added, shown on the desk, and saved and built out of sight
+    /// (`prepareStarters`).
     @discardableResult func put(starter: Starters.Starter) -> LampProject? {
         guard let added = add(starter: starter) else { return nil }
         reload()
@@ -7468,10 +7526,18 @@ final class Store: ObservableObject {
                 offerNewerOriginal(project, starter: starter)
                 continue
             }
-            guard !isRunning(project), begin(project) != nil else { continue }
-            let brought = await bringUp(project, to: starter)
-            finish(project)
-            if brought { broughtUp.insert(project.id) }
+            // The newer starter's files, fetched for it: without a connection it waits for the next launch.
+            guard !isRunning(project), (try? await StarterDownloads.fetch(starter)) != nil,
+                  let held = current(project), begin(held) != nil else { continue }
+            // Looked at again under the hold: the person may have opened or changed it while the files came.
+            guard !isRunning(held), await original(toStartAgain: held) == nil else {
+                finish(held)
+                if await original(toStartAgain: held) != nil { offerNewerOriginal(held, starter: starter) }
+                continue
+            }
+            let brought = await bringUp(held, to: starter)
+            finish(held)
+            if brought { broughtUp.insert(held.id) }
         }
     }
 
@@ -7539,6 +7605,11 @@ final class Store: ObservableObject {
         }
         if opening { open(fromDesk: project) }
         Task {
+            // The newer starter's files, fetched for it; the card stays to try again.
+            do { try await StarterDownloads.fetch(starter) } catch {
+                finish(project)
+                return log(project, .error, "Lamp couldn't get the newer original. \(error.localizedDescription)")
+            }
             if await original(toStartAgain: project) != nil {
                 let package: Sharing.Package
                 do { package = try Starters.package(of: starter) } catch {
@@ -7568,6 +7639,10 @@ final class Store: ObservableObject {
     /// was behind or merged up to it since. The conversation starts again as Start Over's does
     /// (`startConversationAgain`).
     func startOverBegun(_ project: LampProject, to starter: Starters.Starter, from arrival: AppVersion?) async {
+        // The starter's files first, so nothing is taken back when they can't be had.
+        do { try await StarterDownloads.fetch(starter) } catch {
+            return log(project, .error, "Lamp couldn't get the original, so your app is just as it was. \(error.localizedDescription)")
+        }
         dropPausedRequest(project)
         if let arrival {
             guard await Versions.restoreFiles(project, to: arrival) else { return log(project, .error, Self.startOverFailed) }
@@ -7604,7 +7679,6 @@ final class Store: ObservableObject {
         preparingStarters = true
         Task {
             defer { preparingStarters = false }
-            await startersInstall?.value
             // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them, or a game
             // made before them, gets its first version when they arrive.
             if setup.hasBuildTools { await saveFirstVersions() }
@@ -7649,11 +7723,15 @@ final class Store: ObservableObject {
     }
 
     /// Whether some starter can be made ready now: any, once Apple's build tools are there, and before then the
-    /// ones Lamp came with already built (`PrebuiltStarters`).
+    /// ones Lamp came with already built (`PrebuiltStarters`). One opened whose prebuilt copy this Lamp pins but couldn't
+    /// get (an old nightly's, gone) goes on to wait for the tools as a refused one does (`awaitToolsToOpen`).
     func canPrepare(_ project: LampProject? = nil) -> Bool {
         if setup.hasBuildTools { return true }
-        if let project { return PrebuiltStarters.has(project) || !needsAppleTools(project) }
-        return projects.contains { needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)) }
+        if let project { return PrebuiltStarters.has(project) || PrebuiltStarters.unavailable(project) || !needsAppleTools(project) }
+        return projects.contains {
+            needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)
+                || (PrebuiltStarters.unavailable($0) && openWhenReady.contains($0.id)))
+        }
     }
 
     /// Whether a starter's turn comes: one whose prebuilt copy was refused, on a Mac with no tools to build it, only once

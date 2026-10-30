@@ -41,7 +41,7 @@ first time you ask for a change, Lamp has you sign in with Claude or ChatGPT (or
 | An AI to build with | Writes the apps | Claude Code or ChatGPT Codex with your subscription, an [OpenRouter](https://openrouter.ai/keys) key, or a model running on your Mac. See [Choosing the AI](#choosing-the-ai). |
 | An OpenRouter key (optional) | The best image models, icon artwork, decisions (Jev) and the fast in-app AI models | Without one, apps' text AI uses whatever builds them (a model on your Mac, or your Claude Code or ChatGPT Codex sign-in) |
 
-Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) and llama.cpp's model server are bundled inside `Lamp.app`; `build.sh` downloads pinned, checksum-verified copies (about 40 MB together). No Apple developer account is needed to build it. A build from source is **Lamp Dev**: a separate app from the Lamp you install, with its own icon, folders, apps and settings, signed only for your own Mac and never updating itself (release builds are signed and notarized with the team's Developer ID and update themselves). Every app Lamp builds is signed with a certificate Lamp makes on your Mac the first time, so an app keeps the permissions you give it across rebuilds.
+Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) is bundled inside `Lamp.app`, and llama.cpp's model server is fetched the first time a local model needs it; `build.sh` downloads pinned, checksum-verified copies of both (about 40 MB together). No Apple developer account is needed to build it. A build from source is **Lamp Dev**: a separate app from the Lamp you install, with its own icon, folders, apps and settings, signed only for your own Mac and never updating itself (release builds are signed and notarized with the team's Developer ID and update themselves). Every app Lamp builds is signed with a certificate Lamp makes on your Mac the first time, so an app keeps the permissions you give it across rebuilds.
 
 ## Download
 
@@ -157,7 +157,7 @@ Lamp looks at your network only when you ask it to. What it finds stays on this 
 - **Lamp's built-in agent (pi)** with either of these:
   - **An OpenRouter key.** Pick any model from OpenRouter's list; it's searchable.
   - **On this Mac (local models).** **Native Mac AI** in **Settings → AI Providers** lists every model Lamp can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Lamp's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.
-    - **GGUF models** run on Lamp's bundled llama.cpp server (`127.0.0.1:47812`, router mode, loading models on demand). It reads them through a folder of symlinks (`~/Library/Application Support/Lamp/Router`), so nothing is copied.
+    - **GGUF models** run on llama.cpp's server (`127.0.0.1:47812`, router mode, loading models on demand), which Lamp downloads the first time a GGUF model is downloaded or picked, checks for Lamp's own signature, and keeps in `~/Library/Application Support/Lamp/llama`. It reads them through a folder of symlinks (`~/Library/Application Support/Lamp/Router`), so nothing is copied.
     - **MLX models** (like the ones Local uses) run on `mlx_lm.server` (`127.0.0.1:47813`) once mlx-lm is installed: Lamp installs it from Settings → AI Providers → Native Mac AI, with its own copy of uv if the Mac has none.
     - Servers start when needed and stop when Lamp quits.
 - **Claude Code or ChatGPT Codex**, with a Claude or ChatGPT subscription. Lamp uses the copy already on the Mac (on your PATH or inside the Claude or ChatGPT app) with its sign-in, or else downloads and updates its own, so nothing else needs installing. It runs them with file editing allowed and the shell turned off (sandboxed, for Codex), and builds the app itself.
@@ -210,7 +210,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Sources/Lamp/Store.swift` | App state and the build / install / undo loop |
 | `Sources/Lamp/Agent.swift` | pi invocation, system prompt, JSON event parsing, shell helper |
 | `Sources/Lamp/Engines.swift` | Engine choice (pi, Claude Code, Codex), commands and parsers, finding installed tools |
-| `Sources/Lamp/LocalModels.swift` | Hugging Face downloads and the bundled llama.cpp and MLX model servers |
+| `Sources/Lamp/LocalModels.swift` | Hugging Face downloads and the llama.cpp and MLX model servers (llama.cpp fetched by `LlamaInstall.swift`) |
 | `Sources/Lamp/Composer.swift` | Chat input (Return / Shift-Return, paste and drop) and attachments |
 | `Sources/Lamp/Template.swift` | Scaffold for new apps, including the generated `LampSupport.swift` |
 | `Sources/Lamp/AppSigning.swift` | The stable signature on built apps, so macOS permissions survive rebuilds |

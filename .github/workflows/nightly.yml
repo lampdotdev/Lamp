@@ -116,17 +116,30 @@ jobs:
           # the release whole and the feed never pairs a signature with another file; the newest three stay, since the
           # feed is cached for a quarter of an hour and an update window may stay open longer, and each names the DMG
           # it signed (updates/api/appcast.js), which must still be there to verify.
+          # What this nightly fetches when it's needed (dist/assets: each starter's prebuilt app, named by its version)
+          # goes up with its DMG.
           git push -f origin "$GITHUB_SHA:refs/tags/nightly"
           if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" --clobber
+            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/assets/* --clobber
             gh release upload nightly dist/sparkle.json --clobber
             gh release edit nightly --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
           else
-            gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json \
+            gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json dist/assets/* \
               --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
           fi
           gh release view nightly --json assets \
             --jq '[.assets[] | select(.name | test("^Lamp-Nightly-.*\\.dmg$"))] | sort_by(.createdAt) | reverse | .[3:] | .[].name' |
+          while read -r old; do
+            [ -n "$old" ] || continue
+            echo "Removing $old"
+            gh release delete-asset nightly "$old" --yes || true
+          done
+          # What each nightly fetches when it's needed (its prebuilt starters, llama.cpp) stays far longer than its DMG:
+          # an installed nightly pins those files for as long as it runs, while a DMG only has to outlast update offers.
+          # The newest 20 versions' are kept, each version named at the end of its files.
+          gh release view nightly --json assets \
+            --jq '[.assets[] | select(.name | test("^Lamp-Nightly-.*\\.zip$"))] | sort_by(.createdAt) | reverse | .[].name' |
+          awk '{ v = $0; sub(/\.zip$/, "", v); sub(/.*-/, "", v); if (!(v in seen)) { seen[v] = 1; n++ } if (n > 20) print }' |
           while read -r old; do
             [ -n "$old" ] || continue
             echo "Removing $old"
