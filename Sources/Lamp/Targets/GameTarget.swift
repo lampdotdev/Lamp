@@ -60,6 +60,6 @@ extension Target {
 
 extension Language {
     static let game = Language(name: "game", code: "the game's page in Web/", leftover: "the game's files in Web/") {
-        "Write the app again as a game in Web/ against Lamp's game runtime (the scaffold is there), drawn as the game skill and the 2d-game or 3d-game skill say (read them first), reading \($0) for what it does, then delete \($1) with delete_file. "
+        "Write the app again as a game in Web/ against Lamp's game runtime (the scaffold is there), drawn as the game skill, the game-ui skill and the 2d-game or 3d-game skill say (read them first), reading \($0) for what it does, then delete \($1) with delete_file. "
     }
 }

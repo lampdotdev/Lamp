@@ -7,8 +7,8 @@ description: Games, 2D or 3D, made either way - what makes one fun and playtesti
 
 A game is something played in real time, rather than used. What follows holds for every game, whichever way it's
 made; each part then names the tools for each make. For a game in 2D, open the 2d-game skill too (Phaser or SpriteKit,
-and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityKit in Swift). For its title, menus,
-level select, HUD, pause and results, the game-ui skill.
+and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityKit in Swift). Before designing its
+title, menus, level select, HUD, pause or results, read the game-ui skill.
 
 The tools Lamp has for games:
 
