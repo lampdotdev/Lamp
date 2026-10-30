@@ -476,15 +476,13 @@ capabilities.json) reopens it, held for Reload while the person has it open. On 
 from Lamp's player (below) unless it has Swift of its own.
 
 A change to a game while it's played. While the agent works, each change it saves goes into the game open on this Mac
-once it compiles and the saving has paused, not waiting for the agent to look or for the turn to end
-(`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app: the saved files are read every two
-seconds, and a game's are tried once they've held still for six seconds, no more often than every fifteen, since each
-step can hold the picture for a moment), and while the agent's look plays the game in the hidden copy, which can take
-minutes (only the look's build, which writes the same folders, is waited for; `PageLive.put` puts one change into a
-copy at a time). Lamp's own checking says nothing in the chat: the hidden copy's build and play show no line, and a
-look's build of sources a step already put into the open game doesn't say "Building…" (`Turn.shownSources`). A message
-the person sends while the hidden copy plays stops the play (`WebGamePreview.stop`), and the agent's look answers that
-the person wrote, so a message never waits behind Lamp's checking. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+once it compiles, the saving has paused a few seconds and the agent has said in a progress line what's now in it
+(`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app; the `progress` tool's description says
+so, for every engine). Only the agent can tell an edit the person would see from one they wouldn't (a refactor, half a
+piece of work), so its line is both the trigger and the chat's word for the step ("Put into New York: The car is
+rainbow now"); a save that leaves the page's files as the last step put them in (`pageSignature`) puts nothing in. It
+also goes in while the agent's look plays the game in the hidden copy, which can take minutes, once the look has put
+its own change in (`PageLive.put` puts one change into a copy at a time). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the

@@ -782,6 +782,8 @@ final class Store: ObservableObject {
         /// When a change last went in by itself as the agent saved (`autoApply`): what went in next is what the agent
         /// did since (`stepWords`).
         var lastStepAt: Date?
+        /// The game's page as the last step put it in (`pageSignature`): a save that leaves it the same puts nothing in.
+        var shownPage = ""
         /// Stops the agent's look playing the game in the hidden copy (`playGame`), set while it plays: a message from the
         /// person stops it (`stoppedForMessage`), so they never wait behind Lamp's own checking. It stops that play alone,
         /// for the game being played (a wish's part, under the wish's turn), never a build the turn runs beside it.
@@ -8691,7 +8693,24 @@ final class Store: ObservableObject {
         return logs[wish(of: project).id]?.last { $0.kind == .progress && ($0.at ?? .distantPast) >= since }?.text
     }
 
+    /// The game's page as it is (each file's path, size and time), to tell a save that changed what's shown from one that
+    /// changed nothing the page is made of (notes, APP.md, a file saved again as it was).
+    private func pageSignature(_ project: LampProject) -> String {
+        let web = project.dir.appendingPathComponent(GameKit.webFolder)
+        var hasher = SHA256()
+        let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])?.allObjects as? [URL] ?? [])
+            .sorted { $0.path < $1.path }
+        for file in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            hasher.update(data: Data("\(file.path)\n\(values?.fileSize ?? 0)\n\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)".utf8))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
+        // Nothing the page is made of changed since the last step: nothing to put in, nor to say.
+        let page = pageSignature(project)
+        guard page != turn.shownPage else { return }
         // Still being written, or broken: tried again once it changes.
         guard await GameKit.codeProblem(project) == nil else { return }
         // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
@@ -8706,6 +8725,7 @@ final class Store: ObservableObject {
         // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
         guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
         turn.shownSources = Runtime.fingerprint(current)
+        turn.shownPage = page
         turn.autoApplied += 1
         log(current, .status, stepWords(current, turn))
         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
