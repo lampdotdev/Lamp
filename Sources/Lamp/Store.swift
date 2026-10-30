@@ -1232,6 +1232,18 @@ final class Store: ObservableObject {
 
     var selected: LampProject? { projects.first { $0.id == selection } }
 
+    /// The wish a menu bar command acts on: the one picked on the desk while the desk's window is the active one
+    /// (`deskPick`), else the chat in front. The pick stays apart from `selection`, which also says what's been read and
+    /// which window asks the store's questions: a wish picked on the desk has had neither happen.
+    func commandTarget(deskPick: LampProject.ID?) -> LampProject? {
+        deskPick.flatMap { id in projects.first { $0.id == id } } ?? selected
+    }
+
+    /// Whether Duplicate… can be chosen for a wish, in the File menu and the wish's own. `remix` asks again when it runs.
+    func canDuplicate(_ project: LampProject) -> Bool {
+        !busy.contains(project.id) && !project.untitled && project.scaffolded && AppUpdates.mayRemix(project)
+    }
+
     /// Clears the "ready" dot for the app on screen. Also called when Lamp comes back to the front.
     func markRead() {
         if let selection, NSApp?.isActive ?? true { unread.remove(selection) }

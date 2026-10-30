@@ -467,7 +467,7 @@ struct DeskWishMenu: View {
             sent()
             Task { await store.remix(project, change: asked.isEmpty ? nil : asked) }
         }
-        .disabled(busy || !project.scaffolded || project.untitled || !AppUpdates.mayRemix(project))
+        .disabled(!store.canDuplicate(project))
         if entry?.changedFromOriginal == true {
             // A fresh copy beside this one: only a starter, whose original this Lamp ships.
             if entry?.isStarter == true {

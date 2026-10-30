@@ -60,7 +60,8 @@ untouched copy of the starter with the request written into its box (`openCopy`)
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
 open the starter itself), and the shuffle mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
-wish's menu and File → Duplicate…) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
+wish's menu and File → Duplicate…, which acts on the row picked while the desk is in front and otherwise on the chat in
+front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
 to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
 panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
 the card its starter's chat opens on (the original's starter.md kept as `.lamp/starter-suggestions.md`,
