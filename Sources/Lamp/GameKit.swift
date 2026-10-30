@@ -731,9 +731,10 @@ enum GameKit {
     Nothing yet: fresh scaffold, a card saying "Lamp is making this game.", for the game to replace.
 
     ## Code
-    game.js puts the parts together and keeps the renderer and the world through a change (`hot(import.meta).keep`),
-    world.js builds the world (the scene and camera) and builds it again in place when it changes, and making.js (the
-    card) is a part that changes while the game is played: a class in a module ending with `hot(import.meta).accept()`.
+    game.js puts the parts together and registers what lasts through a change: the renderer, the camera, the gameplay
+    state and the world (`hot(import.meta).renderer`, `camera`, `state`, `keep`). world.js builds the world and builds it
+    again in place when it changes, and making.js (the card) is a part that changes while the game is played: a class
+    in a module ending with `hot(import.meta).accept()`.
 
     """
 
@@ -1315,22 +1316,27 @@ extension Agent.Rules {
 
     /// How a change goes into the game while it's played (lamp-game.js, "Changes while it's played"; `PageLive`).
     static let gameWebLive = """
-    - Your changes go into the game while the person plays it, so write it to keep their place. Give game() (or phaser()) \
-    `snapshot()`, returning as plain JSON everything that says where the game is (the mode, which menu or overlay is open, \
-    the level, the player's position, heading and speed, what they ride or hold, the camera, the score, lives, time, the \
-    time of day…). The new code starts straight there: as the game starts (in init, or the first Phaser scene), \
-    `pendingRestore()` from lamp-game.js gives that state, or null for a fresh start, and the game builds exactly that \
-    place, with that menu or overlay open and nothing a fresh start would show (no title, intro or tutorial), never \
-    starting fresh and then patching it. Keep snapshot() current as you add state, and let the start take a snapshot from \
-    before your change (a missing field keeps its start value). Load pictures, models, sounds and \
+    - Your changes go into the game while the person plays it, so write it to keep their place: register what has to \
+    last by name, once, as the game skill ("Changes while it's played") says, and the runtime keeps it. With \
+    `const live = hot(import.meta)` from lamp-game.js: `live.renderer(build)` for the renderer, so new code gets the one \
+    the game has rather than making another; `live.camera(id, build, { target })` for each camera, which keeps its pose, \
+    lens and target; `live.state(id, { version, start })` for everything that says where the game is, as one plain \
+    object the game changes and never replaces (the mode, which menu or overlay is open, the level, the player's \
+    position, heading and speed, what they ride or hold, the score, lives, time, the time of day…); and \
+    `live.keep(key, build, { inputs })` for each part of the world. All of it is back before init reads it and before \
+    the first frame, so the one start reads the state and builds that place, with that menu or overlay open and nothing \
+    a fresh start would show (no title, intro or tutorial). Raise `version` with a `migrate` when a field changes its \
+    meaning; a field you add takes its start value. Only what's registered is kept: a renderer, camera or variable of \
+    the game's own starts again with the code. A 2D game registers its state, since Phaser's renderer and cameras \
+    are made again from it. Load pictures, models, sounds and \
     data through lamp-game.js (`texture('bricks.png')`, `model('car.glb')`, `sound.load('hit.wav')`, `asset('level.json')`), \
     never by a URL of your own, so a new copy goes into the running game; where the game makes something of its own from \
     a file (a material from shader source, clones of a model, a level from JSON), give game() `assetChanged(path)`, which \
     makes it again and returns true. A change of code goes into the running game without the page opening again: \
     swapped where a module that ends with `hot(import.meta).accept()` takes it, else by the game's code running again \
-    in place from the snapshot, keeping the renderer and the parts kept with `hot(import.meta).keep`. So write the game \
-    in parts as the game skill ("Changes while it's played") says: the starting module only puts them together and keeps \
-    the renderer and each part of the world, the HUD and menus are made at each start, and what changes often is a class \
+    in place, keeping everything registered. So write the game \
+    in parts as the game skill ("Changes while it's played") says: the starting module only puts them together and \
+    registers what lasts, the HUD and menus are made at each start, and what changes often is a class \
     in a module that takes its changes. The log says what was swapped or kept and how long it took. While a match, race \
     or round is on, `busy()` returns true: a change that runs the code again waits for the next pause and the person \
     can press Reload. A change of code with no snapshot that can't be swapped starts the game again.

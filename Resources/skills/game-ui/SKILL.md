@@ -88,8 +88,8 @@ What makes it work anywhere:
 - A returning player never walks the path again: Continue and Rematch start the chosen level directly.
 - Decide who steers a shared menu: the first player, the host, or a vote. All phones moving one marker isn't a design.
 - In a small window the choices stay the same size; the map recomposes rather than shrinks.
-- What a snapshot keeps is yours to name: the screen, the node, the camera and the focus, restored directly with no intro
-  replayed (the game skill, "Changes while it's played"). The map isn't `busy()`.
+- What the registered state keeps is yours to name: the screen, the node and the focus, with the camera registered too,
+  restored directly with no intro replayed (the game skill, "Changes while it's played"). The map isn't `busy()`.
 
 ## Teaching and input
 

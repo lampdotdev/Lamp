@@ -1,4 +1,4 @@
-// What's slow to build and rarely changes: the scene, its camera, and later the level, the ground and the buildings.
+// What's slow to build and rarely changes: the scene, and later the level, the ground and the buildings.
 // build() puts it all in `built`, so a change to this file builds the world again in the running game, with the player
 // and everything else kept (the end of this file; lamp-game.js, "Changes while it's played").
 import * as THREE from 'three';
@@ -10,7 +10,6 @@ const worlds = (live.data.worlds ??= new Set());
 export class World {
     constructor() {
         this.scene = new THREE.Scene();
-        this.camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 10);
         this.built = new THREE.Group();
         this.scene.add(this.built);
         this.build();

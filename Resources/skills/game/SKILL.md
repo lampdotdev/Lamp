@@ -142,20 +142,54 @@ Swift: LampStore.
 Lamp puts each change into the game while the person plays it (Web: lamp-game.js, "Changes while it's played"), so a
 game is written to keep the player's place through one:
 
-- `snapshot()` in game() (or phaser()) returns, as plain JSON, everything that says where the game is: the mode
-  (playing, paused, a menu), which menu, overlay or card is open, the level, the player's position, heading and speed,
-  what they ride or hold, the camera, the score, lives, the clock, the time of day.
-- The new code starts straight from it. `pendingRestore()` from lamp-game.js gives the snapshot while the game starts
-  (in `init`; in a 2D game in its first scene's `init` or `create`), or null for a fresh start, and null again once
-  the game has started, so a later restart (a new round, a death) is fresh. With a state, the game builds exactly that
-  screen: that mode, that menu or overlay open, and nothing a fresh start shows (a title card, an intro, a tutorial
-  prompt, a fade in) built or shown at all. One start path, given the state or not, is the pattern: never start fresh
-  and then put the place back, which leaves the title over the game and input in the title's mode. Keep snapshot()
-  current as state is added, and let the start take an older snapshot: a field it lacks keeps its start value. Without
-  a snapshot a change of code that can't be swapped in (below) starts the game again, from its saves. (`restore(state)`, called after init when the
-  game didn't read pendingRestore(), is still taken from games written that way; a new game reads the state at start.)
+- **Everything that has to last is registered, by name, once.** That's how every new game is written, and the scaffold
+  starts that way. Web, with `const live = hot(import.meta)` from lamp-game.js:
+
+  ```js
+  const renderer = live.renderer(() => new THREE.WebGLRenderer({ antialias: true }));
+  const camera = live.camera('main', () => {
+      const c = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 500);
+      c.position.set(0, 4, 12);   // its starting pose and lens are made here, and nowhere else
+      return c;
+  }, { target: () => controls.target });
+  const play = live.state('play', {
+      version: 1,
+      start: () => ({ mode: 'title', menu: null, level: 1, score: 0, lives: 3, player: { x: 0, z: 0, heading: 0, speed: 0 } }),
+  });
+  ```
+
+  - `live.renderer(build)`: new code gets the renderer the game has before it could make another, so there's one, with
+    its compiled shaders. It's made again only when `build` itself changes. An async build (the 3d-game skill's
+    WebGPU) is awaited.
+  - `live.camera(id, build, { target })`: keeps the camera's pose, lens and what it looks at (`target` gives anything
+    with x, y and z that new code makes again, as OrbitControls' `target`). At the first frame it's where the player
+    left it, whatever the start set. A change to `build` gives the new lens at the old pose.
+  - `live.state(id, { version, start, migrate })`: everything that says where the game is goes in one plain object,
+    the mode (playing, paused, a menu), which menu, overlay or card is open, the level, the player's position, heading
+    and speed, what they ride or hold, the score, lives, the clock, the time of day. Change its fields and never
+    replace it. Lamp snapshots it as plain JSON by itself, so it holds no objects of three.js or Phaser, and nothing
+    derived from it is kept elsewhere. A field added to `start()` takes its start value, and every other field keeps its value.
+    Raise `version` when a field changes its meaning, with `migrate(old, oldVersion)` to carry the old state over; with
+    none, that state starts over from `start()`.
+  - Each part of the world is kept with `live.keep` (below).
+
+  Only what's registered is kept. A renderer or camera the game's code makes for itself, or a variable of its own,
+  starts again with the code.
+- **One start path.** Everything registered is back before `init` runs and before the first frame, at a fresh start
+  it's `start()`, and the same object stays the whole time. So `init` (in a 2D game, the first scene's `init` or
+  `create`) reads the state and builds exactly that screen: that mode, that menu or overlay open, and nothing a fresh
+  start shows (a title card, an intro, a tutorial prompt, a fade in) built or shown at all. Never start fresh and then
+  put the place back, which leaves the title over the game and input in the title's mode. A later restart (a new
+  round, a death) sets the state's fields back itself. A 2D game registers its state; Phaser's game and cameras are made
+  again from it.
+- **A game from before this**, or one brought in, may use `snapshot()` in game() (or phaser()), plain JSON of where it
+  is, with `pendingRestore()` (the state while it starts, null for a fresh start and once it has started) or
+  `restore(state)` (called after init when it didn't read pendingRestore()). They're still taken, and a change keeps
+  its place through them. Without either it starts again, from its saves. When you're asked to change such a game, register what your change
+  touches as you make it, and leave the rest for the changes that touch it: move its renderer into `live.renderer` first, its
+  main camera into `live.camera`, then its state, field by field out of snapshot() into `live.state`.
 - A game with phones keeps them through all of this: they stay joined with their numbers, and the code never stops or
-  starts `Lamp.controllers` for a change. So snapshot() holds which player owns which slot (the seat, side, color or
+  starts `Lamp.controllers` for a change. So the state holds which player owns which slot (the seat, side, color or
   team each player number has), and the new code restores those slots before it sits anyone down. As its first frame
   nears, `onLeave` and `onJoin` are called again for who left and who is here, so `onJoin` for a player who already has
   a slot leaves the slot alone, and only a new player takes a free one. What a phone has held down is `isHeld`; a
@@ -171,22 +205,23 @@ game is written to keep the player's place through one:
     from lamp-game.js. Every object the game made of that class runs the new methods with its fields kept.
   - **Run again in place**, for anything else (the HTML, the module that starts the game, a class's constructor or
     fields, an exported function, a new module): the page is put back as the new HTML has it, every module of the game
-    runs again, and the game starts straight from the snapshot, as a reload would but without one. What the game keeps
-    stays: the renderer and its compiled shaders, the files the runtime loaded, and each part kept with
-    `hot(import.meta).keep(key, build, { inputs })`, so the change costs only what's built again. The listeners,
+    runs again, and the game starts straight from what it registered, as a reload would but without one. What's
+    registered stays: the renderer and its compiled shaders, the cameras, the state, and each part kept with
+    `hot(import.meta).keep(key, build, { inputs })`, and so do the files the runtime loaded, so the change costs only
+    what's built again. The listeners,
     timers, sound contexts and workers the old code started are taken away by Lamp, and so are its `Lamp.controllers`
     callbacks, which the new code sets again as it starts; `dispose` in game() is for anything else it must let go of,
     and never stops the phones (a `stop()` there is ignored).
 
   So a game is written in parts, each in a module of its own:
 
-  - **The module that starts the game only puts the parts together** (`game.js`; New York's `main.js`). It keeps the
-    renderer, and each part of the world:
+  - **The module that starts the game only puts the parts together** (`game.js`; New York's `main.js`). It registers
+    the renderer, the cameras and the state, and keeps each part of the world:
 
     ```js
-    import { game, hot, pendingRestore } from './lamp-game.js';
+    import { game, hot } from './lamp-game.js';
     const live = hot(import.meta);
-    const renderer = live.keep('renderer', () => new THREE.WebGLRenderer({ antialias: true }));
+    const renderer = live.renderer(() => new THREE.WebGLRenderer({ antialias: true }));
     const ground = live.keep('ground', () => buildGround());
     const trees = live.keep('trees', () => buildTrees(ground.heights), { inputs: [ground] });
     scene.add(ground.group, trees.group);
@@ -199,7 +234,7 @@ game is written to keep the player's place through one:
     culling) inside its build, never to a kept part afterwards. The build function in the starting module names the
     module it builds from (`buildTrees`), since that's how Lamp tells which change is its own.
 
-    A big 3D world on three.js's `WebGPURenderer` keeps its scene, camera and lights the same way. For a new one of
+    A big 3D world on three.js's `WebGPURenderer` keeps its scene and lights the same way, as its camera is. For a new one of
     them it works out how to draw every object again, which holds a big world still for a second at each change. Empty
     the kept scene at each start (`scene.clear()`), then add back the kept lights and each part's group, so what the
     last run added doesn't stay.
@@ -230,13 +265,13 @@ game is written to keep the player's place through one:
 
   A stylesheet is swapped by itself. Where running again can't be done (a change to the import map or to a script that
   isn't a module, modules that import each other in a circle) the change waits for the person's Reload, which opens the
-  page again from the snapshot; so does new code that fails as it starts, before its first frame or in its first
+  page again from what's registered; so does new code that fails as it starts, before its first frame or in its first
   second, at once. A game bundled from TypeScript is one
   file, so its changes run it again, and what it keeps is built again with each change.
 - `busy()` is true while a match, race or round is on: a change that runs the code again then waits for the next
   pause, and the person can put it in at once with Reload. A swap goes in at once.
-- On a phone, Android, a TV or the Xbox a change arrives when Lamp installs the game again, and the runtime restores the
-  last snapshot then, once.
+- On a phone, Android, a TV or the Xbox a change arrives when Lamp installs the game again, and the runtime puts what's
+  registered back then, once, as it does the last snapshot.
 
 Swift: a change reopens the app; what it keeps is what it saved.
 
