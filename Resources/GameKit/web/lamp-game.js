@@ -1377,13 +1377,18 @@ function keep(path, key, build, options = {}) {
     }
     if (had) letGo(had);
     const entry = { path, key, text, inputs, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false, value: undefined, made: undefined };
+    // What the build starts as it runs belongs to the part. An async build's later work can't be told from other code
+    // that runs while it waits, so of what's listened to meanwhile only listeners on the part itself (its object, its
+    // canvas, an element inside it) stay with it; the rest is watched as the game's.
     keeping++;
     let value;
-    try { value = build(); } catch (e) { keeping--; throw e; }
+    try { value = build(); } finally { keeping--; }
     if (value && typeof value.then === 'function') {
-        value = Promise.resolve(value).finally(() => { keeping--; });
-        value.then(v => { entry.made = v; }, () => { if (kept.get(id) === entry) kept.delete(id); });
-    } else { keeping--; entry.made = value; }
+        const waiting = { added: [] };
+        keepsWaiting.add(waiting);
+        value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
+        value.then(v => { entry.made = v; ownListeners(v, waiting.added); }, () => { if (kept.get(id) === entry) kept.delete(id); });
+    } else entry.made = value;
     entry.value = value;
     kept.set(id, entry);
     if (again && had) again.built.push(key);
@@ -1391,6 +1396,18 @@ function keep(path, key, build, options = {}) {
 }
 
 const isKept = v => [...kept.values()].some(k => k.made === v);
+
+// Async builds still running, each with the listeners added while it ran.
+const keepsWaiting = new Set();
+function ownListeners(made, added) {
+    const parts = [made, made && made.domElement, made && made.canvas].filter(o => o && typeof o === 'object');
+    const of = target => parts.some(p => p === target || (p.contains && target.nodeType && p.contains(target)));
+    for (const [target, listener] of added) {
+        if (!of(target)) continue;
+        const list = listenersOf.get(target), i = list ? list.indexOf(listener) : -1;
+        if (i >= 0) list.splice(i, 1);
+    }
+}
 
 function letGo(k) {
     Promise.resolve(k.value).then(v => {
@@ -1459,6 +1476,10 @@ async function runAgain(change, state) {
     let text, page;
     try { text = await readText(pagePath()); page = parse(text); } catch (e) { return cannot('its page couldn\'t be read'); }
     if (fixed(page) !== fixed(pageText != null ? parse(pageText) : document)) return cannot('its import map or a script that isn\'t a module changed');
+    const classic = doc => [...doc.querySelectorAll('script[src]')].filter(s => s.type !== 'module' && s.type !== 'importmap')
+        .map(s => pathOf(new URL(s.getAttribute('src'), location.href).href));
+    const script = paths.find(p => classic(page).includes(p) || classic(document).includes(p));
+    if (script) return cannot(`${script}, a script that isn't a module, changed`);
     // Every module of the game, in order, what each imports before it.
     const order = [];
     try {
@@ -1535,31 +1556,40 @@ async function runAgain(change, state) {
     }
     for (const path of paths) texts.delete(path);
     for (const path of rootPaths) latest.set(path, addresses.get(path));
-    after(60000, () => { if (!again.called) ranAgainFailed(again, 'the game didn\'t call game() again within a minute'); });
+    after(120000, () => { if (runningAgain === again) ranAgainFailed(again, 'the game didn\'t start again within two minutes'); });
     return done;
 }
 
 // The page as the new HTML has it: what isn't a script in its head (a stylesheet it already links stays, unless it
 // changed), and its body, with Lamp's own elements (the touch controls, the Reload button) kept.
 async function putPage(page, paths, still) {
-    const head = document.head, links = [...head.querySelectorAll('link[rel~="stylesheet"]')], loads = [], stays = new Set();
-    for (const node of [...head.children]) if (node.tagName !== 'SCRIPT' && !links.includes(node)) node.remove();
+    const head = document.head, links = [...head.querySelectorAll('link[rel~="stylesheet"]')], loads = [], placed = [];
     for (const node of [...page.head.children]) {
         if (node.tagName === 'SCRIPT') continue;
         if (node.matches('link[rel~="stylesheet"]')) {
             const path = pathOf(new URL(node.getAttribute('href'), location.href).href);
-            const have = links.find(l => pathOf(l.href) === path && !stays.has(l));
-            if (have && !paths.includes(path)) { stays.add(have); continue; }
+            const have = links.find(l => pathOf(l.href) === path && !placed.includes(l));
+            if (have && !paths.includes(path)) { placed.push(have); continue; }
             const fresh = document.adoptNode(node);
             if (path != null) fresh.href = `${addressOf(path)}?lamp=${++versionCount}`;
             loads.push(new Promise(done => { fresh.onload = fresh.onerror = done; after(5000, done); }));
-            if (have) have.after(fresh); else head.append(fresh);
+            placed.push(fresh);
             continue;
         }
-        head.append(document.adoptNode(node));
+        placed.push(document.adoptNode(node));
+    }
+    // In the new page's order, since the order of stylesheets is the order of their rules. A stylesheet already linked
+    // moves only when it's out of that order (moved, it's read again); the scripts and what goes stay where they are
+    // until the new stylesheets have loaded, so the page is never shown unstyled.
+    let before = null;
+    for (const node of placed) {
+        let at = before ? before.nextSibling : head.firstChild;
+        while (at && (at.nodeType !== 1 || at.tagName === 'SCRIPT' || !placed.includes(at))) at = at.nextSibling;
+        if (node !== at) head.insertBefore(node, at);
+        before = node;
     }
     await Promise.all(loads);
-    for (const link of links) if (!stays.has(link)) link.remove();
+    for (const node of [...head.children]) if (node.tagName !== 'SCRIPT' && !placed.includes(node)) node.remove();
     const body = document.body;
     for (const a of [...body.attributes]) body.removeAttribute(a.name);
     for (const a of [...page.body.attributes]) body.setAttribute(a.name, a.value);
@@ -1627,8 +1657,9 @@ function ranAgainFailed(again, e) {
     return new Promise(() => {});
 }
 if (!preview) {
-    listen(window, 'error', e => { if (runningAgain && !runningAgain.called) ranAgainFailed(runningAgain, e.error || e.message); });
-    listen(window, 'unhandledrejection', e => { if (runningAgain && !runningAgain.called) ranAgainFailed(runningAgain, e.reason); });
+    // Until the new code is running (`ranAgain`), anything it throws opens the page again: half a start is no place to play.
+    listen(window, 'error', e => { if (runningAgain) ranAgainFailed(runningAgain, e.error || e.message); });
+    listen(window, 'unhandledrejection', e => { if (runningAgain) ranAgainFailed(runningAgain, e.reason); });
 }
 
 // What the game's code leaves running: each listener by its target (held weakly, so an element thrown away goes with
@@ -1646,7 +1677,9 @@ function watch() {
             listening.add(new WeakRef(this));
             if (listening.size > 4000) for (const ref of listening) if (!ref.deref()) listening.delete(ref);
         }
-        list.push({ type, fn, capture: captureOf(options) });
+        const listener = { type, fn, capture: captureOf(options) };
+        list.push(listener);
+        for (const waiting of keepsWaiting) waiting.added.push([this, listener]);
     };
     EventTarget.prototype.removeEventListener = function (type, fn, options) {
         browser.unlisten.call(this, type, fn, options);
