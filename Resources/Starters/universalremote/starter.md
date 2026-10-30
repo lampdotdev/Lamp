@@ -2,7 +2,7 @@
 name: Universal Remote
 offer: Make Universal Remote yours
 repository: https://github.com/lampdotdev/universalremote
-commit: 7182deb529760c25f7b5e669cc310615c6ff2d1d
+commit: d97cafe42062470920fc3a01a81dd36d92f7dfb2
 tweaks:
   - iphone: Put the remote on my iPhone
   - moon.zzz: Add a bedtime button
