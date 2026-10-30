@@ -50,7 +50,8 @@ function sleeveOf(id: string, change?: { text: string; ink: string }): Sleeve {
   return change
     ? { ...common, look: "remix", by: `A remix of ${starter.name}`, line: change.text, ink: change.ink, treat: starter.treat,
         remix: `?starter=${id}&ask=${encodeURIComponent(change.text)}` }
-    : { ...common, look: "original", by: `Made by ${starter.by}`, line: starter.about, remix: `?starter=${id}` };
+    : { ...common, look: "original", by: `Made by ${starter.by}`, line: starter.about, remix: `?starter=${id}`,
+        reel: `https://raw.githubusercontent.com/lampdotdev/${id}/main/.github/showcase/reel.mp4` };
 }
 
 // New York's sleeve in the hero.
@@ -128,6 +129,7 @@ const devices: { name: string; icon: string; brands?: string }[] = [
         </div>
         <a href={`/${sleeve.remix}`} data-remix-sleeve class="remix-link tape-button tape-button-paper">Remix New York</a>
         <button type="button" class="tape-control" data-turn aria-pressed="false" aria-controls="sleeve-back">Turn New York's sleeve over</button>
+        <button type="button" class="tape-control" data-watch={sleeve.reel} data-name={sleeve.title}>Watch New York</button>
       </div>
     </div>
     </section>
@@ -173,6 +175,7 @@ const devices: { name: string; icon: string; brands?: string }[] = [
           }
         </ul>
         {shelf.map((item, i) => item.remix && <button type="button" class="tape-control" data-sleeve={i}>Remix {item.look === "remix" ? `${item.title}: ${item.line}` : item.title}</button>)}
+        {shelf.map((item) => item.reel && <button type="button" class="tape-control" data-watch={item.reel} data-name={item.title}>Watch {item.title}</button>)}
         {shelf.map((item) => item.download && <a href={item.download} data-download-place="shelf" class="tape-control">Download Lamp for Mac</a>)}
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
@@ -217,7 +220,7 @@ const devices: { name: string; icon: string; brands?: string }[] = [
 </Base>
 
 <script>
-  import { mountSleeve, mountStack } from "../lib/tapes";
+  import { mountSleeve, mountStack, watchReel } from "../lib/tapes";
   const sleeve = document.querySelector<HTMLElement>("[data-tape-sleeve]");
   const stack = document.querySelector<HTMLElement>("[data-tape-stack]");
   if (sleeve) mountSleeve(sleeve);
@@ -230,6 +233,10 @@ const devices: { name: string; icon: string; brands?: string }[] = [
     });
   });
   if (stack) mountStack(stack);
+  // For a keyboard, what the expand button on a sleeve's reel does.
+  document.querySelectorAll<HTMLButtonElement>("[data-watch]").forEach((button) => {
+    button.addEventListener("click", () => watchReel(button.dataset.watch!, button.dataset.name!));
+  });
 </script>
 
 <style>
@@ -286,6 +293,18 @@ const devices: { name: string; icon: string; brands?: string }[] = [
     width: auto; height: auto; clip-path: none; left: 1rem; bottom: 1rem; z-index: 1; padding: 0.5rem 0.875rem;
     background: var(--color-paper); color: var(--color-tape); font-weight: 800; border-radius: 6px;
     outline: 3px solid var(--stripe-0); outline-offset: 2px;
+  }
+
+  /* A sleeve's reel, large over the page. */
+  :global(.reel-viewer) {
+    width: min(92vw, 150vh); max-width: none; max-height: none; margin: auto; padding: 0; overflow: visible;
+    background: transparent; border: 0;
+  }
+  :global(.reel-viewer::backdrop) { background: rgb(20 18 14 / 0.88); }
+  :global(.reel-viewer video) { display: block; width: 100%; max-height: 88vh; border-radius: 8px; background: #000; }
+  :global(.reel-viewer button) {
+    display: block; margin: 0.75rem auto 0; padding: 0.5rem 1.25rem; border-radius: 6px; cursor: pointer;
+    background: var(--color-paper); color: var(--color-tape); font-weight: 800;
   }
 
   /* An icon's outline in ink, and its fill printed in a color of the sleeve's. */

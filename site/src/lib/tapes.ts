@@ -28,6 +28,8 @@ export type Sleeve = {
   kind: string;
   line: string;
   shot?: string;
+  /** A short silent video of it in use, where its repository has one (lib/starters.ts): an original's, over its screenshot. */
+  reel?: string;
   treat?: "snow" | "frame";
   /** The changes on its back; on the blank one's, what Lamp does. */
   tweaks: string[];
@@ -519,7 +521,7 @@ function stage(THREE: Three, host: HTMLElement, { wall, reach, bleed }: { wall: 
     for (const link of host.querySelectorAll<HTMLElement>(".tape-fallback a, .tape-fallback button")) link.tabIndex = -1;
   };
 
-  return { THREE, scene, camera, canvas, texture, flat, solid, pointer, hit, on, hand, run };
+  return { THREE, scene, camera, canvas, texture, flat, solid, pointer, hit, on, hand, covered, run };
 }
 
 /** Whether a sleeve has been turned over in this browser, after which the arrow that shows the way never shows again. */
@@ -535,6 +537,130 @@ const turned = {
 /** Eases `value` toward `target`, by how long the frame took. */
 const ease = (value: number, target: number, dt: number, speed = 7) => value + (target - value) * (1 - Math.exp(-dt * speed));
 
+// MARK: A reel
+
+/** Opens a reel large, over the page, with the player's own controls. While it's open the tapes behind hold still
+ * (`covered`), and a reel that won't load closes it again. */
+export function watchReel(src: string, name: string) {
+  const viewer = document.createElement("dialog");
+  viewer.className = "reel-viewer";
+  viewer.setAttribute("aria-label", name);
+  const video = Object.assign(document.createElement("video"), { src, controls: true, loop: true, muted: true, playsInline: true, autoplay: !reduced });
+  const close = Object.assign(document.createElement("button"), { type: "button", textContent: "Close" });
+  viewer.append(video, close);
+  close.addEventListener("click", () => viewer.close());
+  video.addEventListener("error", () => viewer.close());
+  // A press on the dark around the video lands on the dialog itself.
+  viewer.addEventListener("click", (event) => { if (event.target === viewer) viewer.close(); });
+  viewer.addEventListener("close", () => {
+    video.pause();
+    viewer.remove();
+  });
+  document.body.append(viewer);
+  viewer.showModal();
+}
+
+// The screenshot's box on a sleeve's front, in the front's units, and the size of the button that opens a reel large.
+const PICTURE = { x: 64, y: 298, w: 672, h: 414 };
+const EXPAND = 84;
+
+/** The expand button as it's printed: two arrows pointing apart, in the label's color on ink. */
+function expandIcon() {
+  const { canvas, ctx } = sheet(168, 168);
+  ctx.fillStyle = INK;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, 168, 168, 28);
+  ctx.fill();
+  ctx.strokeStyle = LABEL;
+  ctx.lineWidth = 15;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const [x, y] of [[1, -1], [-1, 1]]) {
+    const at = (a: number, b: number) => [84 + a * x, 84 + b * y] as const;
+    ctx.beginPath();
+    ctx.moveTo(...at(14, -14));
+    ctx.lineTo(...at(46, -46));
+    ctx.moveTo(...at(14, -46));
+    ctx.lineTo(...at(46, -46));
+    ctx.lineTo(...at(46, -14));
+    ctx.stroke();
+  }
+  return canvas;
+}
+
+/** A sleeve's reel, played over its screenshot on a plane just off the front: nothing is fetched until the sleeve first
+ * asks for it, the screenshot stays until a frame has played, and if there's no reel to fetch it simply stays. Where
+ * less motion is asked for it never plays there, but it can still be opened large. */
+function reelOn(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, box: ThreeTypes.Mesh, sleeve: Sleeve) {
+  const src = sleeve.reel;
+  if (!src) return undefined;
+  // From the front's units to the sleeve's, whose front is 1.05 by 1.9, with the plane just proud of its face.
+  const place = (mesh: ThreeTypes.Mesh, x: number, y: number, z: number) => mesh.position.set(((x - 400) * 1.05) / 800, ((724 - y) * 1.9) / 1448, z);
+  let video: HTMLVideoElement | undefined;
+  let picture: ThreeTypes.Mesh | undefined;
+  let expand: ThreeTypes.Mesh | undefined;
+  // Where the expand button is, in the front's units, once there's a reel to open.
+  let button: { x: number; y: number } | undefined;
+  let wanted = false;
+  let seen = true;
+  let missing = false;
+
+  const load = () => {
+    const made = Object.assign(document.createElement("video"), { crossOrigin: "anonymous", loop: true, muted: true, playsInline: true, preload: reduced ? "metadata" : "auto" });
+    made.setAttribute("aria-hidden", "true");
+    made.setAttribute("muted", "");
+    // A browser may not play one that isn't in the page, so it's there, too small and faint to be seen.
+    Object.assign(made.style, { position: "fixed", left: "0", bottom: "0", width: "1px", height: "1px", opacity: "0", pointerEvents: "none" });
+    made.addEventListener("loadedmetadata", () => {
+      // The reel shown whole in the screenshot's box, on the ink that's behind it.
+      const scale = Math.min(PICTURE.w / made.videoWidth, PICTURE.h / made.videoHeight);
+      const [w, h] = [made.videoWidth * scale, made.videoHeight * scale];
+      const [cx, cy] = [PICTURE.x + PICTURE.w / 2, PICTURE.y + PICTURE.h / 2];
+      const map = new THREE.VideoTexture(made);
+      map.colorSpace = THREE.SRGBColorSpace;
+      picture = new THREE.Mesh(new THREE.PlaneGeometry((w * 1.05) / 800, (h * 1.9) / 1448), new THREE.MeshStandardMaterial({ map, roughness: 0.62, metalness: 0 }));
+      place(picture, cx, cy, 0.1508);
+      picture.visible = false;
+      button = { x: cx + w / 2 - EXPAND - 14, y: cy - h / 2 + 14 };
+      const icon = new THREE.CanvasTexture(expandIcon());
+      icon.colorSpace = THREE.SRGBColorSpace;
+      expand = new THREE.Mesh(new THREE.PlaneGeometry((EXPAND * 1.05) / 800, (EXPAND * 1.9) / 1448), new THREE.MeshBasicMaterial({ map: icon, transparent: true, toneMapped: false }));
+      place(expand, button.x + EXPAND / 2, button.y + EXPAND / 2, 0.1512);
+      // A hit is on the sleeve's own front, which says where it landed: these are only printed over it.
+      picture.raycast = expand.raycast = () => {};
+      box.add(picture, expand);
+      update();
+    });
+    made.addEventListener("playing", () => { if (picture) picture.visible = true; });
+    // No reel to fetch: nothing more to ask of it, and the screenshot stays.
+    made.addEventListener("error", () => { missing = true; made.remove(); });
+    made.src = src;
+    document.body.append(made);
+    new IntersectionObserver(([entry]) => {
+      seen = entry.isIntersecting;
+      update();
+    }).observe(s.canvas);
+    video = made;
+  };
+  const update = () => {
+    if (!video || missing || reduced) return;
+    if (wanted && seen && !s.covered()) {
+      if (video.paused) video.play().catch(() => {});
+    } else if (!video.paused) video.pause();
+  };
+  return {
+    /** Plays while it's asked for, on a sleeve showing its front; asked again each frame, so an open dialog pauses it. */
+    want(on: boolean) {
+      wanted = on;
+      if (on && !video) load();
+      update();
+    },
+    /** Whether a spot on the front, in its units, is on the expand button. */
+    onExpand: (x: number, y: number) => !!button && x >= button.x && x <= button.x + EXPAND && y >= button.y && y <= button.y + EXPAND,
+    open: () => watchReel(src, sleeve.title),
+  };
+}
+
 // MARK: A sleeve
 
 /** A sleeve as a lit box: its faces (the front twice, plain and with its "Remix me" outlined, for while the pointer is
@@ -548,11 +674,17 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
   // A button sits in the same place on either side: the front's "Remix me", or the blank sleeve's "Download for Mac"
   // on its back. `onButton` says whether a hit is on one, and keeps which, for `point` and `press`.
   let side = 4;
+  const reel = reelOn(s, THREE, box, sleeve);
+  // Whether the hit last found was on the reel's expand button, printed over the screenshot.
+  let expanding = false;
   const onButton = (found: ThreeTypes.Intersection | undefined) => {
     const face = found?.face?.materialIndex;
-    const has = face === 4 ? !!sleeve.remix : face === 5 && !!sleeve.download;
-    if (!has || found?.object !== box || !found.uv) return false;
+    expanding = false;
+    if (found?.object !== box || !found.uv) return false;
     const [x, y] = [found.uv.x * 800, (1 - found.uv.y) * 1448];
+    if (face === 4 && reel?.onExpand(x, y)) return (expanding = true);
+    const has = face === 4 ? !!sleeve.remix : face === 5 && !!sleeve.download;
+    if (!has) return false;
     const b = REMIX_BUTTON;
     const on = x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
     if (on) side = face;
@@ -560,13 +692,14 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
   };
   /** Outlines the button last found, or neither. */
   const point = (on: boolean) => {
-    faces[4] = on && side === 4 ? frontPointed : front;
-    faces[5] = on && side === 5 ? backPointed : back;
+    faces[4] = on && !expanding && side === 4 ? frontPointed : front;
+    faces[5] = on && !expanding && side === 5 ? backPointed : back;
     box.material = faces;
   };
   const remix = () => { if (sleeve.remix) document.dispatchEvent(new CustomEvent("lamp:remix", { detail: sleeve.remix })); };
   /** Does what the button last found does: remix, or download Lamp as the page's own Download links do. */
   const press = () => {
+    if (expanding) return reel?.open();
     if (side === 4) return remix();
     const link = Object.assign(document.createElement("a"), { href: sleeve.download! });
     link.dataset.downloadPlace = "shelf";
@@ -624,7 +757,7 @@ function buildSleeve(s: NonNullable<ReturnType<typeof stage>>, THREE: Three, sle
     ink.opacity = ease(ink.opacity, aimed ? 0.65 : 0, dt, aimed ? 10 : 6);
     arrow.visible = ink.opacity > 0.01;
   };
-  return { box, onButton, point, remix, press, arrow, aim, fade };
+  return { box, onButton, point, remix, press, reel, arrow, aim, fade };
 }
 
 // MARK: The hero's sleeve
@@ -648,7 +781,10 @@ export async function mountSleeve(host: HTMLElement) {
   const button = host.querySelector<HTMLButtonElement>("[data-turn]");
   let spin = 0;
   let back = false;
+  // Its reel is New York's, by far the largest, so it waits until someone reaches for the sleeve.
+  let reached = false;
   const turn = () => {
+    reached = true;
     turned.now();
     spin -= Math.PI;
     back = !back;
@@ -662,6 +798,7 @@ export async function mountSleeve(host: HTMLElement) {
   s.on("pointermove", (event) => {
     const found = s.hit(event, [box]);
     s.hand(!!found);
+    if (found) reached = true;
     const onButton = built.onButton(found);
     built.point(onButton);
     built.aim(!!found && !onButton);
@@ -684,6 +821,7 @@ export async function mountSleeve(host: HTMLElement) {
       built.arrow.rotation.set(rotation.x, rotation.y, 0);
       built.arrow.position.copy(sleeveGroup.position);
       built.fade(dt);
+      built.reel?.want(reached && !back);
     },
   );
 }
@@ -694,8 +832,8 @@ const STACK_BLEED = { x: 0.12, y: 0.3 };
 
 // The shelf: the same sleeves, lying flat in a stack with their spines out, each original with its remix under it, a
 // little untidy, as a real stack is. One that's clicked comes out and stands up facing the viewer, as the hero's does:
-// it leans toward the pointer, turns over when clicked again, and its "Remix me" opens the remix dialog. Clicked
-// anywhere else, it goes back.
+// it leans toward the pointer, plays its reel, turns over when clicked again, and its "Remix me" opens the remix
+// dialog. Clicked anywhere else, it goes back.
 export async function mountStack(host: HTMLElement) {
   const sleeves = JSON.parse(host.dataset.sleeves!) as Sleeve[];
   const [THREE, shots] = await Promise.all([
@@ -794,6 +932,7 @@ export async function mountStack(host: HTMLElement) {
           euler.set(-p.y * 0.25, p.x * 0.4, 0);
           item.built.arrow.quaternion.setFromEuler(euler).premultiply(stack.quaternion.clone().invert());
           item.built.arrow.position.copy(box.position);
+          item.built.reel?.want(item.turns % 2 === 0);
         } else {
           // In its place; pulled out a little under the pointer, pushed back a little while another is out.
           target.copy(item.home.position);
@@ -801,6 +940,7 @@ export async function mountStack(host: HTMLElement) {
           box.position.lerp(target, k);
           box.quaternion.slerp(item.home.quaternion, k);
           item.built.aim(false);
+          item.built.reel?.want(false);
         }
         item.built.fade(dt);
       });
