@@ -156,13 +156,11 @@ enum WebReach {
         return String(name).lowercased()
     }
 
-    /// A host as people know it: its registered name ("open-meteo.com" for "api.open-meteo.com").
+    /// A host as the sheet names it: whole, but for a leading www. Shortening it further takes the public suffix list
+    /// (github.io and govt.nz are suffixes, not sites), which Lamp doesn't carry, and a guess would name a suffix or
+    /// fold unrelated sites into one.
     static func site(_ host: String) -> String {
-        let labels = host.split(separator: ".").map(String.init)
-        guard labels.count > 2, labels.allSatisfy({ !$0.isEmpty }), !labels.allSatisfy({ $0.allSatisfy(\.isNumber) }) else { return host }
-        let second = labels[labels.count - 2]
-        let keep = labels.last!.count == 2 && ["co", "com", "org", "net", "gov", "ac", "edu"].contains(second) ? 3 : 2
-        return labels.suffix(keep).joined(separator: ".")
+        host.hasPrefix("www.") && host.split(separator: ".").count > 2 ? String(host.dropFirst(4)) : host
     }
 
     // MARK: - glTF
@@ -652,7 +650,6 @@ private struct Reader {
                             if HTML.use(tag: "", attribute: attribute) != nil { request(shapes(entry.dropFirst(2)), .load, at: "Object.assign") }
                         }
                     }
-                    request(shapes(args.first), .load, at: "fetch")
                 } else if name == "import", !afterDot {
                     request(moduleShapes(args.first), .code, at: "import()")
                 } else if name == "open", global, previous?.text != "new" {
@@ -1672,7 +1669,12 @@ private enum CSS {
         var rest = Substring(source)
         while let match = rest.range(of: #"(url|image-set|image|@import)\s*\(?\s*"#, options: [.regularExpression, .caseInsensitive]) {
             var after = rest[match.upperBound...]
-            if let quote = after.first, quote == "\"" || quote == "'" {
+            if rest[match].lowercased().hasPrefix("image"), rest[match].contains("("), let close = closing(after) {
+                // image-set(…) and image(…): every candidate, as a string or a url(…), is a picture it may load.
+                let inner = after[..<close]
+                found += strings(inner).map(HTML.shape) + addresses(String(inner))
+                rest = after[close...].dropFirst()
+            } else if let quote = after.first, quote == "\"" || quote == "'" {
                 after = after.dropFirst()
                 let end = after.firstIndex(of: quote) ?? after.endIndex
                 found.append(HTML.shape(String(after[..<end])))
@@ -1685,6 +1687,35 @@ private enum CSS {
             } else {
                 rest = after
             }
+        }
+        return found
+    }
+
+    /// Where the parenthesis opened before `text` closes, outside strings and nested parentheses.
+    static func closing(_ text: Substring) -> Substring.Index? {
+        var depth = 0
+        var quote: Character?
+        for index in text.indices {
+            let c = text[index]
+            if let open = quote { if c == open { quote = nil }; continue }
+            if c == "\"" || c == "'" { quote = c } else if c == "(" { depth += 1 } else if c == ")" {
+                if depth == 0 { return index }
+                depth -= 1
+            }
+        }
+        return nil
+    }
+
+    /// The quoted strings in `text`.
+    static func strings(_ text: Substring) -> [String] {
+        var found: [String] = []
+        var rest = text
+        while let start = rest.firstIndex(where: { $0 == "\"" || $0 == "'" }) {
+            let quote = rest[start]
+            let body = rest[rest.index(after: start)...]
+            let end = body.firstIndex(of: quote) ?? body.endIndex
+            found.append(String(body[..<end]))
+            rest = end == body.endIndex ? body[end...] : body[body.index(after: end)...]
         }
         return found
     }

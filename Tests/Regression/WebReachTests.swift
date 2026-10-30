@@ -231,4 +231,29 @@ final class WebReachTests: XCTestCase {
         let credits = WebReach.analyze(code: [("README.md", "Models by Kenney: https://kenney.nl"), ("LICENSE.txt", "See https://example.org/license")])
         XCTAssertFalse(credits.unknown || credits.connects, "\(credits.why)")
     }
+
+    /// Every candidate in image-set() is a picture the browser may load, not only the first.
+    func testEveryImageSetCandidateIsRead() {
+        for css in [".a { background-image: image-set(\"a.png\" 1x, \"https://cdn.elsewhere.example/a@2x.png\" 2x); }",
+                    ".a { background-image: image-set('a.png' 1x, url(https://cdn.elsewhere.example/a@2x.png) 2x); }",
+                    ".a { background-image: -webkit-image-set(url(a.png) 1x, \"https://cdn.elsewhere.example/a@2x.png\" 2x); }"] {
+            XCTAssertEqual(WebReach.analyze(code: [("style.css", css)]).hosts, ["cdn.elsewhere.example"], css)
+        }
+        XCTAssertEqual(WebReach.analyze(code: [("style.css", ".a { background-image: image-set(\"a.png\" 1x, \"a@2x.png\" 2x); }")]),
+                       WebReach.Result())
+    }
+
+    /// Object.assign sets an address only through an address attribute; its target is no address.
+    func testObjectAssignIsNoRequestByItself() {
+        let found = WebReach.analyze(code: [("app.js", "const state = {}; Object.assign(state, { count: 1 }); Object.assign({}, defaults, options);")])
+        XCTAssertFalse(found.unknown || found.connects, "\(found.why)")
+    }
+
+    /// Sites are named as their hosts: unrelated sites under one public suffix stay apart, and none is named by a suffix.
+    func testSitesAreNamedByTheirHosts() {
+        func label(_ hosts: Set<String>) -> String? { TVFiles.connects(WebReach.Result(hosts: hosts))?.label }
+        XCTAssertEqual(label(["api.weather.govt.nz"]), "Connects to api.weather.govt.nz")
+        XCTAssertEqual(label(["alice.github.io", "mallory.github.io"]), "Connects to alice.github.io and mallory.github.io")
+        XCTAssertEqual(label(["www.kenney.nl"]), "Connects to kenney.nl")
+    }
 }
