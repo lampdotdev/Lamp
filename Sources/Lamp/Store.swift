@@ -8918,6 +8918,10 @@ final class Store: ObservableObject {
         current.chosen = .mac
         guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {
             AppTransition.end(current)
+            // Not into this copy (one an earlier Lamp built, a change of its Swift): the build counted these sources as
+            // built, so the turn's end would install nothing and say nothing. It builds them again and installs them,
+            // held for Reload while the person plays.
+            Runtime.forgetBuilt(current)
             return
         }
         // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
