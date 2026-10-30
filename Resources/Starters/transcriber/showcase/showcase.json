@@ -5,32 +5,66 @@
   },
   "steps": [
     {
-      "wait": 2.5
+      "wait": 1.5
     },
     {
-      "action": "click",
-      "x": 112,
-      "y": 189
+      "action": "key",
+      "key": "cmd+r"
     },
     {
-      "wait": 3.5
+      "wait": 1.2
     },
     {
-      "action": "scroll",
-      "x": 900,
-      "y": 450,
-      "amount": 420
+      "focus": "window"
     },
     {
-      "wait": 3
+      "wait": 17.5
     },
     {
-      "action": "click",
-      "x": 112,
-      "y": 134
+      "action": "key",
+      "key": "cmd+r"
     },
     {
-      "wait": 3
+      "wait": 5.5
+    }
+  ],
+  "lines": {
+    "transcript": [
+      {
+        "speaker": "me",
+        "text": "Quick one before the launch. Are we still on for Tuesday?"
+      },
+      {
+        "speaker": "them",
+        "text": "Yes, the build is ready. Design signed off this morning."
+      },
+      {
+        "speaker": "me",
+        "text": "Great. What about the pricing page?"
+      },
+      {
+        "speaker": "them",
+        "text": "Copy is done, but the annual plan needs one more look."
+      },
+      {
+        "speaker": "me",
+        "text": "I'll review it today and send notes by five."
+      }
+    ]
+  },
+  "ai": [
+    {
+      "json": {
+        "title": "Tuesday launch check-in",
+        "summary": "The launch is on for Tuesday: the build is ready and design signed off. The pricing page copy is done, but the annual plan needs one more review.",
+        "decisions": [
+          "Launch on Tuesday as planned."
+        ],
+        "actionItems": [
+          "You: review the annual plan copy and send notes by five today",
+          "Them: post the release notes on Monday"
+        ]
+      }
     }
   ]
 }

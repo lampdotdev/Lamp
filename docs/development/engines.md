@@ -177,6 +177,10 @@ A capability given to one engine must be given to all of them that can take it, 
   every engine reports the call a moment after the look began, and its fixed word would cover each stage after it
   (building, installing, opening, looking at the app, watching it move); when the look ends it's "Thinking". No clock
   is shown beside the activity, in the chat or a first build's chapters: the turn's whole time is its "Worked for…".
+- **A failed request is said once**, as the error card a run's failure makes (`Store.runAgent`,
+  `Provider.friendlyError`), with the engine's own words in Agent Details. An engine's failure never reaches the chat
+  as a message: Claude Code words one as a message from the model, marked with `error`, and its parser drops that line
+  because the `result` line says the same; pi's and Codex's parsers have only their failure events to read.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Lamp's providers are Claude Code, ChatGPT Codex, OpenRouter (pi builds through it; its key is the only one
   Lamp keeps, `Provider.keyProviders`) and Native Mac AI (`LocalModels`: Lamp's own model servers, never another

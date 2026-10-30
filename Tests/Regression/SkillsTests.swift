@@ -183,7 +183,7 @@ final class SkillsTests: XCTestCase {
     func testTVPromptOffersThePhoneSkill() throws {
         let prompt = Agent.tvPrompt(skills: shipped)
         XCTAssertTrue(prompt.contains("  • phone-controllers: \(shipped["phone-controllers"]!.description)\n"))
-        XCTAssertTrue(prompt.contains("Open the phone-controllers skill"))
+        XCTAssertTrue(prompt.contains("the phone-controllers skill says what each choice needs. Open it first"))
         XCTAssertFalse(prompt.contains("LampController.connect"), "the phone page's instructions belong in the skill")
         XCTAssertTrue(shipped["phone-pages"]!.body.contains("LampController.connect"))
         XCTAssertTrue(shipped["phone-pages"]!.body.contains("Lamp.onPhonePage"))

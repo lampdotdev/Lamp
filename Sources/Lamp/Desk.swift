@@ -74,6 +74,7 @@ struct WishDesk: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { deskWidth = $0 }
         .animation(Self.slide, value: panelFits)
         .background(DeskBackground().ignoresSafeArea())
+        .onChange(of: current, initial: true) { DeskPick.shared.wish = current }
         .navigationTitle("Lamp")
         .toolbar {
             // Only where the panel has room to show: in a narrower window the list keeps the space.
@@ -96,7 +97,10 @@ struct WishDesk: View {
         .task(id: wishes.map(\.id) + store.busy.sorted()) { await readEntries() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in lookForDevices() }
         .onChange(of: store.deskFocusRequest) { barFocused = true }
-        .onDisappear { dictation.cancel() }
+        .onDisappear {
+            dictation.cancel()
+            DeskPick.shared.wish = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
         .alert(dictation.problem?.title ?? "Dictation",

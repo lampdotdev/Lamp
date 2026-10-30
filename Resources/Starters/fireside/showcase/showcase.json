@@ -5,28 +5,30 @@
   },
   "steps": [
     {
-      "wait": 3
+      "wait": 2.5
     },
     {
       "action": "scroll",
       "x": 800,
       "y": 500,
-      "amount": 420
+      "amount": 380
     },
     {
-      "wait": 3
+      "wait": 2
     },
     {
-      "action": "scroll",
-      "x": 800,
-      "y": 500,
-      "amount": 420
+      "action": "click",
+      "target": "Amazing Grace"
     },
     {
-      "wait": 3
+      "wait": 5
     },
     {
-      "wait": 1
+      "action": "click",
+      "target": "Back to Folder"
+    },
+    {
+      "wait": 2.5
     }
   ]
 }
