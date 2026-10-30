@@ -30,7 +30,10 @@ struct ContentView: View {
             }
         }
         .modifier(StoreDialogs(active: store.selection == nil))
-        .background(WindowKeyWatcher { store.selection = nil })
+        .background(WindowKeyWatcher(became: {
+            store.selection = nil
+            DeskPick.shared.deskIsKey = true
+        }, resigned: { DeskPick.shared.deskIsKey = false }))
         .background(DeskWindowMarker())
         .onAppear { LampWindows.open = openWindow }
     }
