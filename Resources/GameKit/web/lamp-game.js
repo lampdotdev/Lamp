@@ -779,6 +779,7 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     if (again) ranAgain(again);
     // One loop at a time: the game's code run again starts a new one, and the old one stops at its next frame.
     const mine = ++loops;
+    reopenedFrame = 0;
     let last = 0;
     const loop = now => {
         if (mine !== loops) return;
@@ -794,6 +795,8 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         // The first frame drawn from a snapshot has gone without an error: from here an error is the game's own.
         guarding = false;
         shoot();
+        // Opened again for a change: it's on screen with this first frame.
+        if (shownFor != null && !curtain && !runningAgain && reopenedFrame++ > 0) { tellHost(shownFor, 'shown'); shownFor = null; }
         lift();
         live();
         nextFrame(loop);
@@ -1368,7 +1371,7 @@ function putClass(C, N) {
 // code that fails as it runs again, before init is done or in its first second, opens the page again from the same
 // snapshot.
 
-let runningAgain = null, loops = 0, fitting = false, pageText = null, watching = false;
+let runningAgain = null, loops = 0, fitting = false, pageText = null, watching = false, reopenedFrame = 0;
 // What the game kept, by the module and key it was kept with.
 const kept = new Map();
 // Above 0 while a part's build function runs: what it starts belongs to the part, and stays.
@@ -1640,6 +1643,9 @@ async function putPage(page, paths, still) {
 // The frame just drawn, as a picture placed where the game's canvas is, for runAgain to hold on screen; asked of the
 // next frame, since a WebGL canvas keeps what it drew only until the frame is shown.
 let shooting = null, curtain = null, lifting = 0;
+// The change whose new code is about to be on screen, for `shown`: after a run in place as the old frame goes, after a
+// reload at the first frame.
+let shownFor = null;
 function shoot() {
     if (!shooting) return;
     const done = shooting;
@@ -1661,6 +1667,8 @@ function shoot() {
 // Once the new code has drawn a couple of frames, the old page held over it fades away.
 function lift() {
     if (!curtain || runningAgain || ++lifting < 3) return;
+    // The change is on screen now: Lamp's light crosses the window as the old frame fades.
+    if (shownFor != null) { tellHost(shownFor, 'shown'); shownFor = null; }
     const going = curtain;
     curtain = null;
     lifting = 0;
@@ -1672,6 +1680,9 @@ function lift() {
 function ranAgain(again) {
     runningAgain = null;
     lifting = 0;
+    shownFor = again.change.gen;
+    // No old frame held (a page with no canvas to picture): on screen at the next frame.
+    if (!curtain) after(0, () => { if (shownFor === again.change.gen) { tellHost(shownFor, 'shown'); shownFor = null; } });
     for (const [id, k] of kept) if (!k.used) { letGo(k); kept.delete(id); }
     const said = [again.kept.length ? `kept ${again.kept.join(', ')}` : '', again.built.length ? `built again ${again.built.join(', ')}` : ''].filter(Boolean);
     log(`Lamp: the game's code ran again in place${said.length ? ` (${said.join('; ')})` : ''} in ${Math.round(performance.now() - again.began)} ms.`);
@@ -1826,6 +1837,7 @@ export function pendingRestore() {
 // After init: a game that didn't read the state is given it through restore(), before its first frame.
 async function putBack() {
     const said = pending;
+    if (reopened && said && !said.fresh) shownFor = said.gen;
     if (taken) {
         log(reopened ? 'Lamp: the game started where it was, with the new code.' : 'Lamp: the game started where it was before it was installed again.');
         tellHost(said.gen, 'restored');

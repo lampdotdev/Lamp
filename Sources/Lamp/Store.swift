@@ -8613,6 +8613,10 @@ final class Store: ObservableObject {
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)
         case .unchanged, .went:
+            // A swap is on screen at once; a page that runs its code again, or opens again, says when it's showing the
+            // change (`shown`, `pageShown`), and the smoke stays over the window until then.
+            if outcome == .went("swapped") { AppTransition.land(project) }
+            else if outcome == .went("rerun") || outcome == .went("reloading") { awaitShown(project) }
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.pageReopened = outcome == .went("reloading")
@@ -8887,9 +8891,30 @@ final class Store: ObservableObject {
                          early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
         let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
-        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
-        AppTransition.end(project)
+        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`). A game's
+        // page still putting the change in keeps it until it's on screen (`pageShown`).
+        if !waitingToShow.keys.contains(project.id) { AppTransition.end(project) }
         return crash
+    }
+
+    /// Games whose page is putting a change in by running its code again or opening again, with the smoke held over
+    /// their window until the page says the change is on screen; a page that never says lets it go after a while.
+    private var waitingToShow: [String: Task<Void, Never>] = [:]
+    private func awaitShown(_ project: LampProject) {
+        waitingToShow[project.id]?.cancel()
+        let id = project.id
+        waitingToShow[id] = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled, waitingToShow.removeValue(forKey: id) != nil, let current = projects.first(where: { $0.id == id }) else { return }
+            AppTransition.end(current)
+        }
+    }
+
+    /// The page shows the change it was putting in: the light crosses the window, and the smoke goes.
+    func pageShown(_ project: LampProject) {
+        guard let waiting = waitingToShow.removeValue(forKey: project.id) else { return }
+        waiting.cancel()
+        AppTransition.land(project)
     }
 
     private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {

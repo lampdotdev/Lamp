@@ -303,6 +303,11 @@ import Foundation
         }
         let key = Key(id: project.id, place: place)
         let gen = body["gen"] as? Int ?? 0
+        // The change is on screen: the light Lamp holds over the window while it's put in crosses it now.
+        if state == "shown" {
+            Store.shared.pageShown(project)
+            return (200, [:])
+        }
         if ["held", "reloading", "rerun", "swapped"].contains(state) { reasons[project.id] = (body["why"] as? String).map { String($0.prefix(300)) } }
         if state == "held" { held.insert(key) }
         if let change = lastGiven(project, key), ["held", "swapped", "rerun", "reloading"].contains(state) {

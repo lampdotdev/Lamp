@@ -513,7 +513,11 @@ code changed, or one of its `inputs` isn't the same object (a part built again b
 for the module that starts the game, which imports everything, it goes by the modules whose imports the build function
 names, and a game bundled from TypeScript, one file, builds again everything it kept. New York keeps its renderer, the
 ground's heights and each part of the city, so a change to its HUD runs again in about 2 s instead of a 16 s start,
-and a change to its trees builds only the street details, traffic and road paint again. The page opens again, from the
+and a change to its trees builds only the street details, traffic and road paint again. While the code runs again, the last frame and
+the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
+Lamp's light crosses the window (`Store.pageShown`): the smoke built over the window stays through the run, rather than
+going as the page first answers. A swap gets the light at once; a page that opens again says `shown` at its first frame;
+one that never says lets the smoke go after 20 s. The page opens again, from the
 snapshot, where running again can't be done (the import map or a script that isn't a module changed, a circle of
 imports, Lamp's own files) or the new code fails before init is done or in its first second (`swapGuard`). The game's
 `accept((next, { changed }) => …)` may build again what a changed method built once, or return false to run the code
