@@ -124,8 +124,12 @@ export async function phaser({ scenes, pixelArt = false, physics, background = '
             g.loop.delta = g.loop.rawDelta = delta;
             g.loop.frame = f.number;
             // Phaser keeps each scene's update as the scene was made (Systems' sceneUpdate): a scene's class swapped while
-            // the game runs (lamp-game.js, "Changes while it's played") has a new one, which runs from this frame.
-            for (const scene of g.scene.scenes) if (typeof scene.update === 'function' && scene.sys.sceneUpdate !== scene.update) scene.sys.sceneUpdate = scene.update;
+            // the game runs (lamp-game.js, "Changes while it's played") has a new one, which runs from this frame. Only a
+            // running scene's: while one loads, Phaser holds its update back until create() has run.
+            for (const scene of g.scene.scenes) {
+                if (scene.sys.settings.status === Phaser.Scenes.RUNNING && typeof scene.update === 'function'
+                    && scene.sys.sceneUpdate !== scene.update) scene.sys.sceneUpdate = scene.update;
+            }
             g.step(ms, delta);
             // In the preview a scene that starts loading mid-play is waited for, so a play is the same frames every time;
             // played for real, it loads while the game goes on.
