@@ -20,6 +20,16 @@ import LampRelayKit
 setvbuf(stdout, nil, _IOLBF, 0)
 var relay: Relay?
 
+// Lamp ends the relay by closing its input, or with SIGTERM: either way, what the wishes' keepers hold that isn't written
+// yet is written before the process goes.
+signal(SIGTERM, SIG_IGN)
+let terminated = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+terminated.setEventHandler {
+    relay?.finish()
+    exit(0)
+}
+terminated.resume()
+
 func say(_ value: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: value) else { return }
     print(String(decoding: data, as: UTF8.self))
@@ -68,4 +78,5 @@ while let line = readLine() {
         continue
     }
 }
+relay?.finish()
 exit(0)

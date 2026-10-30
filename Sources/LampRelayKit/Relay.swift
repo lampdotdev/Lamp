@@ -252,6 +252,12 @@ public final class Relay: @unchecked Sendable {
         return games.values.contains { $0.session.pagePort.map(Int.init) == port && $0.session.hosts.contains(host) }
     }
 
+    /// The process is ending: what each room's keeper hasn't written yet is written now, before this returns, so a
+    /// change a copy made in the last moment before Lamp quit isn't lost. Never on the relay's own queue.
+    public func finish() {
+        queue.sync { for room in rooms.values { room.keeper?.close() } }
+    }
+
     public func stop() {
         queue.async {
             self.listener?.cancel()

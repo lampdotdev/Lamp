@@ -267,8 +267,8 @@ final class WishSharedStoreTests: XCTestCase {
         page.end()
     }
 
-    /// Lamp keeps what the copies share: a copy puts a list and a file and closes; Lamp's relay starts again (as it does
-    /// after it's been idle); a second copy opening alone gets both from Lamp and changes the list; a third copy opening
+    /// Lamp keeps what the copies share: a copy puts a list and a file and closes; Lamp's relay ends at once and starts
+    /// again (as when Lamp quits and opens); a second copy opening alone gets both from Lamp and changes the list; a third copy opening
     /// alone gets that change. On disk it's sealed: no item's words are there to read.
     func testACopyThatOpensAloneGetsWhatLampKept() async throws {
         let key = WishChannel.random(32)
@@ -310,8 +310,9 @@ final class WishSharedStoreTests: XCTestCase {
             photos.put('fridge.jpg', picture, 'image/jpeg');
             """)
         for _ in 0..<150 where !keptFiles().contains(where: { $0.hasPrefix("files/") }) { try await Task.sleep(for: .milliseconds(100)) }
-        try await Task.sleep(for: .milliseconds(1500))
         first.end()
+        // As the relay's process ends: what the keeper hasn't written yet is written now, not a moment later.
+        relay.finish()
         relay.stop()
         let kept = keptFiles()
         XCTAssertTrue(kept.contains { $0.hasPrefix("files/") } && kept.contains { $0.hasSuffix(".kept") }, "Lamp kept the list and the file: \(kept)")
