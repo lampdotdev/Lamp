@@ -1,4 +1,5 @@
 import XCTest
+import LampRelayKit
 @testable import Lamp
 
 /// A shared TV app goes on a TV held to its own files and the sites its sheet named: the policy is in every page of
@@ -88,6 +89,30 @@ final class TVNetworkGuardTests: XCTestCase {
             XCTAssertTrue(text.contains("<meta http-equiv=\"Content-Security-Policy\" content=\"\(TVNetworkGuard.tvPage(policy))\">"), page)
         }
         XCTAssertEqual(try String(contentsOf: app.appendingPathComponent("app.js"), encoding: .utf8), "fetch('https://evil.example/')", "scripts go as they are")
+    }
+
+    /// The app's policy is the one Lamp recorded when it arrived (`SharedNetwork`): a shared app's Samsung package is held
+    /// to its sites, one the person let reach everything isn't, and an app made here has none.
+    func testASharedAppIsHeldToTheSitesLampRecorded() throws {
+        let project = LampProject(id: "tv-guard-" + UUID().uuidString, name: "Weather", exe: "Weather", dir: folder.appendingPathComponent("weather"))
+        defer { SharedNetwork.forget(project) }
+        func config() throws -> String {
+            let files = try TVPackage.wgtFiles(for: project, staged: try staged(), guarded: TVNetworkGuard.policy(for: project))
+            return String(decoding: try XCTUnwrap(files.first { $0.path == "config.xml" }).data, as: UTF8.self)
+        }
+        XCTAssertNil(TVNetworkGuard.policy(for: project), "an app made here")
+        XCTAssertTrue(try config().contains("<access origin=\"*\""))
+
+        try SharedNetwork.save(NetworkPolicy(origins: ["https://api.open-meteo.com"], mayConnect: true), for: project)
+        XCTAssertEqual(TVNetworkGuard.policy(for: project)?.origins, ["https://api.open-meteo.com"])
+        let held = try config()
+        XCTAssertFalse(held.contains("<access origin=\"*\""))
+        XCTAssertTrue(held.contains("<access origin=\"https://api.open-meteo.com\" subdomains=\"false\"/>"))
+        let page = try TVPackage.wgtFiles(for: project, staged: try staged(), guarded: TVNetworkGuard.policy(for: project)).first { $0.path == "index.html" }
+        XCTAssertTrue(String(decoding: try XCTUnwrap(page).data, as: UTF8.self).contains("connect-src 'self' file: https://api.open-meteo.com data: blob:"))
+
+        try SharedNetwork.save(NetworkPolicy(origins: ["https://api.open-meteo.com"], unrestricted: true), for: project)
+        XCTAssertNil(TVNetworkGuard.policy(for: project), "the person let it reach every site")
     }
 
     func testOnlyATVWhoseBrowserHoldsThePolicyCountsAsGuarding() {

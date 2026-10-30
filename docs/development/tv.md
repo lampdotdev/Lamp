@@ -70,9 +70,10 @@ reads, pictures and sounds as data), never Lamp's lamp.js or three.js, which the
 A web app or a screen, whose page is the TV app's with Lamp's app around it, travels its own way (`ScreenFiles`, "Wishes").
 
 A shared TV app is held on the TV to its own files and the exact sites its safety sheet named (`TVNetworkGuard`), by
-rules inside the package, so they hold with Lamp closed. The sites come from `TVNetworkGuard.allowedOrigins`, the one
-place the packages read the shared app's policy (nil for an app made here, which packages as before); each is checked
-as a bare origin before it goes anywhere. Neither TV filters a packaged web app's network from outside the page beyond
+rules inside the package, so they hold with Lamp closed. The sites are the app's `NetworkPolicy` as Lamp recorded it when the app
+arrived (`SharedNetwork`, "Wishes"), read only through `TVNetworkGuard.allowedOrigins`: an app made here, or one the
+person let reach every site, packages as before, and one the sheet said "may connect" is held to its named sites alone,
+since a TV can't ask the person about another. Each site is checked as a bare origin before it goes anywhere. Neither TV filters a packaged web app's network from outside the page beyond
 Samsung's manifest, so the rule is the page's Content Security Policy: a meta tag Lamp puts first in every HTML page of
 the package (after the doctype, ahead of anything the page says), and on Samsung the same policy in `config.xml`
 (`tizen:content-security-policy`), its `<access>` list cut from everything to the app's sites and Lamp's, and

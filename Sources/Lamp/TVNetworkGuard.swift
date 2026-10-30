@@ -1,4 +1,5 @@
 import Foundation
+import LampRelayKit
 
 /// A shared TV app held to its own files and the exact sites its safety sheet named, by rules that go inside the
 /// package, so they hold on the TV with Lamp closed. Neither TV gives a packaged web app a network filter of its own
@@ -12,10 +13,14 @@ import Foundation
 /// Lamp's own ways out stay open: its gateway on this Mac (AI, the token, the phone page's address) and the controllers'
 /// relay there, by this Mac's names at the time of the build, and on an LG TV the game's own phone service on the TV.
 enum TVNetworkGuard {
-    /// The origins a shared app may reach, as Lamp read them when the app was imported and keeps them outside the app's
-    /// code; nil for an app that isn't held to any (one made here). The one place the TV packages ask, so the shared
-    /// policy is plugged in here and nowhere else. Tests stand in their own.
-    static var allowedOrigins: (LampProject) -> [String]? = { _ in nil }
+    /// The origins a shared app may reach: its `NetworkPolicy` as Lamp recorded it when the app arrived (`SharedNetwork`),
+    /// outside the app's code. Nil for an app that isn't held to any: one made here, or one the person let reach every
+    /// site. A TV has no way to ask the person about a site the page was blocked from, so an app the sheet said "may
+    /// connect" is held to its named sites alone. The one place the TV packages ask. Tests stand in their own.
+    static var allowedOrigins: (LampProject) -> [String]? = { project in
+        guard let policy = SharedNetwork.policy(for: project), policy.restricts else { return nil }
+        return policy.origins
+    }
 
     struct Policy: Equatable {
         /// The app's sites, each a checked origin ("https://api.example.com", "wss://live.example.com:8443").
