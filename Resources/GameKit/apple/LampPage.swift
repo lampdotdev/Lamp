@@ -815,7 +815,11 @@ enum LampPageGuard {
 /// connect elsewhere, shown over it with a way to allow the site.
 @MainActor final class LampPageRefused: NSObject, WKScriptMessageHandler {
     private let scheme: String
+    /// Sites shown or waiting their turn on this page, the one shown now, and those waiting: one bar at a time, and
+    /// each site's in turn.
     private var shown: Set<String> = []
+    private var showing: String?
+    private var waiting: [String] = []
     init(scheme: String) { self.scheme = scheme }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -825,7 +829,20 @@ enum LampPageGuard {
         FileHandle.standardError.write(Data("Lamp blocked this shared app's request to \(site ?? String(address.prefix(200))) (\(said["what"] as? String ?? ""))\n".utf8))
         guard policy.mayConnect, let site, !shown.contains(site) else { return }
         shown.insert(site)
-        LampPageBlocked.show(site, over: view) { [weak self] in self?.shown.remove(site) }
+        waiting.append(site)
+        showNext(over: view)
+    }
+
+    private func showNext(over view: WKWebView) {
+        guard showing == nil, !waiting.isEmpty else { return }
+        let site = waiting.removeFirst()
+        showing = site
+        LampPageBlocked.show(site, over: view) { [weak self, weak view] in
+            guard let self else { return }
+            self.showing = nil
+            self.shown.remove(site)
+            if let view { self.showNext(over: view) }
+        }
     }
 }
 
@@ -855,7 +872,7 @@ struct LampPageBlocked: View {
 
     /// Shows the bar for `site` at the top of the page; `gone` once it's closed.
     @MainActor static func show(_ site: String, over view: WKWebView, gone: @escaping @MainActor () -> Void) {
-        guard bars.object(forKey: view) == nil else { return }
+        bars.object(forKey: view)?.view.removeFromSuperview()
         let host = LampPageBlockedHost()
         func remove() { host.view.removeFromSuperview(); bars.removeObject(forKey: view); gone() }
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "This app"

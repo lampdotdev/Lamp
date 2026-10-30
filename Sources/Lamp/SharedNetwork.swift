@@ -78,11 +78,26 @@ enum SharedNetwork {
         ([wish] + parts).contains { policy(for: $0) != nil }
     }
 
-    /// A shared file's Native.swift that isn't Lamp's: Swift of the sender's in the app's process.
-    /// `stock` is Lamp's own Native.swift: one that can't be read is never taken for it.
+    /// Swift of the sender's in the app's process, as an app here is judged to have it (`GameKit.hasOwnSwift`): any Swift
+    /// file the file brings beside the page (Lamp's own never travel), but a Native.swift that's Lamp's own. `stock` is
+    /// Lamp's Native.swift: one that can't be read is never taken for it.
     static func hasOwnSwift(_ package: Sharing.Package, stock: String? = Sharing.stockNative) -> Bool {
         package.sources.contains { file in
-            package.path(of: file) == GameFiles.native && (stock == nil || (try? String(contentsOf: file, encoding: .utf8)) != stock)
+            let path = package.path(of: file)
+            guard path.hasPrefix("Sources/"), path.hasSuffix(".swift") else { return false }
+            return path != GameFiles.native || stock == nil || (try? String(contentsOf: file, encoding: .utf8)) != stock
+        }
+    }
+
+    /// The policies of a wish's apps as they are, to put back (`restore`) when a change of the wish is undone: they're
+    /// kept outside its versions.
+    static func snapshot(_ apps: [LampProject]) -> [URL: Data?] {
+        Dictionary(apps.map { (url(for: $0), try? Data(contentsOf: url(for: $0))) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    static func restore(_ snapshot: [URL: Data?]) {
+        for (file, data) in snapshot {
+            if let data { try? data.write(to: file, options: .atomic) } else { try? FileManager.default.removeItem(at: file) }
         }
     }
 

@@ -3606,8 +3606,11 @@ final class Store: ObservableObject {
             // What the wish arrived with (`Credits.load`) is in .lamp too, and the file's credits replace it.
             let creditsRecord = project.dir.appendingPathComponent(Credits.arrivedPath)
             let creditsBefore = try? Data(contentsOf: creditsRecord)
+            // And what its apps may reach (`SharedNetwork`), kept in Lamp's own folder.
+            let networkBefore = SharedNetwork.snapshot([project] + parts(of: project))
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
+                SharedNetwork.restore(networkBefore)
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
                 if let creditsBefore { try? creditsBefore.write(to: creditsRecord, options: .atomic) } else { try? fm.removeItem(at: creditsRecord) }
                 try? fm.removeItem(at: waiting)
@@ -3704,7 +3707,12 @@ final class Store: ObservableObject {
         let merged: Upstream.Merged
         do {
             merged = try await Upstream.merge(package, into: project, from: source, commit: origin?.commit, arrival: arrival)
+            // What the reviewed file says each app reaches: the wish's own, and each of its apps merged in its folder.
             SharedNetwork.arrive(package, in: project, arriving: false)
+            for part in package.parts {
+                guard let app = parts(of: project).first(where: { $0.dir.lastPathComponent.lowercased() == part.folder.lowercased() }) else { continue }
+                SharedNetwork.arrive(part.package, in: app, arriving: false)
+            }
             if let credits = package.credits { try Credits.add(credits, to: project) }
         } catch {
             _ = await Versions.git("git read-tree --reset -u HEAD && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }

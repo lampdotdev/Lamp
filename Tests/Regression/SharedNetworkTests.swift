@@ -67,6 +67,30 @@ final class SharedNetworkTests: XCTestCase {
         XCTAssertTrue(policy.mayConnect)
     }
 
+    /// Any Swift of the sender's beside the page runs where the page's limits don't reach, not only a Native.swift of
+    /// its own: a web app may bring other Swift files in Sources/, which its build compiles.
+    func testAnySwiftOfTheSendersIsSaidToReachAnySite() throws {
+        let stock = "// Lamp's own Native.swift\nenum Native { static func register() {} }\n"
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-own-swift-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        func write(_ text: String, _ path: String) throws {
+            let url = folder.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        try write(#"{"exportedAt": "2026-01-01T00:00:00Z", "format": 12, "name": "Notes", "platform": "web-app"}"#, "lamp-app.json")
+        try write("<!DOCTYPE html><p>Notes</p>", "Web/index.html")
+        try write(stock, "Sources/Native.swift")
+        let plain = try Sharing.open(unpacked: folder)
+        XCTAssertFalse(SharedNetwork.hasOwnSwift(plain, stock: stock), "Lamp's own Native.swift is no Swift of the sender's")
+
+        try write("import Foundation\nlet leak = URLSession.shared\n", "Sources/Helper.swift")
+        let more = try Sharing.open(unpacked: folder)
+        XCTAssertTrue(more.sources.contains { more.path(of: $0) == "Sources/Helper.swift" }, "the file travels as code")
+        XCTAssertTrue(SharedNetwork.hasOwnSwift(more, stock: stock))
+        XCTAssertTrue(SharedNetwork.reading(of: more, stock: stock).ownSwift)
+    }
+
     func testTheAppCarriesItInItsInfoPlist() throws {
         let policy = NetworkPolicy(origins: ["https://api.open-meteo.com", "wss://relay.example:8443"], mayConnect: true, ownSwift: true)
         let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\n\(policy.plistLines)\n</dict></plist>"
