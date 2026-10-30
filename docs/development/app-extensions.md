@@ -46,7 +46,8 @@ loads and shows as played in a preview's log, so only this check finds it. Those
 come from SubspaceAudio's WAV files instead. A clip the pack's page also publishes on its own, byte for byte, is fetched as itself rather than out
 of its archive, so one music loop doesn't cost a 33 MB download. `update-assets.py --sounds` refreshes only those packs.
 They skip everything done to pictures and have no picture for `show`. Their list is CC0 alone, since a CC-BY track also
-needs its credit shown in the app. Playback is the runtimes' own: no sound library is added for these. `find` searches
+needs its credit shown in the app. Playback is the runtimes' own: no sound library is added for these. A game looks here before writing a sound in code
+(the game skill's "Sound", `Rules.gameWebSound`, `Rules.gameSound`), since a request for sound alone doesn't lead an agent to this tool. `find` searches
 the index by words and kind and leaves out what's heavier than one model should be on the slowest place the app is
 shown (`AssetCatalog.budget`, a share of `Rules.gamePlaces`' frame budget); `show` draws the found assets' pictures
 into one numbered sheet for the agent. `fetch` downloads each file (an archive once, kept by its hash in Lamp's own

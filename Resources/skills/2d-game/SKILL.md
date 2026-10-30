@@ -78,8 +78,9 @@ What Lamp has changed in Phaser, so its usual code works here:
   gamepad are off: `this.input.keyboard` and `this.input.gamepad` are null, so never `createCursorKeys` or
   `addKey`. Phaser's pointer input works with the mouse on the Mac; on a touch screen Lamp's touch controls lie over
   the canvas, so a game played by tapping the screen itself passes `touch: false` and reads `this.input.on('pointerdown')`.
-- **Sound is the runtime's.** Phaser's sound is off: `this.load.audio` and `this.sound` play nothing. Make effects with
-  `sound.tone` in a scene's `create` (or once, at the top of game.js), or load files with `await sound.load('assets/…')`.
+- **Sound is the runtime's.** Phaser's sound is off: `this.load.audio` and `this.sound` play nothing. Load files from the
+  `assets` tool (the game skill, "Sound") with `await sound.load('assets/…')`, once, at the top of game.js; `sound.tone`
+  makes an effect in code where nothing there fits, in a scene's `create` or at the top of game.js.
 - **The stage is 1920x1080**, fitted to the window or screen with black around it. Lay everything out in those units.
   The page is never resized to the window: don't listen for resize.
 - **Loading.** Load each scene's files in its `preload`, best all in a first Boot scene, and start play from `create`.
@@ -174,8 +175,9 @@ Nothing is loaded from the network, ever: the art is in Web/ or made in code.
 
 ### Sound and saves
 
-The game skill's: an effect for each thing the player does or meets, from a file or `sound.tone` (a jump sliding up, a
-coin's two quick notes, noise for a hit), made or loaded once; music quiet or none. The best score, levels reached and settings with
+The game skill's: look in the `assets` tool first for an effect for each thing the player does or meets and for the
+music, loaded once; `sound.tone` only for what nothing there fits (a jump sliding up, a coin's two quick notes, noise
+for a hit), made once; music quiet or none. The best score, levels reached and settings with
 `save(name, value)` and `load(name)`, read with a default for anything new (`load('best') ?? 0`).
 `snapshot()` in phaser() keeps the player's place through a change (the scene, its mode, which menu or DOM card is
 open, the player's position, the score, the time), and `busy()` holds a change that runs the game's code again during a round (the game skill,

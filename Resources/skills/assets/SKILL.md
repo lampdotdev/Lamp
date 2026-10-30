@@ -28,6 +28,8 @@ gave, when only one or two things are needed and code makes them well, or when n
 Three.js shapes or Phaser graphics for shapes; `make_art` for a picture in the app's own style (a hero, a boss, a
 backdrop, an illustration in an app). The two mix well when the code-made things take the pack's palette.
 
+Sounds and music have a rule of their own, below: the index comes first.
+
 Look first with `find` (and `kind`), `show: true` to see the candidates together, before deciding: it costs nothing.
 
 ## One style
@@ -130,10 +132,14 @@ Kinds `sound` (short effects) and `music` (loops). Each line has its length and 
 to show: a sound's name and notes are all you can judge it by, so try it in the game, and say in your report that you
 haven't heard it, since the preview plays nothing aloud.
 
-Ready-made when the game wants a finished, recorded feel: menu clicks, coins, hits, a tune to play to. Made in code
-(the game skill, "Sound") when an effect must follow the game (an engine's pitch, notes on a scale), or when nothing here
-suits. Most sounds here are retro and chiptune: it suits an arcade or pixel-art game and fights a calm,
-realistic or orchestral one, so don't force it. One game keeps to one sound family as it keeps to one art style.
+A game's sounds start here, whatever else it makes in code. List them all before writing any: `kind: sound`, `limit: 30`
+and no `find`, then `kind: music`, since one search stops at its own words. Go through each moment (a click, a flip, a
+coin, a hit, a win, a loss) and the music against those lists: "Coin", "Impact" or "Jump" may do for a flip. Make one in
+code (the game skill, "Sound") only when nothing here fits that moment, or when it must follow the game as it's played
+(an engine's pitch, notes on a scale), and say which and why in your report.
+
+Most sounds here are retro and chiptune. That's no reason to skip them, since a tone written in code is no less
+synthetic; a clip that's wrong for the moment is. One game keeps to one sound family as it keeps to one art style.
 
 Choose them as the game is made, and fetch them then: they ship inside it, so the game works offline. Load each once, as
 the game sets itself up, through the runtime, and play it with what the game skill names:

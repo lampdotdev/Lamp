@@ -147,7 +147,7 @@ progress with LampStore.
 A game has sound: a short effect (under a second) for each thing the player does or meets, from `SoundPool` with each
 sound loaded once (files in `app/src/main/res/raw`, .ogg or .wav, or what the `assets` tool brought into
 `app/src/main/assets`, opened with `context.assets.openFd("<pack>/<file>")`), and music only when it suits, quiet (0.3
-to 0.4) under effects at 0.6 to 0.8, from a `MediaPlayer` with `isLooping`. With no sound files, make the effects in code: a
+to 0.4) under effects at 0.6 to 0.8, from a `MediaPlayer` with `isLooping`. Look in the `assets` tool first; only for what nothing there fits, make the effects in code: a
 few hundredths of a second of a wave written into an `AudioTrack` (`MODE_STATIC`), with soft ends so it doesn't click.
 Pause the music when the activity stops and release both when it's destroyed. Its settings turn sound and music on and
 off, kept with LampStore. The emulator plays it on the Mac's speakers.
