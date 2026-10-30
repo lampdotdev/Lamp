@@ -18,9 +18,10 @@ means what Start Over goes by (`Store.original(toStartAgain:)`, below): since Re
 change to a starter's copy moves it to Yours, and the starter is listed afresh. Where there are two untouched copies of
 one starter, the first stands for it and the other is the person's. Starter apps' heading says how many there are
 ("Starter apps · 15") with a disclosure control, and stays when it's closed; it's open for someone with nothing of
-their own yet and closed once they have, until the person opens or closes it, which is kept (`deskStartersOpen`). An
-untouched copy there has no Delete in its menu and isn't deleted by dragging it to the Trash (`AppMenu.deletable`,
-`WishDrag.deletable`): closing the section is how it's tidied away. Yours is headed only when it has something in it. Until the first reading of
+their own yet and closed once they have, until the person opens or closes it, which is kept (`deskStartersOpen`). Every
+row there has Open alone, on its button and its right-click, whether the starter's copy is on the desk or not: a starter
+is opened or remixed, and once changed it's in Yours with the whole menu. So an untouched copy has no Delete, and
+dragging it to the Trash doesn't delete it (`WishDrag.deletable`): closing the section is how it's tidied away. Yours is headed only when it has something in it. Until the first reading of
 the wishes is in, with which copies have changed (asked of git for all at once), neither section is drawn, so a changed
 copy never passes through Starter apps on the way to Yours. Each row is the wish's
 icon (narrower than a picture, and easier to find again down a list), its name and its about.json line, who made it, where
@@ -39,8 +40,8 @@ panel, beside the simulator, the emulator or Lamp's preview that shows it, or on
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
 (`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over and Send Changes Back… where they apply, Wish Info
 (its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
-A starter not on the desk yet has Open alone, and its side panel offers Remix it as any wish's does; the arrows move the
-pick through both sections, and File → Duplicate… acts on no wish while one is picked.
+A row under Starter apps has no ⋯ (above), and its side panel offers Open and Remix it; the arrows move the pick through
+both sections, and File → Duplicate… acts on no wish while a starter not on the desk yet is picked.
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
 for the menu. Dragged out
 of Lamp a row is the wish's shared file, or the app itself in the Dock or the Applications folder (`WishDrag`). A dot

@@ -244,8 +244,6 @@ struct PlaygroundIconSheet: ViewModifier {
 struct AppMenu: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
-    /// False for an untouched starter's copy under the desk's Starter apps, which collapsing tidies away instead.
-    var deletable = true
 
     var body: some View {
         let busy = store.busy.contains(project.id)
@@ -282,9 +280,7 @@ struct AppMenu: View {
             Button("Export…") { store.chooseExport(project) }
             Divider()
         }
-        if deletable {
-            Button("Delete…", role: .destructive) { store.deleting = project }
-        }
+        Button("Delete…", role: .destructive) { store.deleting = project }
     }
 }
 

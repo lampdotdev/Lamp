@@ -730,7 +730,7 @@ struct FileDrop: NSViewRepresentable {
 struct WishDrag: NSViewRepresentable {
     @EnvironmentObject private var store: Store
     let project: LampProject
-    /// False for an untouched starter's copy under Starter apps, which has no Delete: the Trash doesn't take it either.
+    /// False for an untouched starter's copy under Starter apps, which has no menu and so no Delete: nor does the Trash take it.
     var deletable = true
 
     func makeNSView(context: Context) -> Source { Source(store: store, project: project) }
