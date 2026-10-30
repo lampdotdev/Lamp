@@ -164,6 +164,14 @@ enum Gallery {
             LogLine(kind: .oldCopy, text: "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),
             LogLine(kind: .status, text: "Today is ready on the iPhone"),
         ]),
+        screen("A request waiting for what builds", group: "Chat screen", [
+            LogLine(kind: .user, text: "Make it a snowy winter night"),
+            LogLine(kind: .needsBuilder, text: ""),
+        ]),
+        screen("A request waiting, with a sign-in to use", group: "Chat screen", [
+            LogLine(kind: .user, text: "Make it a snowy winter night"),
+            LogLine(kind: .needsBuilder, text: BuilderLine.text([.claude, .codex])),
+        ]),
         screen("A newer original", group: "Chat screen", [
             LogLine(kind: .user, text: "Make it a snowy winter night"),
             LogLine(kind: .agent, text: "Snow falls over the whole city now, and the streets have drifts."),

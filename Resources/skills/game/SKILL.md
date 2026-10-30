@@ -28,7 +28,12 @@ The tools Lamp has for games:
   its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview, on a
   Samsung or LG TV and on the Xbox; elsewhere `Lamp.controllers` says it can't start, so the game stays whole with a controller,
   the keys or touch. Lamp's preview of the game plays with its scripted pad, and can join the game's phone page as one
-  player (the phone-pages skill).
+  player (the phone-pages skill). Read a phone's buttons in `frame(f)` from `f.phones`, as the pads are read (`frame().phones`
+  in a Phaser scene): one `{ player, down, pressed, released }` for each phone joined, each button by the name the phone
+  page gave it, so `for (const p of f.phones) if (p.pressed.a) start()`. `pressed` and `released` last the one frame after
+  it happened, and a press let go again between two frames is still a press. `onButton` runs between frames, so a flag
+  it sets and `frame` clears is lost: keep it for what can't wait for a frame. Sticks and messages still come by
+  `onAxis` and `onMessage`.
 - **A TV app's page**: a game made as a Samsung or LG TV app before games took phones (`kind` "app") has no
   lamp-game.js: it follows the TV rules and lamp.js instead, with its own `requestAnimationFrame`. The rest of this
   skill holds for it wherever it doesn't name the runtime.
@@ -158,9 +163,9 @@ game is written to keep the player's place through one:
   starts `Lamp.controllers` for a change. So snapshot() holds which player owns which slot (the seat, side, color or
   team each player number has), and the new code restores those slots before it sits anyone down. As its first frame
   nears, `onLeave` and `onJoin` are called again for who left and who is here, so `onJoin` for a player who already has
-  a slot leaves the slot alone, and only a new player takes a free one. What a phone has held down is `isHeld`; a
-  press or message from before the new code started isn't sent again, so anything read while held is read with
-  `isHeld`, not remembered from `onButton`.
+  a slot leaves the slot alone, and only a new player takes a free one. What a phone has held down stays in
+  `f.phones`' `down`; a press or message from before the new code started isn't sent again and isn't in `pressed`, so
+  anything read while held is read from `down` (or `isHeld`), not remembered from `onButton`.
 - Pictures, models, sounds and data load through the runtime (`texture()`, `model()`, `sound.load()`, `asset()`), never
   by a URL of the game's own: a new copy of one of those goes into the running game with no reload. What the game makes
   of a file itself (a material from shader source, clones of a model, a mixer for its animations, a level from JSON) is

@@ -5,6 +5,26 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.29.0
+
+- A new look: Lamp is on paper with stripes, in light or dark to match your Mac. The desk is one list, your wishes
+  on top and the starter apps below, in a section you can fold away. The Dock icon brings it back whenever it's hidden.
+- Remix changes a wish in place. Duplicate… makes a new copy, and Start Again from the Original starts its
+  conversation over too.
+- Change a game while you play it: most changes go straight into the running game, without starting your level or
+  your drive over.
+- One change reaches every screen a wish is on: open pages update at once, and Reload puts it everywhere.
+- Lamp keeps a wish's shared data, so a TV or tablet that opens on its own gets your family's calendar, shopping and
+  photos without another screen open.
+- Phones as controllers: games on the Mac, an iPhone or iPad, a Samsung or LG TV and the Xbox let phones on your
+  Wi‑Fi join as players.
+- Games can use free 3D models, art, sound effects and music, and be written in TypeScript.
+- The Xbox controller moves around TV apps and screens, and an app starts once it's really installed.
+- New starter: The Little House, a cozy room on a rainy night. New York offers a sports car, taxi fares, and playing
+  as a monster.
+- A menu bar app tells you where it is when it opens, ⌘Q works in games, and a long-running wish no longer fails
+  with a connection error.
+
 ## 0.28.0
 
 - Remix a game or an app straight from its page. Remix opens the untouched original on your desk, with your request

@@ -632,7 +632,9 @@ extension TVTemplate {
          * Lamp.controllers.onLink(fn(url))             the address phones open: draw it with LampQR.draw (its comment
          *                                              says how); it changes every few minutes, and fn is called each time
          * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
-         * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go
+         * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go, heard as it
+         *                                              arrives, between a game's frames: a game on lamp-game.js reads
+         *                                              buttons each frame from f.phones
          * Lamp.controllers.onAxis(fn(player, name, x, y))               a stick, or the phone's tilt ('tilt'), -1 to 1
          * Lamp.controllers.onMessage(fn(player, data))                  anything else a phone sent (JSON, 16 KB at most)
          * Lamp.controllers.onFile(fn(player, file))                     a phone is sending a file (up to 64 MB):
