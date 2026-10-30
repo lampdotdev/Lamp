@@ -46,19 +46,13 @@ enum LGPhones {
     }
 
     /// The service for this game on this TV, nil when its phones stay Lamp's there.
-    /// `guarded`: a shared game's network policy (`TVNetworkGuard`), put in each page of its phone page, which phones
-    /// open from the TV at its address.
-    static func service(for project: LampProject, on record: TVs.Record, source: URL? = source, guarded: TVNetworkGuard.Policy? = nil) throws -> Service? {
+    static func service(for project: LampProject, on record: TVs.Record, source: URL? = source) throws -> Service? {
         guard project.platform.target.takesPhones, runs(on: record.osVersion), TVs.hasPhonePage(project),
               let id = serviceID(for: project) else { return nil }
         guard let source else { throw TVs.Failure(message: "Lamp's phone service for LG TVs is missing from Lamp.") }
         let published = try ControllerSnapshot.read(TVs.phoneFolder(for: project))
-        var mine = published.files.filter { $0.path != "lamp-controller.js" }
-        if let guarded {
-            let policy = TVNetworkGuard.phonePage(guarded, relayHost: record.address)
-            mine = mine.map { TVNetworkGuard.isPage($0.path) ? ControllerSnapshot.File(path: $0.path, data: TVNetworkGuard.guarded($0.data, policy: policy)) : $0 }
-        }
-        let page = ControllerSnapshot(files: mine + [ControllerSnapshot.File(path: "lamp-controller.js", data: Data(TVTemplate.phoneControllerJS.utf8))])
+        let page = ControllerSnapshot(files: published.files.filter { $0.path != "lamp-controller.js" }
+            + [ControllerSnapshot.File(path: "lamp-controller.js", data: Data(TVTemplate.phoneControllerJS.utf8))])
         do { try page.check() } catch { throw TVs.Failure(message: "\(error)") }
         return Service(id: id, files: try files(id: id, owner: TVTemplate.webOSID(for: project), page: page, source: source))
     }

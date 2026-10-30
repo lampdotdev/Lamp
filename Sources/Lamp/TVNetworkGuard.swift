@@ -73,20 +73,17 @@ enum TVNetworkGuard {
 
     /// The TV page's policy. Its own files are 'self' and file: (a TV opens the package from its disk), pictures and
     /// sounds may be data and blobs it makes, and scripts may be inline and eval'd: this rule is about where the page
-    /// connects, not what code it runs. A frame or worker can't be a data or blob document, which older browsers give
-    /// no policy at all.
+    /// connects, not what code it runs. Frames and workers come only from the app's sites: any of its own files (a script,
+    /// a picture) opened as a frame or a worker is a document of its own that no meta tag reaches, and a data or blob one
+    /// has no policy in older browsers.
     static func tvPage(_ policy: Policy) -> String {
         directives(own: ["'self'", "file:"], sites: policy.origins, connect: lampSources(policy))
-    }
-
-    /// A phone page's policy: its own files at the site that served it, and the relay at that site's host.
-    static func phonePage(_ policy: Policy, relayHost: String) -> String {
-        directives(own: ["'self'"], sites: policy.origins, connect: host(relayHost).map { ["ws://\($0):*"] } ?? [])
     }
 
     private static func directives(own: [String], sites: [String], connect: [String]) -> String {
         func list(_ parts: [String]) -> String { parts.joined(separator: " ") }
         let mine = own + sites
+        let documents = sites.isEmpty ? "'none'" : list(sites)
         return [
             "default-src " + list(mine),
             "script-src " + list(mine + ["'unsafe-inline'", "'unsafe-eval'"]),
@@ -95,9 +92,9 @@ enum TVNetworkGuard {
             "media-src " + list(mine + ["data:", "blob:"]),
             "font-src " + list(mine + ["data:"]),
             "connect-src " + list(mine + ["data:", "blob:"] + connect),
-            "frame-src " + list(mine),
-            "child-src " + list(mine),
-            "worker-src " + list(mine),
+            "frame-src " + documents,
+            "child-src " + documents,
+            "worker-src " + documents,
             "object-src 'none'",
             "base-uri 'self'",
             "form-action " + list(mine),
@@ -107,17 +104,18 @@ enum TVNetworkGuard {
     // MARK: Pages
 
     static func isPage(_ path: String) -> Bool {
-        ["html", "htm", "xhtml"].contains((path as NSString).pathExtension.lowercased())
+        ["html", "htm", "shtml", "shtm"].contains((path as NSString).pathExtension.lowercased())
     }
 
-    /// A page with the policy first: straight after its doctype (before it would put the page in quirks mode), ahead of
+    /// A page with the policy first: straight after its doctype (before it would put the page in quirks mode; only HTML's
+    /// own spaces may come before one, since any other character opens the body, where a policy counts for nothing), ahead of
     /// anything the page says, so no comment, script or tag of its own comes before it. A page that declares UTF-8 has
     /// that said first, since a browser looks for it only in a page's first kilobyte.
     static func guarded(_ page: Data, policy: String) -> Data {
         var text = String(decoding: page, as: UTF8.self)
         var head = ""
         if text.hasPrefix("\u{FEFF}") { text.removeFirst(); head = "\u{FEFF}" }
-        let doctype = try? NSRegularExpression(pattern: #"^\s*<!doctype[^>]*>"#, options: [.caseInsensitive])
+        let doctype = try? NSRegularExpression(pattern: #"^[\t\n\f\r ]*<!doctype[^>]*>"#, options: [.caseInsensitive])
         if let match = doctype?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)), let range = Range(match.range, in: text) {
             head += text[range]
             text = String(text[range.upperBound...])

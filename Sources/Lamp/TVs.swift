@@ -303,7 +303,7 @@ enum TVs {
         say("Packaging \(project.name) for \(record.name)…")
         // The policy goes in either way, but only a TV whose browser holds a page to it is said to keep the app to its sites.
         if guarded != nil, !TVNetworkGuard.holds(on: record) { say("\(record.name) is too old to keep \(project.name) to its own sites.") }
-        let package = try await TVPackage.ipk(for: project, staged: staged, phones: try LGPhones.service(for: project, on: record, guarded: guarded),
+        let package = try await TVPackage.ipk(for: project, staged: staged, phones: try LGPhones.service(for: project, on: record),
                                               guarded: guarded)
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         say("Putting \(project.name) on \(record.name)…")

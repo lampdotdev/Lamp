@@ -1,5 +1,4 @@
 import XCTest
-import LampRelayKit
 @testable import Lamp
 
 /// A shared TV app goes on a TV held to its own files and the sites its sheet named: the policy is in every page of
@@ -44,7 +43,14 @@ final class TVNetworkGuardTests: XCTestCase {
         XCTAssertTrue(tricky.hasPrefix("<meta http-equiv=\"Content-Security-Policy\""), tricky)
         XCTAssertTrue(csp.contains("connect-src 'self' file: https://api.open-meteo.com data: blob: http://studio.local:47100 ws://studio.local:*"))
         XCTAssertTrue(csp.contains("ws://192.168.1.20:*") && csp.contains("ws://127.0.0.1:*"), "the relay and an LG game's own service")
-        XCTAssertFalse(csp.contains("frame-src 'self' file: https://api.open-meteo.com data:"), "no data: documents, which older browsers leave unguarded")
+        XCTAssertTrue(csp.contains("frame-src https://api.open-meteo.com; child-src https://api.open-meteo.com; worker-src https://api.open-meteo.com;"),
+                      "no frame or worker of the app's own files, which no meta tag reaches")
+        XCTAssertTrue(TVNetworkGuard.tvPage(TVNetworkGuard.Policy(origins: [], lampHosts: [], gatewayPort: 1)).contains("frame-src 'none'"))
+        // Any character but HTML's own spaces before the doctype opens the body, where a policy counts for nothing.
+        let spaced = String(decoding: TVNetworkGuard.guarded(Data("\u{00A0}<!doctype html><p>x</p>".utf8), policy: csp), as: UTF8.self)
+        XCTAssertTrue(spaced.hasPrefix("<meta http-equiv=\"Content-Security-Policy\""), spaced)
+        XCTAssertTrue(TVNetworkGuard.isPage("a.shtml") && TVNetworkGuard.isPage("b.HTM"))
+        XCTAssertFalse(TVNetworkGuard.isPage("c.xhtml"), "an XHTML page can't take an HTML meta tag")
     }
 
     func testTheSamsungPackageNamesOnlyTheAppsSites() throws {
@@ -82,18 +88,6 @@ final class TVNetworkGuardTests: XCTestCase {
             XCTAssertTrue(text.contains("<meta http-equiv=\"Content-Security-Policy\" content=\"\(TVNetworkGuard.tvPage(policy))\">"), page)
         }
         XCTAssertEqual(try String(contentsOf: app.appendingPathComponent("app.js"), encoding: .utf8), "fetch('https://evil.example/')", "scripts go as they are")
-    }
-
-    func testAnLGGamesPhonePageIsGuardedWithItsRelayOnTheTV() throws {
-        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Resources/LGPhones")
-        let page = TVNetworkGuard.guarded(Data("<p>pad</p>".utf8), policy: TVNetworkGuard.phonePage(policy, relayHost: "192.168.1.30"))
-        let text = String(decoding: page, as: UTF8.self)
-        XCTAssertTrue(text.contains("connect-src 'self' https://api.open-meteo.com data: blob: ws://192.168.1.30:*"), text)
-        XCTAssertFalse(text.contains("studio.local"), "the phone page reaches its relay where it was served, nothing of the Mac's")
-        let files = try LGPhones.files(id: "dev.lamp.app.pong.phones", owner: "dev.lamp.app.pong",
-                                       page: ControllerSnapshot(files: [.init(path: "index.html", data: page)]), source: source)
-        XCTAssertNotNil(files.first { $0.path == "phone/index.html" && $0.data == page })
     }
 
     func testOnlyATVWhoseBrowserHoldsThePolicyCountsAsGuarding() {
