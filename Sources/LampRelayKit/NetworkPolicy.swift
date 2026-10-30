@@ -3,8 +3,11 @@ import Foundation
 /// What a page shared with this person may reach: its own files, and the exact sites (scheme, host and port) the safety
 /// sheet named when it arrived, read from its code (`WebReach`, `SharedNetwork` in Lamp). Lamp keeps it in its own folder,
 /// outside the app's, and writes it into every build of the app (Info.plist's `LampNetwork`), so it holds with Lamp
-/// closed and the app's code, a rebuild or a live change can't widen it. An app the person made has none and reaches
-/// what it likes.
+/// closed and neither the page's code, a rebuild nor a live change can widen it. Swift of the sender's in the app
+/// (`ownSwift`) can: it runs in the app's own process, where it can reach the network itself and switch the page's
+/// guard off (the person's choices are kept in the app's defaults), so such an app isn't held at all, its page
+/// included, and its sheet says "Has Swift that can reach any site". An app the person made has none and reaches what
+/// it likes.
 ///
 /// One rule for every host of a shared page, each reading this type rather than a copy of it: the app around it on the
 /// Mac, the iPhone and the iPad (LampPage.swift, as Content-Security-Policy headers and its navigation) and Lamp's
@@ -17,8 +20,9 @@ public struct NetworkPolicy: Codable, Equatable, Sendable {
     /// The sheet said the app may connect outside itself (a request whose address Lamp couldn't work out): a request it
     /// blocks is shown to the person, who can allow that one site.
     public var mayConnect: Bool
-    /// The app carries Swift of its own beside the page (Sources/Native.swift): that Swift runs in the app's process and
-    /// can reach the network itself, so the app isn't held to these sites as a whole, only its page is.
+    /// The app carries Swift of the sender's beside the page (any of Sources/ but Lamp's own Native.swift): it runs in
+    /// the app's process, where it can reach the network itself and turn the page's guard off, so the app isn't held to
+    /// these sites, its page included.
     public var ownSwift: Bool
     /// The person chose to let it reach any site, for good.
     public var unrestricted: Bool

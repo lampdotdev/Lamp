@@ -677,7 +677,8 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
 /// redirect included since each step is decided here; what no policy covers (WebRTC, a link's preconnect) is off
 /// (`NetworkPolicy.holdBack`). A page whose review said
 /// it may connect elsewhere shows what was blocked, and the person can allow that site or, for good, every site.
-/// Swift of the app's own (Native.swift) runs beside the page with none of this: the review says so.
+/// Swift of the sender's in this app (Native.swift or any other) runs in this process with none of this, and can turn it
+/// off for the page too (the person's choices are this app's defaults): such an app isn't held, and its review says so.
 enum LampPageGuard {
     static let policy = NetworkPolicy(plist: Bundle.main.object(forInfoDictionaryKey: NetworkPolicy.plistKey))
     private static let allowedKey = "LampNetworkAllowed", everyKey = "LampNetworkUnrestricted"
