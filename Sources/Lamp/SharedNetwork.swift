@@ -12,7 +12,8 @@ import LampRelayKit
 /// shared page only once it reads it too.
 enum SharedNetwork {
     /// Where the policies are kept: Lamp's own folder, closed to the agent's commands (`Sandbox`), one file an app.
-    static var folder: URL { Edition.supportFolder.appendingPathComponent("Network") }
+    /// Tests keep theirs in a folder of their own.
+    nonisolated(unsafe) static var folder = Edition.supportFolder.appendingPathComponent("Network")
 
     /// An app's file, by who it is (`instance`, kept through renames), or its folder's name for an app from before.
     static func url(for project: LampProject) -> URL {
@@ -95,10 +96,14 @@ enum SharedNetwork {
         Dictionary(apps.map { (url(for: $0), try? Data(contentsOf: url(for: $0))) }, uniquingKeysWith: { first, _ in first })
     }
 
-    static func restore(_ snapshot: [URL: Data?]) {
+    /// Puts the policies back as `snapshot` had them, and takes away those of `apps` it didn't have: an app the undone
+    /// change made (a part an update added) leaves none behind for a later app in its folder, which would be the same
+    /// instance (`Parts.instance`), to take for its own.
+    static func restore(_ snapshot: [URL: Data?], apps: [LampProject] = []) {
         for (file, data) in snapshot {
             if let data { try? data.write(to: file, options: .atomic) } else { try? FileManager.default.removeItem(at: file) }
         }
+        for app in apps where snapshot[url(for: app)] == nil { forget(app) }
     }
 
     /// Records what a shared file's app may reach, as it goes into `project`. A fresh import (`arriving`) records it; an

@@ -91,6 +91,34 @@ final class SharedNetworkTests: XCTestCase {
         XCTAssertTrue(SharedNetwork.reading(of: more, stock: stock).ownSwift)
     }
 
+    /// An update undone puts back what its apps reached, and leaves no policy for an app it added: a later app made in
+    /// that folder is the same instance, and would take it for its own.
+    func testAnUndoneUpdateLeavesTheWishsPoliciesAsTheyWere() throws {
+        let kept = SharedNetwork.folder
+        SharedNetwork.folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-network-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: SharedNetwork.folder); SharedNetwork.folder = kept }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wish")
+        let wish = LampProject(id: "wish", name: "Wish", exe: "Wish", dir: dir, instance: UUID().uuidString)
+        func part(_ folder: String) -> LampProject {
+            LampProject(id: Parts.id(wish: wish.id, folder: folder), name: "Wish", exe: "Wish", dir: dir.appendingPathComponent(folder),
+                        instance: Parts.instance(wish: wish, folder: folder), partOf: wish.id)
+        }
+        let tv = part("TV"), added = part("iPhone")
+        try SharedNetwork.save(NetworkPolicy(origins: ["https://old.example"]), for: wish)
+        try SharedNetwork.save(NetworkPolicy(origins: ["https://tv.example"]), for: tv)
+        let before = SharedNetwork.snapshot([wish, tv])
+
+        // The update writes the new sites, and a part it adds gets its own, before something fails.
+        try SharedNetwork.save(NetworkPolicy(origins: ["https://new.example"]), for: wish)
+        try SharedNetwork.save(NetworkPolicy(origins: ["https://new-tv.example"]), for: tv)
+        try SharedNetwork.save(NetworkPolicy(origins: ["https://added.example"]), for: added)
+        SharedNetwork.restore(before, apps: [tv, added])
+
+        XCTAssertEqual(SharedNetwork.policy(for: wish)?.origins, ["https://old.example"])
+        XCTAssertEqual(SharedNetwork.policy(for: tv)?.origins, ["https://tv.example"])
+        XCTAssertNil(SharedNetwork.policy(for: added), "a part the undone update added leaves no policy behind")
+    }
+
     func testTheAppCarriesItInItsInfoPlist() throws {
         let policy = NetworkPolicy(origins: ["https://api.open-meteo.com", "wss://relay.example:8443"], mayConnect: true, ownSwift: true)
         let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\n\(policy.plistLines)\n</dict></plist>"

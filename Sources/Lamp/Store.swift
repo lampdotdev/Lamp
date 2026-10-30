@@ -3610,7 +3610,11 @@ final class Store: ObservableObject {
             let networkBefore = SharedNetwork.snapshot([project] + parts(of: project))
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
-                SharedNetwork.restore(networkBefore)
+                // The apps the update made are still listed here, and their policies go with them.
+                SharedNetwork.restore(networkBefore, apps: await parts(of: project)
+                    + package.parts.map { LampProject(id: Parts.id(wish: project.id, folder: $0.folder), name: project.name, exe: project.exe,
+                                                      dir: project.dir.appendingPathComponent($0.folder),
+                                                      instance: Parts.instance(wish: project, folder: $0.folder), partOf: project.id) })
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
                 if let creditsBefore { try? creditsBefore.write(to: creditsRecord, options: .atomic) } else { try? fm.removeItem(at: creditsRecord) }
                 try? fm.removeItem(at: waiting)
