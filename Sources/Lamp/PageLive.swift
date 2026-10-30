@@ -26,7 +26,8 @@ import Foundation
         case cannot
         /// The open copy already has it.
         case unchanged
-        /// In, as the page says it went: `swapped` into the running game, or `reloading` with the player's place kept.
+        /// In, as the page says it went: `swapped` into the running game, `rerun` (its code run again in place, the page,
+        /// renderer and kept parts staying), or `reloading`, each with the player's place kept.
         case went(String)
         /// Waiting for a pause in the game, or the person's Reload.
         case held
@@ -302,19 +303,24 @@ import Foundation
         }
         let key = Key(id: project.id, place: place)
         let gen = body["gen"] as? Int ?? 0
-        if ["held", "reloading", "swapped"].contains(state) { reasons[project.id] = (body["why"] as? String).map { String($0.prefix(300)) } }
+        // The change is on screen: the light Lamp holds over the window while it's put in crosses it now.
+        if state == "shown" {
+            Store.shared.pageShown(project)
+            return (200, [:])
+        }
+        if ["held", "reloading", "rerun", "swapped"].contains(state) { reasons[project.id] = (body["why"] as? String).map { String($0.prefix(300)) } }
         if state == "held" { held.insert(key) }
-        if let change = lastGiven(project, key), ["held", "swapped", "reloading"].contains(state) {
+        if let change = lastGiven(project, key), ["held", "swapped", "rerun", "reloading"].contains(state) {
             var marked = change
             marked.waits = state == "held"
             if marked.waits != (change.waits ?? false) { give(marked, to: key, in: project) }
         }
-        if let waiting = deciding[key], gen >= waiting.gen, ["swapped", "reloading", "held"].contains(state) {
+        if let waiting = deciding[key], gen >= waiting.gen, ["swapped", "rerun", "reloading", "held"].contains(state) {
             deciding[key] = nil
             waiting.answer.resume(returning: state)
             return (200, [:])
         }
-        if ["swapped", "reloading"].contains(state) {
+        if ["swapped", "rerun", "reloading"].contains(state) {
             held.remove(key)
             Store.shared.pageWentIn(project)
         }

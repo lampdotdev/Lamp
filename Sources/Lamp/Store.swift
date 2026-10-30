@@ -751,6 +751,9 @@ final class Store: ObservableObject {
         /// The latest change went into an open game by its page opening again (its code couldn't be swapped in, why in
         /// `reloadWhy`): told with the look, since the player's place was kept but the world was built again.
         var pageReopened = false
+        /// The latest change went into an open game by its code running again in place (`reloadWhy` says why it
+        /// couldn't be swapped): the player's place and the parts the game keeps stayed, the rest was built again.
+        var pageRanAgain = false
         /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
         var endedReloadWait = false
         /// The person pressed Reload while the agent worked, and the app reopened with the change that waited
@@ -8467,6 +8470,7 @@ final class Store: ObservableObject {
                         turn.outcomes.append(.live)
                         turn.reloadWhy = nil
                         turn.pageReopened = false
+                        turn.pageRanAgain = false
                         turn.autoApplied += 1
                         // A step, not the turn's end: "is updated" is said once the request is done, and here the
                         // agent is still at work on it.
@@ -8609,10 +8613,15 @@ final class Store: ObservableObject {
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)
         case .unchanged, .went:
+            // A swap is on screen at once; a page that runs its code again, or opens again, says when it's showing the
+            // change (`shown`, `pageShown`), and the smoke stays over the window until then.
+            if outcome == .went("swapped") { AppTransition.land(project) }
+            else if outcome == .went("rerun") || outcome == .went("reloading") { awaitShown(project) }
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.pageReopened = outcome == .went("reloading")
-            owner?.reloadWhy = owner?.pageReopened == true ? PageLive.shared.reason(project) : nil
+            owner?.pageRanAgain = outcome == .went("rerun")
+            owner?.reloadWhy = owner?.pageReopened == true || owner?.pageRanAgain == true ? PageLive.shared.reason(project) : nil
             if outcome != .unchanged { owner?.shown.append(Date()) }
             pageWentIn(project, saying: false)
             if inFront { log(project, .status, "\(project.name) is updated") }
@@ -8882,9 +8891,30 @@ final class Store: ObservableObject {
                          early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
         let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
-        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
-        AppTransition.end(project)
+        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`). A game's
+        // page still putting the change in keeps it until it's on screen (`pageShown`).
+        if !waitingToShow.keys.contains(project.id) { AppTransition.end(project) }
         return crash
+    }
+
+    /// Games whose page is putting a change in by running its code again or opening again, with the smoke held over
+    /// their window until the page says the change is on screen; a page that never says lets it go after a while.
+    private var waitingToShow: [String: Task<Void, Never>] = [:]
+    private func awaitShown(_ project: LampProject) {
+        waitingToShow[project.id]?.cancel()
+        let id = project.id
+        waitingToShow[id] = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled, waitingToShow.removeValue(forKey: id) != nil, let current = projects.first(where: { $0.id == id }) else { return }
+            AppTransition.end(current)
+        }
+    }
+
+    /// The page shows the change it was putting in: the light crosses the window, and the smoke goes.
+    func pageShown(_ project: LampProject) {
+        guard let waiting = waitingToShow.removeValue(forKey: project.id) else { return }
+        waiting.cancel()
+        AppTransition.land(project)
     }
 
     private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {
@@ -8951,6 +8981,7 @@ final class Store: ObservableObject {
             owner?.outcomes.append(.live)
             owner?.reloadWhy = nil
             owner?.pageReopened = false
+            owner?.pageRanAgain = false
             await DataSnapshots.wentIn(project)
             prepareIconMeanwhile(project)
             return nil
@@ -13012,6 +13043,9 @@ final class Store: ObservableObject {
                 if turn.pageReopened {
                     note = "The change went into the open game, but its page opened again for it" + (turn.reloadWhy.map { " (\($0))" } ?? "")
                         + " and started from its snapshot: the person waited for the world to be built again. Where you can, make the next change one its modules swap in (the game skill, \"Changes while it's played\")."
+                } else if turn.pageRanAgain {
+                    note = "The change went into the open game by running its code again in place" + (turn.reloadWhy.map { " (\($0))" } ?? "")
+                        + ": it started from its snapshot, keeping the page, the renderer and the parts it keeps, and built the rest again. The game's log says what was kept and how long it took (the game skill, \"Changes while it's played\")."
                 }
                 if turn.endedReloadWait {
                     note += " The change that was waiting for Reload went in with it, so nothing waits for Reload now; don't tell the person to press it."

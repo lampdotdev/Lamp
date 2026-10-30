@@ -70,11 +70,12 @@ async function settled(g) {
 // behind everything; `touch` and `keyboard` as game() in lamp-game.js takes them (the touch buttons a phone shows, or
 // false for a game that draws its own; keyboard: false for a game that reads keys itself). `config` is anything more of
 // Phaser's game config (`render`, `fps`…), never its size, scale, input, audio or loop, which are Lamp's. `snapshot`,
-// `restore`, `busy` and `assetChanged` keep the player's place through a change, as game() takes them. The scenes are
+// `restore`, `busy`, `assetChanged` and `dispose` keep the player's place through a change, as game() takes them; when
+// the game's code runs again for a change, this Phaser.Game goes and the new code's starts. The scenes are
 // made during game()'s init, so pendingRestore() from lamp-game.js gives the snapshot in the first scene's init or
 // create, and a game goes straight to where the player was without showing its title.
 export async function phaser({ scenes, pixelArt = false, physics, background = '#000000', touch, keyboard, config = {},
-                               snapshot, restore, busy, assetChanged }) {
+                               snapshot, restore, busy, assetChanged, dispose }) {
     // What lamp-game.js fits to the screen at 1920x1080's shape: Phaser fits its canvas inside it (Phaser's FIT, so a
     // click is read where it lands however big the window is).
     const stage = document.createElement('div');
@@ -90,6 +91,11 @@ export async function phaser({ scenes, pixelArt = false, physics, background = '
     let g = null;
     return game({
         renderer, touch, keyboard, sharp: true, snapshot, restore, busy, assetChanged,
+        async dispose() {
+            if (dispose) await dispose();
+            // Phaser takes a game away at its next step, which a sleeping loop never takes: it goes now.
+            if (g) { g.destroy(true); g.runDestroy(); g = null; }
+        },
         async init() {
             g = phaserGame = new Phaser.Game(Object.assign({}, config, {
                 type: config.type ?? Phaser.AUTO, parent: stage, width: WIDTH, height: HEIGHT,

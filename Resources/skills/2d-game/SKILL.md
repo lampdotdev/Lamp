@@ -64,8 +64,8 @@ As the game grows, each scene goes in a module of its own (`play.js` exporting `
 with `hot(import.meta).accept()` from lamp-game.js, so a change to it goes into the running scene (the game skill,
 "Changes while it's played"): the scene keeps its sprites and fields and runs the new `update` and the methods it
 calls. What `create` built stays until the scene starts again, so a change to `create` or `preload` returns false from
-`accept((next, { changed }) => !changed.some(n => /\.(create|preload|init)$/.test(n)))` and the page opens again from
-the snapshot.
+`accept((next, { changed }) => !changed.some(n => /\.(create|preload|init)$/.test(n)))` and the game's code runs again
+in place from the snapshot, with a new Phaser game that loads its pictures again.
 
 What Lamp has changed in Phaser, so its usual code works here:
 
@@ -177,7 +177,7 @@ The game skill's: effects from `sound.tone` for each thing the player does or me
 quick notes, noise for a hit), made once; music quiet or none. The best score, levels reached and settings with
 `save(name, value)` and `load(name)`, read with a default for anything new (`load('best') ?? 0`).
 `snapshot()` in phaser() keeps the player's place through a change (the scene, its mode, which menu or DOM card is
-open, the player's position, the score, the time), and `busy()` holds a change that opens the page again during a round (the game skill,
+open, the player's position, the score, the time), and `busy()` holds a change that runs the game's code again during a round (the game skill,
 "Changes while it's played"). The first scene reads `pendingRestore()` and goes straight to the scene the snapshot
 names, and that scene's `create` reads it again and builds that place with no title card or intro, so a fresh start
 and a change's start are one path:
@@ -201,7 +201,7 @@ class Play extends Phaser.Scene {
 
 Read it in `create`, not from the scene's data: `this.scene.restart()` with no data starts the scene with its last
 data again, so a snapshot passed that way would be put back on every restart. A picture Phaser's loader read goes in again through `assetChanged(path)` in phaser() (load it again and
-swap the texture), or the page opens again with the snapshot.
+swap the texture), or the game's code runs again in place from the snapshot.
 
 ### Keeping it smooth on the slowest place
 

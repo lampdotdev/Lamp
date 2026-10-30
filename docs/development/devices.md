@@ -429,7 +429,12 @@ its declared step makes, `Web/lamp.js` written then), installed as a game. The a
 `WebGamePreview`: a copy of the page (`GameKit.stageWeb`, under the sandbox) in a web view nobody sees, given the same
 script as the C++ kit's preview (`window.lampPreview`), which `lamp-game.js` plays itself at exactly 1/60 s a frame with its
 clock and random numbers fixed, pausing at each `shot` while Lamp pictures the whole page, HTML over the canvas
-included; the same script gives the same pixels. Its stats count draws and triangles (three.js's `renderer.info`, or the
+included; the same script gives the same pixels. After a play that ends cleanly the preview is kept open for ten
+minutes, one a game: the next look hands it its script and the files changed since the last (by hash, the build's own
+name aside), and the game's code runs again in place there from a fresh start, with the clock, seed, saves and log
+reset (`__lampPreviewAgain`), so only the first look of a while waits for the whole game to be built and its shaders
+compiled. Lamp's own files changing, a page that can't run its code again, a failed play or one that runs past two
+minutes closes it, and that look starts a new preview. Its stats count draws and triangles (three.js's `renderer.info`, or the
 WebGL calls lamp-phaser.js counts).
 
 A game may be written in TypeScript, its source in `src/` with `src/main.ts` its entry as a Vite project keeps it, so a
@@ -488,15 +493,36 @@ versions and `import.meta` written out), up to each module that does, as Vite's 
 class gets the new version's methods on its prototype (every version's, so objects made by any version run the new
 code with their fields kept; `Symbol.hasInstance` makes one an instance of every version), and each exported plain
 object the values the change changed, told from what the game changed as it ran by the values each version made. Native
-modules can't rebind an importer's bindings, so a change those can't take opens the page again: a class whose
-constructor or fields changed (read off its source without its methods) or that has private members (their brand is
-the old class's), an exported function or value that changed,
-or code outside the classes of a module exporting functions; and the HTML, a module nothing takes changes for (the one
-that starts the game, as a rule: a new game's world.js builds its world again in place), a circle of imports, or new code throwing in its first second (`swapGuard`), which opens it
-from the snapshot taken before the swap. The game's `accept((next, { changed }) => …)` may build again what a changed
-method built once, or return false to open the page again. Anything else (a file nothing put in, or code that can't be
-swapped) opens the page again with the game's `snapshot()` kept in sessionStorage ("reloading", with the page's reason
-as `why`, which the agent's look is told: `PageLive.reason`). The new copy takes
+modules can't rebind an importer's bindings, so a change a swap can't take (a class whose constructor or fields changed,
+read off its source without its methods, or that has private members, whose brand is the old class's; an exported
+function or value that changed; code outside the classes of a module exporting functions; the HTML; a module nothing
+takes changes for, the one that starts the game as a rule) runs the game's code again in place instead ("rerun", with
+the swap's reason as `why`, which the agent's look is told: `pageRanAgain`). That's a reload without the reload, chosen
+over carving out the swap's refusals one by one (rebinding exports by rewriting modules as they load, rebuilding a
+class's objects with their fields carried across), since most changes a person asks for change what a game's start
+built, which no swap of code puts in: the old code's frame loop stops, its `dispose` (a game() option) and the modules'
+disposers run, and what it left running is taken away (lamp-game.js watches the page's listeners, timers, sound
+contexts and workers from the start, the runtime's own going through the browser's functions it kept first); the
+page's head (all but its scripts) and body are put back as the HTML now has them, Lamp's elements kept; every module
+of the game runs again in order, loaded from its source with its imports pointed at the new versions; and the module
+that starts the game calls game() again, whose init starts from the snapshot taken before (`pendingRestore()`, as after
+a reload). What stays is what a reload loses: the WebGL or WebGPU context and its compiled shaders, the files the
+runtime loaded, the sound, the controllers, and the parts the game kept with `hot(import.meta).keep(key, build, {
+inputs })`. A kept part is built again when the module that kept it or one it imports changed, its build function's
+code changed, or one of its `inputs` isn't the same object (a part built again builds again the parts made from it);
+for the module that starts the game, which imports everything, it goes by the modules whose imports the build function
+names, and a game bundled from TypeScript, one file, builds again everything it kept. New York keeps its renderer, the
+ground's heights and each part of the city, so a change to its HUD runs again in about 2 s instead of a 16 s start,
+and a change to its trees builds only the street details, traffic and road paint again. While the code runs again, the last frame and
+the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
+Lamp's light crosses the window (`Store.pageShown`): the smoke built over the window stays through the run, rather than
+going as the page first answers. A swap gets the light at once; a page that opens again says `shown` at its first frame;
+one that never says lets the smoke go after 20 s. The page opens again, from the
+snapshot, where running again can't be done (the import map or a script that isn't a module changed, a circle of
+imports, Lamp's own files) or the new code fails before init is done or in its first second (`swapGuard`). The game's
+`accept((next, { changed }) => …)` may build again what a changed method built once, or return false to run the code
+again. A file nothing put in opens the page again with the game's `snapshot()` kept in sessionStorage ("reloading",
+with the page's reason as `why`: `PageLive.reason`). The new copy takes
 it before init (`claim`), and the game reads it with `pendingRestore()` as it starts, in init or its first Phaser scene,
 so it builds the place the player was in and never shows its title first; a game that doesn't read it is given it in
 `restore(state)` after init, before the first frame. Either way it's taken from storage as it's read, so it's restored
