@@ -155,8 +155,10 @@ watch, a kart game and an invaders game were removed (see "Removed since the fir
 | `qrcode/` | 3 | qrcode-generator 2.0.4, checked against the npm SHA-512 (`scripts/update-qrcode.sh`) | `LICENSE` (MIT) | `NOTICE.md` |
 
 Under `three/addons/libs/` sit six libraries by other authors: fflate, lil-gui, meshoptimizer's decoder, potpack,
-stats.js and tween.js (all MIT or ISC, licensed in their file headers; the folder's `LICENSE` is three.js's alone).
-`loaders/EXRLoader.js` carries the BSD-style notices of the code it ports. None blocks release.
+stats.js and tween.js (MIT, ISC for potpack). Their headers carry only a license label, a link or a copyright line
+(`stats.module.js` has no notice at all), and the folder's `LICENSE` is three.js's alone, so their own copyright and
+permission texts do not travel with the copies. `loaders/EXRLoader.js` carries the BSD-style notices of the code it
+ports. **Notice**: add the upstream license texts to the bundled three tree (`scripts/update-three.sh` writes it).
 `THIRD_PARTY_NOTICES.md` lists three.js, Phaser and Rapier but not qrcode.
 
 ### `Resources/GameKit/` (32 files). NOTICE checked against what is there
