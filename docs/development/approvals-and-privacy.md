@@ -92,6 +92,13 @@ A capability given to one engine must be given to all of them that can take it, 
   the page in its Mac copy saved (`PageLive.saved`, asked of the open copy with its own token): held in Lamp's memory
   only, written nowhere but the preview's own store, and never sent back, so the agent's tries there leave the person's
   data alone (the devices guide, "The preview holds the person's data, one way").
+- **A wish's shared data on this Mac** (`WishKeeper`, "Lamp keeps them too" in the wishes guide): Lamp keeps what a
+  wish's copies share in collections and shared files, which is the family's, in its own folder (Shared Data, by the
+  wish's tag), sealed with a key from the wish's key, and it leaves the Mac only as the copies' own sealed messages on the
+  home network. The agent doesn't read it: the sandbox closes every Lamp's folders, no tool answers with it, and the
+  agent sees an app's data as before, only as the app shows it (`look_at_app`, `use_app`, what the app prints) and in the
+  preview's one-way copy of what the Mac copy saved; a seeded preview never joins the room, so it never reaches Lamp's
+  copy either. It goes with the wish.
 - **Files Lamp fetches for an app** (`assets`, "3D scenes and games"): Lamp itself downloads them, unconfined, but only
   from the addresses in its own index, checks each against the hash the index pins, and writes it into the app's folder
   with `AppFolder` (never through a link). They're data: a model, a picture, an atlas's XML; nothing is run, opened or

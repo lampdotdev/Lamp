@@ -318,10 +318,10 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// icon, which is answered (the person draws icons, or something draws them by Settings' choices) and
     /// folded away while the app's own pictures aren't. An offer that isn't about the icon then takes that
     /// card's place (the line at the index given).
-    enum Standing: Equatable { case new, offered, replaces(Int) }
+    enum Standing: Equatable { case new, offered(Int), replaces(Int) }
     static func standing(of offer: SetupOffer, in lines: [LogLine], iconAnswered: Bool) -> Standing {
         guard let index = lines.firstIndex(where: { $0.setupOffer == offer }) else { return .new }
-        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered
+        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered(index)
     }
 
     /// Whether a chat with these lines should get a line offering to draw the design `key`: not when it has
@@ -2194,6 +2194,7 @@ final class Store: ObservableObject {
             try Template.fill(part)
             if let kept {
                 try Sharing.install(kept.package, into: part)
+                SharedNetwork.arrive(kept.package, in: part, arriving: SharedNetwork.isShared(wish, parts: parts(of: wish)))
                 Sharing.forgetKept(in: wish.dir, for: kind, slot: reserved)
             }
         } catch {
@@ -3036,6 +3037,8 @@ final class Store: ObservableObject {
                 try fm.copyItem(at: suggestions, to: Starters.suggestionsFile(of: copy))
             }
             try Template.saveMeta(copy)
+            // A remix of a wish from someone else is held as the wish is, before its first build.
+            SharedNetwork.carry(from: project, parts: parts(of: project), to: copy)
             if let original = Sharing.identity(of: project) {
                 try Credits.add(Credits(remixOf: [Credits.Remix(name: project.name, wish: original)]), to: copy)
             }
@@ -3606,8 +3609,15 @@ final class Store: ObservableObject {
             // What the wish arrived with (`Credits.load`) is in .lamp too, and the file's credits replace it.
             let creditsRecord = project.dir.appendingPathComponent(Credits.arrivedPath)
             let creditsBefore = try? Data(contentsOf: creditsRecord)
+            // And what its apps may reach (`SharedNetwork`), kept in Lamp's own folder.
+            let networkBefore = SharedNetwork.snapshot([project] + parts(of: project))
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
+                // The apps the update made are still listed here, and their policies go with them.
+                SharedNetwork.restore(networkBefore, apps: await parts(of: project)
+                    + package.parts.map { LampProject(id: Parts.id(wish: project.id, folder: $0.folder), name: project.name, exe: project.exe,
+                                                      dir: project.dir.appendingPathComponent($0.folder),
+                                                      instance: Parts.instance(wish: project, folder: $0.folder), partOf: project.id) })
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
                 if let creditsBefore { try? creditsBefore.write(to: creditsRecord, options: .atomic) } else { try? fm.removeItem(at: creditsRecord) }
                 try? fm.removeItem(at: waiting)
@@ -3631,6 +3641,7 @@ final class Store: ObservableObject {
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
+                SharedNetwork.arrive(package, in: project, arriving: false)
                 let notIn = await installParts(of: package, into: project)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be put in place.") }
                 // The copy's credits name the wish it was copied from; the wish keeps its own, moved on to the update.
@@ -3703,6 +3714,12 @@ final class Store: ObservableObject {
         let merged: Upstream.Merged
         do {
             merged = try await Upstream.merge(package, into: project, from: source, commit: origin?.commit, arrival: arrival)
+            // What the reviewed file says each app reaches: the wish's own, and each of its apps merged in its folder.
+            SharedNetwork.arrive(package, in: project, arriving: false)
+            for part in package.parts {
+                guard let app = parts(of: project).first(where: { $0.dir.lastPathComponent.lowercased() == part.folder.lowercased() }) else { continue }
+                SharedNetwork.arrive(part.package, in: app, arriving: false)
+            }
             if let credits = package.credits { try Credits.add(credits, to: project) }
         } catch {
             _ = await Versions.git("git read-tree --reset -u HEAD && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
@@ -3752,6 +3769,8 @@ final class Store: ObservableObject {
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
             try Sharing.install(package, into: project)
+            // Someone else's: held to what its sheet named, from now on (`SharedNetwork`).
+            SharedNetwork.arrive(package, in: project, arriving: true)
             // The copy is the same app as the sender's: the next file shared from theirs can update it. A
             // second copy made beside one that's already here (Keep Both), or beside one of another kind, is an
             // app of its own.
@@ -3803,6 +3822,8 @@ final class Store: ObservableObject {
     /// app of the same family already here is never taken for one of them, since its files were merged in place.
     func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
         var notIn: [String] = []
+        // A part of a wish from someone else is held as the wish is (`SharedNetwork`), and one of the person's own isn't.
+        let shared = SharedNetwork.isShared(wish, parts: parts(of: wish))
         func failed(_ kind: Platform) {
             let name = Parts.name(of: kind)
             notIn.append(name.prefix(1).uppercased() + name.dropFirst())
@@ -3846,7 +3867,10 @@ final class Store: ObservableObject {
                 }
                 target = made
             }
-            do { try Sharing.install(part.package, into: target, replacing: had != nil) } catch {
+            do {
+                try Sharing.install(part.package, into: target, replacing: had != nil)
+                SharedNetwork.arrive(part.package, in: target, arriving: shared)
+            } catch {
                 log(wish, .error, "Lamp couldn't put \(Parts.name(of: kind))'s files in place: \(error.localizedDescription)")
                 failed(kind)
             }
@@ -5502,7 +5526,10 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
+        for app in [project] + parts { SharedNetwork.forget(app) }
         if project.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(project) }
+        // What Lamp kept of what its apps share goes before the key that reads it.
+        WishKeep.forget(project)
         WishKeys.forget(project)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
@@ -6610,6 +6637,7 @@ final class Store: ObservableObject {
         if intent == .game, kind != .game { said.append("It's a game: read the game skill with `read_skill` before you write it.") }
         said.append(watchLine(for: part, wanted: target.rows.contains("watch"), had: false))
         said.append(Skills.forNewDevices(target.rows))
+        said.append(Agent.Rules.newAppAI)
         said.append("Done: the wish has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. It's a new app "
                     + "with data of its own, starting empty: nothing another app of the wish saved is in it unless its code reads it from that app. Build it in this "
                     + "request, made to work with the rest. `make_app_for` and `remove_app` name it with `app` \"\(part.dir.lastPathComponent)\"; `look_at_app` and `use_app` reach it with `part` \"\(Parts.address(of: part, among: apps(of: current(wish) ?? wish)))\". "
@@ -6628,6 +6656,8 @@ final class Store: ObservableObject {
         // What this says replaces what Lamp still had to tell about the app since it made it from the wish's list.
         if let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }) { Parts.forgetMade(about: app, in: wish) }
         var said: [String] = []
+        // An app given its first kind is a new app being built: the moment the builder weighs AI for it.
+        if app.undecided != nil { said.append(Agent.Rules.newAppAI) }
         if kind != app.platform || app.undecided != nil || (kind == .device && target.integration != app.integration) {
             let (status, answer) = await convert(app, to: kind, integration: kind == .device ? target.integration : nil)
             guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed") else {
@@ -11093,18 +11123,23 @@ final class Store: ObservableObject {
     /// any app; the agent's, which come with a reason of their own, only from what was turned down in this
     /// one. Returns what happened, in words for the agent.
     @discardableResult
-    func offerSetup(_ project: LampProject, _ offer: SetupOffer, because reason: String, fromAgent: Bool = false) -> String {
+    func offerSetup(_ project: LampProject, _ offer: SetupOffer, because reason: String, fromAgent: Bool = false, asked: Bool = false) -> String {
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
         guard resolution.tier != .best else {
             return "\(offer.capability.title) is already set up: \(resolution.answer ?? ""). Nothing to offer."
         }
-        guard !offer.declined(in: fromAgent ? project : nil) else {
+        if asked { offer.undecline(in: project) }
+        guard asked || !offer.declined(in: fromAgent ? project : nil) else {
             return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
         }
         // An icon's card is answered apart from the app's pictures (it follows Settings' choices and the
         // choice to draw by hand, not the app's own models), so it can be all set while this isn't.
         let iconAnswered = AppAI.resolve(.pictures, for: project, in: .icon).tier == .best
         switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconAnswered: iconAnswered) {
+        case .offered(let index) where asked:
+            // Asked for by the person: the card comes back to the end of the chat, where they're looking.
+            logs[project.id]?.remove(at: index)
+            log(project, .offer, reason, offer: offer)
         case .offered: return "Lamp already offered this in the chat. Don't offer it again."
         case .replaces(let index):
             // The card there was about the icon and is folded away, answered. This is about pictures the
@@ -11803,7 +11838,7 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
@@ -11888,6 +11923,7 @@ final class Store: ObservableObject {
             await EngineInstall.lookForPersonsCopies()
         }
         if route == "/ai/status" { return await aiStatus(for: project) }
+        if route == "/ai/setup" { return askedForSetup(request, for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
         // The About window's credits as they are now (`LampAbout`): a credit added since the app was installed shows.
@@ -12358,10 +12394,49 @@ final class Store: ObservableObject {
     private func aiStatus(for project: LampProject) async -> (Int, [String: Any]) {
         await EngineSignIn.refresh()
         var reply: [String: Any] = [:]
+        var details: [String: Any] = [:]
+        let ready = readyFor(project)
         for capability in Capability.allCases {
-            reply[capability.rawValue] = readyFor(project) && AppAI.resolve(capability, for: project).tier != .none
+            let resolution = AppAI.resolve(capability, for: project)
+            reply[capability.rawValue] = ready && resolution.tier != .none
+            details[capability.rawValue] = AppAI.details(resolution)
         }
+        // Actions are asked of the same route as `/ai/act`'s probe, so the two never disagree.
+        let act = AppAct.status(appModel: AppModels.load(project).text)
+        reply["act"] = ready && act["available"] as? Bool == true
+        details["act"] = act
+        if !ready {
+            for (key, value) in details {
+                guard var one = value as? [String: Any] else { continue }
+                one["available"] = false
+                one["reason"] = "Lamp is still being set up."
+                one["setup"] = "lamp"
+                details[key] = one
+            }
+        }
+        reply["details"] = details
         return (200, reply)
+    }
+
+    /// `LampAI.openSetup`: the person pressed the app's own "Set up in Lamp", so the setup card goes in the app's chat
+    /// even where Lamp wouldn't raise it by itself (a "Not Now" before). Actions are set up as the app's text.
+    private func askedForSetup(_ request: Gateway.Request, for project: LampProject) -> (Int, [String: Any]) {
+        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        let asked = body["capability"] as? String ?? "text"
+        guard let capability = Capability(rawValue: asked == "act" ? "text" : asked) else {
+            return (400, ["error": "There's no capability called \(asked)."])
+        }
+        let reason = Self.askedReason(capability, AppAI.resolve(capability, for: project), app: project.name)
+            ?? Self.offerReason(capability, for: project)
+        let said = offerSetup(project, SetupOffer(capability: capability), because: reason, asked: true)
+        return (200, ["shown": said.hasPrefix("Lamp showed"), "said": said])
+    }
+
+    /// Why the card is there when the person asked for it themselves: what the resolution says is wrong, when
+    /// something answers in a way that isn't what was chosen (a removed model on this Mac). Nil for the usual reasons.
+    static func askedReason(_ capability: Capability, _ resolution: Resolution, app: String) -> String? {
+        guard resolution.tier == .works, let note = resolution.note else { return nil }
+        return "\(app) can't use the AI chosen for it. \(note)"
     }
 
     /// What an app on the person's own phone keeps so its AI works away from the Mac:

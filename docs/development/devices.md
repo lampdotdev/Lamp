@@ -294,7 +294,7 @@ and model, and browses Bonjour for the types in the app's `NSBonjourServices` (a
 iPhone app may browse no others; a Mac copy is given them by `Capabilities.macInfo`), plus common media and home types on a Mac; each Bonjour service is resolved to its
 address by a connection opened and closed at once. This device's own addresses are left out. The app's own reason for
 the question is `localNetwork` in capabilities.json (`Capabilities.localNetworkReason`: one line, 150 characters at
-most, words and plain punctuation only, since it passes through build scripts' heredocs), written in place of Lamp's general one wherever the reasons are (build.sh, the phone's project, the simulator's
+most, words and plain punctuation only, since it goes into Info.plist as it is), written in place of Lamp's general one wherever the reasons are (build.sh, the phone's project, the simulator's
 bundle, `apply(to:)` for a Mac copy).
 
 **Controlling a Roku from another app** (`LampRoku`, in LampSupport.swift): a wish's Mac or iPhone app drives the

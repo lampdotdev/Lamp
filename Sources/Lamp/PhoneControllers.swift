@@ -150,7 +150,9 @@ enum ControllerRelay {
 
     /// Opens a wish's room with its wish's key, or tells the relay its apps again when they changed.
     static func openRoom(_ key: String, wishKey: Data, apps: [[String: Any]]) {
-        let line: [String: Any] = ["op": "room", "app": key, "key": wishKey.base64EncodedString(), "apps": apps]
+        // With the folder Lamp keeps the wish's shared collections in (`WishKeep`), so a copy that opens alone gets them.
+        let line: [String: Any] = ["op": "room", "app": key, "key": wishKey.base64EncodedString(), "apps": apps,
+                                   "keep": WishKeep.folder(for: wishKey).path]
         guard rooms[key].map({ NSDictionary(dictionary: $0) != NSDictionary(dictionary: line) }) ?? true else { return }
         rooms[key] = line
         if process == nil { launch() } else { send(line) }
@@ -175,10 +177,11 @@ enum ControllerRelay {
         }
     }
 
-    static func endRoom(_ key: String) {
+    /// `forget`: the wish is gone, and what Lamp kept of its shared collections goes too.
+    static func endRoom(_ key: String, forget: Bool = false) {
         presence[key] = nil
         guard rooms.removeValue(forKey: key) != nil else { return }
-        send(["op": "end-room", "app": key])
+        send(forget ? ["op": "end-room", "app": key, "forget": true] : ["op": "end-room", "app": key])
         if sessions.isEmpty, rooms.isEmpty { quit() }
     }
 

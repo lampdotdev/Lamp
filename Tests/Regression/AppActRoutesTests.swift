@@ -108,6 +108,46 @@ final class AppActRoutesTests: XCTestCase {
         XCTAssertEqual(AppAct.refusal(for: route(.engine(.claude, model: "sonnet"), false)), AppAI.noTextRoute)
     }
 
+    /// Ask is ready on a sign-in with no OpenRouter key, and an app set to a model on this Mac never has its actions
+    /// sent to a service while that model can't answer: they're refused instead, with the reason.
+    @MainActor func testActionsStayOnAModelOnThisMacWhenOneWasChosen() {
+        func route(_ kind: AppAI.TextRoute.Kind, _ available: Bool = true) -> AppAI.TextRoute {
+            AppAI.TextRoute(id: "r", label: "r", group: "g", name: "Qwen", kind: kind, available: available)
+        }
+        let claude = route(.engine(.claude, model: "sonnet")), local = route(.localModel(provider: "local", model: "qwen3.5-4b"))
+        guard case .success = AppAct.choose(wanted: nil, resolved: claude) else { return XCTFail("a sign-in alone should answer") }
+        guard case .success = AppAct.choose(wanted: local, resolved: local) else { return XCTFail("the chosen local model should answer") }
+        // The model was removed: the routes Lamp lists no longer have it at all.
+        let removed = AppAct.wanted("local:qwen3.5-4b", among: [claude])
+        guard case .failure(let refused) = AppAct.choose(wanted: removed, resolved: claude) else {
+            return XCTFail("actions went to Claude Code though a model on this Mac was chosen")
+        }
+        XCTAssertTrue(refused.message.contains("qwen3.5-4b on this Mac"))
+        XCTAssertNil(AppAct.wanted("engine:claude:sonnet", among: []), "a cloud choice that's gone is no choice to keep to")
+        guard case .success = AppAct.choose(wanted: route(.openRouter(model: "m"), false), resolved: claude) else {
+            return XCTFail("a cloud choice standing in for another cloud route should answer")
+        }
+        guard case .failure(let none) = AppAct.choose(wanted: nil, resolved: route(.openRouter(model: "m"), false)) else { return XCTFail("nothing can answer") }
+        XCTAssertEqual(none.message, AppAI.noTextRoute)
+    }
+
+    /// An app whose chosen model on this Mac was removed, with Claude Code answering in its place: the setup card the
+    /// person opens says why, points to Settings to install it again, and offers what answers now as this app's choice,
+    /// instead of the usual reason and no rows.
+    @MainActor func testARemovedLocalModelsSetupCardOffersAWayBack() {
+        let claude = AppAI.TextRoute(id: "engine:claude:sonnet", label: "Sonnet via Claude Code", group: "Claude Code", name: "Sonnet",
+                                     kind: .engine(.claude, model: "sonnet"), available: true)
+        let removed = AppAct.wanted("local:qwen3.5-4b", among: [claude])!
+        let resolution = AppAI.standIn(for: removed, answering: claude, app: "app-1")
+        XCTAssertEqual(resolution.tier, .works)
+        XCTAssertTrue(resolution.note?.contains("Install it again in Settings, or choose another AI for this app") == true, resolution.note ?? "")
+        // No download on the card: what one installs is named by the files in the cache, so it can't promise to bring
+        // this very choice back; "Use … instead" always does.
+        XCTAssertEqual(resolution.upgrades, [.useText(route: "engine:claude:sonnet", label: "Sonnet via Claude Code", app: "app-1")])
+        let reason = Store.askedReason(.text, resolution, app: "Notes")
+        XCTAssertTrue(reason?.contains("Install it again") == true, "the card shows the usual reason, not why: \(reason ?? "nil")")
+    }
+
     /// An MLX model whose chat template mlx-lm has no tool-call parser for hands a call back as plain text, so it's
     /// asked for the JSON plan instead, whatever the version. The templates in Tests/Fixtures/mlx-templates are the
     /// `chat_template` of each mlx-community repository's tokenizer_config.json, as published on 2026-10-29.

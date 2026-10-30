@@ -1660,9 +1660,11 @@ extension TVTemplate {
           var MESSAGE = 16384, VALUE = 8192, VALUES = 65536;
           // What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
           // 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
-          // (LampStore.shared), 6 the wish's own collections, shared by all its apps; an app from before says none, which
-          // counts as 1.
-          var WIRE = 6;
+          // (LampStore.shared), 6 the wish's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
+          // before says none, which counts as 1.
+          var WIRE = 7;
+          // Lamp's own name in its room, as the keeper of the wish's shared collections: never one of the wish's apps.
+          var KEEPER = 'lamp';
           var REASONS = { connecting: "Connecting to the wish's other apps…",
                           away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
@@ -1712,6 +1714,9 @@ extension TVTemplate {
           // listens, else looked for on this network at the wish's port for it. Each is sealed the same way, with the
           // wish's key; a message goes the straight way when there is one. So the apps go on talking with Lamp closed.
           var relayIn = false, lampAway = false, alone = false, relayPresent = {}, roster = [], restored = false;
+          // Lamp's room said Lamp keeps the wish's shared collections: Lamp is shared with as a copy is, under its own name
+          // (KEEPER), so a page that opens alone gets the latest and what it changes reaches the others when they open.
+          var lampKeeps = false;
           // Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then a page
           // whose wish has no other app doesn't look for its copies on the network.
           var copiesSeen = false;
@@ -2240,6 +2245,7 @@ extension TVTemplate {
             var i;
             if (m.t === 'welcome') {
               retry = 0; undeliveredSaid = {}; lampAway = false; relayIn = true; alone = false; reported = '';
+              lampKeeps = m.keeps === true;
               if (isName(m.peer)) mine = appOf(m.peer);
               setRoster(m.apps || []);
               relayPresent = {};
@@ -2247,6 +2253,8 @@ extension TVTemplate {
               for (i = 0; i < list.length; i++) present(list[i]);
               rebuild();
               reach();
+              // Lamp keeps what the copies share: each tells the other what it has, as two copies do when they meet.
+              if (lampKeeps && mine) { sendSums(KEEPER); fetchFiles(); }
             } else if (m.t === 'joined' && m.peer) {
               present(m.peer); rebuild(); reach();
             } else if (m.t === 'left') {
@@ -2343,7 +2351,7 @@ extension TVTemplate {
           // page is; dropped otherwise, the page comes back after a moment.
           function lost(code) {
             var wasIn = relayIn;
-            socket = null; hello = null; sendKey = openKey = null; relayIn = false; relayPresent = {};
+            socket = null; hello = null; sendKey = openKey = null; relayIn = false; lampKeeps = false; relayPresent = {};
             dropRoutes(null, 'r', 'The link was lost.');
             rebuild();
             if (!started) return;
@@ -2475,7 +2483,10 @@ extension TVTemplate {
           function routeTo(peer, d) {
             var way = d ? d.way : 'r', k = 'w-' + peer + '-' + way;
             if (routes[k]) return routes[k];
-            function up() { return d ? !d.over && directs[peer] === d && d.ready : relayIn && !!socket && socket.readyState === 1 && !!sendKey && !!relayPresent[peer]; }
+            function up() {
+              return d ? !d.over && directs[peer] === d && d.ready
+                : relayIn && !!socket && socket.readyState === 1 && !!sendKey && (!!relayPresent[peer] || (peer === KEEPER && lampKeeps));
+            }
             var route = routes[k] = {
               key: k, place: 0, peer: peer, way: way,
               text: function (m) {
@@ -2521,6 +2532,12 @@ extension TVTemplate {
           // A file to another copy open now, the straight way when there is one, else through Lamp's room: the one named, or
           // the app's opened last.
           function sendFile(given, data, info, ch) {
+            // A shared file's bytes to Lamp, which keeps them for the copies that open later: through its room alone.
+            if (given === KEEPER && ch && ch.indexOf('store:') === 0 && lampKeeps) {
+              var lampRoute = routeTo(KEEPER, null);
+              return files.send({ key: lampRoute.key, place: 0, peer: KEEPER, way: 'r', binary: lampRoute.binary, buffered: lampRoute.buffered,
+                                  text: function (m) { if (m.t === 'file') m.ch = ch; return lampRoute.text(m); } }, data, info);
+            }
             var p = find(given), peer = String(given).indexOf('.') < 0 && p && p.copies.length ? p.copies[p.copies.length - 1].id : given;
             var d = directs[peer] && directs[peer].ready ? directs[peer] : null, why = null;
             if (!p) why = 'the wish has no app called "' + given + '".';
@@ -2765,7 +2782,7 @@ extension TVTemplate {
               started = false;
               clearTimeout(askTimer); clearTimeout(again); clearInterval(beatTimer);
               if (socket) { var s = socket; socket = null; s.close(); }
-              sendKey = openKey = null; relayIn = false; relayPresent = {};
+              sendKey = openKey = null; relayIn = false; lampKeeps = false; relayPresent = {};
               epoch++;
               dropRoutes(null, null, 'The link was stopped.');
               for (var id in directs) directs[id].end();
@@ -2958,11 +2975,12 @@ extension TVTemplate {
           function storePeers() {
             if (!mine) return [];
             var me = myCopy();
-            return copiesFor(null).filter(function (id) { return id !== me && wireOf(id) >= (appOf(id) === mine ? 5 : 6); });
+            return copiesFor(null).filter(function (id) { return id !== me && wireOf(id) >= (appOf(id) === mine ? 5 : 6); })
+              .concat(relayIn && lampKeeps ? [KEEPER] : []);
           }
           // A collection goes to another copy and is taken from it: this app's own only between its copies, never another
           // app's of the wish; the wish's own between every app of it.
-          function shares(name, peer) { return !!mine && peer !== myCopy() && (appOf(peer) === mine || wishWide(name)); }
+          function shares(name, peer) { return !!mine && peer !== myCopy() && (appOf(peer) === mine || wishWide(name) || peer === KEEPER); }
           function heardStore(m, from) {
             var name, i;
             if (!mine || from === myCopy()) return;
@@ -3051,11 +3069,12 @@ extension TVTemplate {
             if (changed.length) itemsChanged(name, changed, from);
             else { var u = false; for (var un in unsaved) u = true; if (u) saveItemsSoon(); }
             if (!any) return;
-            // Passed on as values are: to the copies open now that the one it came from may not reach.
+            // Passed on as values are: to the copies open now that the one it came from may not reach. Lamp tells each copy
+            // in its room what it keeps, so what came from Lamp goes no further; what came straight goes on to Lamp.
             var each_ = storePeers();
             for (var j = 0; j < each_.length; j++) {
               var to = each_[j], straight = directs[to] && directs[to].ready;
-              if (to !== from && shares(name, to) && (straight || (!relayPresent[from] && relayPresent[to]))) shareItems(name, taken, to);
+              if (to !== from && shares(name, to) && (straight || (from !== KEEPER && !relayPresent[from] && (relayPresent[to] || to === KEEPER)))) shareItems(name, taken, to);
             }
           }
           function shareItems(name, list, id) {
@@ -3078,7 +3097,7 @@ extension TVTemplate {
             body.t = 'store';
             var d = directs[id];
             if (d && d.ready) directSeal(d, JSON.stringify(body));
-            else if (relayPresent[id] && socket && socket.readyState === 1 && sendKey) { body.to = id; seal(JSON.stringify(body)); }
+            else if ((relayPresent[id] || (id === KEEPER && lampKeeps)) && socket && socket.readyState === 1 && sendKey) { body.to = id; seal(JSON.stringify(body)); }
           }
           function sums(name) {
             var parts = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], c = cols[name] || {};

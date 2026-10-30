@@ -1,4 +1,5 @@
 import Foundation
+import LampRelayKit
 
 /// Where a shared page's requests go, worked out from its code rather than from words in it (`TVFiles.detected`): the
 /// review says an app connects outside itself only when one of its requests goes to an outside address, and that it
@@ -15,6 +16,10 @@ enum WebReach {
     struct Result: Equatable {
         /// Outside hosts the page's requests go to.
         var hosts: Set<String> = []
+        /// The same requests' exact sites, scheme, host and port ("https://api.open-meteo.com"), which a shared page is held
+        /// to as it runs (`NetworkPolicy`). An address with no scheme of its own ("//host/…") has none: it's read against the
+        /// page's own address, which isn't the web's.
+        var origins: Set<String> = []
         /// A request to an outside address whose host the code builds as it runs.
         var unnamed = false
         /// A request whose address can't be worked out, or a web address the code holds that no followed request uses.
@@ -129,6 +134,23 @@ enum WebReach {
         // A relative path: settled once a / ? or # comes before any colon could make it a scheme.
         if let end = text.firstIndex(where: { "/?#".contains($0) }), !text[..<end].contains(":") { return .local }
         return .unknown
+    }
+
+    /// The exact site an outside request goes to, when its scheme and host are settled: the whole address, or the start of
+    /// one up to where its host ends.
+    static func origin(of shape: Shape) -> String? {
+        let text: String
+        switch shape {
+        case .exact(let raw): text = normalized(raw)
+        case .prefix(let raw): text = normalized(raw, end: false)
+        default: return nil
+        }
+        // Up to where the host ends: what follows is the path, whose characters needn't make an address that parses.
+        guard let scheme = text.range(of: "://") else { return nil }
+        let rest = text[scheme.upperBound...]
+        let end = rest.firstIndex(where: { "/?#".contains($0) })
+        if end == nil, case .prefix = shape { return nil }
+        return NetworkPolicy.origin(String(text[..<(end ?? text.endIndex)]))
     }
 
     /// The host of a web address ("" when it's one with no host yet), or nil when it isn't one.
@@ -403,6 +425,7 @@ private struct Reader {
             case .local: break
             case .external(let host):
                 if let host { result.hosts.insert(host) } else { result.unnamed = true }
+                if host != nil, let origin = WebReach.origin(of: shape) { result.origins.insert(origin) }
                 if use == .code { result.remoteCode = true }
             case .unknown:
                 result.unknown = true

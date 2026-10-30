@@ -915,7 +915,7 @@ enum GameKit {
     @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
-        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id) else {
+        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: SharedNetwork.policy(for: project)) else {
             throw Failure(message: "The game didn't start in the preview, or ran for more than two minutes without finishing the play: "
                 + "check that Web/index.html loads it and that game() is called once, and look for an error in what it logged.")
         }

@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import WebKit
+import LampRelayKit
 
 /// The preview a web game is played in for the agent (`GameKit.Engine.web`): its page from a copy in Lamp's own
 /// folder, in a web view no one sees, playing the script the agent's looks and uses make (`GameKit.plays`). Lamp's game
@@ -14,7 +15,7 @@ import WebKit
 /// compiled. Anything that can't go that way (Lamp's own files changed, the page can't run its code again, a play that
 /// fails or runs too long) closes it, and the look starts a new one.
 @MainActor
-final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
+final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDelegate {
     private var webView: WKWebView?
     /// The previews kept open, by game, and how long one waits for its next look.
     private static var warm: [String: WebGamePreview] = [:]
@@ -33,18 +34,22 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
 
     /// Plays the script and hands back what it drew and said, or nil when the page never got to the end of it (it
     /// didn't start, or ran for more than two minutes: a whole city takes about half a minute to build out of sight).
-    static func play(_ staged: URL, script: [String], for id: String) async -> (pictures: [String: Data], result: [String: Any])? {
+    /// A shared game (`policy`) is held to what it's held to as an app (`SharedNetwork`), and is never kept warm: its
+    /// policy is set up afresh with each play.
+    static func play(_ staged: URL, script: [String], for id: String, policy: NetworkPolicy? = nil) async -> (pictures: [String: Data], result: [String: Any])? {
         if let kept = warm[id] {
             warm[id] = nil
-            if let played = await kept.again(staged, script: script) {
+            if policy == nil, let played = await kept.again(staged, script: script) {
                 keep(kept, for: id, after: played.result)
                 return played
             }
             kept.close()
         }
         let preview = WebGamePreview()
+        preview.files.policy = policy
+        preview.files.own = "lamp-game://app"
         guard let result = await preview.run(staged, script: script) else { preview.close(); return nil }
-        keep(preview, for: id, after: result)
+        if policy == nil { keep(preview, for: id, after: result) } else { preview.close() }
         return (preview.pictures, result)
     }
 
@@ -117,11 +122,13 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
         // In no window, a page is one WebKit soon suspends, and a big one (a whole city) takes longer to build than that.
         configuration.preferences.inactiveSchedulingPolicy = .none
         configuration.setURLSchemeHandler(files, forURLScheme: "lamp-game")
+        if files.policy != nil { NetworkPolicy.holdBack(configuration.preferences) }
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "lampPreview")
         let json = (try? JSONSerialization.data(withJSONObject: ["script": script, "warm": true] as [String: Any])).map { String(decoding: $0, as: UTF8.self) } ?? "{\"script\":[]}"
         configuration.userContentController.addUserScript(WKUserScript(source: "window.lampPreview = \(json);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: GameKit.width, height: GameKit.height), configuration: configuration)
         webView = view
+        view.navigationDelegate = self
         view.load(URLRequest(url: URL(string: "lamp-game://app/index.html")!))
         let timeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(120))
@@ -130,6 +137,13 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
         let result = await withCheckedContinuation { finished = $0 }
         timeout.cancel()
         return result
+    }
+
+    /// A shared game never leaves its own address, in its window or a frame.
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        guard let url = action.request.url, let policy = files.policy, !policy.allowsFrame(url, own: files.own) else { return decisionHandler(.allow) }
+        decisionHandler(.cancel)
     }
 
     private func end(_ result: [String: Any]?) {

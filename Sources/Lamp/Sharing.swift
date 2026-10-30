@@ -1112,6 +1112,11 @@ extension Sharing {
 
     /// A source file that isn't valid text. Lamp's checks and the AI can't read it, so it's never built
     /// unseen: `open` refuses a file that has one, and a review that meets one anyway says so in red.
+    /// A page's own Swift (Native.swift) runs in the app beside it, where the page's limits don't reach.
+    /// Lamp's own Native.swift, which a page's app has until its Swift is the agent's; tests give it from the source tree.
+    nonisolated(unsafe) static var stockNative: String? = GameKit.native?.text
+    static let ownSwift = Capability(label: "Has Swift that can reach any site", icon: "swift", level: .ordinary, patterns: [])
+
     static let unreadableCode = Capability(label: "Has code Lamp can't read as text (can hide what it does)",
                                            icon: "eye.slash", level: .sensitive, patterns: [])
 
@@ -1449,6 +1454,8 @@ extension Sharing {
                 add(TVFiles.detected(in: sources, data: app.webData) + checklist.filter { item in
                     item.patterns.contains { swift.contains($0) }
                 })
+                // The page is held to its sites once it's here (`SharedNetwork`); Swift of the sender's beside it isn't.
+                if SharedNetwork.hasOwnSwift(app, stock: stockNative) { add([ownSwift]) }
             } else {
                 switch app.platform.target.recipe.language {
                 case .kotlin:

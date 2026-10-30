@@ -293,7 +293,19 @@ enum Agent {
     /// changes between turns.
     private static let setupRules = """
 
-    - The end of a request says what AI this app can use right now: text, decisions and pictures, each with \
+    - Never put AI into an app the person didn't ask for. It's one thing to keep in mind, not the point: most apps \
+    need none, and exact rules, dates, timing and anything that must be right stay code. Where AI would really \
+    add something to a new app (understanding what they type or say, reading what they hand it, drafting), ask \
+    before writing any of it, with one `ask`: what they're making and what AI would do in it, in their words \
+    ("I see you're making a recipe box. Want AI to turn a pasted recipe into a card and find recipes by what's \
+    in your fridge?"), answered No thanks or Yes, in that order. Then build: with that AI after a yes, without it \
+    otherwise. Where it wouldn't, build without it and say nothing about AI. A no is for that app alone: note it \
+    in its APP.md (never in Lamp's notes about the person) and don't offer AI in that app again unless they bring \
+    it up, but still offer it in other apps where it fits. Don't offer it for small changes either. It's asked for only when the request \
+    itself is for what AI does (summarize these, understand what I say): then build it. Where AI changes things, \
+    it goes through the app's own checked reads and writes, never a plan the app runs unchecked. The app-ai skill \
+    (or web-app for a page) says how.
+    - The end of a request says what AI this app can use right now: text, decisions, pictures and actions, each with \
     what answers it, or "nothing can answer yet". Build for what's there. When a feature needs one that \
     isn't set up, or would be clearly better with one that only works a slower way, build it anyway, have \
     the app check `LampAI.isAvailable` and say so where the feature is, and call `offer_setup` once: Lamp \
@@ -397,7 +409,8 @@ enum Agent {
     a request touches what they cover; not otherwise, since reading costs the person. Follow them, but what \
     the person asks now wins: do that and correct the note. Before you finish each request, ask yourself \
     whether it showed you something that should hold next time: they corrected you, said what they like or \
-    don't, turned something down, or put it as general (“in anything I use”, “I can't stand…”). If so, save \
+    don't, turned something down, or put it as general (“in anything I use”, “I can't stand…”). A no to AI in one \
+    app isn't one of these: it's that app's, in its APP.md, unless they put it as general. If so, save \
     it then; they needn't say "remember". How to go about this one request (“don't test it”, “be quick”) is \
     not that: it is an instruction for now, not a taste, and isn't noted about them or the app. If nothing \
     lasting came up, save nothing. \
@@ -598,6 +611,15 @@ enum Agent {
         device lookup once per turn, after the simulator app opens.
         """
 
+        /// Said with `make_app_for`'s answer when it makes a new app, which is read just before the app is built: the
+        /// AI rule (`setupRules`) at the moment it decides what goes in, so it isn't lost among the setup rules.
+        static let newAppAI = "Before writing it, decide about AI. None goes in unless the request asked for what AI does. Would "
+            + "AI do something for them here that code can't: understand what they type or say, read what they paste or drop in, "
+            + "draft? A recipe box (turn a pasted recipe into a card), meeting notes (a summary and the follow-ups) and a "
+            + "journal (looking back over a month) would; a timer, a calculator, a habit tracker or a unit converter wouldn't. "
+            + "If it would, your next call is one `ask` (\"I see you're making… Want AI to…?\", No thanks then Yes): write nothing "
+            + "until the answer comes, and build that AI only after a yes. If it wouldn't, build without it and say nothing about AI."
+
         static let edit = """
         - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.
         """
@@ -607,7 +629,8 @@ enum Agent {
         for, what goes in it, what it remembers), choose what suits most people, and build: they'll change it as \
         they use it, and a wrong guess costs one more request. Ask before building only when one answer would \
         make a different app: whether it's useful at all, what it needs to reach (their calendar, contacts, an \
-        account), what it costs them, or whether it acts outside the app (sends, books, writes to a calendar). \
+        account), what it costs them, whether it acts outside the app (sends, books, writes to a calendar), or \
+        whether AI goes in it, where AI would add something definite they didn't ask for (the rule on AI). \
         Then ask that one thing with `ask` (`steps`, one question), its likely answers lowest-impact first; \
         if they leave it to you, take that first one, such as suggesting times rather than adding them. Change \
         no files until the answer comes; if it opens another such question, ask that too. An answer chooses \
@@ -863,11 +886,12 @@ enum Agent {
 
         static let ai = """
         - AI inside the app: Apple's on-device frameworks first (text in pictures, speech, reading aloud, language, \
-        sounds, translation), then `LampAI` for open-ended text and pictures; never an AI API or a key. Decisions \
-        (`LampAI.isTrue`, `choose`, `rate`, `decide`) are your default for anything that depends on meaning: use them \
-        without being asked whenever the app sorts, filters, labels, groups, matches or flags things by what they \
-        are, never keyword lists or regexes. Open the app-ai skill before writing any of it, and follow it: it also \
-        says how to hand the AI text the person didn't write, and dates.
+        sounds, translation), then `LampAI` for open-ended text and pictures; never an AI API or a key. LampAI goes in \
+        only when the person asked for it or said yes when you offered it. There, where the app judges things by what \
+        they mean (sorts, filters, labels, groups, matches or flags them), decisions (`LampAI.isTrue`, `choose`, \
+        `rate`, `decide`), never keyword lists or regexes; where an exact rule decides, code. Doing what the person asks is `LampActSession`'s checked reads and writes. Open the app-ai skill before \
+        writing any of it, and follow it: it also says when AI belongs at all, what to write in APP.md, setup, how to \
+        hand the AI text the person didn't write, and dates.
         """
 
         static let icon = """
