@@ -9719,6 +9719,12 @@ final class Store: ObservableObject {
     private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
         // The preview is drawn out of sight, often while the person plays the game itself: these say it's a copy.
         note("Building a hidden copy…", for: project)
+        // Its copy of the page is made from the same folders a step of the agent's saves builds from (a TypeScript game's
+        // Web/app/ among them): one going in is waited for, and none starts until the copy is made (`autoApply` waits
+        // while the turn builds); the preview then plays from its own copy, alongside any step.
+        await owner.applying?.value
+        owner.building = true
+        defer { owner.building = false }
         do {
             // A three.js game has nothing to compile: its page is copied where the preview reads it.
             if GameKit.engine(project) == .web { _ = try await GameKit.stageWeb(project) }
