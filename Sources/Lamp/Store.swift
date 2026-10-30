@@ -274,9 +274,10 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
     /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
+    /// `needsBuilder` asks for what builds, for a request waiting in the chat (`BuilderLine`).
     /// `oldCopy` asks whether to take the copy signed for the app's old team off the phone (`OldCopyLine`).
     /// `newerOriginal` offers a changed starter's copy the newer starter this Lamp ships (`NewerOriginalLine`).
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy, newerOriginal }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, needsBuilder, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy, newerOriginal }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -649,8 +650,6 @@ final class Store: ObservableObject {
 
     func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
     @Published var setup = SetupCheck()
-    /// A request is waiting for what builds, and the desk is asking for it (`SetupView`).
-    @Published var askingForSetup = false
     /// Whether Lamp has really looked at setup yet, with the saved keys in. Before that `setup` can't be gone
     /// by: it starts out assuming everything is in place, and a look made before the keys are read finds no key.
     private let setupLook = FirstLook()
@@ -661,7 +660,7 @@ final class Store: ObservableObject {
     @Published var icons: [String: NSImage] = [:]
     /// The icon's background chosen with the app's name, before its icon is designed: the blueprint shows it.
     @Published var iconColors: [String: String] = [:]
-    /// The shared app whose review is up. When it goes, the next one kept from before setup gets its turn.
+    /// The shared app whose review is up. When it goes, the next one kept during the welcome gets its turn.
     @Published var pendingImport: PendingImport? {
         didSet { if pendingImport == nil, oldValue != nil { openWaitingImport() } }
     }
@@ -1162,9 +1161,10 @@ final class Store: ObservableObject {
         // be chosen it waits too, so there's one thing to do at a time.
         // Only for a request that waits for them: a Mac that makes only games and screens never needs them.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && setup.hasBuilder
-            && (waitsForAppleTools || waitingImport.count > 0) { requestBuildTools() }
+            && waitsForAppleTools { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
         prepareStarters()   // the prebuilt ones need no build tools, nor do games and screens
+        if !setup.hasBuilder { await offerSignedInEngines() }
         if setup.ready && !wasReady { await becameReady() }
         // A request that needs no tools starts as soon as what builds is set up.
         for project in projects where !(queued[project.id] ?? []).isEmpty && readyFor(project) { startQueued(project) }
@@ -1228,7 +1228,6 @@ final class Store: ObservableObject {
     private func becameReady() async {
         for project in projects where !(queued[project.id] ?? []).isEmpty { startQueued(project) }
         saveWaiting()
-        openWaitingImport()
         await backfillIcons()
         resumeWaitingIcons()
     }
@@ -2117,20 +2116,48 @@ final class Store: ObservableObject {
         SidebarServer.shared.send(project)
     }
 
-    /// Asks for what builds, on the desk: wishes run without it, so the first request is when it's needed.
-    func askForSetup() {
-        showDesk()
-        askingForSetup = true
+    /// Asks for what builds, where the request was made: wishes run without it, so the first request is when it's
+    /// needed. One line in the chat (`BuilderLine`), the latest request's, under which that request waits. Claude Code or
+    /// Codex already signed in on this Mac is offered there, never chosen for the person: it's their plan and their code.
+    func askForSetup(_ project: LampProject) {
+        logs[project.id]?.removeAll { $0.kind == .needsBuilder }
+        log(project, .needsBuilder, "")
+        Task { await offerSignedInEngines() }
     }
 
-    /// What a shared app waits for before its review can open: what builds, on the desk, then Apple's tools.
-    func askForWhatsMissing() {
-        if !setup.hasBuilder || !setup.hasAgent {
-            askForSetup()
-        } else if !setup.hasBuildTools, !setup.installRequested {
-            requestBuildTools()
+    /// What the lines asking for what builds offer, as of now: looked at again with each look at setup, so a request
+    /// waiting from before a relaunch, or a sign-in made elsewhere meanwhile, offers what's there.
+    private func offerSignedInEngines() async {
+        guard logs.values.contains(where: { $0.contains { $0.kind == .needsBuilder } }) else { return }
+        if !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
+        await EngineSignIn.refresh(olderThan: 5)
+        let offered = BuilderLine.text(BuilderLine.offers(installed: { EngineInstall.path(for: $0) != nil }, signedIn: { EngineSignIn.known[$0] == true }))
+        for project in projects {
+            guard let index = logs[project.id]?.firstIndex(where: { $0.kind == .needsBuilder }),
+                  logs[project.id]?[index].text != offered else { continue }
+            logs[project.id]?[index].text = offered
+            saveChat(project)
         }
     }
+
+    /// The person took what `askForSetup` offered: saved as their choice, and the request waiting starts with the next
+    /// look at setup (`recheckSetup`). A sign-in that has run out since goes to the sheet, which signs in.
+    func useSignedIn(_ engine: Engine, for project: LampProject, line: UUID) {
+        guard let stated = logs[project.id]?.first(where: { $0.id == line }), stated.kind == .needsBuilder,
+              BuilderLine.engines(in: stated.text).contains(engine), !choosingBuilder else { return }
+        choosingBuilder = true
+        Builder.engine = engine
+        Task {
+            defer { choosingBuilder = false }
+            await EngineSignIn.refresh(olderThan: 0)
+            await recheckSetup()
+            guard !setup.hasBuilder, let stated = logs[project.id]?.first(where: { $0.id == line }) else { return }
+            SetupSheet.shared.show(project, line: stated)
+        }
+    }
+
+    /// A click on a line's offer has been taken: a second one meanwhile is the same click.
+    private var choosingBuilder = false
 
     /// The desk's window in front.
     func showDesk() {
@@ -3471,9 +3498,10 @@ final class Store: ObservableObject {
         return projects.first { $0.holdsApp && $0.platform == package.platform && $0.hasScaffold && Sharing.identity(of: $0, create: false) == identity }
     }
 
-    /// Opens a shared `.lampapp`. Its review (fixed checklist + AI check) opens only when setup is really done
-    /// and the welcome is over, so that an AI agent is there to check the app before it runs. Until then the
-    /// file is kept, and its review opens by itself once the person is through setup.
+    /// Opens a shared `.lampapp`, with nothing set up if need be: its review opens as soon as the welcome is over, the
+    /// AI's check being a part of it only when AI is set up (`Sharing.review`), and building it always takes a click on
+    /// that review (`ImportReview.opening`). During the welcome the file is kept and the welcome gives way to it
+    /// (`OnboardingView.arrive`); its review opens as the welcome ends.
     func importApp(from file: URL, updating target: String? = nil) {
         NSApp.activate()
         Task {
@@ -3481,27 +3509,23 @@ final class Store: ObservableObject {
             // the same file on the same Mac always goes the same way.
             await setupLook.wait()
             guard reviewsCanOpen else {
-                let alert = NSAlert()
-                alert.messageText = "Finish setting up Lamp first"
                 if waitingImport.keep(file, updating: target) {
-                    alert.informativeText = waitingImport.count > 1
-                        ? "Lamp will open your shared apps as soon as it can build them."
-                        : "Lamp will open the shared app as soon as it can build it."
+                    arrivedImport += 1
                 } else {
+                    let alert = NSAlert()
+                    alert.messageText = "Finish the welcome first"
                     alert.informativeText = "Then open the shared app again."
+                    alert.runModal()
                 }
-                alert.runModal()
-                // Nothing else would ask: no request is waiting in a chat for what this needs.
-                if Onboarding.isDone || welcomeFinished { askForWhatsMissing() }
                 return
             }
             review(file, updating: target)
         }
     }
 
-    /// Setup is in place (Apple's tools and an AI agent) and the person is through the welcome.
+    /// Lamp has looked at setup and the person is through the welcome.
     private var reviewsCanOpen: Bool {
-        WaitingImport.reviewsCanOpen(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+        WaitingImport.reviewsCanOpen(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
     }
 
     /// Unpacks a shared app and shows its review.
@@ -3538,16 +3562,18 @@ final class Store: ObservableObject {
 
     private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
 
+    /// Goes up as a shared app is kept during the welcome, which gives way to it (`OnboardingView.arrive`).
+    @Published private(set) var arrivedImport = 0
+
     /// A shared app is kept for its review.
     var hasWaitingImport: Bool { waitingImport.count > 0 }
 
-    /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
-    /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a
-    /// review closes.
+    /// Shared apps kept during the welcome get their reviews once it's over, one at a time in the order they were
+    /// opened: called after Lamp's first look at setup, when the welcome ends, and when a review closes.
     /// Whether a shared app is now being looked at, waiting or not.
     @discardableResult func openWaitingImport() -> Bool {
         guard pendingImport == nil, importRequest == nil else { return true }
-        let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+        let file = waitingImport.take(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
         if let file { review(file, updating: WaitingImport.target(beside: file)) }
         return file != nil
     }
@@ -3962,7 +3988,7 @@ final class Store: ObservableObject {
         let ready = readyFor(project)
         if !ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
         if !setup.hasBuilder || !setup.hasAgent {
-            askForSetup()
+            askForSetup(project)
         } else if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested {
             requestBuildTools()
         }
@@ -7563,6 +7589,9 @@ final class Store: ObservableObject {
     /// Starters whose first build failed this time: not tried again until Lamp next starts, and opening one
     /// shows its chat, which has the failure.
     private var unpreparedStarters: Set<String> = []
+    /// Starters whose prebuilt copy this Mac couldn't use while it has no Apple tools to build one: tried again only when
+    /// the person opens one (`openWhenReady`), or built once the tools are there, not at every look at setup.
+    private var refusedPrebuilt: Set<String> = []
 
     /// Builds the starters nobody has opened yet, one at a time, as soon as Apple's tools are there, so each
     /// opens at once when used. One that's being waited for goes first.
@@ -7623,8 +7652,15 @@ final class Store: ObservableObject {
         return projects.contains { needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)) }
     }
 
+    /// Whether a starter's turn comes: one whose prebuilt copy was refused, on a Mac with no tools to build it, only once
+    /// the person opens it.
+    nonisolated static func triesStarter(refused: Bool, opened: Bool, hasTools: Bool) -> Bool { !refused || opened || hasTools }
+
     private func nextStarterToPrepare(excluding tried: Set<String> = []) -> LampProject? {
-        let waiting = projects.filter { needsPreparing($0) && canPrepare($0) && !tried.contains($0.instance) }
+        let waiting = projects.filter {
+            needsPreparing($0) && canPrepare($0) && !tried.contains($0.instance)
+                && Self.triesStarter(refused: refusedPrebuilt.contains($0.id), opened: openWhenReady.contains($0.id), hasTools: setup.hasBuildTools)
+        }
         return waiting.first { openWhenReady.contains($0.id) } ?? waiting.first
     }
 
@@ -7660,10 +7696,31 @@ final class Store: ObservableObject {
             saveChat(project)
         }
         if !made, canBuild { unpreparedStarters.insert(project.id) }
+        if !made, !canBuild { refusedPrebuilt.insert(project.id) }
         preparing.remove(project.id)
         finish(project)
-        guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
+        guard openWhenReady.contains(project.id), let current = current(project) else { return }
+        // Asked for, and nothing to open until Apple's tools come: that starter goes on when they do. The other
+        // starters aren't held up meanwhile, this wait being its own.
+        if !made, !canBuild { return awaitToolsToOpen(current) }
+        openWhenReady.remove(project.id)
         if made { open(fromDesk: current) } else { showChat(current.id) }
+    }
+
+    /// A starter the person opened whose prebuilt copy can't be used here: Apple's tools are asked for, its chat says
+    /// so, with Stop to give up on it, and it's built and opened when they arrive.
+    private func awaitToolsToOpen(_ project: LampProject) {
+        guard let turn = begin(project) else { return }
+        showChat(project.id)
+        Task {
+            let before = Set((logs[project.id] ?? []).map(\.id))
+            let came = await waitForAppleTools(project, in: turn)
+            logs[project.id]?.removeAll { !before.contains($0.id) && $0.kind == .status }
+            saveChat(project)
+            if !came { openWhenReady.remove(project.id) }
+            finish(project)
+            if came { prepareStarters() }
+        }
     }
 
     func run(_ project: LampProject) async {

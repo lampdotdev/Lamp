@@ -429,6 +429,9 @@ private struct LineView: View {
                 // Side by side, as a pair of answers, even where the card puts its buttons under its words.
                 HStack {
                     if let decline = line.declineButton { Button(decline) { link.send(.decline(line.id)) } }
+                    ForEach(Array((line.choices ?? []).enumerated()), id: \.offset) { place, choice in
+                        Button(choice) { link.send(.choose(line.id, place)) }
+                    }
                     if let button = line.button { Button(button) { link.send(.offer(line.id)) } }
                 }
                 .disabled(line.disabled ?? false)

@@ -111,6 +111,8 @@ struct SetupCheck {
     }
 }
 
+/// What builds, chosen for a request waiting in its chat, in Lamp's sheet (`SetupSheet`). Apple's tools aren't asked for
+/// here: only what's compiled needs them, and once this is chosen they're asked for if the request does (`recheckSetup`).
 struct SetupView: View {
     @EnvironmentObject private var store: Store
     /// Puts it off: the request stays in its chat, and the next one asks again.
@@ -146,23 +148,6 @@ struct SetupView: View {
                 Label("Lamp's AI builder is missing from the app. Download Lamp again.",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
-            }
-
-            step(done: store.setup.hasBuildTools,
-                 title: "Install Apple's app-building tools",
-                 detail: store.setup.installRequested
-                    ? "Apple's installer window is open. Click **Install**, then **Agree**. It usually takes 5–10 minutes, and Lamp carries on by itself when it's done."
-                    : "Free from Apple, and no developer account needed.") {
-                VStack(alignment: .trailing, spacing: 6) {
-                    if store.setup.installRequested {
-                        ProgressView().controlSize(.small)
-                        Button("Show Installer Again", action: SetupCheck.showInstaller)
-                            .buttonStyle(.link)
-                            .font(.caption)
-                    } else {
-                        Button("Install…") { store.requestBuildTools() }
-                    }
-                }
             }
 
             step(done: store.setup.hasBuilder,
@@ -202,7 +187,11 @@ struct SetupView: View {
                         let engine: Engine = choice == "claude" ? .claude : .codex
                         Button("Use \(engine.title)") { use(engine) }
                     default:
-                        Button("Choose a Model…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
+                        Button("Choose a Model…") {
+                            // Settings can't come in front of the sheet, which floats over the app.
+                            later()
+                            openSettings(tab: "providers", sheet: Builder.localProvider)
+                        }
                     }
                 }
                 .padding(.leading, 36)
