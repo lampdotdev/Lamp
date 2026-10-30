@@ -7509,9 +7509,10 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Start Over for a copy of a starter this Lamp ships newer, under the caller's hold: the version it arrived as, then
-    /// the newer starter over it (`bringUp`), as one version, so it lands on the starter as this Lamp ships it, one Undo
-    /// away. The conversation starts again as Start Over's does (`startConversationAgain`).
+    /// Start Over for a copy of a starter this Lamp ships, under the caller's hold: the version it arrived as, then the
+    /// starter as this Lamp ships it over that (`bringUp`), as one version, so it lands there one Undo away, whether it
+    /// was behind or merged up to it since. The conversation starts again as Start Over's does
+    /// (`startConversationAgain`).
     func startOverBegun(_ project: LampProject, to starter: Starters.Starter, from arrival: AppVersion?) async {
         dropPausedRequest(project)
         if let arrival {

@@ -191,8 +191,8 @@ A starter whose code imports RealityKit (none does now) gets LampScene.swift and
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.
 
 **"The original" is the starter as this Lamp ships it**, never the version a copy happened to arrive as, so a copy
-follows the pin as it moves (`Starters.newer`: the commit on the copy's link, else in its `.lamp/starter.md`, isn't the
-pin; a copy that names none, made before starters named theirs, is behind). Once a launch, when git is there
+follows the pin as it moves (`Starters.newer`: the commit on the copy's link in its credits.json, which goes with its
+versions so Undo takes it back too, isn't the pin; a copy that names none, made before starters named theirs, is behind). Once a launch, when git is there
 (`Store.bringStartersUp`, from `prepareStarters`), a copy unchanged since it arrived takes the new starter's files in
 place of its own (`Store.bringUp`: `Starters.copy` replacing, as an update replaces a wish's), keeping its name, data and
 chat, saved as a new "From Lamp" version, so it's what the copy arrived as from now on and Undo takes it back; its link,
@@ -205,8 +205,8 @@ into the person's changes as an update from GitHub merges (`Store.mergeUpdate`, 
 commit the copy has, fetched when it can be and else the version it began with), the agent settling only what both
 sides changed. Wish Info's Check for Updates… compares a starter's copy with the pin, never GitHub's latest
 (`Store.followsShippedStarter`). Start Over on a starter's copy goes back to the version it arrived as and then on to
-the starter as this Lamp ships it, in the same hold and as one version (`Store.startOverBegun`), so it lands on the
-current starter with the chat started over ("Started over from the latest original"), one Undo away; a wish from
+the starter as this Lamp ships it (`Starters.original`), behind or merged up to it since, in the same hold and as one
+version (`Store.startOverBegun`), so it lands on the current starter with the chat started over ("Started over from the latest original"), one Undo away; a wish from
 GitHub or a shared file still goes back to what arrived.
 
 A starter deleted from the desk is gone, as any wish is; a remix of it from the site puts a fresh copy back

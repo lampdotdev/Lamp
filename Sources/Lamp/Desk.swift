@@ -1231,7 +1231,10 @@ extension Store {
         guard begin(project) != nil else { return }
         defer { finish(project) }
         let arrival = await original(toStartAgain: project)
+        // A starter's copy lands on the starter as this Lamp ships it, whether it's behind or was merged up to it since
+        // it arrived.
         let newer = Starters.newer(for: project)
+        let shipped = Starters.original(for: project)
         guard arrival != nil || newer != nil else { return }
         // What a stopped or failed turn left unsaved is kept as a version first, so Undo brings that back too; a restore
         // would otherwise overwrite it for good.
@@ -1243,8 +1246,8 @@ extension Store {
         // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
         ContributeCards.shared.close(project)
         if opening { open(fromDesk: project) }
-        if let newer {
-            await startOverBegun(project, to: newer, from: arrival)
+        if let shipped {
+            await startOverBegun(project, to: shipped, from: arrival)
         } else if let arrival {
             await restoreBegun(project, to: arrival, startingAgain: true)
         }

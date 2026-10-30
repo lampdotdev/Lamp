@@ -333,18 +333,25 @@ enum Starters {
         return bundled.first { $0.folder.lastPathComponent == folder }
     }
 
-    /// The commit of its starter a copy has: its link's, else the one its starter.md came with. Nil for a copy made
-    /// before starters named one.
+    /// The commit of its starter a copy has: its link's in credits.json, which goes with the copy's versions, so Undo of
+    /// an update takes it back too (`.lamp`'s records stay as they are). Nil for a copy made before starters named one.
     static func commit(of project: LampProject) -> String? {
-        Credits.load(project).remixOf.last { $0.starter != nil }?.commit ?? starter(of: project)?.commit
+        Credits.read(project.dir.appendingPathComponent(Credits.file))?.remixOf.last { $0.starter != nil }?.commit
     }
 
-    /// The starter this Lamp ships, when it's newer than what a copy of it has, and the copy can take it: the same kind
-    /// of wish. A copy that names no commit is behind; a starter not put on GitHub yet has no commit to be behind.
-    /// "The original" is always this: the starter as this Lamp ships it.
+    /// The starter a copy was made from as this Lamp ships it, when the copy can take it: the same kind of wish. "The
+    /// original" is always this, whatever the copy arrived as: what Start Over lands on.
+    static func original(for project: LampProject) -> Starter? {
+        guard !project.isPart, isStarter(project), let shipped = shipped(of: project), shipped.commit != nil,
+              shipped.kind == project.platform else { return nil }
+        return shipped
+    }
+
+    /// The original, when it's newer than what the copy has. A copy that names no commit is behind; a starter not put
+    /// on GitHub yet has no commit to be behind.
     static func newer(for project: LampProject) -> Starter? {
-        guard !project.isPart, isStarter(project), let shipped = shipped(of: project), let pin = shipped.commit,
-              shipped.kind == project.platform, commit(of: project)?.lowercased() != pin.lowercased() else { return nil }
+        guard let shipped = original(for: project), let pin = shipped.commit,
+              commit(of: project)?.lowercased() != pin.lowercased() else { return nil }
         return shipped
     }
 }
