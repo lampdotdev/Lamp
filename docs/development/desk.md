@@ -25,7 +25,7 @@ click goes the same way, `Store.openChat`); a wish that opens no Mac window is u
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
-(`DeskWishMenu`): Duplicate…, Duplicate the Original, Start Again from the Original and Send Changes Back… where they apply, Wish Info
+(`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over and Send Changes Back… where they apply, Wish Info
 (its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
 for the menu. Dragged out
@@ -49,16 +49,16 @@ or a wish opened from GitHub or a file is already the person's own copy, so the 
 
 A wish that arrived from somewhere and has been changed since (`Store.original(toStartAgain:)`: its files differ from
 the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
-original" in the panel, with Start Again beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
-creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Again from the Original in
-its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. It starts
+original" in the panel, with Start Over beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
+creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Over in its menu
+(`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. It starts
 the conversation again too, since one about a game that's gone would steer the next request: every engine's
 conversation is set aside (`Conversation.setAside`, "How big a conversation grows" in the engines guide), so the next
-request starts fresh, told the original's APP.md, and the chat goes down to one line, "Started again from the
+request starts fresh, told the original's APP.md, and the chat goes down to one line, "Started over from the
 original" (`Store.startConversationAgain`). Both are kept with the version the restore made, so Undo of it brings back
 the code, the old chat and the old conversations together. For a starter there's
-also Duplicate the Original (`Store.duplicateOriginal`): a fresh copy of the starter as this Lamp ships it, put on the
-desk as a remix link puts one, beside the changed copy. Send Changes Back… is
+also New Copy of the Original (`Store.duplicateOriginal`), on every copy of one this Lamp ships, changed or not: a fresh
+copy of the starter as this Lamp ships it, put on the desk as a remix link puts one, beside the copy. Send Changes Back… is
 in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
 wish's chat as the chat's Share menu does. A remix link from the site lands the same way: it opens the person's own
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
@@ -108,7 +108,8 @@ Lamp ships built, and the first request to any wish asks for what builds (`Store
 desk), signed in where the choice needs it, then Apple's tools where it needs them, the request waiting in its chat. A
 shared file or repository opened before then asks the same way and waits for its review. A starter from the site opens at
 once, and only a wish from the site, which has to be made, goes on to the welcome's setup. They're copied once, on the first launch, each saved as its first version ("From Lamp"),
-and from then on they're the person's: a later Lamp with other starters gives those only to new people. As soon
+and from then on they're the person's: a later Lamp with other starters gives those only to new people, and brings the
+copies of the ones it still ships up to them ("The original", below). As soon
 as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
 their chats; nothing on the desk shows it; one clicked before its build is done glows, says it's opening, and opens when it's
 ready (`openWhenReady`). A
@@ -188,6 +189,25 @@ person's Mac does); Home HQ's Native.swift makes it compiled ("Lamp's player" in
 A starter whose code imports RealityKit (none does now) gets LampScene.swift and macOS 15 like any app with a 3D scene
 (`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.
+
+**"The original" is the starter as this Lamp ships it**, never the version a copy happened to arrive as, so a copy
+follows the pin as it moves (`Starters.newer`: the commit on the copy's link, else in its `.lamp/starter.md`, isn't the
+pin; a copy that names none, made before starters named theirs, is behind). Once a launch, when git is there
+(`Store.bringStartersUp`, from `prepareStarters`), a copy unchanged since it arrived takes the new starter's files in
+place of its own (`Store.bringUp`: `Starters.copy` replacing, as an update replaces a wish's), keeping its name, data and
+chat, saved as a new "From Lamp" version, so it's what the copy arrived as from now on and Undo takes it back; its link,
+credits and starter.md move to the pin, and it's built again out of sight with the starters' first builds, from the
+prebuilt copy when it's the starter's (`PrebuiltStarters`), so a release costs no build for an unchanged copy. One open
+or busy then waits for the next launch. A changed copy isn't touched: its chat gets a card, once for each newer
+starter (`NewerOriginalLine`, "A newer original is available" with Update), the panel says the same with Update beside
+it, and its menu has Update from the Original (`Store.updateFromOriginal`), which merges the starter from Lamp's bundle
+into the person's changes as an update from GitHub merges (`Store.mergeUpdate`, `Upstream`: three ways, against the
+commit the copy has, fetched when it can be and else the version it began with), the agent settling only what both
+sides changed. Wish Info's Check for Updates… compares a starter's copy with the pin, never GitHub's latest
+(`Store.followsShippedStarter`). Start Over on a starter's copy goes back to the version it arrived as and then on to
+the starter as this Lamp ships it, in the same hold and as one version (`Store.startOverBegun`), so it lands on the
+current starter with the chat started over ("Started over from the latest original"), one Undo away; a wish from
+GitHub or a shared file still goes back to what arrived.
 
 A starter deleted from the desk is gone, as any wish is; a remix of it from the site puts a fresh copy back
 (`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put on the desk, which the first launch

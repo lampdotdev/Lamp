@@ -1205,7 +1205,7 @@ extension Store {
     }
 
     /// The version a starter's copy, or a wish opened from GitHub or a shared file, last arrived as ("From Lamp", or what
-    /// an update brought), when the wish has changed since: what Start Again from the Original goes back to. Nil for a
+    /// an update brought), when the wish has changed since: what Start Over goes back to. Nil for a
     /// wish unchanged since, one remixed here, and one with no such version. What's on disk counts, saved or not; Lamp's
     /// own files, rewritten by each Lamp, aren't a change, nor are files attached to requests.
     func original(toStartAgain project: LampProject) async -> AppVersion? {
@@ -1222,32 +1222,38 @@ extension Store {
         return changed ? arrival : nil
     }
 
-    /// Start Again from the Original: the wish's files go back to the version it arrived as, as a new version (so this
-    /// too is undone with Undo), and it opens with its chat, which says so (`opening`; from the chat it's open already).
-    /// The conversation starts again too: the agent's, for every engine, and the chat, down to the line that says so.
+    /// Start Over: the wish's files go back to the version it arrived as, as a new version (so this too is undone with
+    /// Undo), and it opens with its chat, which says so (`opening`; from the chat it's open already). A starter's copy
+    /// lands on the starter as this Lamp ships it, newer or not (`startOverBegun`): "the original" is always that. The
+    /// conversation starts again too: the agent's, for every engine, and the chat, down to the line that says so.
     func startAgain(_ project: LampProject, opening: Bool = true) async {
         // The wish's work is held from the first look to the restore, so no request or other restore comes between.
         guard begin(project) != nil else { return }
         defer { finish(project) }
-        guard let arrival = await original(toStartAgain: project) else { return }
+        let arrival = await original(toStartAgain: project)
+        let newer = Starters.newer(for: project)
+        guard arrival != nil || newer != nil else { return }
         // What a stopped or failed turn left unsaved is kept as a version first, so Undo brings that back too; a restore
         // would otherwise overwrite it for good.
         if await Versions.hasUnsavedChanges(project),
            await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": "Unfinished change"]) != .saved {
-            log(project, .error, "Lamp couldn't save the unfinished change, so it didn't start again.")
+            log(project, .error, "Lamp couldn't save the unfinished change, so it didn't start over.")
             return
         }
         // A Send Changes Back card holds the changes being taken back: there's nothing left to send.
         ContributeCards.shared.close(project)
         if opening { open(fromDesk: project) }
-        await restoreBegun(project, to: arrival, startingAgain: true)
+        if let newer {
+            await startOverBegun(project, to: newer, from: arrival)
+        } else if let arrival {
+            await restoreBegun(project, to: arrival, startingAgain: true)
+        }
     }
 
-    /// Duplicate the Original: a fresh copy of the starter a changed copy came from, as this Lamp ships it, put on the
-    /// desk as a remix link from the site puts one (`put(starter:)`), and opened with its chat. The changed copy stays.
+    /// New Copy of the Original: a fresh copy of the starter a copy came from, as this Lamp ships it, put on the desk as a
+    /// remix link from the site puts one (`put(starter:)`), and opened with its chat. The copy it was asked from stays.
     func duplicateOriginal(of project: LampProject) {
-        guard let name = Starters.starter(of: project)?.name, let starter = Starters.bundled.first(where: { $0.name == name }),
-              let copy = put(starter: starter) else {
+        guard let starter = Starters.shipped(of: project), let copy = put(starter: starter) else {
             NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of the original \(project.name).")).runModal()
             return
         }

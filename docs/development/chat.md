@@ -104,7 +104,8 @@ A capability given to one engine must be given to all of them that can take it, 
 
 When a conversation starts again, Lamp says so in a line of the chat, as any status: "Started a fresh conversation for
 <wish>: the last one had grown too large to send" when a request couldn't be sent, and, alone in a cleared chat,
-"Started again from the original" (both in `Conversation`; "How big a conversation grows" in the engines guide).
+"Started over from the original", or "Started over from the latest original" for a starter's copy brought up to the
+starter this Lamp ships (all in `Conversation`; "How big a conversation grows" in the engines guide).
 
 ## The chat's one screen
 

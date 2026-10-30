@@ -28,9 +28,13 @@ struct DeskEntry: Equatable, Sendable {
     var ideas: [String] = []
     /// It came from a repository on GitHub and can offer its changes there (`Contribute.canContribute`).
     var sendsBack = false
-    /// It arrived from somewhere (a starter, GitHub, a shared file) and has been changed in place since: Start Again from
-    /// the Original takes it back (`Store.original(toStartAgain:)`). Read after the rest, since it asks git.
+    /// It arrived from somewhere (a starter, GitHub, a shared file) and has been changed in place since: Start Over
+    /// takes it back (`Store.original(toStartAgain:)`). Read after the rest, since it asks git.
     var changedFromOriginal = false
+    /// A copy of a starter this Lamp ships, which New Copy of the Original makes another of (`Starters.shipped`).
+    var shipsOriginal = false
+    /// This Lamp ships a newer version of the starter it's a copy of: Update from the Original brings it in (`Starters.newer`).
+    var newerOriginal = false
 
     nonisolated static func read(_ project: LampProject, apps: [LampProject]) -> DeskEntry {
         let credits = Credits.load(project)
@@ -56,7 +60,9 @@ struct DeskEntry: Equatable, Sendable {
                          picture: picture,
                          pictureDate: picture.flatMap { (try? fm.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date },
                          ideas: Starters.starter(of: project)?.tweaks.map(\.title) ?? [],
-                         sendsBack: Contribute.canContribute(project))
+                         sendsBack: Contribute.canContribute(project),
+                         shipsOriginal: Starters.isStarter(project) && Starters.shipped(of: project) != nil,
+                         newerOriginal: Starters.newer(for: project) != nil)
     }
 }
 
@@ -350,11 +356,21 @@ struct DeskDetail: View {
                     if !remixes.isEmpty { fact("Remixes", remixes.map(\.title).joined(separator: ", ")) }
                 }
                 .font(.system(size: 13))
-                // Changed in place since it arrived: said where it's seen, with the way back beside it.
+                // A newer original, then changed in place since it arrived: said where it's seen, with what to do beside it.
+                if row.entry?.newerOriginal == true {
+                    HStack(spacing: 8) {
+                        Text("A newer original is available").font(.system(size: 13)).foregroundStyle(Paper.muted)
+                        Button("Update") { store.updateFromOriginal(project) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 26))
+                            .disabled(store.busy.contains(project.id))
+                            .help(row.entry?.changedFromOriginal == true ? "Bring in the newer \(project.title), keeping your changes."
+                                  : "Bring in the newer \(project.title). Undo takes it back.")
+                    }
+                }
                 if row.entry?.changedFromOriginal == true {
                     HStack(spacing: 8) {
                         Text("Changed from the original").font(.system(size: 13)).foregroundStyle(Paper.muted)
-                        Button("Start Again") { Task { await store.startAgain(project) } }
+                        Button("Start Over") { Task { await store.startAgain(project) } }
                             .buttonStyle(PaperButtonStyle(.outline, height: 26))
                             .disabled(store.busy.contains(project.id))
                             .help("Go back to the original \(project.title). Undo brings your changes back.")
@@ -468,12 +484,16 @@ struct DeskWishMenu: View {
             Task { await store.remix(project, change: asked.isEmpty ? nil : asked) }
         }
         .disabled(!store.canDuplicate(project))
+        // A fresh copy beside this one, changed or not: only a starter's, whose original this Lamp ships.
+        if entry?.shipsOriginal == true {
+            Button("New Copy of the Original") { store.duplicateOriginal(of: project) }
+        }
+        if entry?.newerOriginal == true {
+            Button("Update from the Original") { store.updateFromOriginal(project) }
+                .disabled(busy)
+        }
         if entry?.changedFromOriginal == true {
-            // A fresh copy beside this one: only a starter, whose original this Lamp ships.
-            if entry?.isStarter == true {
-                Button("Duplicate the Original") { store.duplicateOriginal(of: project) }
-            }
-            Button("Start Again from the Original") { Task { await store.startAgain(project) } }
+            Button("Start Over") { Task { await store.startAgain(project) } }
                 .disabled(busy)
         }
         // Only once there's something of the person's to send.
