@@ -1378,16 +1378,17 @@ function keep(path, key, build, options = {}) {
     if (had) letGo(had);
     const entry = { path, key, text, inputs, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false, value: undefined, made: undefined };
     // What the build starts as it runs belongs to the part. An async build's later work can't be told from other code
-    // that runs while it waits, so of what's listened to meanwhile only listeners on the part itself (its object, its
-    // canvas, an element inside it) stay with it; the rest is watched as the game's.
+    // that runs while it waits, so of what's started meanwhile only what's the part's own stays with it: listeners on
+    // the part (its object, its canvas, an element inside it) and a worker or sound context that is the part or one of
+    // its values. The rest (a timer above all) is watched as the game's.
     keeping++;
     let value;
     try { value = build(); } finally { keeping--; }
     if (value && typeof value.then === 'function') {
-        const waiting = { added: [] };
+        const waiting = { added: [], made: [] };
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
-        value.then(v => { entry.made = v; ownListeners(v, waiting.added); }, () => { if (kept.get(id) === entry) kept.delete(id); });
+        value.then(v => { entry.made = v; own(v, waiting); }, () => { if (kept.get(id) === entry) kept.delete(id); });
     } else entry.made = value;
     entry.value = value;
     kept.set(id, entry);
@@ -1399,10 +1400,12 @@ const isKept = v => [...kept.values()].some(k => k.made === v);
 
 // Async builds still running, each with the listeners added while it ran.
 const keepsWaiting = new Set();
-function ownListeners(made, added) {
+function own(made, waiting) {
     const parts = [made, made && made.domElement, made && made.canvas].filter(o => o && typeof o === 'object');
     const of = target => parts.some(p => p === target || (p.contains && target.nodeType && p.contains(target)));
-    for (const [target, listener] of added) {
+    const values = made && typeof made === 'object' ? [made, ...Object.values(made)] : [made];
+    for (const [thing, end] of waiting.made) if (values.includes(thing)) owned.delete(end);
+    for (const [target, listener] of waiting.added) {
         if (!of(target)) continue;
         const list = listenersOf.get(target), i = list ? list.indexOf(listener) : -1;
         if (i >= 0) list.splice(i, 1);
@@ -1702,7 +1705,11 @@ function watch() {
     const owning = (Made, end) => {
         const Watched = function (...args) {
             const made = new Made(...args);
-            if (!keeping) owned.add(() => end(made));
+            if (!keeping) {
+                const ending = () => end(made);
+                owned.add(ending);
+                for (const waiting of keepsWaiting) waiting.made.push([made, ending]);
+            }
             return made;
         };
         Watched.prototype = Made.prototype;
