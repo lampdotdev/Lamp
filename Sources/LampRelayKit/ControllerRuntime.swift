@@ -16,7 +16,9 @@ import Foundation
 /// the iPhone and the iPad (`GameKit.controllerKit`), where LampPage.swift runs it.
 public final class ControllerRuntime: @unchecked Sendable {
     public let app: String
-    private let root: URL
+    /// The page served: the bundle's, or the newer one Lamp gave the game as it's played (`use`).
+    private var root: URL
+    private var version: String?
     private let queue = DispatchQueue(label: "dev.lamp.controllers")
     private var key: SymmetricKey?
     private var relay: Relay?
@@ -35,6 +37,20 @@ public final class ControllerRuntime: @unchecked Sendable {
         self.app = app
         self.root = root
     }
+
+    /// Serves a newer page, as Lamp handed it to the game (`LampPageLive`), under the session that's open: every player
+    /// keeps their seat, and each phone's page finds the new version and opens again from it.
+    public func use(page root: URL, version: String, _ done: @escaping @Sendable () -> Void = {}) {
+        queue.async {
+            self.root = root
+            self.version = version
+            self.site?.use(page: root, version: version)
+            done()
+        }
+    }
+
+    /// The same, waiting for it: for tests.
+    public func useNow(page root: URL, version: String) { queue.sync { self.root = root; self.version = version; site?.use(page: root, version: version) } }
 
     /// The game's session, opened if it isn't: what `/app/controller` answers, with its status. On the runtime's own
     /// queue, never the caller's, since opening waits for the system to give each listener its port.
@@ -125,7 +141,8 @@ public final class ControllerRuntime: @unchecked Sendable {
     }
 
     private func openSite() {
-        let site = PhonePageServer(port: 0, root: root, app: app, hosts: hosts, relayPort: { [weak self] in self?.currentRelayPort })
+        if version == nil { version = (try? ControllerSnapshot.read(root))?.version }
+        let site = PhonePageServer(port: 0, root: root, version: version, app: app, hosts: hosts, relayPort: { [weak self] in self?.currentRelayPort })
         let ready = DispatchSemaphore(value: 0)
         let listening = Said<Bool>()
         site.start(ready: { ok in listening.value = ok; ready.signal() }, onFailure: { [weak self, weak site] in

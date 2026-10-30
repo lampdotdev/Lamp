@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import LampRelayKit
 
 /// The person's TVs: Samsung's (Tizen) and LG's (webOS), found on the network, set up through their own developer
 /// modes, and given a web app Lamp packages, signs and installs itself. A TV app is the same HTML, CSS and JavaScript
@@ -382,8 +383,9 @@ enum TVs {
 
     /// Copies only the app's phone page where it's served, as `stage` does beside a TV app's files: for a game built for
     /// the Mac, which is played from its own copy rather than a staged one, and takes phones while it's open. No Phone/
-    /// takes the published page away.
-    static func stagePhone(_ project: LampProject) async throws {
+    /// takes the published page away. `expecting`: the version that was checked; a copy that isn't it stays unpublished,
+    /// and the answer is false.
+    @discardableResult static func stagePhone(_ project: LampProject, expecting: String? = nil) async throws -> Bool {
         let fm = FileManager.default
         let dir = stagingFolder(for: project)
         let incoming = dir.appendingPathComponent(".phone-" + UUID().uuidString)
@@ -399,7 +401,9 @@ enum TVs {
             .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
         if linked { throw Failure(message: "Some of the phone page's files are shortcuts to other files. Put the files themselves in their place.") }
         let hasPage = fm.fileExists(atPath: incoming.appendingPathComponent("index.html").path)
+        if let expecting, (try? ControllerSnapshot.read(incoming))?.version != expecting { return false }
         try publishPhone(hasPage ? incoming : nil, as: phoneFolder(for: project))
+        return true
     }
 
     /// A file of the published phone page by the names in its path, when it's a plain file there of a size to hand out.
@@ -435,6 +439,23 @@ enum TVs {
     /// Where an app's phone page is copied (its Phone/ folder), beside its web files.
     static func phoneFolder(for project: LampProject) -> URL {
         stagingFolder(for: project).appendingPathComponent("phone")
+    }
+
+    /// The version of each app's published page, kept by the folder's identity: publishing swaps in another folder
+    /// (`publishPhone`), and every open phone asks every few seconds.
+    @MainActor private static var phoneVersions: [String: (folder: NSObject, version: String)] = [:]
+
+    /// The version of the page published now (`ControllerSnapshot.version`), nil when there's none to serve.
+    @MainActor static func phoneVersion(of project: LampProject) -> String? {
+        let folder = phoneFolder(for: project)
+        guard let identity = (try? folder.resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier as? NSObject else {
+            phoneVersions[project.id] = nil
+            return nil
+        }
+        if let known = phoneVersions[project.id], known.folder.isEqual(identity) { return known.version }
+        guard let version = (try? ControllerSnapshot.read(folder))?.version else { return nil }
+        phoneVersions[project.id] = (identity, version)
+        return version
     }
 
     /// Whether the app's last copy has a phone page to hand out.

@@ -437,19 +437,21 @@ enum GameKit {
     /// nil: what a change the agent is still writing goes into the open game by (`Store.stepPage`). Parsed as modules by
     /// the Bun inside Lamp's pi (its transpiler, which reads them as a browser does and runs nothing), in the game's
     /// sandbox; Lamp's own files and the libraries beside the page are left out. A game bundled from TypeScript is checked
-    /// by its bundling instead.
-    static func codeProblem(_ project: LampProject) async -> String? {
-        guard !compilesSource(project), let bun = Agent.executable else { return nil }
-        let web = project.dir.appendingPathComponent(webFolder)
+    /// by its bundling instead. `folder`: the app's phone page (`Store.stepPhones`), whose scripts aren't modules, so
+    /// nothing is asked of them that only a module must keep to, and whose pages' inline scripts are read too.
+    static func codeProblem(_ project: LampProject, in folder: String = webFolder) async -> String? {
+        let modules = folder == webFolder
+        guard !(modules && compilesSource(project)), let bun = Agent.executable else { return nil }
+        let web = project.dir.appendingPathComponent(folder)
         let base = web.standardizedFileURL.path + "/"
         let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .map { String($0.standardizedFileURL.path.dropFirst(base.count)) }
             .filter { path in
-                ["js", "mjs"].contains((path as NSString).pathExtension.lowercased()) && !path.hasPrefix("three/") && !path.hasPrefix("phaser/")
+                (modules ? ["js", "mjs"] : ["js", "mjs", "html", "htm"]).contains((path as NSString).pathExtension.lowercased()) && !path.hasPrefix("three/") && !path.hasPrefix("phaser/")
                     && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
             }.sorted()
         guard !files.isEmpty else { return nil }
-        if let strict = strictProblem(in: files, of: web, project: project) { return strict }
+        if modules, GameKit.isGame(project), let strict = strictProblem(in: files, of: web, project: project) { return strict }
         // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
         // it runs in a scratch folder, reading the page's files by their paths.
         let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-check-\(project.id)-\(UUID().uuidString.prefix(8))")
@@ -517,8 +519,19 @@ enum GameKit {
     private static let parseCheck = """
         const [web, ...files] = process.argv.slice(2);
         const parse = new Bun.Transpiler({ loader: 'js' });
+        // The code in a file: all of it, or in a page each script written inline that runs, line breaks kept so a line is right.
+        function code(file, text) {
+          if (!/\\.html?$/i.test(file)) return [text];
+          const found = [];
+          for (const m of text.matchAll(/<script\\b([^>]*)>([\\s\\S]*?)<\\/script\\s*>/gi)) {
+            const type = /\\btype\\s*=\\s*["']?([^"'\\s>]+)/i.exec(m[1]);
+            if (/\\bsrc\\s*=/i.test(m[1]) || (type && !/^(module|(text|application)\\/(javascript|ecmascript))$/i.test(type[1]))) continue;
+            found.push('\\n'.repeat(text.slice(0, m.index).split('\\n').length - 1) + m[2]);
+          }
+          return found;
+        }
         for (const file of files) {
-          try { parse.transformSync(await Bun.file(web + '/' + file).text()); }
+          try { for (const part of code(file, await Bun.file(web + '/' + file).text())) parse.transformSync(part); }
           catch (e) {
             const m = (e.errors && e.errors[0]) || e;
             console.log(`${file}${m.position ? ':' + m.position.line : ''}: ${m.message || e}`);
