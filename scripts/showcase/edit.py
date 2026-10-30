@@ -283,7 +283,7 @@ def source(st):
 
 silent = outdir / "reel.silent.mp4"
 writer = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-                           "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", str(silent)], stdin=subprocess.PIPE)
+                           "-c:v", "libx264", "-preset", "slow", "-crf", "24", "-pix_fmt", "yuv420p", str(silent)], stdin=subprocess.PIPE)
 last_video = None
 for i in range(int(TOTAL * FPS)):
     o = i / FPS
@@ -325,12 +325,12 @@ if voices:
 else:
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(silent), "-c", "copy", "-movflags", "+faststart", str(reel_path)], check=True)
     silent.unlink()
-# The loop: from a little before the first voice (or the first action) for about fifteen seconds, or where `reel` says.
+# The loop: from a little before the first voice (or the first action) for about ten seconds, or where `reel` says.
 anchor = min([v["t"] for v in voices] or [acts[0]["t"] if acts else src_from])
 loop_from = reel.get("loopFrom", max(0.0, out_time(anchor) - 3.5))
-loop_length = min(reel.get("loopLength", 15.0), VIDEO_END - loop_from)
+loop_length = min(reel.get("loopLength", 10.0), VIDEO_END - loop_from)
 subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{loop_from:.2f}", "-t", f"{loop_length:.2f}", "-i", str(reel_path),
-                "-vf", "fps=20,scale=960:-1:flags=lanczos", "-c:v", "libwebp_anim", "-quality", "70", "-loop", "0",
+                "-vf", "fps=15,scale=720:-1:flags=lanczos", "-c:v", "libwebp_anim", "-quality", "60", "-loop", "0",
                 str(outdir / "loop.webp")], check=True)
 subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{loop_from + loop_length / 2:.2f}", "-i", str(reel_path),
                 "-frames:v", "1", "-vf", "scale=1280:-1:flags=lanczos", str(outdir / "poster.png")], check=True)
