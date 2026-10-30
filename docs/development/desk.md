@@ -119,15 +119,20 @@ isn't an answer to a card names it like any first request and ends `finding`.
 A new person's desk isn't empty: Lamp comes with fifteen wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello, and ends on the desk with nothing set up: a starter runs from the copy
-Lamp ships built, and the first request to any wish asks for what builds (`Store.askForSetup`, `SetupView` over the
-desk), signed in where the choice needs it, then Apple's tools where it needs them, the request waiting in its chat. A
-shared file or repository opened before then asks the same way and waits for its review. A starter from the site opens at
-once, and only a wish from the site, which has to be made, goes on to the welcome's setup. They're copied once, on the first launch, each saved as its first version ("From Lamp"),
+Lamp ships built, and the first request to any wish asks for what builds in its chat (`Store.askForSetup`, `BuilderLine`),
+offering Claude Code or Codex as a click where one is on this Mac and signed in, never choosing it for the person, with
+the rest in Lamp's sheet (`SetupView`, `SetupSheet`); Apple's tools are asked for after that, only where the request needs
+them, the request waiting in its chat and starting once. A shared file or repository opened with nothing set up goes
+straight to its review (`Store.importApp`), the welcome's hello giving way to it, and says it wasn't checked by AI; building
+it takes a click, a request that came with it stays in the box, and something compiled then waits for Apple's tools. A
+starter from the site opens at once, and only a wish from the site, which has to be made, goes on to the welcome's setup. They're copied once, on the first launch, each saved as its first version ("From Lamp"),
 so they open at once: a later Lamp with other starters lists those under Starter apps, copied when they're opened, and
 brings the copies of the ones it still ships up to them ("The original", below). As soon
 as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
 their chats; nothing on the desk shows it; one clicked before its build is done glows, says it's opening, and opens when it's
-ready (`openWhenReady`). A
+ready (`openWhenReady`). A prebuilt copy this Mac refuses, with no tools to build one, is tried again only when the person
+opens that starter (`refusedPrebuilt`): its chat then waits for Apple's tools, Stop giving up on it, and the starter is built
+and opened when they arrive (`awaitToolsToOpen`). A
 starter opens with its chat beside it the first time (`MagicPanel.startWithChat`, the hand-off a new app gets after
 its first build); one that opens no window has its chat opened in Lamp the first time it's used. The chat opens on
 Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line and its three changes, each sent as

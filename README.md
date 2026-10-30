@@ -1,20 +1,35 @@
 # Lamp
 
-**A Mac app that builds the apps your work is missing.**
-
-Describe what you need, and Lamp builds a real app for your Mac, iPhone or iPad (with AI inside when it helps) that you can keep using, change whenever you like, and share. Make a tool for one annoying task, then keep improving it until it works exactly your way.
+**Remixable software.** Start from scratch, or from an app or game someone made. Change it live. Run it wherever
+you want. No code.
 
 ![Lamp icon](Resources/AppIcon.png)
 
-Some things people build with it:
+Lamp is a Mac app. Say what you'd like in your own words and it makes it: an app for your Mac, something in your
+menu bar, a widget, a game, a screen for the kitchen tablet or the TV, or an app for your iPhone or iPad. Each one is
+a **wish**: it opens straight away, with its chat beside it, and every change you ask for goes into it while you use
+it.
 
-- **Downloads Tidy:** a menu bar app that groups everything in Downloads by what it is (receipts, installers, screenshots), suggests clear names, and only moves files once you approve.
-- **Screenshot Notes:** drop screenshots on it and it pulls out the text and key details (who, what, dates, amounts) into a searchable list.
-- **Reading Queue:** drop in PDFs and links, describe what you're working on, and it ranks them by what matters, with a one-line summary and a reason for each.
+Lamp comes with apps to start from, on its desk under **Starter apps**:
 
-Each Mac app is a real `.app` in `~/Applications/Lamp Apps`, with a wand at its top right and **Customize with Lamp (⇧⌘E)** in its menu, which open its chat beside it for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt. iPhone and iPad apps open in the simulator on your Mac, or on your own phone (see [iPhone and iPad apps](#iphone-and-ipad-apps)).
+- **New York** (from Mr.doob's Slop New York): explore Manhattan on foot, by car, by bike or by helicopter, then ask
+  for a sports car, taxi fares or to play as a monster.
+- **Home HQ** (from Wes Bos's family dashboard): the day, calendar, chores, shopping and photos at a glance, on the
+  Mac, a tablet or the TV.
+- **The Little House**: a cozy room on a rainy night, with a fire and a ticking clock to listen to.
+- **Universal Remote**, **Buzzer Beater**, **Fireside**, **Local Crossings**, **Today**, **Hot Shelf**, **Disk Map**,
+  **Hours**, **Wedding Words**, **Transcriber**, **Tidy Up** and **Site-to-App**.
 
-[Download Lamp](https://lamp.dev) and open it. It opens on your desk, where the apps that come with Lamp are ready to use. The first time you ask for a change, Lamp has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent).
+Change one and it's yours; the original stays under Starter apps. Every starter is a repository on GitHub
+(github.com/lampdotdev), and anything made with Lamp can be shared as a file, a link or a GitHub repository for
+someone else to remix.
+
+A wish can run on more than your Mac: an iPhone or iPad, a Samsung, LG or Roku TV, an Android phone, tablet or TV, an
+Xbox, and a photo frame, with phones on the same Wi‑Fi as game controllers. One wish can be on several screens at
+once, sharing its data, so a family calendar set up on the Mac shows on the kitchen tablet and the TV.
+
+[Download Lamp](https://lamp.dev) and open it. It opens on your desk, where the starter apps are ready to use. The
+first time you ask for a change, Lamp has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent).
 
 ## Requirements
 
@@ -30,7 +45,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 ## Download
 
-Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/lampdotdev/Lamp/releases)): open the DMG and drag Lamp to Applications. To get every change as soon as it's merged, install **Lamp Nightly** from the `nightly` pre-release there: a separate app, signed and notarized the same way, that updates itself with each nightly and lives beside Lamp without touching it. To cut a release, see [RELEASING.md](RELEASING.md).
+Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/lampdotdev/Lamp/releases)): open the DMG and drag Lamp to Applications. To get every change as soon as it's merged, install **Lamp Nightly** from the `nightly` pre-release there: a separate app, signed and notarized the same way, built from every change merged to `main`, that updates itself and lives beside Lamp without touching it. To cut a release, see [RELEASING.md](RELEASING.md).
 
 ## Setup
 
@@ -61,34 +76,49 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
 
 ## Using it
 
-- **Help → Lamp Help (⌘/)** opens an offline guide to getting started, changing and sharing apps, versions, AI and privacy, troubleshooting, and keyboard shortcuts.
-- **Help → Report a Bug…** prepares an editable report to send to the Lamp team through lamp.dev. Review the whole report before clicking Send: it includes Lamp's version and build, macOS version, selected engine and recent activity labels. Automatic diagnostics omit log text, keys, chat and app code. If sending fails or you are offline, Copy Report and Share… let you contact the person who invited you instead. Website setup is in [site/BUG_REPORTS.md](site/BUG_REPORTS.md).
-- **Usage counts** go to PostHog while Lamp is alpha software, unless **Send usage counts to the Lamp team** is turned off in Settings → Memory: each step of the welcome, and each new app from New App to its first run (`Sources/Lamp/Analytics.swift` lists every event). They carry fixed words only (a step, a kind of app, an engine, an outcome), never text, names, paths or keys, under a random id made on the Mac and with no person profile. Lamp Dev sends nothing; `LAMP_ANALYTICS_LOG=1` prints what it would send. Help → AI & Privacy says the same to the person.
-- A new app's empty chat shows six ideas to start from (a Downloads sorter, screenshot notes, a clipboard history, a reading queue, a focus timer and a photo studio). Clicking one fills in the request, ready to change before you send it. They go away once you start typing.
-- Click **New App** at the bottom of the app list, give the app a name and (optionally) describe it. Lamp builds it and opens it, usually in under a minute.
-- A vague request ("help me keep track of when I water my plants") is built straight away from sensible guesses, which you change as you use the app. The agent asks first only when one answer would make a different app, such as whether it suggests times or adds them to your calendar: one short question with likely answers, and leaving it to Lamp picks the choice that does less outside the app. Answering starts the build; it doesn't give the app access to anything.
-- Type changes into the chat. Each change rebuilds and relaunches the app. **Undo** reverts the last change. The pencil beside a message you sent moves it back into the message box to change and send again: on sending, the app goes back to how it was before that message, and what followed it leaves the chat (the versions stay under **Versions**). **Return** sends, and **Shift-Return** starts a new line.
-- While a new app's first version is built, the agent's plan becomes the chat's chapters: each part is a heading, ticked with its time once it's done, with what the agent said during it and its steps folded under it, the parts still to come grayed below, and a bar at the top saying which part it's on. When the app is ready it all folds into one line ("Built it in 3 parts") above the agent's answer. Later changes show one line with the current step and the time so far. Progress is said in everyday words ("Working on the interface", "Making your app look nice"), never as file names or code, and the chat keeps to your requests, the agent's answers and what happened to the app.
-- You can keep typing while Lamp works. Messages sent in the meantime wait in the chat (click the ✕ to take one back) and go out together as the next change.
-- Attach screenshots, mockups, logos, data files or documents with the paperclip, by dropping them on the chat, or by pasting (a screenshot copied with ⌃⇧⌘4 pastes as an image). The agent sees images and small text files directly. Attachments are saved in the app's `Attachments/` folder, which stays on your Mac. When the app should use one (a logo, a data file), the agent copies it into the app's `Assets/` folder, the only folder bundled inside the app and shared with it, and loads it with `LampAssets.url/image/text("name")`.
-- In any generated app, press **⇧⌘E** to jump back to its chat in Lamp.
-- While an app is open, the toolbar's Play button becomes a Stop button that quits it (**Quit** is also in the app's right-click menu). That's the way to stop a menu bar app, which has no Dock icon to quit from. To bring an open app to the front instead, double-click it in the sidebar.
-- Every app records which Lamp built it. When an app was built by an older Lamp, it gets an orange badge in the sidebar and a banner above the message box with a **Rebuild** button. The app's info panel shows the version under **Built with**.
-- Apps are signed with Lamp's local certificate ("Lamp App Signing", made in Lamp's own keychain the first time and never shared, so building never asks for keychain access), so permissions you grant an app, such as Files and Folders or Screen Recording, survive rebuilds instead of being asked for again after every change. When an app's signature does change (an app built before Lamp signed this way, or a lost signing keychain), Lamp clears that app's old entries in System Settings ▸ Privacy & Security, which would otherwise stay switched on while doing nothing, and says in the chat that macOS needs the permission once more.
-- Generated apps are installed to `~/Applications/Lamp Apps/`, so they show up in Spotlight and Launchpad. A link at `/Applications/Lamp Apps` puts them in Finder's Applications too (made once, if the account can write there; delete it and it stays gone).
-- If you're in another app when Lamp finishes, it sends a notification saying the app is ready, has a reply, or needs your attention. Click it to jump to that chat. macOS asks for permission the first time one is sent. Turn notifications off in **Settings → Building**. The Dock icon shows how many chats you haven't seen.
-- Double-click an app in the sidebar to build and open it. A blue dot means its chat has a reply you haven't seen. The buttons at the bottom of the sidebar switch between a list and icon tiles.
-- Right-click an app in the sidebar for **Run**, **New Icon**, **Show in Finder**, **Share…** or **Export…**. Toggle **Agent Details** (the wrench and screwdriver) in the toolbar to see the agent's working: every file it reads and writes, the commands it runs and what it says along the way.
+- **The desk** is Lamp's window: your wishes under **Yours**, and the starter apps below under **Starter apps**, which
+  you can fold away. Click a column's name to sort; the side panel shows the picked wish, with **Remix it** to change
+  it. **Your Devices** down the side lists what Lamp can make things for (this Mac, your phones, TVs, Xbox, speakers)
+  and finds them on your Wi‑Fi when you ask it to.
+- **Make a wish** in the box at the top, by typing or with the microphone. **Not sure?** asks a few questions about
+  your days and writes a wish with you. Lamp asks a question first only when the answer would change what it makes;
+  otherwise it fills in the rest, names it, designs its icon, makes it and opens it.
+- **Change a wish while you use it.** The chat sits beside the app (click the wand at its top right, or **Customize
+  with Lamp (⇧⌘E)** in the app's menu). A change goes into the open app without restarting it where it can: games
+  take most changes while you play. **Reload** puts a change in everywhere the wish is open. Lamp checks its work in
+  a hidden copy first, so a half-made change doesn't land on what you're doing.
+- **Remix changes the wish itself.** **Undo** and **Versions** take changes back; **Duplicate…** makes a separate
+  copy; for a starter, **Start Over** goes back to the original and starts its chat over. When Lamp ships a newer
+  starter, your copy offers to bring it in, keeping your changes.
+- You can keep typing while Lamp works: messages wait in the chat and go out together as the next change. The pencil
+  beside a message you sent takes it back into the box to change and send again. **Stop** cancels a change.
+- Attach screenshots, mockups, logos, data files or documents with the paperclip, by dropping them on the chat, or by
+  pasting. When the app should use one (a logo, a data file), the agent copies it into the app's `Assets/` folder.
+- A wish that lives somewhere you might not look (the menu bar, a desktop widget, the background) says where when it
+  opens: a menu bar app drops its panel down, and its chat says where it is.
+- Mac apps are real `.app`s in `~/Applications/Lamp Apps`, so they show up in Spotlight and Launchpad and keep working
+  without Lamp. Each records which Lamp built it, and Lamp rebuilds it when a newer Lamp opens it.
+- **Help → Lamp Help (⌘/)** is an offline guide to all of this. **Help → Report a Bug…** prepares a report to review
+  before it's sent to the Lamp team through lamp.dev; it includes Lamp's version, macOS version, the engine and
+  activity labels, never log text, keys, chat or app code. Website setup is in [site/BUG_REPORTS.md](site/BUG_REPORTS.md).
+- **Usage counts** go to PostHog while Lamp is alpha software, unless **Send usage counts to the Lamp team** is turned
+  off in Settings → Memory: each step of the welcome, and each new wish from the request to its first run (`Sources/Lamp/Analytics.swift` lists every event). They carry fixed words only (a step,
+  a kind of app, an engine, an outcome), never text, names, paths or keys, under a random id made on the Mac and with
+  no person profile. Lamp Dev sends nothing; `LAMP_ANALYTICS_LOG=1` prints what it would send.
+- Apps are signed with Lamp's local certificate ("Lamp App Signing", made in Lamp's own keychain the first time and
+  never shared), so permissions you give an app, such as Files and Folders or Screen Recording, survive changes.
+  When an app's signature does change, Lamp clears its old entries in System Settings ▸ Privacy & Security and says
+  in the chat that macOS needs the permission once more.
 
-## Sharing apps
+## Sharing wishes
 
-Click **Share** (the toolbar button), or right-click an app and choose **Share…**, to send it through AirDrop, Messages, Mail and so on. You can also use **Export…** to save the file. Apps travel as small `.lampapp` files containing the app's code (Swift, and its widget's, if it has one; an Android app's Kotlin; a TV app's web pages and scripts), `APP.md`, `icon.json`, icon artwork and the app's own files from `Assets/` (a logo, say). A wish of several apps travels whole, each of its other apps in its own folder. Your chat, its attachments, tokens, agent sessions and git history are never included.
+Click **Share Wish** in the toolbar of a wish's chat, or right-click it on the desk, and choose **Share…**, to send it through AirDrop, Messages, Mail and so on. **Copy Wish File (⇧⌘C)** puts it on the clipboard, and **Export…** saves it. **Share Link…** puts a page for it on lamp.dev that anyone can open to make their own with Lamp, with the wish itself included if you tick it. Apps travel as small `.lampapp` files containing the app's code (Swift, and its widget's, if it has one; an Android app's Kotlin; a TV app's web pages and scripts), `APP.md`, `icon.json`, icon artwork and the app's own files from `Assets/` (a logo, say). A wish of several apps travels whole, each of its other apps in its own folder. Your chat, its attachments, tokens, agent sessions and git history are never included.
 
 **Put on GitHub…** (in the Share menu) puts a wish on your own GitHub account as a repository: what the shared file holds, unpacked so the code reads there, with Lamp's build files so `zsh build.sh` makes the app on any Mac with Apple's tools, the shared file itself, a README that leads with Open in Lamp (in a public repository, a link that opens a copy in Lamp, or gets Lamp first) and the ideas to try, and the credits of what it's based on. You choose whether it's public and whether to add an MIT license. It uses GitHub's command-line tool, `gh`, and your sign-in there; nothing goes through Lamp's servers. Putting it on GitHub again adds the wish as it is now as a new commit. The wish's own git history and attachments stay on your Mac.
 
 On a Mac without Lamp, an app Lamp built (copied over, or kept after Lamp was removed) still shows its wand. The chat beside it becomes a way into Lamp: three things to change, written by Lamp after the last change, and a box for your own words; **Continue with Lamp** opens the wish's Share Link page, or lamp.dev, with the request, where Lamp is downloaded and the wish waits for its first open. A game published as a web page offers the same under **Remix…** in its credit bar. An app built from its code on GitHub has no chat of its own yet, so its wand opens lamp.dev. Nothing leaves the Mac or the page until that button is pressed.
 
-The recipient double-clicks the file, or uses **File → Import Shared App… (⌘O)**. Before anything is built, Lamp shows a review:
+The recipient double-clicks the file, or uses **File → Import Shared Wish… (⌘O)**; a wish on GitHub opens with **File → Open from GitHub… (⇧⌘O)**. Before anything is built, Lamp shows a review:
 
 - **A fixed checklist** of what the code uses: shell commands, network, AppleScript, Keychain, SSH keys or browser data, deleting files, camera, screen capture, background items, runtime code loading, encoded blobs, and AI. This is plain text search, so comments in the code can't talk it out of anything.
 - **An AI review** using the building model. It summarizes what the app does, what it can access and any concerns, with a low, medium or high risk rating. It's told to treat the code as untrusted and ignore any instructions in it.
@@ -100,6 +130,25 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 Say it's for your iPhone or iPad when you ask for a new app, or later ask for it to work on your phone: Lamp builds one SwiftUI app for both, tried in the simulator on your Mac (use **Try On** in the toolbar, or right-click the app, to switch between iPhone and iPad), which needs Xcode installed. It has the same icon and building blocks as a Mac app (saved data, AI, text from photos and documents, calendar, reminders, contacts, notifications), plus motion and the rest of what a phone has. The agent builds and opens it in the simulator, looks at the screen after each change, and taps, types, scrolls and swipes on it to try what it made (which needs Lamp allowed under System Settings → Privacy & Security → Accessibility; Lamp asks once).
 
 With your Apple account signed in to Xcode, plug your phone in: Try On offers to pair it, then lists it. Press Play and Lamp builds the app for it, signs it with your account (the team is chosen in **Settings → Building**) and puts it there. The app's AI goes through Lamp while your Mac is reachable, and uses your OpenRouter key itself when it isn't (its models are chosen in **Settings → Apps**). iPhone and iPad apps can't be shared yet.
+
+## TVs, Xbox, Android and other devices
+
+Say where you want it ("for the TV", "on my Xbox", "on the kitchen tablet"), or pick a device under **Your Devices**
+on the desk, and Lamp makes it for there:
+
+- **Samsung and LG TVs, Roku, Android phones, tablets and TVs, and the Xbox.** The first time, a setup window walks
+  you through each device's developer mode (Samsung's and LG's, Roku's, Android's debugging over a cable or Wi‑Fi,
+  the Xbox's Dev Mode and Device Portal), with Lamp checking each step. **Try On** in a wish's toolbar picks where it
+  opens, and **Play** puts it there.
+- **Screens and web apps** (a family dashboard, a photo frame, a cozy room) are one page that fills whatever it's on:
+  the Mac, an iPad, a TV or a frame. A wish on several screens keeps one set of data for all of them, and Lamp keeps a
+  copy on the Mac, so a screen that opens on its own still gets it.
+- **Games** are three.js or Phaser (or TypeScript), with free 3D models, art, sounds and music to use. Phones on the
+  same Wi‑Fi join as controllers by scanning a code, on the Mac, an iPhone or iPad, a TV or the Xbox.
+- **Devices Lamp doesn't know yet** (a speaker, a smart plug, a projector) can be taken on: Lamp finds them on your
+  network when you ask, and the agent writes how to reach one, in a form Lamp checks and limits, never code it runs.
+
+Lamp looks at your network only when you ask it to. What it finds stays on this Mac, except that it's told to the AI that builds your apps when that AI works on something for your devices (device names often include people's names); it's never put in an app or sent anywhere else.
 
 ## Choosing the AI
 
@@ -138,7 +187,7 @@ Local models are slower and much less capable than the best cloud models for who
   - **Always**: every command asks first.
   - **Never**: commands run without asking.
 
-  Approvals show in the app's chat as a plain-English summary of what the command does and how risky it is (written by the in-app AI model), with the command itself under **Show command**, and **Allow**, **Allow All This Turn** and **Deny**. High-risk commands default to Deny and can't be allowed for the whole turn. Nothing runs until you answer, and **Stop** denies it. pi asks through Lamp's extension (`Resources/lamp-tools.ts`), and Claude Code through a `PreToolUse` hook. Claude Code runs isolated from your own setup (`--restricted --strict-mcp-config --disable-slash-commands`): none of your hooks, permission rules, plugins, MCP servers or skills. Codex sends every shell command to Lamp through a `PreToolUse` hook and stays in its sandbox, writing only in the app's folder. It has no file tools of its own, so it reads and searches with `read`, `ls`, `find` and `grep` from Lamp's MCP endpoint instead of its shell: they work like the built-in agent's and follow the same privacy rule. Codex also runs isolated from your own setup (`--ignore-user-config --ignore-rules`), with Lamp's instructions as developer instructions, live web search and resumed conversations. When the Mac already has Claude Code or Codex (the newest on your PATH or inside the Claude or ChatGPT app), Lamp runs that copy as it is, with your sign-in and folder (`~/.claude`, `~/.codex`), and leaves its updates to you. When it has none, Lamp downloads its own when the engine is chosen (Claude Code from Anthropic's stable channel, Codex's package from its latest GitHub release), refuses any download whose checksum doesn't match the vendor's or that isn't signed with the vendor's Developer ID, and checks for a newer version once a day. That copy keeps its sign-in and state in `~/Library/Application Support/Lamp/Engines/<engine>/home` (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`). An app's conversation follows when Lamp moves between its copy and yours. `https://updates.lamp.dev/engines.json` can hold Lamp's copy of either engine back to a version, for a release that breaks Lamp. Settings → Building picks the model: Opus, Sonnet, Haiku or Fable for Claude Code (Opus unless changed; Lamp passes `--model`, since it runs Claude Code without your personal settings), and any model ID for Codex (`-m`). Settings shows whether the tool is signed in, and **Sign In…** runs its own login (`claude auth login`, `codex login`), which finishes in the browser; picking one of them on the welcome screen signs in the same way when needed. To read a GitHub repo, the agent clones it into `.lamp/reference/`. When it makes an app from one, Lamp's `lampify` tool credits the exact commit from Lamp's own copy (fetched with your GitHub sign-in through `gh` for a private repo), keeps its license and notice files, makes the manifest and says what the app still lacks. Lamp then runs `./build.sh` itself and sends any compiler errors back, up to three times. After that it commits to the app's git repo, installs the app and relaunches it. Each app keeps one agent conversation, so the agent remembers earlier requests. **Undo** is `git reset` and starts a fresh conversation.
+  Approvals show in the app's chat as a plain-English summary of what the command does and how risky it is (written by the in-app AI model), with the command itself under **Show command**, and **Allow**, **Allow All This Turn** and **Deny**. High-risk commands default to Deny and can't be allowed for the whole turn. Nothing runs until you answer, and **Stop** denies it. pi asks through Lamp's extension (`Resources/lamp-tools.ts`), and Claude Code through a `PreToolUse` hook. Claude Code runs isolated from your own setup (`--restricted --strict-mcp-config --disable-slash-commands`): none of your hooks, permission rules, plugins, MCP servers or skills. Codex sends every shell command to Lamp through a `PreToolUse` hook and stays in its sandbox, writing only in the app's folder. It has no file tools of its own, so it reads and searches with `read`, `ls`, `find` and `grep` from Lamp's MCP endpoint instead of its shell: they work like the built-in agent's and follow the same privacy rule. Codex also runs isolated from your own setup (`--ignore-user-config --ignore-rules`), with Lamp's instructions as developer instructions, live web search and resumed conversations. When the Mac already has Claude Code or Codex (the newest on your PATH or inside the Claude or ChatGPT app), Lamp runs that copy as it is, with your sign-in and folder (`~/.claude`, `~/.codex`), and leaves its updates to you. When it has none, Lamp downloads its own when the engine is chosen (Claude Code from Anthropic's stable channel, Codex's package from its latest GitHub release), refuses any download whose checksum doesn't match the vendor's or that isn't signed with the vendor's Developer ID, and checks for a newer version once a day. That copy keeps its sign-in and state in `~/Library/Application Support/Lamp/Engines/<engine>/home` (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`). An app's conversation follows when Lamp moves between its copy and yours. `https://updates.lamp.dev/engines.json` can hold Lamp's copy of either engine back to a version, for a release that breaks Lamp. Settings → Building picks the model: Opus, Sonnet, Haiku or Fable for Claude Code (Opus unless changed; Lamp passes `--model`, since it runs Claude Code without your personal settings), and any model ID for Codex (`-m`). Settings shows whether the tool is signed in, and **Sign In…** runs its own login (`claude auth login`, `codex login`), which finishes in the browser; picking one of them on the welcome screen signs in the same way when needed. To read a GitHub repo, the agent clones it into `.lamp/reference/`. When it makes an app from one, Lamp's `lampify` tool credits the exact commit from Lamp's own copy (fetched with your GitHub sign-in through `gh` for a private repo), keeps its license and notice files, makes the manifest and says what the app still lacks. Lamp then runs `./build.sh` itself and sends any compiler errors back, up to three times. After that it commits to the app's git repo, installs the app and relaunches it. Each wish keeps one agent conversation, so the agent remembers earlier requests; Lamp compacts it before it grows too big to send, and starts a fresh one, seeded from the wish's notes, when it must. **Undo** is `git reset`, and the agent is told to reread the app before its next change.
 - **Permissions and Privacy** (Settings → Building): the built-in agent's file tools work in the app's own folder. To read or change anything else on your Mac it asks first, with the same card as shell commands; system and developer files and temporary folders need no asking, and Lamp's keys, its agent's sign-ins and your other apps are never opened whatever the setting. Links inside the app's folder that lead outside it count as outside. Two more switches decide whether the agent sees what an app prints while it runs and pictures of its windows, both of which go to the AI model you chose. The folder rule covers the built-in agent's file tools and the ones Lamp gives Codex for reading; shell commands go through the approvals above, and Claude Code follows its own rules.
 - **Seeing the app run:** the agent can't run anything, so Lamp shows it what happened. Every app saves what it prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors, failed AI calls) to `.lamp/runtime/log.txt` in its project, and the agent reads that when you say something doesn't work. If an app quits within a few seconds of opening, Lamp sends the macOS crash report and the last lines it printed back to the agent, up to twice, the same way it does with compiler errors. A crash later on is mentioned to the agent with your next message. Apps also save a picture of their own windows (`.lamp/runtime/screenshot.png`) shortly after opening and whenever you switch away from them, so an agent that can view images sees what you were looking at. An app may picture its own windows, so there's no screen recording permission. The built-in agent can also check its own work mid-turn: its `look_at_app` tool has Lamp build the app with the changes so far, open it behind your windows, and hand back the pictures, what the app printed and any build errors or crash. It can also try the app with `use_app`: click at points in the latest picture, type, press keys and scroll, then see the result. Lamp tells it what each click landed on (a button, row 3 of a list, a text field), whether the window changed at all, what the app printed meanwhile, and whether the code has changed since the app was built, so a click that missed isn't mistaken for a bug. It can pick from pop-up, pull-down, right-click and menu bar menus by name (they're read out to it, never opened on your screen), answer dialogs and sheets, accept or cancel a save panel, and open the panel behind a menu bar app's icon. The app performs all of this on its own windows, so no Accessibility permission is needed; it can't drag. The pictures are the windows as the system shows them, so video, maps and web content are included, still without screen recording permission. Claude Code and Codex get the same two tools from Lamp's own MCP endpoint (`/mcp` on the gateway), and every agent is asked to try what it built with `use_app` before saying it works, and to say in a sentence what it tried.
 - **Live editing:** every generated Mac app has a wand at its top right and a **Customize with Lamp** command (⇧⌘E) that open its chat beside it.

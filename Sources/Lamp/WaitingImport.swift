@@ -1,8 +1,8 @@
 import Foundation
 
-/// Shared apps opened before setup finished. Lamp keeps a copy of each and remembers them on disk, like the
-/// requests waiting for setup, so their reviews open by themselves once the person is through setup, in this
-/// run or the next.
+/// Shared apps opened during the welcome, or before Lamp has had its first look at setup. Lamp keeps a copy of each and
+/// remembers them on disk, like the requests waiting for setup, so their reviews open by themselves as soon as they can,
+/// in this run or the next.
 struct WaitingImport {
     /// The kept copies' paths, in the order the apps were opened.
     static let key = "waitingSharedApps"
@@ -12,11 +12,12 @@ struct WaitingImport {
     /// Where files waiting for setup are kept, each in a folder of its own.
     let folder: URL
 
-    /// When a shared app's review may open: setup really in place (Apple's tools and an AI agent, so the AI
-    /// check can read the app before it runs) and the welcome over. Never while the welcome is still up, even
-    /// with everything in place: the review would land in the middle of setup, the moment an agent is chosen.
-    /// It waits for "Start building", or a launch that needs no welcome.
-    static func reviewsCanOpen(setupReady: Bool, welcomeOver: Bool) -> Bool { setupReady && welcomeOver }
+    /// When a shared app's review may open: once Lamp has looked at setup (`look`, nil before that), with the saved keys
+    /// in, so the same file on the same Mac is reviewed the same way, and the welcome is over. What the look found doesn't
+    /// count: with no AI the review says the app wasn't checked and takes a click (`ImportReview.opening`), and a build
+    /// that needs Apple's tools asks for them after that click. Never while the welcome is still up: the review would land
+    /// in the middle of its setup.
+    static func reviewsCanOpen(after look: SetupCheck?, welcomeOver: Bool) -> Bool { look != nil && welcomeOver }
 
     private var paths: [String] {
         if let saved = defaults.stringArray(forKey: Self.key) { return saved }
@@ -87,8 +88,8 @@ struct WaitingImport {
 
     /// Hands over the kept file that has waited longest, once: it leaves the list, so its review can't open
     /// twice. Nothing until reviews may open (`reviewsCanOpen`).
-    func take(setupReady: Bool, welcomeOver: Bool) -> URL? {
-        guard Self.reviewsCanOpen(setupReady: setupReady, welcomeOver: welcomeOver) else { return nil }
+    func take(after look: SetupCheck?, welcomeOver: Bool) -> URL? {
+        guard Self.reviewsCanOpen(after: look, welcomeOver: welcomeOver) else { return nil }
         var waiting = paths
         defer { save(waiting) }
         while !waiting.isEmpty {
@@ -110,7 +111,7 @@ struct WaitingImport {
 
 /// Something Lamp finds out once, a moment after launch, that others may have to wait for: here, its first
 /// real look at setup. A shared app that launched Lamp arrives before that look, and waits for it rather than
-/// being decided on a guess, so the same file on the same Mac always goes the same way.
+/// being reviewed without the saved keys, so the same file on the same Mac always goes the same way.
 @MainActor
 final class FirstLook {
     private(set) var isDone = false

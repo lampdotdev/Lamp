@@ -452,6 +452,40 @@ enum DrawIconLine {
     static func text(_ app: String) -> String { "\(app) has a plain icon for now." }
 }
 
+/// The chat's line asking for what builds, for a request waiting there (`Store.askForSetup`): Claude Code or Codex, where
+/// one is on this Mac and signed in, to take with a click, and the rest in Lamp's sheet (`SetupView`), since the chat beside
+/// an app can't hold a key. Its text is the engines offered, found after the line is put there.
+enum BuilderLine {
+    static let title = "Choose what builds your apps"
+    static let others = "Other Ways…"
+    /// What's offered, in the order the setup sheet lists them.
+    private static let order: [Engine] = [.claude, .codex]
+
+    static func choice(_ engine: Engine) -> String { "Use \(engine.title)" }
+
+    static func status(_ offered: [Engine]) -> String {
+        offered.isEmpty ? "Your request starts as soon as this is done." : "Uses your signed-in account."
+    }
+
+    static func offers(installed: (Engine) -> Bool, signedIn: (Engine) -> Bool) -> [Engine] {
+        order.filter { installed($0) && signedIn($0) }
+    }
+
+    static func text(_ offered: [Engine]) -> String { offered.map(\.rawValue).joined(separator: " ") }
+
+    static func engines(in text: String) -> [Engine] {
+        let saved = text.split(separator: " ").compactMap { Engine(rawValue: String($0)) }
+        return order.filter(saved.contains)
+    }
+
+    /// Asked for while nothing builds and a request waits for it. In the gallery it has no wish, and shows.
+    @MainActor static func shows(for project: LampProject?) -> Bool {
+        guard let project else { return true }
+        let store = Store.shared
+        return !(store.setup.hasBuilder && store.setup.hasAgent) && !(store.queued[project.id] ?? []).isEmpty
+    }
+}
+
 /// A first request that read as an iPhone app, made for the Mac because this Mac can't build one yet; or one of a
 /// wish's other apps that this Mac can't build yet (`part`: the wish keeps it on its list, `WishApp`). The button opens
 /// the kind's setup; once it's done, the app is asked to be made for the iPhone as well (or instead), or the wish's

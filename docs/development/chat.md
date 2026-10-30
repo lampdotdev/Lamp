@@ -142,7 +142,10 @@ the desk forward (⌘[).
 
 What only Lamp could hold is handed to it, as Share hands over the file it makes: a setup card's header is in the chat,
 with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a hand-drawn icon, are in Lamp's sheet
-(`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. A device's
+(`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. The same goes
+for what builds, asked for when a request finds nothing does (`BuilderLine`): the line is in the chat, with a button for
+each of Claude Code and Codex that's on this Mac and signed in (`SidebarLine.choices`), which only a click takes since it
+spends the person's plan, and the key or sign-in in the sheet (`SetupView`). A device's
 step opens its setup window, and an iPhone or Android setup line its kind's setup. A new wish's empty chat shows its
 intro (`SidebarIntro`, `ChatLook.Intro`: its icon, its name to change, what to do, and ideas that go into the message
 box), and Apple's tools installing shows above every chat (`SidebarBanner`). A sidebar built by an earlier Lamp reads
