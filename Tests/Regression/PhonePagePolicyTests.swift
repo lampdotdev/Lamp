@@ -36,7 +36,7 @@ final class PhonePagePolicyTests: XCTestCase {
 
         let (_, response) = try await URLSession.shared.data(from: URL(string: "http://localhost:\(pagePort)/")!)
         let policy = try XCTUnwrap((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Security-Policy"))
-        let sites = "api.example.com https://cdn.example.org:8443 *.example.net"
+        let sites = "api.example.com https://cdn.example.org:8443"
         XCTAssertEqual(policy, "default-src 'none'; script-src 'self' 'unsafe-inline' \(sites); style-src 'self' 'unsafe-inline' \(sites); "
             + "img-src 'self' data: blob: \(sites); media-src 'self' data: blob: \(sites); font-src 'self' data: \(sites); "
             + "connect-src 'self' ws://localhost:\(relayPort) \(sites); worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'")

@@ -12,7 +12,7 @@ public enum PhonePagePolicy {
         /// Any https site, and secure sockets to any site: an app the person made here, whose page reaches what they asked for.
         case secureSites
         /// Only these: an app shared with the person, held to the sites its safety review named. Each is a host name
-        /// ("api.example.com", or "*.example.com" for its subdomains) or an origin ("https://api.example.com:8443"); anything else is dropped.
+        /// ("api.example.com") or an origin ("https://api.example.com:8443"); anything else is dropped.
         case only([String])
     }
 
@@ -73,10 +73,7 @@ public enum PhonePagePolicy {
     /// One named site as a policy source: a host name, or an http(s) or ws(s) origin with at most a port.
     static func source(_ text: String) -> String? {
         let site = text.trimmingCharacters(in: .whitespaces).lowercased()
-        guard let split = site.range(of: "://") else {
-            let host = site.hasPrefix("*.") ? String(site.dropFirst(2)) : site
-            return plainHost(host) ? site : nil
-        }
+        guard let split = site.range(of: "://") else { return plainHost(site) ? site : nil }
         let scheme = site[..<split.lowerBound]
         guard ["http", "https", "ws", "wss"].contains(scheme) else { return nil }
         var rest = String(site[split.upperBound...])

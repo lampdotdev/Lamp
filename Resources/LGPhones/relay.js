@@ -151,7 +151,7 @@ function plainHost(host) {
 function policySource(text) {
   var site = String(text).trim().toLowerCase();
   var split = site.indexOf('://');
-  if (split < 0) return plainHost(site.indexOf('*.') === 0 ? site.slice(2) : site) ? site : null;
+  if (split < 0) return plainHost(site) ? site : null;
   var scheme = site.slice(0, split);
   if (['http', 'https', 'ws', 'wss'].indexOf(scheme) < 0) return null;
   var rest = site.slice(split + 3);

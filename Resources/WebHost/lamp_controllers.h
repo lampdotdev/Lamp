@@ -486,7 +486,7 @@ inline bool plain_host(std::string const& host) {
 inline std::optional<std::string> policy_source(std::string text) {
     std::string site = lower(trim(text));
     auto split = site.find("://");
-    if (split == std::string::npos) return plain_host(site.rfind("*.", 0) == 0 ? site.substr(2) : site) ? std::optional(site) : std::nullopt;
+    if (split == std::string::npos) return plain_host(site) ? std::optional(site) : std::nullopt;
     std::string scheme = site.substr(0, split);
     if (scheme != "http" && scheme != "https" && scheme != "ws" && scheme != "wss") return std::nullopt;
     std::string rest = site.substr(split + 3);
