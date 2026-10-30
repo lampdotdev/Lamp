@@ -1734,22 +1734,26 @@ const listening = new Set(), listenersOf = new WeakMap(), timeouts = new Set(), 
 const captureOf = options => typeof options === 'boolean' ? options : !!(options && options.capture);
 function watch() {
     watching = true;
+    // A call with no receiver (`addEventListener(...)` written without `window.`) is the window's, as it is to the
+    // browser's own function, which also turns down anything that isn't an event target before it's recorded.
     EventTarget.prototype.addEventListener = function (type, fn, options) {
-        browser.listen.call(this, type, fn, options);
+        const target = this ?? window;
+        browser.listen.call(target, type, fn, options);
         if (fn == null || keeping) return;
-        let list = listenersOf.get(this);
+        let list = listenersOf.get(target);
         if (!list) {
-            listenersOf.set(this, list = []);
-            listening.add(new WeakRef(this));
+            listenersOf.set(target, list = []);
+            listening.add(new WeakRef(target));
             if (listening.size > 4000) for (const ref of listening) if (!ref.deref()) listening.delete(ref);
         }
         const listener = { type, fn, capture: captureOf(options) };
         list.push(listener);
-        for (const waiting of keepsWaiting) waiting.added.push([this, listener]);
+        for (const waiting of keepsWaiting) waiting.added.push([target, listener]);
     };
     EventTarget.prototype.removeEventListener = function (type, fn, options) {
-        browser.unlisten.call(this, type, fn, options);
-        const list = listenersOf.get(this), capture = captureOf(options);
+        const target = this ?? window;
+        browser.unlisten.call(target, type, fn, options);
+        const list = listenersOf.get(target), capture = captureOf(options);
         if (list) { const i = list.findIndex(l => l.type === type && l.fn === fn && l.capture === capture); if (i >= 0) list.splice(i, 1); }
     };
     // A timer started while an async part's build waits is recorded against that part, and so is every timer its
