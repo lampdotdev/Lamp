@@ -5284,9 +5284,14 @@ final class Store: ObservableObject {
                 log(project, .status, Conversation.startedFresh(for: project.name))
                 // What the person sent while it worked and the model took (Send Now) goes too: the chat note stops at
                 // the turn's request, and the conversation that had them is gone.
-                let taken = (logs[project.id] ?? []).filter { turn.midTurn.contains($0.id) }.map(\.text).filter { !$0.trimmed.isEmpty }
+                // Their files and what they pointed at go as `handOver` first sent them.
+                let taken = (logs[project.id] ?? []).filter { turn.midTurn.contains($0.id) }
+                let words = taken.map(\.text).filter { !$0.trimmed.isEmpty }.joined(separator: "\n\n")
+                let names = taken.flatMap { $0.attachments ?? [] }
                 let again = taken.isEmpty ? prompt
-                    : prompt + "\n\n---\nThe person then sent this while you worked, oldest first:\n\n" + taken.joined(separator: "\n\n")
+                    : prompt + "\n\n---\nThe person then sent this while you worked, oldest first:\n\n"
+                        + (words.isEmpty ? Self.onlyFiles(names.count) : words)
+                        + Attachments.note(for: names, inlined: false) + PointedAt.note(for: taken.compactMap(\.pointed))
                 return await runAgent(again, files: files, sendsRequest: sendsRequest, afresh: true, on: current(project) ?? project)
             }
             log(project, .error, Agent.conversationTooLarge)
