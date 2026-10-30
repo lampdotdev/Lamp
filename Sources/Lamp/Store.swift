@@ -7386,6 +7386,9 @@ final class Store: ObservableObject {
         let folder = starter.folder.lastPathComponent
         let prebuiltHere = StarterDownloads.prebuilt(of: starter) == nil || StarterDownloads.prebuiltArchive(of: starter) != nil
         if Starters.hasTree(starter), prebuiltHere { return then(starter) }
+        // A second ask while it's coming (a change sent from the panel after Open, another link) waits for the same
+        // download, and is answered in turn.
+        fetchWaiters[folder, default: []].append(then)
         guard fetchingStarters.insert(folder).inserted else { return }
         starterFetchFailed[folder] = nil
         let needsPrebuilt = !setup.hasBuildTools
@@ -7393,9 +7396,10 @@ final class Store: ObservableObject {
             do {
                 try await StarterDownloads.fetch(starter, needsPrebuilt: needsPrebuilt)
                 fetchingStarters.remove(folder)
-                then(starter)
+                for waiting in fetchWaiters.removeValue(forKey: folder) ?? [] { waiting(starter) }
             } catch {
                 fetchingStarters.remove(folder)
+                let waiting = fetchWaiters.removeValue(forKey: folder) ?? []
                 starterFetchFailed[folder] = error.localizedDescription
                 guard alerting else { return }
                 let alert = NSAlert()
@@ -7403,10 +7407,13 @@ final class Store: ObservableObject {
                 alert.informativeText = error.localizedDescription
                 alert.addButton(withTitle: "Try Again")
                 alert.addButton(withTitle: "Cancel")
-                if alert.runModal() == .alertFirstButtonReturn { fetching(starter, alerting: true, then: then) }
+                if alert.runModal() == .alertFirstButtonReturn {
+                    for then in waiting { fetching(starter, alerting: true, then: then) }
+                }
             }
         }
     }
+    private var fetchWaiters: [String: [@MainActor (Starters.Starter) -> Void]] = [:]
 
     /// One starter put on the desk, its files fetched (`fetching`): its files in a new app, saved as its first version
     /// and built by `prepareStarters`. The caller reloads the desk. Nil when it couldn't be written, and then nothing
@@ -7493,10 +7500,17 @@ final class Store: ObservableObject {
                 continue
             }
             // The newer starter's files, fetched for it: without a connection it waits for the next launch.
-            guard !isRunning(project), (try? await StarterDownloads.fetch(starter)) != nil, begin(project) != nil else { continue }
-            let brought = await bringUp(project, to: starter)
-            finish(project)
-            if brought { broughtUp.insert(project.id) }
+            guard !isRunning(project), (try? await StarterDownloads.fetch(starter)) != nil,
+                  let held = current(project), begin(held) != nil else { continue }
+            // Looked at again under the hold: the person may have opened or changed it while the files came.
+            guard !isRunning(held), await original(toStartAgain: held) == nil else {
+                finish(held)
+                if await original(toStartAgain: held) != nil { offerNewerOriginal(held, starter: starter) }
+                continue
+            }
+            let brought = await bringUp(held, to: starter)
+            finish(held)
+            if brought { broughtUp.insert(held.id) }
         }
     }
 
@@ -7682,10 +7696,11 @@ final class Store: ObservableObject {
     }
 
     /// Whether some starter can be made ready now: any, once Apple's build tools are there, and before then the
-    /// ones Lamp came with already built (`PrebuiltStarters`).
+    /// ones Lamp came with already built (`PrebuiltStarters`). One opened whose prebuilt copy this Lamp pins but couldn't
+    /// get (an old nightly's, gone) goes on to wait for the tools as a refused one does (`awaitToolsToOpen`).
     func canPrepare(_ project: LampProject? = nil) -> Bool {
         if setup.hasBuildTools { return true }
-        if let project { return PrebuiltStarters.has(project) || !needsAppleTools(project) }
+        if let project { return PrebuiltStarters.has(project) || PrebuiltStarters.unavailable(project) || !needsAppleTools(project) }
         return projects.contains { needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)) }
     }
 

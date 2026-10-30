@@ -117,7 +117,7 @@ jobs:
           # feed is cached for a quarter of an hour and an update window may stay open longer, and each names the DMG
           # it signed (updates/api/appcast.js), which must still be there to verify.
           # What this nightly fetches when it's needed (dist/assets: each starter's prebuilt app, named by its version)
-          # goes up with its DMG, and goes when its DMG does.
+          # goes up with its DMG.
           git push -f origin "$GITHUB_SHA:refs/tags/nightly"
           if gh release view nightly >/dev/null 2>&1; then
             gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/assets/* --clobber
@@ -133,12 +133,17 @@ jobs:
             [ -n "$old" ] || continue
             echo "Removing $old"
             gh release delete-asset nightly "$old" --yes || true
-            # And what that nightly fetched: its assets end in its version.
-            version="${old#Lamp-Nightly-}"; version="${version%.dmg}"
-            gh release view nightly --json assets --jq ".assets[].name | select(endswith(\"-$version.zip\"))" |
-            while read -r asset; do
-              [ -n "$asset" ] && gh release delete-asset nightly "$asset" --yes || true
-            done
+          done
+          # What each nightly fetches when it's needed (its prebuilt starters, llama.cpp) stays far longer than its DMG:
+          # an installed nightly pins those files for as long as it runs, while a DMG only has to outlast update offers.
+          # The newest 20 versions' are kept, each version named at the end of its files.
+          gh release view nightly --json assets \
+            --jq '[.assets[] | select(.name | test("^Lamp-Nightly-.*\\.zip$"))] | sort_by(.createdAt) | reverse | .[].name' |
+          awk '{ v = $0; sub(/\.zip$/, "", v); sub(/.*-/, "", v); if (!(v in seen)) { seen[v] = 1; n++ } if (n > 20) print }' |
+          while read -r old; do
+            [ -n "$old" ] || continue
+            echo "Removing $old"
+            gh release delete-asset nightly "$old" --yes || true
           done
 
       - name: Remove nightlies published one release each

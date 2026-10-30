@@ -135,7 +135,8 @@ Opening or remixing one (the desk, a remix link, New Copy of the Original) fetch
 `StarterDownloads`): its repository at the pinned commit as GitHub's archive of that commit (no git needed, which a
 new person's Mac doesn't have yet), checked as git hashes a tree against the tree the pinned commit names, and, from a
 release, the starter's prebuilt app, an asset of Lamp's release pinned by size and SHA-256 and checked for Lamp's own
-signature before it's used. Meanwhile its row says "Getting it ready…" as a build's wait does; without a connection
+signature before it's used (one no longer there, an old nightly's, is done without: the starter waits for Apple's tools
+as below). Meanwhile its row says "Getting it ready…" as a build's wait does; without a connection
 it says so in one gray line with Try Again (an alert with Try Again for a link or a menu command). What's fetched is
 kept in Lamp's folder by edition (`StarterDownloads.cache`), so the next copy needs no download; a starter's older
 trees and prebuilt apps go when a newer one comes. Then it's copied (`put(starter:)`), saved as its first version

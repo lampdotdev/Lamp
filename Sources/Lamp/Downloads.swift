@@ -8,7 +8,9 @@ import Security
 enum Downloads {
     struct Failure: LocalizedError {
         let message: String
-        init(_ message: String) { self.message = message }
+        /// The file isn't there any more (an old nightly's assets are removed in time), so trying again won't help.
+        var gone = false
+        init(_ message: String, gone: Bool = false) { self.message = message; self.gone = gone }
         var errorDescription: String? { message }
     }
 
@@ -36,9 +38,10 @@ enum Downloads {
             } else {
                 let tracker = progress.map { report in DownloadProgress { written in report(Double(written) / Double(max(pinned.size, 1))) } }
                 let (file, response) = try await URLSession.shared.download(from: url, delegate: tracker)
-                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                let status = (response as? HTTPURLResponse)?.statusCode
+                guard status == 200 else {
                     try? FileManager.default.removeItem(at: file)
-                    throw Failure(offline)
+                    throw Failure(offline, gone: status == 404 || status == 410)
                 }
                 temp = file
             }
