@@ -175,6 +175,7 @@ enum RepoArchive {
         let tar = tar.startIndex == 0 ? tar : Data(tar)
         var entries: [Entry] = []
         var kinds: [String: Bool] = [:]   // every path, as the disk would see it: whether it's a folder
+        var spelled: [String: String] = [:]   // every folder, as the disk would see it: as the archive writes it
         var top: String?
         var said: [String: String] = [:]   // the extended header for the next entry
         var saidCommit: String?
@@ -230,13 +231,27 @@ enum RepoArchive {
             }
             let inside = Array(steps.dropFirst())
             var seen = ""
-            for step in inside.dropLast() {
+            var written = ""
+            // A folder spelled a second way is the same folder to the disk, which would put the two's files together.
+            func follow(_ step: String) throws {
                 seen += (seen.isEmpty ? "" : "/") + disk(step)
+                written += (written.isEmpty ? "" : "/") + step
+                // By their bytes: Swift counts the two ways of writing an accent as equal.
+                if !spelled[seen, default: written].utf8.elementsEqual(written.utf8) { throw refused("It holds two things under one name.") }
+                spelled[seen] = written
+            }
+            for step in inside.dropLast() {
+                try follow(step)
                 if kinds[seen] == false { throw refused("It holds a file and a folder under one name.") }
                 kinds[seen] = true
             }
-            seen += (seen.isEmpty ? "" : "/") + disk(inside.last!)
-            if let was = kinds[seen], !(was && folder) { throw refused("It holds two things under one name.") }
+            if folder {
+                try follow(inside.last!)
+                if kinds[seen] == false { throw refused("It holds two things under one name.") }
+            } else {
+                seen += (seen.isEmpty ? "" : "/") + disk(inside.last!)
+                if kinds[seen] != nil { throw refused("It holds two things under one name.") }
+            }
             kinds[seen] = folder
 
             if !folder {

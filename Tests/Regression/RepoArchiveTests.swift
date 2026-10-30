@@ -133,6 +133,16 @@ final class RepoArchiveTests: XCTestCase {
         refuses(tar(file(top + "a"), block(top + "a/", type: "5")))
     }
 
+    /// Two spellings of a folder are one folder on the disk, which would put their files together.
+    func testAFolderSpelledTwoWaysIsRefused() throws {
+        refuses(tar(file(top + "Sources/a"), file(top + "sources/b")))
+        refuses(tar(block(top + "Sources/", type: "5"), block(top + "sources/", type: "5")))
+        refuses(tar(block(top + "Sources/", type: "5"), file(top + "sources/b")))
+        refuses(tar(file(top + "a/Deep/x"), file(top + "A/deep/y")))
+        refuses(tar(file(top + "caf\u{e9}/a"), file(top + "cafe\u{301}/b")))
+        XCTAssertEqual(try RepoArchive.read(tar: tar(file(top + "Sources/a"), file(top + "Sources/b")), commit: commit).map(\.path), ["Sources/a", "Sources/b"])
+    }
+
     // MARK: Which commit
 
     func testAnArchiveOfAnotherCommitIsRefused() {
@@ -225,6 +235,31 @@ final class RepoArchiveTests: XCTestCase {
         XCTAssertEqual(package.credits?.remixOf.last?.url, url)
         XCTAssertEqual(package.credits?.remixOf.last?.commit, commit)
         XCTAssertNil(WaitingImport.fetched(beside: tree), "a record in the tree isn't one Lamp kept")
+    }
+
+    /// The same files fetched from another repository or at another commit are another fetch: each is credited to its own.
+    func testTwoFetchesOfTheSameFilesAreKeptApart() throws {
+        let suite = "lamp-archive-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        func tree(_ name: String) throws -> URL {
+            let tree = folder.appendingPathComponent("\(name)/Tally")
+            try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: tree.appendingPathComponent("lamp-app.json"))
+            return tree
+        }
+        let waiting = WaitingImport(defaults: defaults, folder: folder.appendingPathComponent("Waiting"))
+        let original = "https://github.com/octocat/tally", fork = "https://github.com/someone/tally"
+        let other = String(repeating: "b", count: 40)
+        let first = try tree("a"), second = try tree("b"), third = try tree("c"), again = try tree("d")
+        XCTAssertTrue(waiting.keep(first, fetched: RepoArchive.Fetched(tree: first, url: original, commit: commit)))
+        XCTAssertTrue(waiting.keep(second, fetched: RepoArchive.Fetched(tree: second, url: fork, commit: commit)))
+        XCTAssertTrue(waiting.keep(third, fetched: RepoArchive.Fetched(tree: third, url: original, commit: other)))
+        XCTAssertTrue(waiting.keep(again, fetched: RepoArchive.Fetched(tree: again, url: original, commit: commit)))
+        XCTAssertEqual(waiting.count, 3, "the same fetch again is kept once")
+        let kept = try (0..<3).map { _ in try XCTUnwrap(WaitingImport.fetched(beside: try XCTUnwrap(waiting.take(after: SetupCheck(), welcomeOver: true)))) }
+        XCTAssertEqual(kept.map(\.url), [original, fork, original])
+        XCTAssertEqual(kept.map(\.commit), [commit, commit, other])
     }
 
     /// Through the wait for the welcome, what was fetched stays with Lamp's copy, in Lamp's own folder.

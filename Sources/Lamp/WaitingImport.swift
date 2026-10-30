@@ -70,9 +70,12 @@ struct WaitingImport {
         let fm = FileManager.default
         let kept = paths
         // The same file again counts as the same only when it's for the same wish: two copies (Keep Both) updated from
-        // one repository fetch the same thing, and each still gets its own review.
+        // one repository fetch the same thing, and each still gets its own review. And only as the same fetch: a fork
+        // with the same files is another repository, to be credited as that.
         if let same = kept.first(where: { URL(fileURLWithPath: $0).lastPathComponent == file.lastPathComponent
             && Self.target(beside: URL(fileURLWithPath: $0)) == target
+            && Self.fetched(beside: URL(fileURLWithPath: $0))?.url == fetched?.url
+            && Self.fetched(beside: URL(fileURLWithPath: $0))?.commit == fetched?.commit
             && fm.contentsEqual(atPath: $0, andPath: file.path) }) {
             // The same file again, with a request: the newer request is the one meant, so it replaces the kept one.
             let request = file.deletingLastPathComponent().appendingPathComponent(Self.requestFile)
