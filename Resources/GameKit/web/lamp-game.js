@@ -1380,15 +1380,17 @@ function keep(path, key, build, options = {}) {
     // What the build starts as it runs belongs to the part. An async build's later work can't be told from other code
     // that runs while it waits, so of what's started meanwhile only what's the part's own stays with it: listeners on
     // the part (its object, its canvas, an element inside it) and a worker or sound context that is the part or one of
-    // its values. The rest is watched as the game's: a part that runs a timer starts it before its first await.
+    // its values. The rest is watched as the game's; a timer started while it waits can't be told apart, so a part that
+    // started one still running is built again when the code next runs (a part keeps a timer it starts before its first
+    // await).
     keeping++;
     let value;
     try { value = build(); } finally { keeping--; }
     if (value && typeof value.then === 'function') {
-        const waiting = { added: [], made: [] };
+        const waiting = { added: [], made: [], timers: [] };
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
-        value.then(v => { entry.made = v; own(v, waiting); }, () => { if (kept.get(id) === entry) kept.delete(id); });
+        value.then(v => { entry.made = v; entry.timers = waiting.timers; own(v, waiting); }, () => { if (kept.get(id) === entry) kept.delete(id); });
     } else entry.made = value;
     entry.value = value;
     kept.set(id, entry);
@@ -1519,6 +1521,8 @@ async function runAgain(change, state) {
         for (const dispose of m.disposers) { try { await dispose(m.data); } catch (e) { log(`Error: dispose in ${path}: ${e && e.message || e}`); } }
         m.disposers = [];
     }
+    // A part whose async build started a timer still running loses it now, so it's built again.
+    for (const k of kept.values()) if ((k.timers || []).some(t => intervals.has(t) || timeouts.has(t))) k.stale = true;
     takeAwayLeft();
     listeners.clear();
     for (const voice of voices) sound.stop(voice);
@@ -1693,12 +1697,16 @@ function watch() {
         if (keeping || typeof fn !== 'function') return browser.setTimeout.call(window, fn, ms, ...rest);
         const id = browser.setTimeout.call(window, (...a) => { timeouts.delete(id); fn(...a); }, ms, ...rest);
         timeouts.add(id);
+        for (const waiting of keepsWaiting) waiting.timers.push(id);
         return id;
     };
     window.clearTimeout = id => { timeouts.delete(id); browser.clearTimeout.call(window, id); };
     window.setInterval = function (fn, ms, ...rest) {
         const id = browser.setInterval.call(window, fn, ms, ...rest);
-        if (!keeping) intervals.add(id);
+        if (!keeping) {
+            intervals.add(id);
+            for (const waiting of keepsWaiting) waiting.timers.push(id);
+        }
         return id;
     };
     window.clearInterval = id => { intervals.delete(id); browser.clearInterval.call(window, id); };
