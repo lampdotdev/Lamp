@@ -431,7 +431,8 @@ final class LocalModels: ObservableObject {
     /// server answers any origin with CORS headers, so without one any page in a browser on this Mac could, and so could
     /// any program. Kept in Lamp's own folder, which the agent's commands can't read, and the same from one launch to the
     /// next, since a server a previous Lamp left running keeps the key it started with (`ensureLlama` reuses one that
-    /// answers). A server from before there was a key takes any. mlx_lm.server has no key to give.
+    /// answers). A server from before there was a key takes any. The router's workers, one per loaded model on a port
+    /// of its own, take it from the environment (`ensureLlama`). mlx_lm.server has no key to give.
     nonisolated static let apiKey: String = {
         let url = Edition.supportFolder.appendingPathComponent("local-model-key")
         if let kept = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !kept.isEmpty { return kept }
@@ -468,6 +469,11 @@ final class LocalModels: ObservableObject {
         process.executableURL = binary
         process.arguments = ["--models-dir", Self.routerDir.path, "--jinja", "--host", "127.0.0.1", "--api-key", Self.apiKey,
                              "--port", String(Self.port), "-ngl", "999", "-c", String(Self.contextSize)]
+        // The router runs each loaded model in a worker of its own, on a loopback port of its own, and leaves the key
+        // out of the worker's arguments; the worker inherits the environment, and reads the key from there.
+        var env = ProcessInfo.processInfo.environment
+        env["LLAMA_API_KEY"] = Self.apiKey
+        process.environment = env
         process.standardOutput = logFile("llama-server.log")
         process.standardError = process.standardOutput
         process.standardInput = FileHandle.nullDevice

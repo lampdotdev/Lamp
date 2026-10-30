@@ -121,12 +121,18 @@ the answer read back, the model loaded and unloaded (llama.cpp's router), the Ma
 as the page liked. Nothing of the person's comes out that way (the servers hold no files or keys), and the agent's
 commands can reach them too, which is what pi does. Medium.
 
-- **llama.cpp** (**fixed**): Lamp now starts it with `--api-key`, a key made once and kept at
+- **llama.cpp** (**fixed**): Lamp now starts it with a key, made once and kept at
   `~/Library/Application Support/Lamp/local-model-key` (mode 0600, closed to the agent's commands), and sends it from
-  every call of its own and in pi's `models.json`. Without the key the server answers 401, with the CORS headers but
-  no completion; `/health` stays open, which is what Lamp's own check reads. A server a previous Lamp left running
-  keeps the key it started with, and one from before there was a key takes any, so an update never locks Lamp out of
-  its own model.
+  every call of its own and in pi's `models.json`. The server is a router: each model it loads runs in a worker
+  process of its own, listening on a loopback port the system picks, and the router leaves the key out of the
+  worker's arguments (`unset_reserved_args` in its `server-models.cpp`), so `--api-key` alone would have left every
+  loaded model open at its worker's port. The worker inherits the router's environment and reads the key from
+  `LLAMA_API_KEY` there, so Lamp sets both, and the router forwards each request's headers to the worker, so a keyed
+  call still goes through. Checked with a model loaded: the worker answers 401 without the key and 200 with it, the
+  router proxies a keyed completion and refuses an unkeyed one. The router's own calls to a worker for resuming
+  streams carry no key and would be refused, which nothing of Lamp's uses. `/health` stays open, which is what
+  Lamp's own check reads. A server a previous Lamp left running keeps the key it started with, and one from before
+  there was a key takes any, so an update never locks Lamp out of its own model.
 - **mlx_lm.server** (recommended): it takes no key, so it stays reachable by any page while an MLX model is loaded.
   Fix: put Lamp's gateway in front of it (the app routes already go there) and bind it to a Unix socket or a random
   port Lamp alone knows, or ask upstream for an API key option; until then, the MLX provider is the one to turn off
