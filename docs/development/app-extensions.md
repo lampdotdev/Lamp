@@ -28,7 +28,7 @@ watches the front window for about two seconds and writes what changed frame to 
 most different frames beside it), and `Runtime.motion` puts that in words; it's how flicker is caught, which a
 single picture hides.
 
-Ready-made models and art come from Lamp's index of free work (`AssetCatalog`, Resources/asset-catalog.json),
+Ready-made models, art, sounds and music come from Lamp's index of free work (`AssetCatalog`, Resources/asset-catalog.json),
 through the `assets` tool and the `assets` skill, offered to every prompt (`Skills.everywhere`). Lamp ships the index,
 never the files: `scripts/update-assets.py` writes it, reading each license where the work is published (each model's
 listing on Poly Pizza, each pack's page and its own license file on OpenGameArt, ambientCG's license page and API) and
@@ -36,13 +36,23 @@ keeping only CC0 and CC-BY (`AssetCatalog.licenses`, checked again as Lamp reads
 nothing it shouldn't). It downloads every file, pins it by SHA-256, reads each .glb for its triangles, its box through
 the node transforms, its largest picture and its animations, refuses one that needs a decoder Lamp's three.js lacks
 (Draco, meshopt, KTX2), and leaves out a model far from its own origin or thousands of units across (a piece of a
-scene, which can't be placed by its box). Kenney's 2D packs come from OpenGameArt, where he published them, since his
-own site hands out short-lived links; Poly Pizza's static files and ambientCG's downloads are stable. `find` searches
+scene, which can't be placed by its box). Kenney's 2D packs and interface sounds come from OpenGameArt, where he published them, since his
+own site hands out short-lived links, as do SubspaceAudio's effects and music; Poly Pizza's static files and ambientCG's
+downloads are stable. Sounds and music (`AssetCatalog.audioKinds`, listed clip by clip in `OGA_SOUNDS`) are .wav or .ogg:
+the script decodes each whole with macOS's `afconvert`, refuses one that's empty or silent, takes its length from
+what it decoded, and refuses one that decoder leaves well short of ffmpeg's result. Apple's Vorbis decoder, WebKit's and
+AVFoundation's, loses up to about 40 ms at the start of a file, which is all of Kenney's clicks and ticks; the file still
+loads and shows as played in a preview's log, so only this check finds it. Those clips aren't listed, and menu sounds
+come from SubspaceAudio's WAV files instead. A clip the pack's page also publishes on its own, byte for byte, is fetched as itself rather than out
+of its archive, so one music loop doesn't cost a 33 MB download. `update-assets.py --sounds` refreshes only those packs.
+They skip everything done to pictures and have no picture for `show`. Their list is CC0 alone, since a CC-BY track also
+needs its credit shown in the app. Playback is the runtimes' own: no sound library is added for these. A game looks here before writing a sound in code
+(the game skill's "Sound", `Rules.gameWebSound`, `Rules.gameSound`), since a request for sound alone doesn't lead an agent to this tool. `find` searches
 the index by words and kind and leaves out what's heavier than one model should be on the slowest place the app is
 shown (`AssetCatalog.budget`, a share of `Rules.gamePlaces`' frame budget); `show` draws the found assets' pictures
 into one numbered sheet for the agent. `fetch` downloads each file (an archive once, kept by its hash in Lamp's own
 folder, which commands can't write), checks its hash, takes out only the files the index names (`Zip`, Lamp's own
-reading of the archive), makes a model's pictures smaller where the place needs it (`GLB.shrinkingPictures`, the
+reading of the archive; `AssetCatalog.items` leaves out a file whose name would land on another's in its pack's folder), makes a model's pictures smaller where the place needs it (`GLB.shrinkingPictures`, the
 binary chunk laid out again) and a lone picture likewise (an atlas's sheet stays, since its XML gives places in
 pixels), and writes them with `AppFolder` into Web/assets/<pack>/ (any app with a page), app/src/main/assets/<pack>/ (a native
 Android app, whose build packages that folder) or Assets/<pack>/. Nothing

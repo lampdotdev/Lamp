@@ -96,7 +96,7 @@ enum Skills {
     }
 
     /// The skills every prompt offers, whatever the app is now: how an app is made (web or native) and on which
-    /// devices, games of every kind and their screens, 2D games and 3D in a page, ready-made models and art, web apps,
+    /// devices, games of every kind and their screens, 2D games and 3D in a page, ready-made models, art and sounds, web apps,
     /// and phones as controllers are the agent's to choose for any request, so their guidance can't wait for the app to
     /// be of a kind that has them.
     static let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]

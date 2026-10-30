@@ -221,7 +221,7 @@ enum Agent {
     to the progress over a faint or outlined copy, so it reads as empty at zero; never paint the empty state too. \
     Look at each picture before using it (call it again with a better subject if it's wrong). When nothing can make pictures, use \
     SF Symbols in the app's palette instead, never a picture drawn in code: Lamp offers the user a way to set that up.
-    - `assets` finds free ready-made models, sprites, tilesets, icons and textures and brings the chosen ones into the \
+    - `assets` finds free ready-made models, sprites, tilesets, icons, textures, sounds and music and brings the chosen ones into the \
     app, credited; read the assets skill before using it.
     """
 

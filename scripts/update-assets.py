@@ -1,5 +1,5 @@
 #!/usr/bin/env python3 -I
-"""Writes Resources/asset-catalog.json: Lamp's index of free models, sprites, tiles, icons and textures the agent can
+"""Writes Resources/asset-catalog.json: Lamp's index of free models, sprites, tiles, icons, textures and sounds the agent can
 bring into an app with the `assets` tool (`AssetCatalog` in Sources/Lamp). Lamp ships the index, never the assets: each
 entry says where its file is, and Lamp fetches it into the app when the agent chooses it.
 
@@ -10,12 +10,14 @@ share-alike, "personal use", none) is left out, and the run says what it left ou
 pinned by its SHA-256, so Lamp fetches exactly what was checked here; a file changed at its source since is refused until
 this is run again. Models are read for what the agent needs to choose and place one: triangles, its box in meters (y up,
 as glTF has it), its textures' largest side, its animations, and that it needs no decoder three.js lacks here (Draco,
-meshopt, KTX2 are refused).
+meshopt, KTX2 are refused). Sounds are decoded whole with macOS's afconvert, for their true length and to refuse one
+that's empty or silent, and with ffmpeg as well, to refuse an Ogg that comes out of macOS's decoder short of what's in it.
 
 Run it to refresh the index, or after changing the lists below. Downloads are kept in a cache folder (the first argument,
-or a new temporary folder), so a second run after a small change is quick. Needs nothing but Python 3.
+or a new temporary folder), so a second run after a small change is quick. With --sounds only the sound packs are made
+again, and the rest of the index stays as it is. Needs Python 3 and a Mac, and ffmpeg for sounds.
 """
-import concurrent.futures, hashlib, io, json, math, os, re, struct, subprocess, sys, tempfile, time, urllib.parse, zipfile
+import array, concurrent.futures, hashlib, io, json, math, os, re, struct, subprocess, sys, tempfile, time, urllib.parse, wave, zipfile
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Resources", "asset-catalog.json")
 AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
@@ -137,6 +139,55 @@ OGA_PACKS = [
     ]),
 ]
 
+# Sounds on OpenGameArt, chosen clip by clip: a pack's archive is many megabytes and most of it would never be used, and
+# an agent can't hear them, so a short list with honest notes serves it better than hundreds of numbered files. A clip is
+# named by its file in the archive, wherever it lies there. The kinds, notes and tags come from the packs' own folders
+# and file names. Kenney's interface sounds are Ogg Vorbis, and his shortest (his clicks and ticks) are missing here on
+# purpose: `sound_facts` refuses them.
+# (page, pack id, name, author, kind, style, [(name, file in the archive, loops, notes, tags)])
+OGA_SOUNDS = [
+    ("interface-sounds", "kenney-interface-sounds", "Interface Sounds", "Kenney", "sound", "Kenney: short, clean interface sounds", [
+        ("Confirmation", "confirmation_004.ogg", False, "a choice accepted", ["menu", "confirm", "ok", "ui"]),
+        ("Error", "error_003.ogg", False, "a choice refused", ["menu", "wrong", "denied", "ui"]),
+        ("Open", "open_001.ogg", False, "a panel opening", ["menu", "panel", "ui"]),
+        ("Question", "question_001.ogg", False, "something asked of the player", ["prompt", "dialog", "ui"]),
+        ("Maximize", "maximize_001.ogg", False, "a panel growing", ["menu", "panel", "ui"]),
+        ("Minimize", "minimize_001.ogg", False, "a panel shrinking", ["menu", "panel", "ui"]),
+    ]),
+    ("512-sound-effects-8-bit-style", "subspace-retro-sfx", "Essential Retro Sound Effects", "Juhani Junkala (SubspaceAudio)", "sound",
+     "SubspaceAudio: retro 8-bit effects", [
+        ("Menu move", "sfx_menu_move1.wav", False, "moving through a menu", ["menu", "focus", "click", "ui"]),
+        ("Menu select", "sfx_menu_select1.wav", False, "a button pressed", ["menu", "click", "button", "ui"]),
+        ("Coin", "sfx_coin_single1.wav", False, "one coin picked up", ["pickup", "collect", "money", "score"]),
+        ("Two coins", "sfx_coin_double1.wav", False, "a coin with a second note", ["pickup", "collect", "money", "score"]),
+        ("Jump", "sfx_movement_jump1.wav", False, "a jump", ["platformer", "hop"]),
+        ("Landing", "sfx_movement_jump10_landing.wav", False, "landing from a jump", ["platformer", "land"]),
+        ("Hit", "sfx_damage_hit1.wav", False, "taking damage", ["hurt", "damage", "enemy"]),
+        ("Impact", "sfx_sounds_impact4.wav", False, "something struck", ["bump", "collision", "hit"]),
+        ("Power-up", "sfx_sounds_powerup4.wav", False, "a power-up gained", ["bonus", "level up", "positive"]),
+        ("Negative", "sfx_sounds_negative1.wav", False, "a loss or a failure", ["lose", "fail", "game over"]),
+        ("Fanfare", "sfx_sounds_fanfare1.wav", False, "a short win", ["win", "victory", "level complete", "celebration"]),
+        ("Pause in", "sfx_sounds_pause4_in.wav", False, "the game pausing", ["pause", "menu"]),
+        ("Pause out", "sfx_sounds_pause4_out.wav", False, "the game resuming", ["pause", "resume", "menu"]),
+        ("Explosion", "sfx_exp_short_soft4.wav", False, "a short, soft explosion", ["blast", "boom", "destroy"]),
+        ("Laser", "sfx_wpn_laser1.wav", False, "a laser fired", ["shoot", "weapon", "space"]),
+        ("Shot", "sfx_weapon_singleshot6.wav", False, "one shot", ["shoot", "weapon", "gun"]),
+        ("Portal", "sfx_movement_portal1.wav", False, "a portal or a change of place", ["teleport", "transition"]),
+        ("Door", "sfx_movement_dooropen1.wav", False, "a door opening", ["open", "room"]),
+        ("Footstep", "sfx_movement_footsteps1a.wav", False, "one step", ["walk", "step"]),
+        ("Falling", "sfx_sounds_falling1.wav", False, "a fall", ["drop", "lose"]),
+        ("Low health alarm", "sfx_lowhealth_alarmloop5.wav", True, "a warning that repeats", ["danger", "warning", "health"]),
+    ]),
+    ("12-music-loops", "subspace-music-loops", "12 Music Loops", "Juhani Junkala (SubspaceAudio)", "music", "SubspaceAudio: chiptune game music", [
+        ("Menu relaxed", "379 [Misc Extras] bgm_menu_title_1_relaxed.ogg", True, "a relaxed menu theme", ["menu", "title", "calm", "chiptune"]),
+        ("Menu sporty", "384 [Misc Extras] bgm_menu_title_6_sporty.ogg", True, "a sporty menu theme", ["menu", "title", "sports", "chiptune"]),
+        ("Storytime", "399 [Misc Extras] bgm_storytime.ogg", True, "a story theme", ["story", "cutscene", "chiptune"]),
+        ("Action stage", "215 [Super Action Chiptunes] bgm_stage_6.ogg", True, "an action stage", ["action", "level", "platformer", "chiptune"]),
+        ("Battle", "373 [Misc Extras] bgm_gojira_battle_A.ogg", True, "a battle theme", ["battle", "boss", "fight", "chiptune"]),
+        ("Retro sports", "129 [Retro Sports] bgm_stage_3.ogg", True, "a sports stage", ["sports", "racing", "level", "chiptune"]),
+    ]),
+]
+
 # ambientCG's materials: each a set of maps at 1K (color, normal for OpenGL, roughness), for floors, walls and ground.
 AMBIENTCG = ["Asphalt026C", "Bricks090", "Concrete034", "Grass004", "Ground054", "Gravel022", "PavingStones138",
              "Planks037B", "WoodFloor051", "Tiles074", "Rock030", "RoofingTiles014B", "Fabric026", "Metal032", "Ground080"]
@@ -226,6 +277,29 @@ def picture_size(data):
                 h, w = struct.unpack(">HH", data[i + 5:i + 9]); return w, h
             i += 2 + struct.unpack(">H", data[i + 2:i + 4])[0]
     return None
+
+def sound_facts(data, name, cache):
+    """A sound's length, decoded whole, or the reason it can't be used: a pack's word for a file is not proof it plays.
+    Apple's Vorbis decoder, which is WebKit's and AVFoundation's, loses up to about 40 ms at the start of a file. A file
+    still "loads" and is logged as played, but a click that short is gone, so its result is held against ffmpeg's."""
+    digest = hashlib.sha256(data).hexdigest()[:24]
+    source, decoded = os.path.join(cache, digest + os.path.splitext(name)[1]), os.path.join(cache, digest + ".decoded.wav")
+    with open(source, "wb") as f: f.write(data)
+    if subprocess.run(["/usr/bin/afconvert", "-f", "WAVE", "-d", "LEI16", source, decoded], capture_output=True).returncode != 0:
+        return None, "doesn't decode"
+    with wave.open(decoded) as w:
+        rate, channels, frames = w.getframerate(), w.getnchannels(), w.getnframes()
+        samples = array.array("h", w.readframes(frames))
+    os.remove(decoded)
+    if not frames: return None, "empty"
+    reference = array.array("h", subprocess.run(["ffmpeg", "-v", "error", "-i", source, "-f", "s16le", "-acodec", "pcm_s16le", "-"],
+                                                capture_output=True, check=True).stdout)
+    def energy(values): return sum(s * s for s in values) + 1
+    if energy(samples) / energy(reference) < 0.95: return None, "Apple's decoder loses its start"
+    if max(abs(s) for s in samples) < 328: return None, "silent"  # under 1% of full scale, -40 dB
+    # How far a loop jumps where its end meets its start, for whoever reads the run: a click there is heard, not read.
+    seam = max(abs(samples[i] - samples[len(samples) - channels + i]) for i in range(channels)) / 32768
+    return {"seconds": round(frames / rate, 3), "seam": seam}, None
 
 def slug(text):
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", text.lower())).strip("-") or "asset"
@@ -338,6 +412,48 @@ def oga_packs(cache):
         print(f"{name}: {len(assets)}", file=sys.stderr)
     return packs
 
+def oga_sound_packs(cache):
+    packs = []
+    for page, pack, name, author, kind, style, clips in OGA_SOUNDS:
+        html = get(f"https://opengameart.org/content/{page}", cache).decode("utf-8", "replace")
+        licenses = re.findall(r"<div class='license-name'>([^<]+)</div>", html)
+        if [LICENSES.get(l) for l in licenses] != ["CC0-1.0"]:
+            left_out.append(f"{name}: {licenses or 'no license'}"); continue
+        archive = sorted(set(re.findall(r'https://opengameart.org/sites/default/files/[^"]+\.zip', html)))[0]
+        data = get(archive, cache)
+        members = zipfile.ZipFile(io.BytesIO(data))
+        sizes = {i.filename: i.file_size for i in members.infolist()}
+        # A license file in the pack says CC0 too. The music pack has none, and has its page's word alone.
+        license_file = next((n for n in sizes if re.fullmatch(r"(?i)(licen[cs]e|info)\.txt", os.path.basename(n))), None)
+        if license_file and "CC0" not in members.read(license_file).decode("utf-8", "replace"):
+            left_out.append(f"{name}: its own license file doesn't say CC0"); continue
+        # What the page publishes on its own, by hash: such a clip is fetched alone rather than out of the archive.
+        alone = {}
+        for url in sorted(set(re.findall(r"data-ogg-url='(https://opengameart.org/sites/default/files/[^']+\.ogg)'", html))):
+            alone[hashlib.sha256(get(url, cache)).hexdigest()] = url
+        assets, in_archive = [], False
+        for title, file, loops, notes, tags in clips:
+            found = [n for n in sizes if os.path.basename(n) == file]
+            if len(found) != 1: raise RuntimeError(f"{name} has {len(found)} files called {file}: the pack has changed.")
+            clip = members.read(found[0])
+            facts, refusal = sound_facts(clip, file, cache)
+            if refusal:
+                left_out.append(f"{title} ({name}): {refusal}"); continue
+            entry = {"name": title, "kind": kind, "bytes": len(clip), "seconds": facts["seconds"], "notes": notes, "tags": tags}
+            if loops:
+                entry["loops"] = True
+                print(f"{title}: {facts['seconds']} s, jumps {facts['seam']:.3f} of full scale at its loop point", file=sys.stderr)
+            sha = hashlib.sha256(clip).hexdigest()
+            if sha in alone: entry.update(file=alone[sha], sha256=sha)
+            else: entry["files"] = [found[0]]; in_archive = True
+            assets.append(entry)
+        head = {"id": pack, "name": name, "author": author, "source": f"https://opengameart.org/content/{page}", "kind": kind, "style": style,
+                "license": "CC0-1.0", "credit": "pack"}
+        if in_archive: head["archive"] = {"url": archive, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+        packs.append({**head, "assets": name_assets(pack, assets)})
+        print(f"{name}: {len(assets)}", file=sys.stderr)
+    return packs
+
 def ambientcg_pack(cache):
     license = get("https://docs.ambientcg.com/license/", cache).decode("utf-8", "replace")
     if "CC0" not in license: left_out.append("ambientCG: its license page no longer says CC0"); return None
@@ -375,12 +491,22 @@ def check_homes(cache):
         if words not in get(url, cache).decode("utf-8", "replace"): raise RuntimeError(f"{url} no longer says {words}.")
 
 def main():
-    cache = sys.argv[1] if len(sys.argv) > 1 else tempfile.mkdtemp(prefix="lamp-assets-")
+    arguments = [a for a in sys.argv[1:] if a != "--sounds"]
+    only_sounds = len(arguments) < len(sys.argv) - 1
+    cache = arguments[0] if arguments else tempfile.mkdtemp(prefix="lamp-assets-")
     os.makedirs(cache, exist_ok=True)
-    check_homes(cache)
-    packs = poly_packs(cache) + oga_packs(cache)
-    textures = ambientcg_pack(cache)
-    if textures: packs.append(textures)
+    if only_sounds:
+        kept = json.load(open(OUT))
+        sound_packs = {entry[1] for entry in OGA_SOUNDS}
+        packs = [p for p in kept["packs"] if p["id"] not in sound_packs]
+        refreshed = kept["refreshed"]
+    else:
+        check_homes(cache)
+        packs = poly_packs(cache) + oga_packs(cache)
+        textures = ambientcg_pack(cache)
+        if textures: packs.append(textures)
+        refreshed = time.strftime("%Y-%m-%d")
+    packs += oga_sound_packs(cache)
     # A pack's license is its assets' when they share one; otherwise each asset keeps its own.
     for pack in packs:
         licenses = {a.get("license", pack.get("license")) for a in pack["assets"]}
@@ -390,7 +516,7 @@ def main():
         authors = {a.get("author", pack["author"]) for a in pack["assets"]}
         if authors == {pack["author"]}:
             for a in pack["assets"]: a.pop("author", None)
-    catalog = {"version": 1, "refreshed": time.strftime("%Y-%m-%d"), "licenses": sorted(set(LICENSES.values())), "packs": packs}
+    catalog = {"version": 1, "refreshed": refreshed, "licenses": sorted(set(LICENSES.values())), "packs": packs}
     # One line per asset, so a refresh reads as a diff of what changed.
     lines = ["{", f'  "version": 1, "refreshed": {json.dumps(catalog["refreshed"])},', f'  "licenses": {json.dumps(catalog["licenses"])},', '  "packs": [']
     for i, pack in enumerate(packs):

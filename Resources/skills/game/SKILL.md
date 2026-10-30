@@ -58,11 +58,10 @@ A game is for fun, and fun is designed from the first build, not added at the en
   secret, a joke in a name, a combo that does something special, weather that changes, a celebration that's over the
   top. Many small ones beat one big one.
 
-What's in it is made in code (3D models from three.js shapes, the 3d-game skill; music and effects from `sound`,
-below; pictures drawn in code or painted with `make_art`) or ready-made from Lamp's free assets: models, characters
-with their animations, sprite sheets, tilesets and textures, fetched and credited by the `assets` tool (the assets
-skill says when each suits and how to keep one style). Either way it's the person's to share. Any other file only
-when the person gives it or names where it comes from and its license allows sharing; it goes into the game's own
+What's in it is made in code (3D models from three.js shapes, the 3d-game skill; pictures drawn in code or painted with
+`make_art`) or ready-made from Lamp's free assets: models, characters with their animations, sprite sheets, tilesets,
+textures, sound effects and music, fetched and credited by the `assets` tool (the assets skill says when each suits and
+how to keep one style). Sound looks in those assets first ("Sound", below). Either way it's the person's to share. Any other file only when the person gives it or names where it comes from and its license allows sharing; it goes into the game's own
 folder, credited as the rules say. The game never loads anything from the network while it's played.
 
 When asked to make a game more fun, play it first and find what's flat (a loop that doesn't pull, a curve that's
@@ -113,12 +112,20 @@ B (or Esc, or Back) is the game's own back or cancel; Menu pauses.
 Every game has sound: a short effect (under a second) for each thing the player does or meets, and music only when it
 suits, quiet (0.3 to 0.4) under effects at 0.6 to 0.8. Settings or the pause menu turn sound and music on and off.
 
-- Web: `sound` in lamp-game.js, effects made in code with `sound.tone` unless the person gave files. Music is made in
-  code too: a loop of a few bars written out note by note into `sound.samples` (a bass line, chords, a melody, in one
-  key) and played with `sound.music`, a calmer one for menus and a livelier one for play.
-- Swift: files the person gave go in Assets/ (.wav, .m4a or .mp3) and play with an
+**Look in the `assets` tool before writing any sound.** List what the game needs to sound like (each thing the player
+does or meets, and its music), then see the whole catalog: `assets` with `kind: sound`, `limit: 30` and no `find` lists
+every effect, and `kind: music` every loop. Fetch one for every moment it can serve, by name and notes (the assets
+skill's "Sounds and music" has more). Only files the person gave come before this. Write a sound in code only for a
+moment nothing in those lists fits, or one that has to follow the game as it's played (an engine's pitch, notes on a
+scale), and name each of those in your report. They're chosen as the game is made, and every one ships inside it.
+
+- Web: `sound` in lamp-game.js. A file loads with `await sound.load('assets/…')`. Written in code, effects come from
+  `sound.tone`, and music from a loop of a few bars written out note by note into `sound.samples` (a bass line, chords,
+  a melody, in one key). Either way `sound.play` plays an effect and `sound.music` a loop, a calmer one for menus and a
+  livelier one for play.
+- Swift: files in Assets/ (.wav, .m4a or .mp3, and what the `assets` tool brought in) play with an
   `AVAudioPlayer(contentsOf: LampAssets.url(name)!)` made once and `prepareToPlay()`ed, a few of them for an effect
-  that overlaps itself; music is one looping (`numberOfLoops = -1`). With no files, make effects in code: one
+  that overlaps itself; music is one looping (`numberOfLoops = -1`). Written in code, effects come from one
   `AVAudioEngine` started at launch with an `AVAudioPlayerNode`, each effect a few hundredths of a second of a wave
   written once into an `AVAudioPCMBuffer`, with soft ends so it doesn't click. On iPhone set the session to
   `.ambient`, so the silent switch mutes the game and the person's own music keeps playing.
