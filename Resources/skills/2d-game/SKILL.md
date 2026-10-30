@@ -88,7 +88,8 @@ What Lamp has changed in Phaser, so its usual code works here:
 
 ### Structure
 
-- **Scenes**: one for each screen (Boot, which loads; Title; Play; GameOver). A pause menu is a scene launched over
+- **Scenes**: one for each screen (Boot, which loads; Title; Play; GameOver); the game-ui skill says which screens a
+  game needs and how they look. A pause menu is a scene launched over
   play (`this.scene.launch('pause'); this.scene.pause()`), which reads the pad itself and resumes play
   (`this.scene.resume('play'); this.scene.stop()`). Keep the game's state (score, lives, level) in a plain object
   passed in `this.scene.start('play', state)`, not spread over scenes.
@@ -231,7 +232,7 @@ Once it plays right, `look_at_app` with `on_device` where Try On points.
 ## SpriteKit in a Mac or iPhone app
 
 The game is an `SKScene` subclass for each screen, shown in SwiftUI with `SpriteView`, with SwiftUI over it for the
-score, menus and prompts:
+score, menus and prompts (the game-ui skill says which screens a game needs and how they look):
 
 ```swift
 import SwiftUI

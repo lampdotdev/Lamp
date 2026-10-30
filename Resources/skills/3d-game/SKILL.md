@@ -41,7 +41,7 @@ lamp-game.js once:
   `new GLTFLoader().loadAsync('ship.glb')` or sounds; make or load every sound here. It starts the game where
   `pendingRestore()` says, after a change of its code: `const was = pendingRestore();` then the level, the player,
   the camera and the open menu or overlay from `was` when there is one, and the title or intro only when there isn't
-  (the game skill, "Changes while it's played").
+  (the game skill, "Changes while it's played"; the game-ui skill says what the title and menus are).
 - `frame(f)` runs about 60 times a second. It reads the controller as `f.pads[0]`, moves things by `f.dt` (and
   `f.time`), and ends with `renderer.render(scene, camera)`.
 - `touch` names the buttons Lamp's touch controls show on a phone or tablet.
