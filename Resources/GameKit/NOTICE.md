@@ -6,7 +6,8 @@ commit named, under its own licence.
 - sokol_gfx.h, sokol_log.h, sokol_gl.h, sokol_debugtext.h, sokol_shape.h: https://github.com/floooh/sokol at
   efeb77603e24daea7d1dd6445b9358bb5d82533b, zlib licence (below).
 - HandmadeMath.h: https://github.com/HandmadeMath/HandmadeMath at 661fef0893bccfe30342049e848b8d54e7430234, public
-  domain (CC0 1.0).
+  domain (the file's own words, with a fallback grant of a perpetual, irrevocable license to copy, modify and
+  distribute it).
 - cgltf.h: https://github.com/jkuhlmann/cgltf at 85cd62382dfea638278962690cf515023f33ed00, MIT licence, Copyright (c)
   2018-2021 Johannes Kuhlmann.
 - stb_image.h and stb_vorbis.c: https://github.com/nothings/stb at 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5, MIT

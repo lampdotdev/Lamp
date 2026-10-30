@@ -192,4 +192,5 @@ for reporting a security problem privately.
 Lamp is open source under the [MIT License](LICENSE). The Lamp name and icon aren't part of that license: a
 fork is welcome to the code, but should ship under its own name. The software bundled inside Lamp.app (the pi
 coding agent, llama.cpp, Lobe Icons, xwin and the libraries in the Xbox game kit) has its own licenses, listed in
-[Resources/THIRD_PARTY_NOTICES.md](Resources/THIRD_PARTY_NOTICES.md).
+[Resources/THIRD_PARTY_NOTICES.md](Resources/THIRD_PARTY_NOTICES.md). The logos of AI providers shown in Settings are trademarks of
+their owners, used only to say which provider is meant, and are not part of that license.
