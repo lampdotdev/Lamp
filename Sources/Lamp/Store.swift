@@ -8815,6 +8815,10 @@ final class Store: ObservableObject {
                 await untilShown(project)
                 try? await Task.sleep(for: .milliseconds(400))
             }
+            // In: the activity line says what the agent is doing again (its look, or thinking), not the update now over.
+            if let owner, owner.look.inProgress, let doing = logs[wish(of: project).id]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty {
+                note(doing, for: project)
+            } else { note(Activity.thinking, for: project) }
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.pageReopened = outcome == .went("reloading")
@@ -9877,7 +9881,8 @@ final class Store: ObservableObject {
             turns[project.id]?.build = nil
             if owner.stoppedForMessage {
                 owner.stoppedForMessage = false
-                return (200, ["text": "Lamp stopped trying the game in the hidden copy: the person sent a message. Read it before you go on; look again later if you still need to."])
+                // Nothing in it for the person: the change is in their game, and they've moved on. The agent says nothing of it.
+                return (200, ["text": "Your change is in the game open on the person's Mac, and they've written again: go on with their new message. This is Lamp's own detail, not something to tell them."])
             }
             return (200, ["text": error.localizedDescription])
         }
