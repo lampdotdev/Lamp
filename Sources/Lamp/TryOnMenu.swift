@@ -62,13 +62,13 @@ struct TryOnMenu: Equatable {
             if !models.isEmpty { sections.append(Section(title: "Choose Simulator", items: models, submenu: true)) }
             let phones = store.devices.filter { $0.kind.isPhone }
             var mine = phones.filter(\.paired).map { device in
-                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(stopped(device))", symbol: device.kind.symbol,
+                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(stopped(device))", symbol: device.symbol,
                      checked: project.onIOS && project.device == device.udid)
             }
             mine += phones.filter { !$0.paired }.map { device in
                 let pairing = store.pairing.contains(device.udid)
                 return Item(id: "pair:\(device.udid)", title: pairing ? "Pairing with \(device.name)…" : "Pair \(device.name) (\(device.model))…",
-                            symbol: device.kind.symbol, disabled: pairing)
+                            symbol: device.symbol, disabled: pairing)
             }
             if !mine.isEmpty { sections.append(Section(title: "Your iPhones and iPads", items: mine)) }
         }
@@ -85,22 +85,24 @@ struct TryOnMenu: Equatable {
         }
         if places.contains(where: \.isAndroid) {
             let tv = !places.contains(.android)
-            sections.append(Section(title: nil, items: [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi")]))
+            sections.append(Section(title: nil, items: Self.foundTVs(store) + [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi")]))
         }
         if places.contains(.tv) {
             var items = [Item(id: "preview", title: "TV Preview", symbol: "tv", checked: project.onTV && project.device == nil)]
             items += store.devices.filter { $0.kind.isTV }.map { tv in
-                Item(id: "tv:\(tv.udid)", title: "\(tv.name)\(step(tv))", symbol: "tv", checked: project.onTV && project.device == tv.udid)
+                Self.item(tv, id: "tv:\(tv.udid)", title: "\(tv.name)\(step(tv))", symbol: "tv", checked: project.onTV && project.device == tv.udid)
             }
+            items += store.devices.filter { $0.kind.isTV }.compactMap { Self.setUpAgain($0, id: "tvsetup:\($0.udid)", chosen: project.onTV && project.device == $0.udid) }
             sections.append(Section(title: older(.tv, "TVs"), items: items))
         }
         if places.contains(.device) {
             let name = DeviceApps.integration(for: project)?.name ?? "Xbox"
             let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
-            let items = mine.map { device in
-                Item(id: "device:\(device.id)", title: "\(device.name)\(step(device))", symbol: device.kind.symbol,
-                     checked: project.onDevice && project.device == device.id)
+            var items = mine.map { device in
+                Self.item(device, id: "device:\(device.id)", title: "\(device.name)\(step(device))", symbol: device.symbol,
+                          checked: project.onDevice && project.device == device.id)
             }
+            items += mine.compactMap { Self.setUpAgain($0, id: "setup:\($0.id)", chosen: project.onDevice && project.device == $0.id) }
             sections.append(Section(title: older(.device, "Your \(name)s"), items: items.isEmpty
                 ? [Item(id: "look", title: "No \(name) found. Look Again", symbol: Device.Kind.other.symbol, checked: project.onDevice)] : items))
         }
@@ -110,7 +112,7 @@ struct TryOnMenu: Equatable {
         // Where a page can't go, said under the places it can, whether or not one is left to add: every built-in row
         // with no host, and an integration's only once the person has one of its devices. Lamp's own gap is told apart
         // from the device's.
-        let mine = Set(store.devices.compactMap(\.integration))
+        let mine = Set(store.devices.filter(\.isSetUp).compactMap(\.integration))
         missing += Places.noPage().filter { Places.builtIn.contains($0) || mine.contains($0.id) }.map { place in
             Item(id: "native:\(place.id)", title: "\(place.name): \(place.noHostYet ? "Native Only for Now" : "Needs a Native Version")",
                  symbol: "nosign", disabled: true)
@@ -127,6 +129,30 @@ extension TryOnMenu {
     static let olderNote = " (older version, updated when opened)"
 
     @MainActor private static func step(_ device: Device) -> String { device.setup() == .ready && !device.isAway ? "" : " (\(device.status))" }
+
+    /// A TV or device as a place: one set up with Lamp is chosen as it is; one only found on the network may be a
+    /// neighbor's, so it's offered to set up instead, and choosing it runs its setup and chooses it once that's done
+    /// (`Store.setTVDevice`, `Store.setDeviceAppDevice`). One already chosen keeps its tick.
+    static func item(_ device: Device, id: String, title: String, symbol: String, checked: Bool) -> Item {
+        guard !device.isSetUp, !checked else { return Item(id: id, title: title, symbol: symbol, checked: checked) }
+        return Item(id: id, title: "Set Up \(device.name)…", symbol: "gearshape")
+    }
+
+    /// Google TVs and Android TVs the last look on the network found that adb doesn't list yet: each offered to set up,
+    /// in the window that connects it.
+    @MainActor static func foundTVs(_ store: Store) -> [Item] {
+        let listed = Set(store.devices.filter { $0.kind == .android }.compactMap(\.address))
+        return AndroidTVs.found(in: store.hosts).filter { !listed.contains($0.host) }.map { tv in
+            Item(id: "wifi:\(tv.host)", title: "Set Up \(tv.name ?? "Android TV")…", symbol: "gearshape")
+        }
+    }
+
+    /// The chosen one, when it isn't set up (forgotten since it was chosen): its row keeps the tick, and choosing a row
+    /// already chosen does nothing, so its setup is offered beside it (`tvsetup:`, `setup:`).
+    static func setUpAgain(_ device: Device, id: String, chosen: Bool) -> Item? {
+        guard chosen, !device.isSetUp, !device.isAway else { return nil }
+        return Item(id: id, title: "Set Up \(device.name)…", symbol: "gearshape")
+    }
 
     /// Every list's last section: all the devices, and looking again; and when macOS refused the last look on the
     /// network, the way to allow Lamp there.
@@ -156,10 +182,10 @@ extension TryOnMenu {
             sections.append(Section(title: "Your \(name)s", items: mine.isEmpty
                 ? [Item(id: "look", title: "No \(name) found. Look Again", symbol: Device.Kind.other.symbol, checked: true)]
                 : mine.map { device in
-                    Item(id: "device:\(device.id)", title: (device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step(device),
-                         symbol: device.kind.symbol, checked: project.device == device.id)
+                    item(device, id: "device:\(device.id)", title: (device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step(device),
+                         symbol: device.symbol, checked: project.device == device.id)
                 }))
-            var setups = mine.filter { $0.setup() != .ready && !$0.isAway }.map { Item(id: "setup:\($0.id)", title: "Set Up \($0.name)…", symbol: "gearshape") }
+            var setups = mine.filter { ($0.isSetUp || $0.id == project.device) && $0.setup() != .ready && !$0.isAway }.map { Item(id: "setup:\($0.id)", title: "Set Up \($0.name)…", symbol: "gearshape") }
             if GameKit.isGame(project) { setups.append(Item(id: "check:xbox", title: "Check Xbox Setup for Games…", symbol: "checklist")) }
             if !setups.isEmpty { sections.append(Section(title: nil, items: setups)) }
         } else if project.onTV {
@@ -167,7 +193,7 @@ extension TryOnMenu {
             sections.append(Section(title: "Preview", items: [Item(id: "preview", title: "TV Preview", symbol: "tv", checked: project.device == nil)]))
             var items = tvs.map { tv in
                 let model = "\(tv.maker) \(tv.model)"
-                return Item(id: "tv:\(tv.udid)", title: (tv.name == model ? tv.name : "\(tv.name) · \(model)") + step(tv), symbol: "tv",
+                return item(tv, id: "tv:\(tv.udid)", title: (tv.name == model ? tv.name : "\(tv.name) · \(model)") + step(tv), symbol: "tv",
                             checked: project.device == tv.udid)
             }
             if let chosen = project.device, !tvs.contains(where: { $0.udid == chosen }) {
@@ -175,7 +201,7 @@ extension TryOnMenu {
             }
             if items.isEmpty { items.append(Item(id: "look", title: "No Samsung or LG TV found. Look Again", symbol: "tv", disabled: false)) }
             sections.append(Section(title: "Your TVs", items: items))
-            let setups = tvs.filter { $0.setup() != .ready && !$0.isAway }.map { Item(id: "tvsetup:\($0.udid)", title: "Set Up \($0.name)…", symbol: "gearshape") }
+            let setups = tvs.filter { ($0.isSetUp || $0.udid == project.device) && $0.setup() != .ready && !$0.isAway }.map { Item(id: "tvsetup:\($0.udid)", title: "Set Up \($0.name)…", symbol: "gearshape") }
             if !setups.isEmpty { sections.append(Section(title: nil, items: setups)) }
         } else if project.onAndroid {
             let devices = store.devices.filter { $0.kind == .android }
@@ -186,7 +212,7 @@ extension TryOnMenu {
                 items.append(Item(id: prefix + chosen, title: "Chosen device (not connected)", symbol: "smartphone", checked: true))
             }
             sections.append(Section(title: "Android", items: items))
-            sections.append(Section(title: nil, items: [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi"),
+            sections.append(Section(title: nil, items: (tv ? Self.foundTVs(store) : []) + [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi"),
                                                         Item(id: "check:android", title: "Check Android Setup…", symbol: "checklist")]))
         } else {
             if project.platform.choosesPlace, project.hasMac {
@@ -210,7 +236,7 @@ extension TryOnMenu {
             if !models.isEmpty { sections.append(Section(title: "Choose Simulator", items: models, submenu: true)) }
             let phones = store.devices.filter { $0.kind.isPhone }
             var mine = phones.filter(\.paired).map { device in
-                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(PhoneRenewals.stoppedOpening(project, on: device.udid) ? " (stopped opening)" : "")", symbol: device.kind.symbol,
+                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(PhoneRenewals.stoppedOpening(project, on: device.udid) ? " (stopped opening)" : "")", symbol: device.symbol,
                      checked: project.onIOS && project.device == device.udid)
             }
             if let chosen = project.device, project.onIOS, !phones.contains(where: { $0.udid == chosen && $0.paired }) {
@@ -219,7 +245,7 @@ extension TryOnMenu {
             mine += phones.filter { !$0.paired }.map { device in
                 let pairing = store.pairing.contains(device.udid)
                 return Item(id: "pair:\(device.udid)", title: pairing ? "Pairing with \(device.name)…" : "Pair \(device.name) (\(device.model))…",
-                            symbol: device.kind.symbol, disabled: pairing)
+                            symbol: device.symbol, disabled: pairing)
             }
             if !mine.isEmpty { sections.append(Section(title: "Your iPhones and iPads", items: mine)) }
             sections.append(Section(title: nil, items: [Item(id: "check:iphone", title: "Check iPhone & iPad Setup…", symbol: "checklist")]))
@@ -238,6 +264,10 @@ extension Store {
     func tryOn(_ project: LampProject, _ id: String, open: Bool = false) {
         guard let project = current(project) else { return }
         let (what, value) = id.firstIndex(of: ":").map { (String(id[..<$0]), String(id[id.index(after: $0)...])) } ?? (id, "")
+        if Self.choices.contains(what) {
+            tryOnChoices[project.id, default: 0] += 1
+            MagicPanel.shared.choiceMade(project)
+        }
         switch what {
         case "mac": setMac(project)
         case "family": if let family = DeviceFamily(rawValue: value) { setSimulator(project, family) }
@@ -259,9 +289,7 @@ extension Store {
             return
         case "settings":
             // Every device Lamp knows, with where its setup stands, is in Settings → Building.
-            NSApp.activate()
-            UserDefaults.standard.set("building", forKey: "settingsTab")
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            SettingsMenu.show(tab: "building")
             return
         case "look":
             refreshDevices()
@@ -277,7 +305,7 @@ extension Store {
             TVSetup.shared.show(value)
             return
         case "wifi":
-            AndroidWiFi.shared.show()
+            AndroidWiFi.shared.show(host: value == "android" ? nil : value)
             return
         case "check":
             NSApp.activate()
@@ -297,6 +325,9 @@ extension Store {
             self.tryOn(now, id)
         })
     }
+
+    /// What says where the app opens, as against a look, a setup or a window.
+    static let choices: Set<String> = ["mac", "family", "simulator", "phone", "emulator", "android", "androidtv", "preview", "tv", "device", "add"]
 
     /// Exactly where a choice puts the app: its place, its device (nil for a simulator, the emulator, the preview or
     /// the Mac), and for the simulator which one.

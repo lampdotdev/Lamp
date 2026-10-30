@@ -72,11 +72,15 @@ Every request goes to the address the device was found at; you give only the por
 `https: true` for a device that only speaks HTTPS with a certificate of its own (Xbox's Device Portal): Lamp
 trusts that certificate the first time and holds the device to it after. `method` (GET, POST, PUT, DELETE), `headers`, `body` or `form` (a value `"@{package}"` sends the package file), `auth`
 (`digest` true or false for basic; the password is always one `{field:…}`), and `keep`: `"picture"` in `bridge.look`
-for the answer that is the screen's picture, `"log"` in `bridge.log` for the answer that is the app's log, `"key"` in a
+for the answer that is the screen's picture, `"screen"` in `bridge.screen` for the answer that is the screen as text (the
+tree of what the app shows, where the device describes it), `"log"` in `bridge.log` for the answer that is the app's log, `"key"` in a
 step's `run` for an SSH key the device gives this Mac.
 `poll` (seconds) asks again every two seconds while the device answers 204 (still working on an install), and `expect`
 (`json` or `xml`, with `equals` or `contains`) is what the answer must say for the step to count, else it fails with the
-device's words. A form value `"@{certificate}"` sends Lamp's certificate for a wrapped package (below).
+device's words. In a `json` path, `*` is every element of a list, and the answer counts when any of them says it
+(`"InstalledPackages.*.PackageFullName"`); `equals` and `contains` may hold Lamp's values (`"{packageFullName}"`).
+`until` (seconds, with `expect`) asks again every two seconds until the answer says it: for a device that's done with an
+install a while before the app can be opened, end `install` with a request that waits until the device lists the app. A form value `"@{certificate}"` sends Lamp's certificate for a wrapped package (below).
 `restore` (a JSON field's name) on a PUT or POST that changes a setting only for its sequence: Lamp first reads the
 same path with a GET, takes that field's value, and when the sequence ends (in `bridge.install`, once the app has been
 launched after it), however it ends, sends `{"<field>": "<that value>"}` back the same way. For a device-wide setting an install needs (an Xbox installs a package as a game only while
@@ -167,7 +171,10 @@ remote's keys the builder presses (`{key}` is the device's name for it, from `ke
 while it's open. What the device answers to `install` is shown to the builder, so a device that says there what it
 made of the package (a compile error) needs nothing more. `stop` ends the app when the person stops it (Lamp presses
 `home` when there's no `stop`, or the device refuses it), and for a wrapped package it also ends the copy on the device
-before an update goes over it, with the values of the copy that's there. `type` types into a keyboard on the device's
+before an update goes over it, with the values of the copy that's there. `running` says whether the app `launch` opened
+is running: a request whose `expect` finds it among the device's processes, with `until` a few seconds. Lamp launches
+again, with growing pauses, while the device refuses the launch or the app isn't running, and says so plainly when it
+never opens. `type` types into a keyboard on the device's
 screen, run once per character with `{text}` that character (a Roku's `/keypress/Lit_{text}`). `log` reads a log the app keeps on the device (a file) for the
 builder, for a device with no log to stream. `remove` takes the app off the device when its wish is deleted. With `app`,
 each of `stop`, `remove` and `type` is there or named in `"lacks": ["type"]` when the device has no way to do it, so

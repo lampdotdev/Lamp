@@ -19,6 +19,9 @@ open class ChatLink: ObservableObject {
     @Published public var lampInstalled = true
     /// What that panel offers: the app's name and line and three things to change, from the app's own bundle.
     @Published public var remix: RemixOffer?
+    /// Lamp is open but no chat it sent could be shown for a while (`ChatWait`): the chat offers Lamp's own window
+    /// rather than waiting on.
+    @Published public var stuck = false
     /// The box's words as last typed here, with the draft version they were typed over. Lamp doesn't send back words
     /// typed here, so a box drawn again (a panel was open in the chat's place) takes them from here, not from Lamp.
     public var typed: (version: Int, text: String)?
@@ -37,6 +40,8 @@ open class ChatLink: ObservableObject {
     open func openLamp() {}
     /// Continue with Lamp, on a Mac without it: the request goes to lamp.dev, or the wish's own page.
     open func continueWithLamp(_ ask: String) {}
+    /// The chat can't come up here: Lamp shows it in its own window.
+    open func openInLamp() {}
 }
 
 /// The chat as everyone sees it: its bar, the chat or a panel in its place, and the message box. Drawn the same
@@ -61,6 +66,9 @@ public struct ChatScreen: View {
                     if link.lampAway {
                         Text("Lamp isn't open").font(.headline)
                         Button("Open Lamp") { link.openLamp() }
+                    } else if link.stuck {
+                        Text("Lamp couldn't open this chat here").font(.headline)
+                        Button("Open in Lamp") { link.openInLamp() }
                     } else {
                         ProgressView().controlSize(.small)
                     }
@@ -75,6 +83,30 @@ public struct ChatScreen: View {
             Dropped.load(providers) { files in if !files.isEmpty { link.send(.attach(files)) } }
             return true
         }
+    }
+}
+
+/// How long the chat beside an app has gone without a chat from Lamp it could show, across every connection
+/// meanwhile: a connection Lamp turns away is tried again twice a second, and one that connects but never sends
+/// a chat that can be read looks connected, so neither "Lamp isn't open" nor the chat ever comes and the spinner
+/// turned for good. Only a chat that's read starts the count again; a connection lost after one starts it then.
+public struct ChatWait {
+    /// After this long without a chat to show, the chat stops waiting and offers Lamp's own window.
+    public static let patience: TimeInterval = 10
+
+    /// Since when nothing could be shown; nil while a chat that was read is showing.
+    public private(set) var since: Date?
+
+    public init(from start: Date = Date()) { since = start }
+
+    /// A chat from Lamp was read.
+    public mutating func read() { since = nil }
+
+    /// The connection went. Lost after a chat was read, the wait starts now; lost while waiting, it goes on.
+    public mutating func dropped(at date: Date = Date()) { if since == nil { since = date } }
+
+    public func isStuck(at date: Date = Date()) -> Bool {
+        since.map { date.timeIntervalSince($0) >= Self.patience } ?? false
     }
 }
 
@@ -143,6 +175,14 @@ private struct Chat: View {
                              put: { link.send(.repo(.put)) }, fix: { link.send(.repo(.fix)) }, makeLink: { link.send(.repo(.makeLink)) },
                              setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },
                              openRepo: { link.send(.repo(.openRepo)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
+                }
+            } else if let card = state.contribute {
+                ScrollView {
+                    ContributeCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, upstream: card.upstream, fork: card.fork,
+                                   credit: card.credit, notes: card.notes, size: card.size, copied: card.copied, canSend: card.canSend,
+                                   send: { link.send(.contribute(.send)) }, fix: { link.send(.contribute(.fix)) },
+                                   openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
+                                   close: { link.send(.contribute(.close)) }, width: nil)
                 }
             } else if let card = state.publish {
                 ScrollView {
@@ -817,6 +857,7 @@ struct ChatBar: View {
         Menu {
             Button("Share Link…") { link.send(.wishLink(.open)) }
             Button("Put on GitHub…") { link.send(.repo(.open)) }
+            if toolbar.canContribute == true { Button("Send Changes Back…") { link.send(.contribute(.open)) } }
             if toolbar.canPublish == true { Button("Publish as Web Page…") { link.send(.publish(.open)) } }
             Divider()
             Button("Copy Wish File") { link.send(.copyWishFile) }
@@ -910,13 +951,13 @@ private struct ToolSymbol: View {
         let side: CGFloat = 30
         Image(systemName: symbol)
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(on ? AnyShapeStyle(Color.accentColor) : isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+            .foregroundStyle(on ? AnyShapeStyle(Paper.ink) : isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
             .frame(width: side, height: side)
             .background {
                 if #available(macOS 26, *) {
-                    if on && !plain { Circle().fill(Color.accentColor.opacity(0.15)).padding(2) }
+                    if on && !plain { Circle().fill(Paper.ink.opacity(0.15)).padding(2) }
                 } else {
-                    Circle().fill(on && !plain ? AnyShapeStyle(Color.accentColor.opacity(0.15)) : AnyShapeStyle(Color(nsColor: .textBackgroundColor)))
+                    Circle().fill(on && !plain ? AnyShapeStyle(Paper.ink.opacity(0.15)) : AnyShapeStyle(Paper.card))
                         .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
                 }
             }
@@ -1116,7 +1157,7 @@ struct VersionsPanel: View {
                             .lineLimit(expanded ? nil : 2)
                     }
                     HStack(spacing: 4) {
-                        if version.current { Text("Current").foregroundStyle(Color.accentColor) }
+                        if version.current { Text("Current").foregroundStyle(Paper.ink) }
                         Text(version.date, format: .relative(presentation: .named))
                     }
                     .font(.caption)
@@ -1139,7 +1180,7 @@ struct VersionsPanel: View {
             }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(expanded ? Color.accentColor.opacity(0.1) : .clear))
+        .background(RoundedRectangle(cornerRadius: 8).fill(expanded ? Paper.ink.opacity(0.1) : .clear))
         .contextMenu {
             Button(version.named ? "Rename…" : "Name…") { startNaming(version) }
             if version.named { Button("Remove Name") { link.send(.nameVersion(version.id, "")) } }

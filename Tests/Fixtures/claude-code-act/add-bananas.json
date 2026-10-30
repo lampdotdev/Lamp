@@ -1,0 +1,4 @@
+{
+  "call" : "{\"calls\":[{\"name\":\"addGrocery\",\"args\":{\"name\":\"bananas\",\"qty\":null,\"store\":null}}],\"reply\":null}",
+  "reply" : "{\"calls\":[],\"reply\":{\"ask\":false,\"choices\":[],\"text\":\"I added bananas to the list, quantity 1, at the grocer.\"}}"
+}

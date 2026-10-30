@@ -117,6 +117,8 @@ enum PrebuiltStarters {
         build.currentDirectoryURL = project.dir
         build.environment = ProcessInfo.processInfo.environment.merging(["LAMP_LIVE": "1"]) { $1 }
             .merging(try GamePage.buildEnvironment(for: project)) { $1 }
+            // A game or a screen with no Swift of its own is a copy of Lamp's player, as it is on the person's Mac.
+            .merging(GameKit.playerEnvironment(for: project)) { $1 }
         let output = Pipe()
         build.standardOutput = output
         build.standardError = output
@@ -219,10 +221,10 @@ enum PrebuiltStarters {
             }
             return found.subtracting(owned)
         }
-        let shipped = swiftFiles(in: starter.folder)
+        let shipped = swiftFiles(in: starter.tree)
         guard swiftFiles(in: project.dir) == shipped else { return false }
         return shipped.allSatisfy { file in
-            guard let theirs = fm.contents(atPath: starter.folder.appendingPathComponent(file).path) else { return false }
+            guard let theirs = fm.contents(atPath: starter.tree.appendingPathComponent(file).path) else { return false }
             return AppFile.read(project.dir.appendingPathComponent(file), in: project) == theirs
         }
     }

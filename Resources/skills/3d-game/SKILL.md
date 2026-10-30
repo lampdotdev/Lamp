@@ -1,6 +1,6 @@
 ---
 name: 3d-game
-description: 3D games and scenes in a web page with three.js, on any device that runs web, TVs included - the renderer, models, light and materials, physics with Rapier (things that fall, roll, stack and collide, a player that walks on them, a car on its wheels), and what costs the most. Read before writing or changing 3D in a web page.
+description: 3D games and scenes in a web page with three.js, on any device that runs web, TVs included - which library 3D is drawn with, loading it and the renderer on Lamp's game runtime or in a TV or device page, models, light and materials, physics with Rapier (things that fall, roll, stack and collide, a player that walks on them, a car on its wheels), and what costs the most. Read before writing or changing 3D in a web page.
 ---
 
 # 3D in a web page
@@ -10,9 +10,10 @@ host for the page isn't enough on its own, so check WebGL 2 first (below). What 
 more than a phone, and a TV's chip is often slower than a phone's. Nothing here limits what you make; it says what
 costs the most, so you can choose what the game is worth on the devices it's played on.
 
-Lamp ships three.js in two pages: a game's page on its runtime (`make_app_for` with `kind` "game"), and a Samsung or LG
-TV app's page, which is what a game played with phones is for now (the phone-controllers skill). The TV app's page has
-no game runtime: the TV rules say how it loads three.js, and it makes its own renderer and frame loop.
+Lamp ships three.js in two kinds of page: a game's page on its runtime (`make_app_for` with `kind` "game"), and a page
+with no runtime: a Samsung or LG TV app's page, or a device integration's web app whose rules name the 3D library's folder. A page with no
+runtime has no game runtime, no Phaser bridge and no Rapier: it loads three.js from the folder its rules give and makes
+its own renderer and frame loop (below).
 
 A 3D game is made this way by default, on every device Lamp has a host for a page on, the Mac included. 3D in Swift,
 in a Mac app made natively (because the person asked for native, or the app was made so), is the scene-3d skill's
@@ -21,14 +22,64 @@ frameworks. A game whose play is flat is better made in 2D with Phaser (the 2d-g
 TV's browser has no WebGL 2. The game skill holds what every game needs
 (the frame loop, controls, sound, saves); read it too.
 
+A menu that's a place (the game-ui skill) is a list of stops with a camera position for each, eased between in `frame`,
+with the stop and the camera in `snapshot()`.
+
 ## The renderer
 
-The page loads three.js from `Web/three` through the import map in index.html (`three` and `three/addons/`, the
-WebGL build and its addons such as GLTFLoader; nothing is loaded from the network). A game on the runtime makes one
-`THREE.WebGLRenderer({ antialias: true })` and hands it to `game()` in lamp-game.js, which sizes the canvas to
-1920x1080, fits it to the screen and runs your `frame`. Read lamp-game.js's comments first. A TV app's page makes the
-same renderer, sizes it to 1920x1080 at a pixel ratio of 1 (the page is laid out at that size and scaled), and draws
-from its own `requestAnimationFrame`, moving by the time since the last frame.
+### A game on Lamp's runtime
+
+index.html loads lamp.js, then the scaffold's import map, then game.js as a module: keep that. The import map's
+`three` and `three/addons/` come from `Web/three`: the WebGL build and its addons such as GLTFLoader. `three/webgpu`
+and `three/tsl` (node materials, drawing with WebGL 2) are added once the page imports them, and only a heavy scene
+needs them. Nothing else is there, so no Draco or KTX2 files (the `assets` tool brings in none), and nothing is
+loaded from the network. Physics is
+Rapier, mapped in the import map when a game needs it (Physics, below).
+
+game.js makes one `THREE.WebGLRenderer({ antialias: true })` and calls `game({ renderer, init, frame, touch })` from
+lamp-game.js once:
+
+- Lamp sizes the canvas to 1920x1080 and fits it to the window or screen.
+- `init` runs once, before the first frame. It may be async, to load models with
+  `new GLTFLoader().loadAsync('ship.glb')` or sounds; make or load every sound here. It starts the game where
+  `pendingRestore()` says, after a change of its code: `const was = pendingRestore();` then the level, the player,
+  the camera and the open menu or overlay from `was` when there is one, and the title or intro only when there isn't
+  (the game skill, "Changes while it's played"; the game-ui skill says what the title and menus are).
+- `frame(f)` runs about 60 times a second. It reads the controller as `f.pads[0]`, moves things by `f.dt` (and
+  `f.time`), and ends with `renderer.render(scene, camera)`.
+- `touch` names the buttons Lamp's touch controls show on a phone or tablet.
+- game.js only puts the parts together, and keeps the renderer, the scene, the camera, the lights and the world's parts
+  with `hot(import.meta).keep` (the game skill, "Changes while it's played", has the recipe). The world is built in parts (the ground, the
+  buildings, the trees and street details, the props, the traffic), each in a module of its own and into a group of
+  its own, so a change to one part builds only that part again; each thing that moves or changes in play (the player,
+  a vehicle, the camera, enemies, the HUD's code) is a class in a module that ends with `hot(import.meta).accept()`,
+  so a change to its methods goes into the running scene with nothing built again. A uniform's value or a material's
+  color set in an `update` swaps; a material made anew compiles its shader again as it's first drawn.
+
+A page laid out at the window's size whose HUD is its own HTML (a strategy game, a page made for phones as well as
+TVs) passes `fill: true` to `game()` and places and sizes its canvas itself, drawing it smaller when frames run slow;
+the rest of this section is for a game drawn at 1920x1080.
+
+When frames run slow, Lamp draws the game smaller and scales it up to the screen by itself (`sharp: true` in `game()`
+keeps it at 1920x1080), so size anything drawn off-screen (a render target, a post-process pass) from
+`renderer.getSize()`, never from 1920x1080. Read lamp-game.js's comments first: they're the whole interface.
+
+### A page with no runtime (a TV app, a device's web app)
+
+The page's rules name the folder Lamp writes three.js in and the path the page reaches it at (`./three/` in a Samsung
+or LG TV app's Web/). Lamp writes that folder before every build: never edit it. In index.html, after lamp.js, put the
+import map with that path:
+
+```html
+<script type="importmap">{ "imports": { "three": "./three/three.module.js", "three/addons/": "./three/addons/" } }</script>
+```
+
+then the 3D code in a `<script type="module">` (or a module file of your own beside it), with
+`import * as THREE from 'three'` and addons from `'three/addons/…'`. Use this three.js for anything 3D, never another
+engine or one from the network. Make the renderer yourself, sized to 1920x1080 at a pixel ratio of 1 (the page is laid
+out at that size and scaled), and draw from your own `requestAnimationFrame`, moving everything by the time since the
+last frame. Modules and import maps need a newer TV browser than the oldest the TV rules allow for, and three.js needs
+WebGL 2 (next).
 
 The three.js Lamp ships asks the browser only for a WebGL 2 context and stops with an error when it gets none, so
 WebGL 2 comes before anything else here: check on the device that a canvas gives one (log whether
@@ -38,9 +89,18 @@ device) or tell the person why 3D in a page can't run there.
 
 ## Models, light and materials
 
-- Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
-  mismatched models, and cost little. A model the game needs (a .glb) goes in Web/ and loads once in `init` with
-  `new GLTFLoader().loadAsync('ship.glb')`.
+- Before building a game's buildings, vehicles, characters or trees in code, look in Lamp's free models (`assets` with
+  `find` and `show`; the assets skill): many distinct things, and anything that walks or runs, come out better
+  ready-made. Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
+  mismatched models, and cost little. Build each character and prop as a `THREE.Group` of them in a function of its
+  own (a body, a head, eyes that blink, wheels that turn, a tail that wags), its parts named so they can move, and
+  give it a little life: a bob, a lean into a turn, a squash on landing. A model file (a .glb) is one the person
+  gave or named, or a ready-made one from the `assets` tool (buildings, vehicles, characters with animations, trees:
+  the assets skill says when they suit and how to scale, turn, copy and animate them). It goes in Web/ and loads once
+  in `init` with lamp-game.js's `model('ship.glb')` (a group holding its scene, with `group.animations`), and a picture with
+  `texture('bricks.png', t => { t.colorSpace = THREE.SRGBColorSpace; })`: a new copy of either goes into the running
+  game, inside the same group or texture. A clone of the model, or a mixer playing its animations, is made again in
+  `assetChanged(path)` (the game skill, "Changes while it's played").
 - One or two lights computed in the shader are the safe start. MeshStandardMaterial looks good under them;
   MeshLambertMaterial or MeshBasicMaterial cost less.
 - Make every mesh, material and texture once in `init` and reuse it; many copies of one shape are one
@@ -200,3 +260,4 @@ Some platforms might not be powerful enough to run three.js.
 `look_at_app` draws the preview on this Mac, which can't show a device's speed; its stats count draws and triangles a
 frame, to compare with the budget in the request's device line. `look_at_app` with `on_device` opens the game where
 Try On points and shows its log, with the real frame times.
+Play it as the game skill's "Playtesting" says before you finish.

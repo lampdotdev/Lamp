@@ -49,9 +49,42 @@ enum WishKeys {
         }
     }
 
+    /// The wish's key when it has one, never making one: for what's done as the wish goes.
+    static func existing(for wish: LampProject) -> Data? {
+        lock.withLock {
+            let url = file(for: wish)
+            if let key = known[url.path] { return key }
+            guard let kept = try? Data(contentsOf: url), let key = Data(base64Encoded: String(decoding: kept, as: UTF8.self).trimmed),
+                  key.count == WishChannel.keySize else { return nil }
+            return key
+        }
+    }
+
     private static func file(for wish: LampProject) -> URL {
         let name = (wish.instance.isEmpty ? wish.id : wish.instance).map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "_" }
         return folder.appendingPathComponent(String(name))
+    }
+}
+
+/// Where Lamp keeps each wish's shared collections and shared files (`WishKeeper`, in the relay): in Lamp's own folder
+/// (each edition and instance its own, `Edition.supportFolder`), never the wish's, which the agent's commands read and
+/// versions and shared files carry, and which the agent's sandbox closes as it closes every Lamp's folders. Each wish's
+/// folder is named by its tag (`WishChannel.tag`, which only the wish's key makes and which says nothing of the wish), and
+/// what's in it is sealed with a key from the wish's key, which is kept apart (`WishKeys`). Gone with the wish.
+enum WishKeep {
+    /// For tests, which keep theirs apart from any Lamp's.
+    nonisolated(unsafe) static var folder = Edition.supportFolder.appendingPathComponent("Shared Data")
+
+    static func folder(for key: Data) -> URL {
+        folder.appendingPathComponent(WishChannel.tag(for: SymmetricKey(data: key)).map { String(format: "%02x", $0) }.joined(), isDirectory: true)
+    }
+
+    /// The wish is gone: what Lamp kept of what its apps share goes with it, here and in a room still open.
+    @MainActor
+    static func forget(_ wish: LampProject) {
+        ControllerRelay.endRoom(WishRooms.key(for: wish), forget: true)
+        guard let key = WishKeys.existing(for: wish) else { return }
+        try? FileManager.default.removeItem(at: folder(for: key))
     }
 }
 
@@ -129,7 +162,7 @@ final class WishClaims: @unchecked Sendable {
 enum WishRooms {
     /// What this Lamp's apps of a wish say to each other, numbered as LampSupport.swift, LampSupport.kt and lamp.js number
     /// it (`wire` in each): an app in the room that says less was built by an earlier Lamp.
-    static let wire = 6
+    static let wire = 7
 
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
     static func key(for wish: LampProject) -> String { "wish:" + wish.id }

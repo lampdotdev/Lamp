@@ -5,6 +5,70 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.29.0
+
+- A new look: Lamp is on paper with stripes, in light or dark to match your Mac. The desk is one list, your wishes
+  on top and the starter apps below, in a section you can fold away. The Dock icon brings it back whenever it's hidden.
+- Remix changes a wish in place. Duplicate… makes a new copy, and Start Again from the Original starts its
+  conversation over too.
+- Change a game while you play it: most changes go straight into the running game, without starting your level or
+  your drive over.
+- One change reaches every screen a wish is on: open pages update at once, and Reload puts it everywhere.
+- Lamp keeps a wish's shared data, so a TV or tablet that opens on its own gets your family's calendar, shopping and
+  photos without another screen open.
+- Phones as controllers: games on the Mac, an iPhone or iPad, a Samsung or LG TV and the Xbox let phones on your
+  Wi‑Fi join as players.
+- Games can use free 3D models, art, sound effects and music, and be written in TypeScript.
+- The Xbox controller moves around TV apps and screens, and an app starts once it's really installed.
+- New starter: The Little House, a cozy room on a rainy night. New York offers a sports car, taxi fares, and playing
+  as a monster.
+- A menu bar app tells you where it is when it opens, ⌘Q works in games, and a long-running wish no longer fails
+  with a connection error.
+
+## 0.28.0
+
+- Remix a game or an app straight from its page. Remix opens the untouched original on your desk, with your request
+  waiting in its chat.
+- Make any project on GitHub into a Lamp app or game: paste its link and say what you want. Lamp keeps its credits
+  and licences, and an app made from GitHub or opened from a wish there tells you when an update is available. You
+  review it before your app changes.
+- Games aim to be fun from the first build, and "Make it a lot more fun" is one of the changes New York offers.
+- Home HQ listens: ask it something, or tell it to add an event or a chore.
+- A wish's chat stays with it when its app plays on another device, and Lamp offers its own panel when an app can't
+  show the chat beside it.
+- Android: a phone or TV is checked as you choose it, an Android TV keeps its place in a wish, and setting one up
+  over Wi‑Fi walks you through it.
+- Starters each have their own page on GitHub, with a picture and a way to try them.
+
+## 0.27.0
+
+- The desk shows your devices on a shelf between your wishes and the box where you wish.
+- Remix with git underneath:
+  - A wish remembers exactly what it was made from.
+  - Update from GitHub brings in the latest of the wish it came from, merging it with your own changes.
+  - Send Changes Back offers yours to it.
+- Starter wishes live on GitHub. A starter you've changed can take its starter's updates and send your changes back,
+  and New York has the latest Slop New York.
+- Share a screen or a web app as a file, put it on GitHub, or make it a starter, as you can a game.
+- A game opened again after a change starts where you were, without its title screen in the way.
+- Open Settings works from the chat beside an app, and comes up in front of it.
+- The Chrome sidebar is gone.
+
+## 0.26.0
+
+- Games change while you play them. New pictures, models and sounds appear in place, a change to the game's code
+  puts you back where you were (the level, your position, the camera, the score), and a change made during a match
+  waits for a pause or for you to press Reload. On an iPhone, Android, a TV or an Xbox, the game picks up where you
+  left off after Lamp installs the change.
+- Games and screens open on the Mac in about a second, and no longer need Apple's developer tools unless they read
+  your own things like your calendar or photos.
+- Open a wish from GitHub: File → Open from GitHub… takes a repository's address, and the wish's credits say where it
+  came from.
+- Adding a starter wish opens it.
+- Your Devices tells the devices you've set up apart from ones Lamp only found on your network, which may be a
+  neighbor's, and every found device offers Set Up….
+- A game made inside a wish has the wish's chat beside it.
+
 ## 0.25.0
 
 - Apps build again with Xcode 26. Since 0.24.0 they only built with the Xcode 27 preview.

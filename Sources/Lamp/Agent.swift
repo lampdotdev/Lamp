@@ -57,7 +57,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,remove_app,connectors,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -72,7 +72,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + deviceRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + githubRules + deviceRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -86,7 +86,8 @@ enum Agent {
     kind of file (`opens` in capabilities.json), whatever its code does. So "not found" or a failed open \
     there can mean "closed to you" or "not declared": never read it as a fault in the app's code. To \
     read a file elsewhere, use your file tools, which ask the user. `gh` can't see its sign-in there: \
-    clone public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`.
+    clone public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`; `lampify` \
+    reaches a private one with the person's sign-in (`read_only: true` to read it without crediting it).
     """
 
     private static let lookRules = """
@@ -177,7 +178,8 @@ enum Agent {
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `plan` for what \
     you're building; `progress` for a line on how longer work is going; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
-    (the iPhone, the Mac or a TV), and `remove_app` when they want one of the wish's apps gone. A change of mind \
+    (the iPhone, the Mac or a TV), `remove_app` when they want one of the wish's apps gone, and `rename_app` when they \
+    ask for a new name, never only the name in its code or headings. A change of mind \
     ("never mind, make it a timer instead") changes the app the wish has, in its own code and, when what it's made for \
     changes, with `make_app_for` and its folder in `app`; one more app of another kind ("an Android app as well") is \
     `another`, only once they chose it when you asked them with `ask`, before changing anything; two apps of one kind \
@@ -219,6 +221,8 @@ enum Agent {
     to the progress over a faint or outlined copy, so it reads as empty at zero; never paint the empty state too. \
     Look at each picture before using it (call it again with a better subject if it's wrong). When nothing can make pictures, use \
     SF Symbols in the app's palette instead, never a picture drawn in code: Lamp offers the user a way to set that up.
+    - `assets` finds free ready-made models, sprites, tilesets, icons, textures, sounds and music and brings the chosen ones into the \
+    app, credited; read the assets skill before using it.
     """
 
     /// Rides with a message the person sent while the agent worked (`Store.handOver`), not in the system prompt:
@@ -289,7 +293,19 @@ enum Agent {
     /// changes between turns.
     private static let setupRules = """
 
-    - The end of a request says what AI this app can use right now: text, decisions and pictures, each with \
+    - Never put AI into an app the person didn't ask for. It's one thing to keep in mind, not the point: most apps \
+    need none, and exact rules, dates, timing and anything that must be right stay code. Where AI would really \
+    add something to a new app (understanding what they type or say, reading what they hand it, drafting), ask \
+    before writing any of it, with one `ask`: what they're making and what AI would do in it, in their words \
+    ("I see you're making a recipe box. Want AI to turn a pasted recipe into a card and find recipes by what's \
+    in your fridge?"), answered No thanks or Yes, in that order. Then build: with that AI after a yes, without it \
+    otherwise. Where it wouldn't, build without it and say nothing about AI. A no is for that app alone: note it \
+    in its APP.md (never in Lamp's notes about the person) and don't offer AI in that app again unless they bring \
+    it up, but still offer it in other apps where it fits. Don't offer it for small changes either. It's asked for only when the request \
+    itself is for what AI does (summarize these, understand what I say): then build it. Where AI changes things, \
+    it goes through the app's own checked reads and writes, never a plan the app runs unchecked. The app-ai skill \
+    (or web-app for a page) says how.
+    - The end of a request says what AI this app can use right now: text, decisions, pictures and actions, each with \
     what answers it, or "nothing can answer yet". Build for what's there. When a feature needs one that \
     isn't set up, or would be clearly better with one that only works a slower way, build it anyway, have \
     the app check `LampAI.isAvailable` and say so where the feature is, and call `offer_setup` once: Lamp \
@@ -298,6 +314,14 @@ enum Agent {
 
     /// Which services there are and how to build on each is the tool's answer (Connectors), so this stays one
     /// rule however many there are.
+    private static let githubRules = """
+
+    - When a request names a project on GitHub, open the github-projects skill with `read_skill` and do what the request \
+    asks. To make an app from it, read it in a git clone as the skill says and call `lampify` before using any of its \
+    code or assets, and again when the app is done. A project the person names is that project, with its author's \
+    credit: never rewrite it from memory in its place.
+    """
+
     private static let connectorRules = """
 
     - When a wish needs a service the person uses (their Notion, Airtable, GitHub, Home Assistant…) that the \
@@ -385,7 +409,8 @@ enum Agent {
     a request touches what they cover; not otherwise, since reading costs the person. Follow them, but what \
     the person asks now wins: do that and correct the note. Before you finish each request, ask yourself \
     whether it showed you something that should hold next time: they corrected you, said what they like or \
-    don't, turned something down, or put it as general (“in anything I use”, “I can't stand…”). If so, save \
+    don't, turned something down, or put it as general (“in anything I use”, “I can't stand…”). A no to AI in one \
+    app isn't one of these: it's that app's, in its APP.md, unless they put it as general. If so, save \
     it then; they needn't say "remember". How to go about this one request (“don't test it”, “be quick”) is \
     not that: it is an instruction for now, not a taste, and isn't noted about them or the app. If nothing \
     lasting came up, save nothing. \
@@ -458,13 +483,9 @@ enum Agent {
 
     static func kindPrompt(for project: LampProject) -> String { project.platform.target.guidance.prompt(project) }
 
-    /// The Mac prompt, made once for each state of Apps in Chrome: its rule is only for a Lamp where it's on, and the
-    /// switch can change while Lamp runs.
-    static var systemPrompt: String { BrowserBridge.enabled ? macPromptWithSidebar : macPrompt }
-    private static let macPrompt = prompt(platform: .mac, device: "Mac", sidebar: false)
-    private static let macPromptWithSidebar = prompt(platform: .mac, device: "Mac", sidebar: true)
+    static let systemPrompt = prompt(platform: .mac, device: "Mac")
 
-    static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name, sidebar: false) }
+    static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name) }
 
     /// An app for both gets both kinds' rules, each said to be for its half, after one rule on how the halves
     /// share one code: so a block or a design given to one kind is given to the pair in the same place.
@@ -479,10 +500,10 @@ enum Agent {
         let onMac = "On the Mac", onPhone = "On iPhone and iPad"
         let wishRules = part == nil
         var rules = [Rules.edit] + (wishRules ? [Rules.ask, Rules.shell] : []) + [Rules.universal, Rules.universalFrameworks,
-                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
+                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.share, Rules.store, Rules.kinds(mac: true), Skills.index(Skills.offered(.universal, sidebar: BrowserBridge.enabled)),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.share, Rules.store, Rules.kinds(mac: true), Skills.index(Skills.offered(.universal)),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.ai]
         rules += (wishRules ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs, Rules.universalTry]
@@ -498,16 +519,15 @@ enum Agent {
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the rules of its kind alone, without the
     /// ones about the wish as a whole (asking, the shell, the icon, how to talk and finish), which the wish's own prompt has.
     /// `alone`: it's the wish's only app, so nothing about reaching the others.
-    static func prompt(platform: Platform, device: String, sidebar: Bool, part: String? = nil, alone: Bool = false) -> String {
+    static func prompt(platform: Platform, device: String, part: String? = nil, alone: Bool = false) -> String {
         let mac = platform == .mac
         var rules = [Rules.edit] + (part == nil ? [Rules.ask, Rules.shell] : []) + [
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.share, Rules.permissions] }
-        if mac && sidebar { rules.append(Rules.browserCompanion) }
         rules += [Rules.script, Rules.intents, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.share, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac), Skills.index(Skills.offered(platform, sidebar: mac && sidebar))]
+        rules += [Rules.store, Rules.kinds(mac: mac), Skills.index(Skills.offered(platform))]
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated, Rules.ai]
             + (part == nil ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -591,6 +611,15 @@ enum Agent {
         device lookup once per turn, after the simulator app opens.
         """
 
+        /// Said with `make_app_for`'s answer when it makes a new app, which is read just before the app is built: the
+        /// AI rule (`setupRules`) at the moment it decides what goes in, so it isn't lost among the setup rules.
+        static let newAppAI = "Before writing it, decide about AI. None goes in unless the request asked for what AI does. Would "
+            + "AI do something for them here that code can't: understand what they type or say, read what they paste or drop in, "
+            + "draft? A recipe box (turn a pasted recipe into a card), meeting notes (a summary and the follow-ups) and a "
+            + "journal (looking back over a month) would; a timer, a calculator, a habit tracker or a unit converter wouldn't. "
+            + "If it would, your next call is one `ask` (\"I see you're making… Want AI to…?\", No thanks then Yes): write nothing "
+            + "until the answer comes, and build that AI only after a yes. If it wouldn't, build without it and say nothing about AI."
+
         static let edit = """
         - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.
         """
@@ -600,7 +629,8 @@ enum Agent {
         for, what goes in it, what it remembers), choose what suits most people, and build: they'll change it as \
         they use it, and a wrong guess costs one more request. Ask before building only when one answer would \
         make a different app: whether it's useful at all, what it needs to reach (their calendar, contacts, an \
-        account), what it costs them, or whether it acts outside the app (sends, books, writes to a calendar). \
+        account), what it costs them, whether it acts outside the app (sends, books, writes to a calendar), or \
+        whether AI goes in it, where AI would add something definite they didn't ask for (the rule on AI). \
         Then ask that one thing with `ask` (`steps`, one question), its likely answers lowest-impact first; \
         if they leave it to you, take that first one, such as suggesting times rather than adding them. Change \
         no files until the answer comes; if it opens another such question, ask that too. An answer chooses \
@@ -619,9 +649,8 @@ enum Agent {
         run it yourself, and build it only where a rule here says to check that it compiles. When you finish, Lamp \
         {{RELAUNCH}}, and if the build fails your next message will contain the compiler errors to fix. If \
         something you need is denied or unavailable, say plainly what you need (for \
-        example "attach the files"); a refused command is final, so never say the user will be asked to approve it. To read a GitHub repo, clone it shallowly into \
-        .lamp/reference/ (`gh repo clone owner/name .lamp/reference/name -- --depth 1` when gh is installed, which \
-        also works for private repos; otherwise `git clone --depth 1`); it's reference only, not part of the app. \
+        example "attach the files"); a refused command is final, so never say the user will be asked to approve it. \
+        A file you download only to read goes in .lamp/reference/, never in /tmp. \
         Never tell the user to approve prompts or change \
         permission settings anywhere else: Lamp is the only place they can approve anything.
         """
@@ -639,20 +668,6 @@ enum Agent {
         `WindowGroup`; the app is built for iPhone and iPad. Package.swift and build.sh belong to Lamp and are \
         written afresh before every build, so an edit to either is lost: no dependencies, plugins, compiler flags \
         or build steps; everything the app needs goes in Sources/.
-        """
-
-        static let browserCompanion = """
-            - Some wishes are about web pages: keeping what's found on them (recipes, articles, products, places), \
-            understanding or comparing what's being read, doing something with a passage. A wish that says online, \
-            from the web, a site, a link or an article is one, even when it doesn't name Chrome. For those, the Mac app \
-            always also gets a sidebar in Chrome, beside the page: a small web page of the app's own, which the app \
-            serves itself with `LampBrowser.startPage`. Decide that from the wish yourself, never ask; make the sidebar one of `plan`'s parts (its \
-            files: browser.json and Assets/Sidebar/), and say it in one line of your reply, like "Recipe Box also works \
-            in Chrome, beside recipe pages." Lamp's one extension frames every app's page: never write extension \
-            code, a web server of your own, or browser automation. Open the chrome-sidebar skill with `read_skill` \
-            before writing or changing browser.json, the page or the app's side of it, and follow it: it says which \
-            pages the sidebar fits, its right-click item, how the page talks to the app and reads the page, how it \
-            looks, and how to try it before finishing.
         """
 
         static let macBlocks = """
@@ -871,11 +886,12 @@ enum Agent {
 
         static let ai = """
         - AI inside the app: Apple's on-device frameworks first (text in pictures, speech, reading aloud, language, \
-        sounds, translation), then `LampAI` for open-ended text and pictures; never an AI API or a key. Decisions \
-        (`LampAI.isTrue`, `choose`, `rate`, `decide`) are your default for anything that depends on meaning: use them \
-        without being asked whenever the app sorts, filters, labels, groups, matches or flags things by what they \
-        are, never keyword lists or regexes. Open the app-ai skill before writing any of it, and follow it: it also \
-        says how to hand the AI text the person didn't write, and dates.
+        sounds, translation), then `LampAI` for open-ended text and pictures; never an AI API or a key. LampAI goes in \
+        only when the person asked for it or said yes when you offered it. There, where the app judges things by what \
+        they mean (sorts, filters, labels, groups, matches or flags them), decisions (`LampAI.isTrue`, `choose`, \
+        `rate`, `decide`), never keyword lists or regexes; where an exact rule decides, code. Doing what the person asks is `LampActSession`'s checked reads and writes. Open the app-ai skill before \
+        writing any of it, and follow it: it also says when AI belongs at all, what to write in APP.md, setup, how to \
+        hand the AI text the person didn't write, and dates.
         """
 
         static let icon = """
@@ -897,7 +913,9 @@ enum Agent {
         from a repository, a library copied in, a model, a picture, a sound, a font, data), add it to `upstream`: \
         `{"name": "Slop New York", "author": "Mr.doob", "url": "https://github.com/mrdoob/slop-newyork", "commit": \
         "<full commit hash>", "license": "MIT", "licenseFile": "Web/LICENSE-slop-newyork"}`, with the license as its SPDX id \
-        (left out when it has none) and its license text kept in the app beside the work. Never take anything out of \
+        (left out when it has none) and its license text kept in the app beside the work. A project on GitHub is credited \
+        by `lampify`, which writes its entry at the commit it pinned and its license files itself, and marks the project \
+        the app is made from (`"adapted": true`): Lamp brings the person its updates from there. Never take anything out of \
         \(Credits.file), never remove or change a license or a notice of someone else's, and never take an author's \
         name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license can be used here but \
         not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \
@@ -1061,6 +1079,11 @@ enum Agent {
             "PI_CODING_AGENT_DIR": configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
+            // Lamp's extension compacts pi's conversation here (lamp-tools.ts), as the other engines are told to.
+            "LAMP_COMPACT_TOKENS": String(Conversation.compactAt),
+            // And keeps its pictures few the way Lamp does for the others (`keepsPicturesFew` there).
+            "LAMP_KEEP_PICTURES": String(Conversation.keepPictures),
+            "LAMP_TRIM_PICTURES": String(Conversation.trimAbove),
         ]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor

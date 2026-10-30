@@ -94,6 +94,8 @@ public struct SidebarState: Codable, Equatable {
     public var publish: SidebarPublish?
     /// The Put on GitHub card, while it's open in this chat (`SidebarCommand.repo`): shown in the chat's place.
     public var repo: SidebarRepo?
+    /// The Send Changes Back card, while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
+    public var contribute: SidebarContribute?
     /// Try On's choices, for a wish that opens anywhere but this Mac alone (an iPhone app, a TV app, a game, a screen):
     /// the bar's device button opens them, and a click is `SidebarCommand.tryOn`. Nil for a Mac app, which has none.
     public var tryOn: SidebarTryOn?
@@ -215,6 +217,8 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canShare: Bool
     /// Its page can be published (a game drawn with three.js, while the experiment is on): the share menu offers it.
     public var canPublish: Bool?
+    /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
+    public var canContribute: Bool?
     /// It has versions to look back at.
     public var hasVersions: Bool
     public var details: Bool
@@ -619,6 +623,8 @@ public enum SidebarCommand: Codable, Equatable {
     case publish(SidebarPublishCommand)
     /// The Put on GitHub card: open it, or what was done on it.
     case repo(SidebarRepoCommand)
+    /// The Send Changes Back card: open it, or what was done on it.
+    case contribute(SidebarContributeCommand)
     /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
     case tryOn(String)
     /// Try On's menu opened: Lamp looks for devices, as when Lamp's own Try On opens, so the list is the one now.
@@ -891,6 +897,42 @@ public struct SidebarRepo: Codable, Equatable {
         self.license = license
         self.canChooseLicense = canChooseLicense
     }
+}
+
+/// The Send Changes Back card as Lamp has it (`ContributeCard`): everything on it is Lamp's, worked out before the
+/// person confirms.
+public struct SidebarContribute: Codable, Equatable {
+    public var name: String
+    public var icon: Data?
+    public var stage: ContributeCard.Stage
+    /// "owner/name", where the changes go.
+    public var upstream: String?
+    /// "login/name", the person's fork they go through, once known.
+    public var fork: String?
+    public var credit: String?
+    public var notes: [String]
+    public var size: String?
+    public var copied: Bool
+    /// Send Changes Back can be pressed: it's ready, or a try failed and can be made again.
+    public var canSend: Bool
+
+    public init(name: String, icon: Data?, stage: ContributeCard.Stage, upstream: String?, fork: String?, credit: String?,
+                notes: [String], size: String?, copied: Bool, canSend: Bool) {
+        self.name = name
+        self.icon = icon
+        self.stage = stage
+        self.upstream = upstream
+        self.fork = fork
+        self.credit = credit
+        self.notes = notes
+        self.size = size
+        self.copied = copied
+        self.canSend = canSend
+    }
+}
+
+public enum SidebarContributeCommand: Codable, Equatable {
+    case open, send, fix, openRequest, copy, close
 }
 
 public enum SidebarRepoCommand: Codable, Equatable {

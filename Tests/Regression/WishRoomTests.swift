@@ -76,6 +76,35 @@ final class WishRoomTests: XCTestCase {
         phone.socket.cancel(with: .goingAway, reason: nil)
     }
 
+    /// Lamp's own word (a page's change) reaches only the copies it names, from the relay's own name, which no app can
+    /// take: a page trusts it as Lamp's.
+    func testLampsWordGoesToTheCopiesItNamesAsLamps() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let tv = try await join(address, as: "tv", device: "TV")
+        _ = try await tv.next()
+        let phone = try await join(address, as: "iphone", device: "iPad")
+        _ = try await phone.next()
+        _ = try await tv.next()   // joined
+        let reached: [String] = await withCheckedContinuation { done in
+            relay.say(in: room, to: ["tv", "android"], data: ["lampPage": ["i": 0]]) { done.resume(returning: $0) }
+        }
+        XCTAssertEqual(reached, ["tv"], "only a copy that's there")
+        let heard = try await tv.next()
+        XCTAssertEqual(heard["t"] as? String, "message")
+        XCTAssertEqual(heard["from"] as? String, WishChannel.relayName)
+        try await phone.send(["t": "send", "to": "tv", "data": "next"])
+        let next = try await tv.next()
+        XCTAssertEqual(next["from"] as? String, "iphone", "the iPad heard nothing of Lamp's word")
+
+        relay.configureRoom(room, key: key, apps: apps.merging(["lamp": ("mac", "an app named like the relay")]) { $1 })
+        let impostor = try await join(address, as: "lamp", device: "Mac")
+        let answer = try? await impostor.next()
+        XCTAssertNotEqual(answer?["t"] as? String, "welcome", "no app takes the relay's name")
+        tv.socket.cancel(with: .goingAway, reason: nil)
+        phone.socket.cancel(with: .goingAway, reason: nil)
+    }
+
     func testOnlyAnAppHoldingTheWishsKeyGetsIn() async throws {
         let (relay, address) = try await start()
         defer { relay.stop() }

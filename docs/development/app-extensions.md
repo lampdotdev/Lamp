@@ -5,8 +5,8 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 ### 3D scenes and games
 
 Every prompt offers the `game` skill, for games of every kind and either make (Lamp's game runtime in a page,
-SpriteKit in Swift, an integration's own), the `2d-game` skill, for 2D: Phaser in a page of the game kind, played
-wherever a page goes, or SpriteKit in a Mac or iPhone app, which stays on Apple's devices, and when to choose which;
+SpriteKit in Swift, an integration's own), the `game-ui` skill, for a game's screens whatever it's made with, the
+`2d-game` skill, for 2D: Phaser in a page of the game kind, played wherever a page goes, or SpriteKit in a Mac or iPhone app, which stays on Apple's devices, and when to choose which;
 and the `3d-game` skill, for three.js in a page on any device that runs
 web. 3D in Swift is the `scene-3d` skill
 (RealityKit, Mac apps, offered only on a Mac with macOS 15, where RealityView begins), with the `maps` skill beside it
@@ -27,6 +27,39 @@ agent to compare with a reference picture. `look_at_app` with `motion` works for
 watches the front window for about two seconds and writes what changed frame to frame (`motion.json`, the two
 most different frames beside it), and `Runtime.motion` puts that in words; it's how flicker is caught, which a
 single picture hides.
+
+Ready-made models, art, sounds and music come from Lamp's index of free work (`AssetCatalog`, Resources/asset-catalog.json),
+through the `assets` tool and the `assets` skill, offered to every prompt (`Skills.everywhere`). Lamp ships the index,
+never the files: `scripts/update-assets.py` writes it, reading each license where the work is published (each model's
+listing on Poly Pizza, each pack's page and its own license file on OpenGameArt, ambientCG's license page and API) and
+keeping only CC0 and CC-BY (`AssetCatalog.licenses`, checked again as Lamp reads the index, so a bad refresh offers
+nothing it shouldn't). It downloads every file, pins it by SHA-256, reads each .glb for its triangles, its box through
+the node transforms, its largest picture and its animations, refuses one that needs a decoder Lamp's three.js lacks
+(Draco, meshopt, KTX2), and leaves out a model far from its own origin or thousands of units across (a piece of a
+scene, which can't be placed by its box). Kenney's 2D packs and interface sounds come from OpenGameArt, where he published them, since his
+own site hands out short-lived links, as do SubspaceAudio's effects and music; Poly Pizza's static files and ambientCG's
+downloads are stable. Sounds and music (`AssetCatalog.audioKinds`, listed clip by clip in `OGA_SOUNDS`) are .wav or .ogg:
+the script decodes each whole with macOS's `afconvert`, refuses one that's empty or silent, takes its length from
+what it decoded, and refuses one that decoder leaves well short of ffmpeg's result. Apple's Vorbis decoder, WebKit's and
+AVFoundation's, loses up to about 40 ms at the start of a file, which is all of Kenney's clicks and ticks; the file still
+loads and shows as played in a preview's log, so only this check finds it. Those clips aren't listed, and menu sounds
+come from SubspaceAudio's WAV files instead. A clip the pack's page also publishes on its own, byte for byte, is fetched as itself rather than out
+of its archive, so one music loop doesn't cost a 33 MB download. `update-assets.py --sounds` refreshes only those packs.
+They skip everything done to pictures and have no picture for `show`. Their list is CC0 alone, since a CC-BY track also
+needs its credit shown in the app. Playback is the runtimes' own: no sound library is added for these. A game looks here before writing a sound in code
+(the game skill's "Sound", `Rules.gameWebSound`, `Rules.gameSound`), since a request for sound alone doesn't lead an agent to this tool. `find` searches
+the index by words and kind and leaves out what's heavier than one model should be on the slowest place the app is
+shown (`AssetCatalog.budget`, a share of `Rules.gamePlaces`' frame budget); `show` draws the found assets' pictures
+into one numbered sheet for the agent. `fetch` downloads each file (an archive once, kept by its hash in Lamp's own
+folder, which commands can't write), checks its hash, takes out only the files the index names (`Zip`, Lamp's own
+reading of the archive; `AssetCatalog.items` leaves out a file whose name would land on another's in its pack's folder), makes a model's pictures smaller where the place needs it (`GLB.shrinkingPictures`, the
+binary chunk laid out again) and a lone picture likewise (an atlas's sheet stays, since its XML gives places in
+pixels), and writes them with `AppFolder` into Web/assets/<pack>/ (any app with a page), app/src/main/assets/<pack>/ (a native
+Android app, whose build packages that folder) or Assets/<pack>/. Nothing
+fetched is run or made executable. Each is credited in credits.json as it's written (`AssetCatalog.credits`: a pack of CC0 work once,
+CC-BY work as itself, each with its `files`), never as what the wish is based on, and one whose credit the wish can't
+keep (`Credits.maxEntries` sources already) isn't brought in. The budget is the least any of the app's places allows. Making a model when nothing fits
+(text- or image-to-3D) isn't built: the PR that added the catalog has the design.
 
 Physics is the engine's own for each make, and its guidance is in the skill for that make: Rapier for a three.js game
 (the `3d-game` skill; how it's put into a game is in [devices](devices.md)), RealityKit's `PhysicsBodyComponent`,
@@ -198,14 +231,17 @@ the service that runs them is refused, and running one reports success and does 
 chosen in Settings → Building and this Mac has its Apple Development certificate (`Devices.signingIdentity`),
 `Store.deploy` signs a Mac app with that, from the login keychain where Xcode keeps it
 (`AppSigning.command(ownKeychain: false)`), widget first as before; otherwise it takes `Metadata.appintents` out
-of the app and its widget and signs with Lamp's certificate. Moving between the two changes the app's signature,
+of the app (not its widget's, whose buttons run them inside the widget, which needs no team) and signs with Lamp's
+certificate. Moving between the two changes the app's signature,
 which macOS treats as a new app: its permissions are cleared once and the chat says so (the same path as any
 change of certificate). The team's certificate keeps its name through Apple's yearly renewal, which is what the
 signature's requirement names, so permissions last as long as with Lamp's own. The agent is told the rule
 (`Agent.Rules.macIntents`), and `look_at_app` says why when a Mac app with intents was installed without them
 (`Store.intentsHint`, read off the installed copy: no Xcode, no team, or a team whose key wasn't allowed). A team
 chosen later brings them back: it's part of such an app's fingerprint, and opening one installed without them
-builds it again once a team can sign it (`Store.intentsCanComeBack`). Settings → Building shows the team (`PhoneSigningSection`, "Signing") with an iPhone or
+builds it again once a team can sign it (`Store.intentsCanComeBack`), when its build has intents for the app
+itself to give (`Store.buildCanGiveIntents`): an app whose intents are all its widget's has none of its own to put
+back, and building it on every open would never change that. Settings → Building shows the team (`PhoneSigningSection`, "Signing") with an iPhone or
 iPad app, which needs one, or when this Mac has a team's certificate; with only Mac apps, None is a choice and
 nothing is chosen for the person.
 

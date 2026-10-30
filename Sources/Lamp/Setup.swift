@@ -40,7 +40,12 @@ struct SetupCheck {
         // Whether Claude Code or Codex is there depends on the look for the person's own copy, which takes a few
         // seconds at launch: judged before it's done, a Mac with one showed the setup screen until it finished.
         if Builder.engine != .pi, !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
-        var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(), builderProblem: Builder.problem(),
+        // Claude Code or Codex without its sign-in can't build yet, and a request let through to it would be lost.
+        await EngineSignIn.refresh(olderThan: 5)
+        let engine = Builder.engine
+        let signedOut = await MainActor.run { engine != .pi && EngineSignIn.known[engine] == false }
+        var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(),
+                               builderProblem: Builder.problem() ?? (signedOut ? "Sign in to \(engine.title) to build." : nil),
                                hasAgent: Agent.executable != nil)
         check.installerOpen = installerIsOpen()
         return check.keeping(previous)
@@ -108,6 +113,8 @@ struct SetupCheck {
 
 struct SetupView: View {
     @EnvironmentObject private var store: Store
+    /// Puts it off: the request stays in its chat, and the next one asks again.
+    let later: () -> Void
     @State private var key = ""
     @State private var checkingKey = false
     @State private var keyProblem: String?
@@ -131,8 +138,8 @@ struct SetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Lamp can't build apps right now").font(.largeTitle.bold())
-            Text("Finish what's left below. Your apps and chats are kept.")
+            Text("Get Lamp ready").font(.largeTitle.bold())
+            Text("Your request starts as soon as this is done.")
                 .foregroundStyle(.secondary)
 
             if !store.setup.hasAgent {
@@ -200,9 +207,15 @@ struct SetupView: View {
                 }
                 .padding(.leading, 36)
             }
+            HStack {
+                Spacer()
+                Button("Not Now", action: later).keyboardShortcut(.cancelAction)
+            }
         }
         .padding(40)
-        .frame(maxWidth: 600)
+        .frame(width: 600)
+        // As tall as what's in it: a sheet would otherwise take all the height it's offered.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @Environment(\.openSettings) private var openSettingsAction
@@ -331,20 +344,15 @@ struct SettingsView: View {
 }
 
 /// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface. The tab is there
-/// only while there is something to show: now Apps in Chrome, which only a build from source carries (the extension
-/// and its helper are in Lamp Dev's bundle only).
+/// only while there is something to show: now publishing games as web pages, which only a build from source has.
 struct ExperimentalSettings: View {
     static var hasAny: Bool { Edition.isDev }
-    @AppStorage(BrowserBridge.switchKey) private var browser = ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1"
     @AppStorage(Publish.switchKey) private var publish = false
 
     var body: some View {
         Form {
             Section {
                 SettingsCheckboxes {
-                    Toggle("Apps in Chrome", isOn: $browser)
-                        .checkboxNote("Apps that help with web pages also open beside the page, in Chrome's sidebar.")
-                    if browser { BrowserConnectionUpgrade(compact: true).underCheckbox() }
                     Toggle("Publish games as web pages", isOn: $publish)
                         .checkboxNote("A game's Share menu can put it on GitHub Pages, from your own GitHub account.")
                 }
@@ -355,10 +363,6 @@ struct ExperimentalSettings: View {
             }
         }
         .settingsPane()
-        .onChange(of: browser) { _, on in
-            if on { try? BrowserBridge.shared.prepare() }
-            BrowserSetup.shared.refresh()
-        }
     }
 }
 
@@ -939,9 +943,16 @@ struct DevicesSection: View {
     var body: some View {
         let list = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
         Section("Your Devices") {
-            // What Lamp makes apps for or controls, then what it could learn, then the rest of the network, folded.
-            ForEach(list.works + list.couldLearn) { device in
-                row(device, controls: list.controls[device.id])
+            // The person's devices; then what's only found on the network, which may be a neighbor's: what Lamp makes apps
+            // for or controls, then what it could learn, each offering Set Up… alike; then the rest of the network, folded.
+            ForEach(list.works) { device in
+                row(device)
+            }
+            if !list.possible.isEmpty || !list.couldLearn.isEmpty {
+                Text("Found on your network, not set up").font(.caption).foregroundStyle(.secondary)
+                ForEach(list.possible + list.couldLearn) { device in
+                    row(device)
+                }
             }
             if !list.others.isEmpty || list.unnamed > 0 {
                 DisclosureGroup(isExpanded: $showingEverything) {
@@ -979,16 +990,35 @@ struct DevicesSection: View {
         }
     }
 
+    /// What a device's row shows at its end. One only found on the network shows Set Up… and nothing else, even one an
+    /// app can already control: what its setup asks first ("Turn on developer mode on it") is for the setup that button
+    /// opens, not a warning on a device the person may never set up. A device set up with Lamp shows its next step, if
+    /// it has one.
+    enum RowEnd: Equatable { case away(String), ready, setUp, step(String), words(String) }
+
+    static func end(for device: Device, setup: Device.Setup) -> RowEnd {
+        if device.isAway { return .away(device.status) }
+        guard device.isSetUp else { return .setUp }
+        switch setup {
+        case .ready: return .ready
+        case .talkOnly: return .words(setup.words)
+        case .needs(let step): return .step(step)
+        }
+    }
+
     /// A device Lamp set up itself, on the network: the ones Reconnect and Forget are for. A phone's pairing is the
     /// Mac's, and an Android device's is the device's own.
     private func keptByLamp(_ device: Device) -> Bool {
-        device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
+        if AndroidTVs.isRecord(device.id) { return true }
+        return device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
     }
 
     /// Reconnect: a TV's setup window, checked again from where it stands; another device's setup from the start, its
     /// certificate let go, so a reset device or one whose developer mode was turned on again is trusted afresh.
     private func reconnect(_ device: Device) {
-        if device.kind.isTV {
+        if AndroidTVs.isRecord(device.id) {
+            AndroidWiFi.shared.show(host: device.address)
+        } else if device.kind.isTV {
             TVs.reconnect(device.id)
             store.refreshDevices()
             TVSetup.shared.show(device.udid)
@@ -999,7 +1029,9 @@ struct DevicesSection: View {
     }
 
     private func forget(_ device: Device) {
-        if device.kind.isTV {
+        if AndroidTVs.isRecord(device.id) {
+            AndroidTVs.forget(device.id)
+        } else if device.kind.isTV {
             TVs.forget(device.id)
         } else {
             DeviceSetupModel.discard(device.id)
@@ -1026,10 +1058,10 @@ struct DevicesSection: View {
         .help(HomeNetwork.facts(host))
     }
 
-    private func row(_ device: Device, controls: String? = nil) -> some View {
+    private func row(_ device: Device) -> some View {
         let setup = device.setup(team: team)
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
+            Image(systemName: device.symbol).foregroundStyle(.secondary).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                 Text(device.line).font(.caption).foregroundStyle(.secondary)
@@ -1040,23 +1072,19 @@ struct DevicesSection: View {
                 }
             }
             Spacer()
-            switch setup {
-            case _ where controls != nil:
-                Text("Apps can control it").foregroundStyle(.secondary).help(controls ?? "")
-            case _ where device.isAway:
-                Text(device.status).foregroundStyle(.secondary)
+            switch Self.end(for: device, setup: setup) {
+            case .away(let words):
+                Text(words).foregroundStyle(.secondary)
                     .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
             case .ready:
                 Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
-            case .needs(let step) where device.kind == .other && device.integration == nil:
-                // Found on the network, with nothing yet that knows it: not a problem, an offer.
-                Text(step).foregroundStyle(.secondary)
+            case .setUp:
                 DeviceNextStep(device: device)
-            case .needs(let step):
+            case .step(let step):
                 Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
                 DeviceNextStep(device: device)
-            case .talkOnly:
-                Text(setup.words).foregroundStyle(.secondary)
+            case .words(let words):
+                Text(words).foregroundStyle(.secondary)
             }
             if keptByLamp(device) {
                 Menu {
@@ -1106,6 +1134,8 @@ struct LookingForDevices: View {
 struct AddDeviceSheet: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
+    /// Opened from the desk, it's drawn on the desk's paper with its buttons; from Settings, as Settings is.
+    var onPaper = false
 
     /// Found on the network and not set up: the TVs and the devices an integration finds or nothing knows yet. Phones
     /// and tablets have their own rows above, whose setup windows take each one further, so a wireless one isn't here.
@@ -1134,7 +1164,7 @@ struct AddDeviceSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(waiting) { device in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
+                            Image(systemName: device.symbol).foregroundStyle(.secondary).frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(device.name)
                                 Text(device.line).font(.caption).foregroundStyle(.secondary)
@@ -1159,12 +1189,29 @@ struct AddDeviceSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                if onPaper {
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(PaperButtonStyle(.ink, height: 28))
+                } else {
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                }
             }
         }
         .padding(20)
         .frame(width: 440)
+        .modifier(OnPaper(on: onPaper))
         .onAppear { store.refreshDevices(everything: true) }
+    }
+
+    /// The desk's paper and ink, and its outlined button for every other button here (a device's next step too).
+    private struct OnPaper: ViewModifier {
+        let on: Bool
+        func body(content: Content) -> some View {
+            if on {
+                content.foregroundStyle(Paper.ink).buttonStyle(PaperButtonStyle(.outline, height: 24)).background(Paper.page)
+            } else {
+                content
+            }
+        }
     }
 
     private func kind(_ name: String, symbol: String, how: String, setUp: @escaping () -> Void) -> some View {
@@ -1189,22 +1236,33 @@ struct DeviceNextStep: View {
 
     var body: some View { next(for: device) }
 
+    /// What the button does, for a place that offers a device's next step without the button (the desk's shelf): false
+    /// where Lamp can't take it from here (a team to choose, debugging to allow on the device).
+    static func takeFurther(_ device: Device, store: Store) -> Bool {
+        if device.kind.isPhone, !device.paired {
+            if !store.pairing.contains(device.udid) { store.pairDevice(device, for: nil) }
+        } else if device.kind.isPhone, !device.developerMode {
+            PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid)
+        } else if device.kind.isTV {
+            TVSetup.shared.show(device.udid)
+        } else if device.kind == .other {
+            // One Lamp has an integration for is set up in the window drawn from it; one it doesn't know yet starts
+            // the work of writing its integration, in a wish of its own.
+            if device.integration != nil { DeviceSetupWindow.show(device) } else { store.setUpDevice(device) }
+        } else {
+            return false
+        }
+        return true
+    }
+
     @ViewBuilder private func next(for device: Device) -> some View {
         if device.kind.isPhone, !device.paired {
             Button(store.pairing.contains(device.udid) ? "Pairing…" : "Pair…") { store.pairDevice(device, for: nil) }
                 .controlSize(.small).disabled(store.pairing.contains(device.udid))
         } else if device.kind.isPhone, !device.developerMode {
-            Button("How…") { then(); PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid) }.controlSize(.small)
-        } else if device.kind.isTV {
-            Button("Set Up…") { then(); TVSetup.shared.show(device.udid) }.controlSize(.small)
-        } else if device.kind == .other {
-            // One Lamp has an integration for is set up in the window drawn from it; one it doesn't know yet starts
-            // the work of writing its integration, in a wish of its own.
-            Button("Set Up…") {
-                then()
-                if device.integration != nil { DeviceSetupWindow.show(device) } else { store.setUpDevice(device) }
-            }
-            .controlSize(.small)
+            Button("How…") { then(); _ = Self.takeFurther(device, store: store) }.controlSize(.small)
+        } else if device.kind.isTV || device.kind == .other {
+            Button("Set Up…") { then(); _ = Self.takeFurther(device, store: store) }.controlSize(.small)
         }
     }
 }
@@ -1696,7 +1754,8 @@ struct ProviderLogo: View {
         ZStack {
             shape.fill(.white)
             if id == "lamp" {
-                ChatLook.LampFlame().fill(.black).padding(size * 0.2)
+                Image(systemName: "shuffle")
+                    .font(.system(size: size * 0.45, weight: .semibold)).foregroundStyle(.black)
             } else if id == Builder.localProvider {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: size * 0.5)).foregroundStyle(.black.opacity(0.75))

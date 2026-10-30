@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, offer, kind, remove, connectors, network, ask, progress, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, rename, connectors, network, ask, progress, result, wish, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "connectors": .connectors, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
@@ -57,9 +57,11 @@ struct ToolCall {
         case .learn: "book"
         case .remember: "square.and.pencil"
         case .art: "paintbrush"
+        case .assets: "shippingbox"
         case .offer: "sparkles"
         case .kind: "laptopcomputer.and.iphone"
         case .remove: "minus.circle"
+        case .rename: "character.cursor.ibeam"
         case .connectors: "link"
         case .network: "wifi"
         case .ask: "questionmark.bubble"
@@ -88,9 +90,11 @@ struct ToolCall {
         case .learn: "Read up"
         case .remember: "Updated its notes"
         case .art: "Painted a picture"
+        case .assets: "Looked through free models, art and sounds"
         case .offer: "Suggested a setup"
         case .kind: "Changed what it runs on"
         case .remove: "Took an app away"
+        case .rename: "Renamed it"
         case .connectors: "Looked up a connector"
         case .network: "Looked around your network"
         case .ask: "Asked you"
@@ -121,9 +125,11 @@ struct ToolCall {
         case .learn: "read up"
         case .remember: "updated its notes"
         case .art: "painted \(n("picture", "pictures"))"
+        case .assets: "looked through free models, art and sounds"
         case .offer: "suggested a setup"
         case .kind: "changed what it runs on"
         case .remove: "took an app away"
+        case .rename: "renamed it"
         case .connectors: "looked up \(n("connector", "connectors"))"
         case .network: "looked around your network"
         case .ask: "asked you"
@@ -599,7 +605,8 @@ enum Transcript {
             case .iphoneSetup: IPhoneSetupLine.shows(line.text, for: project)
             // Reload, while the change it's for still waits: the last such line only, under the latest change.
             // A wish's line is for its other parts' changes too.
-            case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload) } ?? false
+            case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload)
+                || Store.shared.awaitsReloadElsewhere($0) } ?? false
                 && line.id == lines.last(where: { $0.kind == .reload })?.id
             default: true
             }
@@ -662,6 +669,17 @@ enum ToolGroup {
 /// one in the app's title bar does.
 enum ReloadLine {
     static func text(_ name: String) -> String { "Reload \(name) to see this change." }
+    /// Reload reaches the wish's other places too (`Store.reloadEverywhere`): where it opens the app again (where it's
+    /// open) and where it only puts the new version, for next time, so nobody using a TV or a phone is surprised.
+    static func text(_ name: String, reopens: [String], updates: [String]) -> String {
+        guard reopens.count + updates.count > 1 || !updates.isEmpty else { return text(name) }
+        let open = reopens.isEmpty ? "" : "Reload opens \(name) again on \(listed(reopens))"
+        let next = updates.isEmpty ? "" : (open.isEmpty ? "Reload puts this change on " : ", and puts it on ") + listed(updates) + " for next time"
+        return open + next + "."
+    }
+    static func listed(_ names: [String]) -> String {
+        names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
     /// Reload was pressed while the agent was at work on the app: it goes in as soon as the agent is between steps.
     static func queued(_ name: String) -> String { "\(name) reloads in a moment." }
 }

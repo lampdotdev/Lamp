@@ -13,6 +13,7 @@ on:
       - "Resources/GameKit/**"
       - "Resources/Starters/**"
       - "scripts/check-starters.sh"
+      - "scripts/fetch-starters.sh"
       - ".github/workflows/support-files.yml"
   push:
     branches: [main]
@@ -43,6 +44,10 @@ jobs:
         run: |
           sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app"
           xcodebuild -version
+
+      - name: Fetch the starters
+        # Each starter's tree is its repository at the commit Resources/Starters/<folder>/starter.md pins.
+        run: scripts/fetch-starters.sh
 
       - name: Type-check the support files and the starters
         run: scripts/check-starters.sh

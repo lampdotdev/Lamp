@@ -205,11 +205,21 @@ enum Template {
 
     static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
         let reason = Capabilities.load(project).localNetworkReason
-        let contents = template
-            .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: reason))
-            .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: reason))
-            .replacingOccurrences(of: "{{NAME}}", with: project.name)
+        // The app's name and its own words (the network reason in capabilities.json) come with a shared file, so
+        // they may hold anything the shell would run: `$(…)`, backquotes, a line that ends a heredoc. A script gets
+        // them as variables set in single quotes at its top (`shellWords`), which the shell expands as text only.
+        // A shared page's sites go beside its permission reasons, in every Info.plist the app is built with.
+        let network = SharedNetwork.plistLines(for: project)
+        let words = [("{{USAGE}}", "LAMP_USAGE", iosUsagePlistLines(name: project.name, localNetwork: reason) + network),
+                     ("{{MAC_USAGE}}", "LAMP_MAC_USAGE", macUsagePlistLines(name: project.name, localNetwork: reason) + network),
+                     ("{{NAME}}", "LAMP_APP_NAME", project.name)]
+        var filled = template.replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
+        if template.hasPrefix("#!") {
+            filled = shellWords(filled, words)
+        } else {
+            for (placeholder, _, value) in words { filled = filled.replacingOccurrences(of: placeholder, with: value) }
+        }
+        let contents = filled
             .replacingOccurrences(of: "{{EXE}}", with: project.exe)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
@@ -218,6 +228,17 @@ enum Template {
         // Never makes the app's folder itself, which would leave a folder of build files where an app was.
         guard FileManager.default.fileExists(atPath: project.dir.path) else { throw CocoaError(.fileNoSuchFile) }
         try put(contents, at: url, for: project, executable: executable)
+    }
+
+    /// A script with each placeholder that's used in it read from a variable, set in single quotes after its first
+    /// line: the value is never part of the script's code, so no name can run, end a heredoc or break a quote.
+    static func shellWords(_ script: String, _ words: [(placeholder: String, variable: String, value: String)]) -> String {
+        let used = words.filter { script.contains($0.placeholder) }
+        guard !used.isEmpty, let end = script.firstIndex(of: "\n") else { return script }
+        var body = String(script[script.index(after: end)...])
+        for word in used { body = body.replacingOccurrences(of: word.placeholder, with: "${\(word.variable)}") }
+        let lines = used.map { "\($0.variable)='\($0.value.replacingOccurrences(of: "'", with: "'\\''"))'\n" }.joined()
+        return script[...end] + lines + body
     }
 
     /// What an app is told about itself and Lamp, read by LampSupport's `LampInstall` from its Info.plist. Lamp
@@ -238,11 +259,6 @@ enum Template {
             "macHost": Devices.macHost,
             "widgetPort": String(widgetPort(for: project)),
             "widgetToken": project.platform == .mac ? widgetToken(for: project) : "",
-            "sidebarPort": String(sidebarPort(for: project)),
-            "sidebarTries": String(sidebarPortTries),
-            "sidebarHost": sidebarHost(for: project),
-            "sidebarKey": project.hasMac ? sidebarKey(for: project) : "",
-            "sidebarFramer": sidebarFramer,
         ]
     }
 
@@ -387,7 +403,9 @@ enum Template {
         let plist = ios ? "$bundle/Info.plist" : "$bundle/Contents/Info.plist"
         return """
         # App Intents (Shortcuts, Siri, Spotlight, a widget's buttons): Xcode's tools write what the code declares into the app.
+        # What they did is kept in .build/appintents for this build alone: Lamp reads there whether they ran.
         INTENTS=""
+        rm -rf .build/appintents
         if grep -rqs --include='*.swift' -e 'import AppIntents' Sources Widget; then
           if PROCESSOR="$(xcrun -f appintentsmetadataprocessor 2>/dev/null)"; then
             INTENTS=1
@@ -1747,8 +1765,9 @@ enum Template {
         }
 
         /// The local network reason, kept to one plain sentence of 150 characters at most, in words and plain punctuation:
-        /// it's shown as it is in the system's question, and goes into Info.plist through build scripts whose heredocs the
-        /// shell expands, so nothing in it may mean anything to a shell or to XML (`$`, backticks, backslashes, quotes, `<>&`).
+        /// it's shown as it is in the system's question, and goes into Info.plist and the commands that fill it in, so
+        /// nothing in it is markup or a shell's special characters (`$`, backticks, backslashes, quotes, `<>&`). Build
+        /// scripts never take it as code either way (`Template.shellWords`).
         var localNetworkReason: String? {
             guard let text = localNetwork?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text.count <= 150,
                   text.range(of: #"^[\p{L}\p{N} .,;:!?'’()–-]+$"#, options: .regularExpression) != nil else { return nil }
@@ -1999,6 +2018,7 @@ enum Template {
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
         if showsPage(project) { pbxproj = withWebFolder(pbxproj) }
+        if GamePhones.bundlesOnIOS(project) { pbxproj = withPhoneFolder(pbxproj) }
         if watch {
             let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
             let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
@@ -2062,8 +2082,10 @@ enum Template {
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
-                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
+            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason
+                ?? (GamePhones.takesOnIOS(project) ? GamePhones.iosNetworkReason : nil)) + SharedNetwork.plistLines(for: project))
+                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason)
+                    + SharedNetwork.plistLines(for: project))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: background)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
@@ -2095,6 +2117,24 @@ enum Template {
                     "A00000000000000000000002 /* Assets */, E00000000000000000000002 /* Web */, A00000000000000000000004 /* Assets.xcassets */,")
         text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
                     "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000001 /* Web in Resources */,")
+        return text
+    }
+
+    /// A game's phone page as a folder of the app's resources (Phone/ at the bundle's top), which the game serves itself
+    /// (`GamePhones`): copied beside the app's files by `Devices.stage`.
+    static func withPhoneFolder(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the device project changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        var text = pbxproj
+        let assetsFile = "A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };"
+        text = swap(text, assetsFile, assetsFile + "\n\t\tE00000000000000000000003 /* Phone in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000004 /* Phone */; };")
+        let assetsRef = "A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = \"<group>\"; };"
+        text = swap(text, assetsRef, assetsRef + "\n\t\tE00000000000000000000004 /* Phone */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Phone; path = ../../\(GamePhones.iosFolder); sourceTree = \"<group>\"; };")
+        text = swap(text, "A00000000000000000000002 /* Assets */, ", "A00000000000000000000002 /* Assets */, E00000000000000000000004 /* Phone */, ")
+        text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
+                    "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000003 /* Phone in Resources */,")
         return text
     }
 
@@ -2629,106 +2669,52 @@ enum Template {
 
     """# + lampGlyphSwift
 
-    /// Lamp's flame in place of a symbol, where an app shows the way to change it with Lamp (the wand at the top
-    /// right of its windows, its menu bar panel and menu, its widget): drawn as the system's own `flame` symbol is,
-    /// the icon's outer flame as an outline and its inner one filled, at a symbol's size and weight. It's in
-    /// LampSupport.swift and in the widget's own file, which shares nothing else with it.
+    /// Lamp's mark where an app shows the way to change it with Lamp (the wand at the top right of its windows, its
+    /// menu bar panel and menu, its widget): the system's `shuffle` symbol, the one Lamp shows for remixing, at the
+    /// size and weight it's asked for. It's in LampSupport.swift and in the widget's own file, which shares nothing
+    /// else with it.
     static let lampGlyphSwift = #"""
 
-    /// Lamp's flame, drawn like an SF Symbol: the app icon's outer flame as an outline, its inner flame filled.
+    /// Lamp's mark: the system's shuffle symbol, the one Lamp shows for remixing.
     enum LampGlyph {
-        /// Width over height.
-        static let aspect: CGFloat = 516 / 725
+        static let symbol = "shuffle"
 
-        /// The two flames in a box one unit tall, y down, from the icon's own drawing. The inner one is smaller
-        /// than in the icon, about its foot, so the outline has room around it at a symbol's size.
-        static let paths: (outer: CGPath, inner: CGPath) = {
-            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: (x - 254) / 725, y: (y - 150) / 725) }
-            let outer = CGMutablePath()
-            outer.move(to: p(540, 150))
-            outer.addCurve(to: p(770, 600), control1: p(560, 290), control2: p(770, 380))
-            outer.addCurve(to: p(512, 875), control1: p(770, 755), control2: p(655, 875))
-            outer.addCurve(to: p(254, 600), control1: p(369, 875), control2: p(254, 755))
-            outer.addCurve(to: p(398, 325), control1: p(254, 465), control2: p(335, 395))
-            outer.addCurve(to: p(482, 472), control1: p(408, 405), control2: p(440, 450))
-            outer.addCurve(to: p(540, 150), control1: p(468, 350), control2: p(492, 250))
-            outer.closeSubpath()
-            let inner = CGMutablePath()
-            inner.move(to: p(524, 388))
-            inner.addCurve(to: p(662, 648), control1: p(560, 476), control2: p(662, 525))
-            inner.addCurve(to: p(512, 812), control1: p(662, 748), control2: p(597, 812))
-            inner.addCurve(to: p(362, 648), control1: p(427, 812), control2: p(362, 748))
-            inner.addCurve(to: p(452, 474), control1: p(362, 565), control2: p(418, 522))
-            inner.addCurve(to: p(500, 558), control1: p(462, 524), control2: p(480, 548))
-            inner.addCurve(to: p(524, 388), control1: p(494, 486), control2: p(502, 436))
-            inner.closeSubpath()
-            let foot = p(512, 812)
-            var smaller = CGAffineTransform(translationX: foot.x, y: foot.y).scaledBy(x: 0.72, y: 0.72)
-                .translatedBy(x: -foot.x, y: -foot.y)
-            return (outer, inner.copy(using: &smaller) ?? inner)
-        }()
-
-        /// The outline's width as a share of the point size, as heavy as a symbol's lines at that weight.
-        static func line(_ weight: NSFont.Weight) -> CGFloat {
-            switch weight.rawValue {
-            case ..<NSFont.Weight.regular.rawValue: 0.062
-            case ..<NSFont.Weight.medium.rawValue: 0.07
-            case ..<NSFont.Weight.semibold.rawValue: 0.075
-            case ..<NSFont.Weight.bold.rawValue: 0.085
-            default: 0.095
-            }
-        }
-
-        /// An image as a symbol at that point size would be: a template, which a button tints as it does a symbol,
-        /// unless it's given a color of its own.
+        /// The symbol at that point size and weight: a template, which a button tints as it does any symbol, unless
+        /// it's given a color of its own.
         static func image(pointSize: CGFloat, weight: NSFont.Weight, color: NSColor? = nil,
                           description: String = "Customize This App") -> NSImage {
-            let width = pointSize * line(weight)
-            let size = NSSize(width: (pointSize * aspect + width).rounded(.up), height: (pointSize + width).rounded(.up))
-            let image = NSImage(size: size, flipped: true) { box in
-                guard let context = NSGraphicsContext.current?.cgContext else { return false }
-                let ink = (color ?? .black).cgColor
-                context.translateBy(x: (box.width - pointSize * aspect) / 2, y: (box.height - pointSize) / 2)
-                context.scaleBy(x: pointSize, y: pointSize)
-                context.addPath(paths.outer)
-                context.setLineWidth(width / pointSize)
-                context.setLineJoin(.round)
-                context.setStrokeColor(ink)
-                context.strokePath()
-                context.addPath(paths.inner)
-                context.setFillColor(ink)
-                context.fillPath()
-                return true
-            }
+            var configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
+            if let color { configuration = configuration.applying(NSImage.SymbolConfiguration(paletteColors: [color])) }
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+                .withSymbolConfiguration(configuration) ?? NSImage(size: NSSize(width: pointSize, height: pointSize))
             image.isTemplate = color == nil
-            image.accessibilityDescription = description
             return image
         }
 
-        /// The flame in SwiftUI, as tall as `size` points, in the foreground style.
+        /// The SwiftUI weight of the same name as an AppKit one.
+        static func fontWeight(_ weight: NSFont.Weight) -> Font.Weight {
+            switch weight.rawValue {
+            case ..<NSFont.Weight.light.rawValue: .thin
+            case ..<NSFont.Weight.regular.rawValue: .light
+            case ..<NSFont.Weight.medium.rawValue: .regular
+            case ..<NSFont.Weight.semibold.rawValue: .medium
+            case ..<NSFont.Weight.bold.rawValue: .semibold
+            case ..<NSFont.Weight.heavy.rawValue: .bold
+            default: .heavy
+            }
+        }
+
+        /// The symbol in SwiftUI, at `size` points, in the foreground style.
         struct Mark: View {
             var size: CGFloat
             var weight: NSFont.Weight = .medium
 
             var body: some View {
-                ZStack {
-                    Flame(inner: false).stroke(style: StrokeStyle(lineWidth: size * LampGlyph.line(weight), lineJoin: .round))
-                    Flame(inner: true).fill()
-                }
-                .frame(width: size * LampGlyph.aspect, height: size)
-                .padding(size * LampGlyph.line(weight) / 2)
-            }
-        }
-
-        private struct Flame: Shape {
-            let inner: Bool
-
-            func path(in rect: CGRect) -> Path {
-                Path(inner ? LampGlyph.paths.inner : LampGlyph.paths.outer)
-                    .applying(CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: rect.height, y: rect.height))
+                Image(systemName: LampGlyph.symbol).font(.system(size: size, weight: LampGlyph.fontWeight(weight)))
             }
         }
     }
+
     """#
 
 
@@ -2738,54 +2724,6 @@ enum Template {
         var hash: UInt32 = 2_166_136_261
         for byte in project.bundleID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
         return 49_152 + Int(hash % 16_000)
-    }
-
-    /// Where an app serves its own sidebar page for Chrome (`LampBrowser.startPage`): a port of its own below the
-    /// range macOS hands out, the same for every build, since Chrome's sidebar keeps it for when Lamp isn't open.
-    static func sidebarPort(for project: LampProject) -> Int {
-        var hash: UInt32 = 2_166_136_261
-        for byte in ("sidebar:" + project.bundleID).utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
-        return 40_000 + Int(hash % 9_000)
-    }
-    /// How many ports from `sidebarPort` an app tries when another program has the first.
-    static let sidebarPortTries = 4
-    /// Every address an app's sidebar page may be at, first port first.
-    static func sidebarURLs(for project: LampProject) -> [String] {
-        (0..<sidebarPortTries).map { "http://\(sidebarHost(for: project)):\(sidebarPort(for: project) + $0)/" }
-    }
-    /// A name of the app's own under .localhost, which Chrome sends to this Mac by itself: each app's page is then
-    /// its own origin, so one app's page can't read another's storage.
-    static func sidebarHost(for project: LampProject) -> String {
-        let readable = String(project.id.lowercased().unicodeScalars.map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? Character($0) : "-" }.prefix(40))
-        // The bundle id's hash keeps two apps whose names read the same here ("Recipe Box", "recipe_box") apart.
-        var hash: UInt32 = 2_166_136_261
-        for byte in project.bundleID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
-        let label = readable.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return (label.isEmpty ? "app" : label) + "-" + String(hash % 0xFFFFFF, radix: 16) + ".localhost"
-    }
-    /// What the app's page says it reads (`data-lamp-reads` on its `<html>`), read from the page's file by Lamp,
-    /// never from the page as it runs: it decides what Chrome's sidebar lets the page read and the consent line.
-    static func sidebarReads(_ project: LampProject) -> String {
-        let file = project.dir.appendingPathComponent("Assets/Sidebar/index.html")
-        guard let head = (try? String(contentsOf: file, encoding: .utf8))?.prefix(4000),
-              let tag = head.range(of: #"<html\b[^>]*>"#, options: [.regularExpression, .caseInsensitive]) else { return "" }
-        let value = head[tag].range(of: #"data-lamp-reads\s*=\s*["']?(page|selection)"#, options: [.regularExpression, .caseInsensitive])
-            .map { String(head[tag][$0]).lowercased() } ?? ""
-        return value.hasSuffix("selection") ? "selection" : value.hasSuffix("page") ? "page" : ""
-    }
-    /// The key the sidebar page's calls carry: Lamp hands it to Chrome's sidebar with the page's address.
-    static func sidebarKey(for project: LampProject) -> String {
-        secret(".lamp/sidebar-key", for: project)
-    }
-    /// Only Lamp's extension may frame an app's sidebar page.
-    static var sidebarFramer: String {
-        let id = (try? String(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BrowserCompanion/extension-id.txt"), encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return id.count == 32 ? "chrome-extension://\(id)" : "'none'"
-    }
-    /// Whether the app has a sidebar page of its own, rather than a surface Lamp's extension draws.
-    static func hasSidebarPage(_ project: LampProject) -> Bool {
-        FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("Assets/Sidebar/index.html").path)
     }
 
     /// The secret an app and its widget are both built with, so the app answers its own widget and nobody else.
@@ -3398,6 +3336,7 @@ enum Template {
     #endif
     import UniformTypeIdentifiers
     import UserNotifications
+    import AVFoundation
     #if canImport(CloudKit)
     import CloudKit
     #endif
@@ -3571,8 +3510,17 @@ enum Template {
                 throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.",
                                      needsSetup: .text)
             }
-            // What the phone carries answers all three.
-            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
+            // What the phone carries answers all three. Actions need Lamp, whatever the phone carries.
+            if path == "/ai/status" {
+                let away: [String: Any] = ["available": true, "route": "OpenRouter, from this phone", "where": "remote"]
+                return ["text": true, "decisions": true, "pictures": true, "act": false,
+                        "details": ["text": away, "decisions": away, "pictures": away,
+                                    "act": ["available": false, "where": "unknown", "setup": "openLamp",
+                                            "reason": "Asking the app to do things needs Lamp: use it on the same Wi‑Fi as the Mac."] as [String: Any]]]
+            }
+            if path == "/ai/act" {
+                throw LampAI.Failure(message: "Couldn't reach Lamp, and asking the app to do things needs it. Try again on the same Wi‑Fi as the Mac.")
+            }
             fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
             switch path {
             case "/ai":
@@ -3925,6 +3873,7 @@ enum Template {
     struct LampCommands: Commands {
         init() {
             LampRuntime.start
+            LampShowcase.start
             LampWindows.start
             LampWidget.start
             LampMagic.start
@@ -3934,6 +3883,9 @@ enum Template {
         }
 
         var body: some Commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About \(LampAbout.name)") { LampAbout.show() }
+            }
             CommandGroup(after: .appInfo) {
                 Button("Customize with Lamp…") {
                     LampSidebar.openFromMenu()
@@ -3943,6 +3895,41 @@ enum Template {
             CommandGroup(after: .saveItem) {
                 Button("Share…") { LampShareApp.share() }
             }
+        }
+    }
+
+    /// The About window, with the app's credits as Lamp has them now. The Credits.html written into the bundle is only
+    /// as new as the app's install, and a credit added while the app is open (work brought in with a change that went
+    /// into the running app, with no install) would wait for the next one; Lamp answers from the wish's credits.json.
+    /// With no answer from Lamp (it isn't open, or this app isn't its), it's the bundle's page, as macOS shows it.
+    @MainActor enum LampAbout {
+        static var name: String {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+        }
+
+        static func show() {
+            Task {
+                let credits = await ask()
+                NSApp.activate()
+                NSApp.orderFrontStandardAboutPanel(options: credits.map { [.credits: $0] } ?? [:])
+            }
+        }
+
+        /// The credits page Lamp has for this app now; empty when it has none, nil when Lamp didn't answer.
+        private static func ask() async -> NSAttributedString? {
+            guard let url = URL(string: lampGateway + "/app/credits") else { return nil }
+            // Short: the window is opened by a click, and the bundle's page is there to fall back on.
+            var request = URLRequest(url: url, timeoutInterval: 1.5)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+            guard let page = answer["page"] as? String else { return NSAttributedString() }
+            return NSAttributedString(html: Data(page.utf8), documentAttributes: nil)
         }
     }
 
@@ -6252,6 +6239,11 @@ enum Template {
                 show(chat)
                 return
             }
+            // An app built from its code with its own script has no chat of its own: the extension is Lamp's and goes
+            // into an app only as Lamp installs it. Nothing to wait for, so it goes straight to Lamp, or its site.
+            guard FileManager.default.fileExists(atPath: Bundle.main.bundleURL.appendingPathComponent("Contents/Extensions/LampSidebar.appex").path) else {
+                return fallback()
+            }
             Task { @MainActor in
                 // Just after Lamp installs a new build, macOS may not have registered its chat yet: the first
                 // answer can be an empty list with the chat a moment behind it. A few seconds are given before
@@ -6292,6 +6284,7 @@ enum Template {
             guard isOpen(in: window), let chat = chat(in: window) else { return }
             chat.wanted = false
             hidePanel(chat)
+            tellLampClosed()
             giveBackWidth(chat)
             LampMagic.refit(window)
             coach(window)
@@ -7068,6 +7061,13 @@ enum Template {
             NSWorkspace.shared.open(LampInstall.link("sidebar"), configuration: configuration)
         }
 
+        /// The chat stays connected while it's hidden, so Lamp is told it was closed: it isn't brought back in Lamp's own
+        /// window when the app moves to another device and quits. Only a Lamp that's running is told.
+        @MainActor private static func tellLampClosed() {
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name(LampInstall.note + "sidebarClosed"), object: nil, userInfo: ["app": LampInstall.slug], deliverImmediately: true)
+        }
+
         /// No chat in this copy of the app (installed by a Lamp from before it): the chat in Lamp's window.
         @MainActor private static func fallback() {
             UserDefaults.standard.set(false, forKey: openKey)
@@ -7232,7 +7232,9 @@ enum Template {
             // ...and stops part way through when the person takes the app back with Lamp's Stop.
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name(LampInstall.note + "useAppStop." + LampInstall.slug), object: nil, queue: .main) { note in
-                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStop"] as? String
+                // Under a key long enough to be kept whole in the binary, which Lamp looks for (a name of 15 bytes or
+                // fewer is compiled into the code itself, so the old key's wasn't always found).
+                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStopSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.Handover.stop(id: id, signature: signature, token: LampInstall.token) }
             }
             // ...and, before it asks the app to quit for a rebuild, whether it still answers, so it can tell the
@@ -7279,6 +7281,13 @@ enum Template {
         /// then calls `done`. An app may picture its own windows without screen recording permission.
         @MainActor
         static func snapshot(then done: (@MainActor () -> Void)? = nil) {
+            // A page's things are read in the page, which answers a moment later.
+            guard let refresh = LampPageItems.refresh else { return snapshotNow(then: done) }
+            refresh { snapshotNow(then: done) }
+        }
+
+        @MainActor
+        private static func snapshotNow(then done: (@MainActor () -> Void)?) {
             LampDriver.keepBarPanel()
             let windows = windowsOnScreen
             guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
@@ -7365,14 +7374,15 @@ enum Template {
                 && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) }
         }
 
-        /// Picture pixels per window point: at most 1400 pixels on the long side, a size models see unscaled.
+        /// Picture pixels per window point: at most 1024 pixels on the long side, a size models see unscaled and read
+        /// a window's words in, at half the bytes and tokens of 1400: every picture is sent again with each request.
         @MainActor
         static func scale(of window: NSWindow) -> CGFloat {
             let size = (window.contentView?.superview ?? window.contentView)?.bounds.size ?? window.frame.size
-            return min(window.backingScaleFactor, 1400 / max(size.width, size.height))
+            return min(window.backingScaleFactor, 1024 / max(size.width, size.height))
         }
 
-        /// The window with its title bar, at most 1400 pixels on the long side. It's the window as the system
+        /// The window with its title bar, at most 1024 pixels on the long side. It's the window as the system
         /// shows it, so video, maps and web pages are in the picture; asking for one's own windows needs no
         /// screen recording permission. If the system has no picture (the app is hidden), the app draws one itself,
         /// which leaves those out.
@@ -7532,7 +7542,7 @@ enum Template {
 
     // LampTransition
     /// While Lamp builds a change for this app, smoke curls up from the bottom of its windows, and when the change
-    /// goes in a band of white whooshes up across them once, so the change looks alive rather than abrupt. Only Lamp starts it: the
+    /// goes in Lamp's stripes roll up across them once, so the change looks alive rather than abrupt. Only Lamp starts it: the
     /// request is signed with the app's token (the "lampTransitionSignature" key marks the builds that understand
     /// it), and nothing here is reachable from the app's own code. It's drawn in clear windows laid over the app's
     /// (children, so they move and stack with them) that let every click through, and the pictures Lamp takes for
@@ -7611,7 +7621,7 @@ enum Template {
             }
         }
 
-        /// The change went in: the band whooshes up each window once (a soft wash where motion is reduced), then the smoke and the glow go.
+        /// The change went in: the stripes roll up each window once (fading where motion is reduced), then the smoke and the glow go.
         @MainActor static func land() {
             timeout?.cancel()
             if glasses.isEmpty {
@@ -7707,20 +7717,24 @@ enum Template {
         /// The effect's layers, filling the window they're laid over and cut to its rounding. Core Animation runs
         /// them out of the app's process, so they keep moving while the app is busy taking the change in.
         ///
-        /// While the change is built, smoke in many colors curls up from the bottom edge, thick there and thinning as
-        /// it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
-        /// of most of the window. When the change goes in the smoke surges for a moment, then a level band of white,
-        /// the window's width, whooshes from the bottom to the top with a soft gray shadow just ahead of it, covering the
-        /// moment the new code draws and leaving the window clear behind it.
+        /// While the change is built, smoke in Lamp's stripe colors curls up from the bottom edge, thick there and thinning
+        /// as it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
+        /// of most of the window. When the change goes in the smoke surges for a moment, then the stripes roll up the window
+        /// on Lamp's slant, as if round a drum: each comes in as a thin line, widens to the middle and thins again as it
+        /// leaves, and at the middle of the roll they cover the window whole, leaving it clear behind them.
         @MainActor final class Look: NSView {
-            /// The colors the smoke mixes: blue, violet, pink, orange and teal.
+            /// Lamp's stripes, in the order they come up: green, lime, yellow, orange, red and magenta.
             static let hues: [NSColor] = [
-                NSColor(red: 0.25, green: 0.5, blue: 1, alpha: 1),
-                NSColor(red: 0.6, green: 0.38, blue: 1, alpha: 1),
-                NSColor(red: 1, green: 0.38, blue: 0.68, alpha: 1),
-                NSColor(red: 1, green: 0.6, blue: 0.22, alpha: 1),
-                NSColor(red: 0.2, green: 0.82, blue: 0.9, alpha: 1),
+                NSColor(red: 0.122, green: 0.541, blue: 0.29, alpha: 1),
+                NSColor(red: 0.486, green: 0.749, blue: 0.227, alpha: 1),
+                NSColor(red: 0.965, green: 0.722, blue: 0.11, alpha: 1),
+                NSColor(red: 0.941, green: 0.541, blue: 0.11, alpha: 1),
+                NSColor(red: 0.886, green: 0.251, blue: 0.165, alpha: 1),
+                NSColor(red: 0.824, green: 0.216, blue: 0.471, alpha: 1),
             ]
+
+            /// The stripes' slant, as on the website: rising to the right.
+            private static let slant: CGFloat = .pi / 6
 
             /// The window's own rounding, so the glow follows its corners.
             var cornerRadius: CGFloat = 12 {
@@ -7734,8 +7748,7 @@ enum Template {
 
             private let glowLayer = CALayer()
             private let wisps = CAEmitterLayer()
-            private let band = CAGradientLayer()
-            private let wash = CALayer()
+            private let stripes = CALayer()
             private var arranged = CGRect.zero
 
             override init(frame: NSRect) {
@@ -7744,7 +7757,7 @@ enum Template {
                 autoresizingMask = [.width, .height]
                 layer?.masksToBounds = true
                 layer?.cornerRadius = cornerRadius
-                for sublayer in [glowLayer, wash, wisps, band] {
+                for sublayer in [glowLayer, wisps, stripes] {
                     sublayer.opacity = 0
                     layer?.addSublayer(sublayer)
                 }
@@ -7810,7 +7823,7 @@ enum Template {
                     cell.contents = Self.puff
                     cell.color = hue.withAlphaComponent(0.42).cgColor
                     cell.redRange = 0.08; cell.greenRange = 0.08; cell.blueRange = 0.08
-                    cell.birthRate = Float(bounds.width / 55)
+                    cell.birthRate = Float(bounds.width / 66)
                     cell.lifetime = life; cell.lifetimeRange = 1.5
                     cell.velocity = rise; cell.velocityRange = rise * 0.45
                     cell.emissionLongitude = .pi / 2; cell.emissionRange = 0.55
@@ -7821,20 +7834,38 @@ enum Template {
                     return cell
                 }
 
-                // The band: the window's width and level, white through its body, fading out below where it's been, and
-                // a narrow gray shadow just above its top edge, ahead of it. Its colors run from the bottom of the layer up.
-                let height = max(bounds.height * 0.4, 120), shadow: CGFloat = 24
-                band.frame = CGRect(x: 0, y: -height - shadow, width: bounds.width, height: height + shadow)
-                band.startPoint = CGPoint(x: 0.5, y: 0)
-                band.endPoint = CGPoint(x: 0.5, y: 1)
-                let top = Double(height / (height + shadow))
-                band.colors = [NSColor(white: 1, alpha: 0), NSColor(white: 1, alpha: 0.85), NSColor(white: 1, alpha: 1), NSColor(white: 1, alpha: 1),
-                               NSColor(white: 0.35, alpha: 0.22), NSColor(white: 0.2, alpha: 0)].map(\.cgColor)
-                band.locations = [0, NSNumber(value: top * 0.45), NSNumber(value: top * 0.7), NSNumber(value: top),
-                                  NSNumber(value: top + 0.001), 1]
+                // The stripes: level in a layer turned to the slant and just big enough that, across its height, they reach
+                // from one corner of the window to the opposite one. Each starts with no height, waiting at the bottom.
+                let along = bounds.width * cos(Self.slant) + bounds.height * sin(Self.slant)
+                let across = bounds.width * sin(Self.slant) + bounds.height * cos(Self.slant)
+                stripes.bounds = CGRect(x: 0, y: 0, width: along, height: across)
+                stripes.position = CGPoint(x: bounds.midX, y: bounds.midY)
+                stripes.setAffineTransform(CGAffineTransform(rotationAngle: Self.slant))
+                stripes.sublayers?.forEach { $0.removeFromSuperlayer() }
+                for (index, hue) in Self.hues.enumerated() {
+                    let stripe = CALayer()
+                    stripe.backgroundColor = hue.cgColor
+                    stripe.allowsEdgeAntialiasing = true
+                    stripe.anchorPoint = .zero
+                    Self.place(stripe, index: index, roll: 0, across: across, along: along)
+                    stripes.addSublayer(stripe)
+                }
+            }
 
-                wash.frame = bounds
-                wash.backgroundColor = NSColor(white: 1, alpha: 0.35).cgColor
+            /// Where a stripe's edges are at a point of the roll, from 0 to 2π: the stripes lie side by side round a drum
+            /// whose near half is the window. An edge's height is the drum's seen from the front, so the stripes are thin
+            /// where the drum turns away, top and bottom, and the six together are as tall as the window at π.
+            private static func edges(index: Int, roll: CGFloat, across: CGFloat) -> (bottom: CGFloat, top: CGFloat) {
+                let share = CGFloat.pi / CGFloat(hues.count)
+                func height(_ angle: CGFloat) -> CGFloat { (1 - cos(min(max(angle, 0), .pi))) / 2 * across }
+                return (height(roll - CGFloat(index + 1) * share), height(roll - CGFloat(index) * share))
+            }
+
+            /// A stripe at a point of the roll, held a point past its lower edge so no line of the window shows between two.
+            private static func place(_ stripe: CALayer, index: Int, roll: CGFloat, across: CGFloat, along: CGFloat) {
+                let edge = edges(index: index, roll: roll, across: across)
+                stripe.position = CGPoint(x: 0, y: edge.bottom)
+                stripe.bounds = CGRect(x: 0, y: 0, width: along, height: edge.top > edge.bottom ? edge.top - edge.bottom + 1 : 0)
             }
 
             /// A puff of smoke: white, soft all the way to its edge, tinted by the cell that uses it.
@@ -7859,19 +7890,27 @@ enum Template {
                 wisps.birthRate = 1
             }
 
-            /// The change went in: the smoke surges and the band whooshes up (a soft wash where motion is reduced), and
+            /// The change went in: the smoke surges and the stripes roll up (the stripes fading where motion is reduced), and
             /// the glow and the smoke go. Answers how long that takes, after which the layers can go.
             func reveal(still: Bool) -> TimeInterval {
                 layoutSubtreeIfNeeded()
                 let glowing = glowLayer.presentation()?.opacity ?? glowLayer.opacity
+                let across = stripes.bounds.height, along = stripes.bounds.width
+                let layers = stripes.sublayers ?? []
                 if still {
                     wisps.birthRate = 0
                     Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6)
                     Self.animate(wisps, "opacity", from: wisps.presentation()?.opacity ?? wisps.opacity, to: 0, duration: 0.6)
-                    Self.animate(wash, "opacity", from: 1, to: 0, duration: 0.7)
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    for (index, stripe) in layers.enumerated() {
+                        Self.place(stripe, index: index, roll: .pi, across: across, along: along)
+                    }
+                    CATransaction.commit()
+                    Self.animate(stripes, "opacity", from: 0.35, to: 0, duration: 0.7)
                     return 0.8
                 }
-                // The smoke gathers itself, more of it and rising faster, for a moment before the whoosh. Timed by
+                // The smoke gathers itself, more of it and rising faster, for a moment before the roll. Timed by
                 // animations, not by the main thread, which may be busy with the new code.
                 let gather = 0.3
                 wisps.opacity = 1
@@ -7884,14 +7923,36 @@ enum Template {
                 wisps.birthRate = 0
                 wisps.add(surge, forKey: "surge")
 
-                // Then the band goes up, quickening as it goes, and the smoke and the glow go with it.
-                let whoosh = 0.8
-                band.opacity = 1
-                Self.animate(band, "position.y", from: Float(band.position.y), to: Float(bounds.height + band.bounds.height / 2),
-                             duration: whoosh, delay: gather, timing: CAMediaTimingFunction(controlPoints: 0.55, 0, 0.3, 1))
+                // Then the stripes roll up at the drum's steady turn, which is what eases them in and out at the edges, and
+                // the smoke and the glow go with them. Each stripe's edges are worked out ahead along the roll, so Core
+                // Animation can run them without the app.
+                let roll = 1.1
+                let steps = 60
+                let times = (0...steps).map { NSNumber(value: Double($0) / Double(steps)) }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                stripes.opacity = 1
+                for (index, stripe) in layers.enumerated() {
+                    let frames = (0...steps).map { Self.edges(index: index, roll: 2 * .pi * CGFloat($0) / CGFloat(steps), across: across) }
+                    Self.follow(stripe, "position.y", values: frames.map(\.bottom), times: times, duration: roll, delay: gather)
+                    Self.follow(stripe, "bounds.size.height", values: frames.map { $0.top > $0.bottom ? $0.top - $0.bottom + 1 : 0 },
+                                times: times, duration: roll, delay: gather)
+                    Self.place(stripe, index: index, roll: 2 * .pi, across: across, along: along)
+                }
+                CATransaction.commit()
                 Self.animate(wisps, "opacity", from: 1, to: 0, duration: 0.6, delay: gather + 0.1)
                 Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6, delay: gather)
-                return gather + whoosh + 0.2
+                return gather + roll + 0.2
+            }
+
+            private static func follow(_ layer: CALayer, _ key: String, values: [CGFloat], times: [NSNumber], duration: Double, delay: Double) {
+                let animation = CAKeyframeAnimation(keyPath: key)
+                animation.values = values
+                animation.keyTimes = times
+                animation.duration = duration
+                animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay
+                animation.fillMode = .backwards
+                layer.add(animation, forKey: key)
             }
 
             /// The glow and the smoke go without a change going in. Answers how long that takes.
@@ -7944,8 +8005,165 @@ enum Template {
     /// first change of each launch, the database is copied to Backups/ (the newest 20 are kept). Anything this
     /// version of the app can't read is left untouched: the user is told once, and it loads again once fixed.
     /// `folder` suits other files the app keeps, such as images (store their names, not their bytes).
+    /// Showcase mode, for a reel of the app. Launched with LAMP_SHOWCASE set to a folder holding a showcase.json (its
+    /// storyboard, with any files it brings), the app keeps its data in that folder, takes its AI's answers, its location
+    /// and the person's spoken lines from the script, and sends no notifications and runs no schedules; on a Mac it then
+    /// plays the script's `steps` on its own window (`LampDriver.playShowcase`). What happens is logged to events.tsv
+    /// with the time, for the reel's edit to put the sound, captions and camera where it happened. Nothing of the
+    /// person's is read, so the reel shows none of it.
+    ///
+    /// The app's own microphone, camera or speech code asks the script while it's on:
+    ///
+    ///     if LampShowcase.isOn { reply = await LampShowcase.hear { transcript = $0 } ?? ""; return }
+    ///     if LampShowcase.isOn { await LampShowcase.speak(utterance); return }
+    ///     if LampShowcase.isOn, let photo = LampShowcase.file("bottle.jpg") { … }      // beside showcase.json
+    enum LampShowcase {
+        static let folder: URL? = ProcessInfo.processInfo.environment["LAMP_SHOWCASE"]
+            .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+        static var isOn: Bool { folder != nil }
+        nonisolated(unsafe) static let script: [String: Any] = folder
+            .flatMap { try? Data(contentsOf: $0.appendingPathComponent("showcase.json")) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        /// How long each word of a spoken line takes to be heard.
+        static let wordTime = 0.34
+
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var taken: [String: Int] = [:]
+        nonisolated(unsafe) private static var answered: Set<Int> = []
+
+        /// Logs something that happened, with the time, for the reel.
+        static func note(_ event: String, _ fields: String...) {
+            guard let folder else { return }
+            let clean = fields.map { $0.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ") }
+            let line = ([String(format: "%.3f", Date().timeIntervalSince1970), event] + clean).joined(separator: "\t") + "\n"
+            lock.lock(); defer { lock.unlock() }
+            let url = folder.appendingPathComponent("events.tsv")
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close()
+            } else {
+                try? Data(line.utf8).write(to: url)
+            }
+        }
+
+        /// A file the script brought beside showcase.json (a photo for the camera, a recording for the microphone).
+        static func file(_ name: String) -> URL? {
+            guard let url = folder?.appendingPathComponent(name), FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+
+        /// The next of the script's `lines[name]`, in order, the last one again once they run out: what the person
+        /// says or types at that point. Each is a string, or `{"text": …, "caption": …}` with the words in English.
+        static func line(_ name: String = "spoken") -> (text: String, caption: String)? {
+            guard let list = (script["lines"] as? [String: Any])?[name] as? [Any], !list.isEmpty else { return nil }
+            let entry = list[min(take(name), list.count - 1)]
+            if let text = entry as? String { return (text, "") }
+            guard let entry = entry as? [String: Any], let text = entry["text"] as? String else { return nil }
+            return (text, entry["caption"] as? String ?? "")
+        }
+
+        private static func take(_ key: String) -> Int {
+            lock.lock(); defer { lock.unlock() }
+            let next = taken[key, default: 0]
+            taken[key] = next + 1
+            return next
+        }
+
+        /// The person saying the next of `lines[name]`: `partial` gets the words as they'd be recognized, one at a time,
+        /// and the whole line is answered once it's said. Nil when the script has none.
+        @MainActor static func hear(_ name: String = "spoken", partial: (String) -> Void = { _ in }) async -> String? {
+            guard let line = line(name) else { return nil }
+            note("hear", line.text, line.caption)
+            try? await Task.sleep(for: .seconds(0.5))
+            var words: [Substring] = []
+            for word in line.text.split(separator: " ") {
+                words.append(word)
+                partial(words.joined(separator: " "))
+                try? await Task.sleep(for: .seconds(wordTime))
+            }
+            note("hear-end")
+            return line.text
+        }
+
+        /// What the script's `captions` says a line means, for the reel's subtitles.
+        static func caption(_ text: String) -> String { (script["captions"] as? [String: String])?[text] ?? "" }
+
+        /// Says `utterance` into a file beside the log instead of the speakers, then waits as long as it lasts, so the
+        /// app behaves as if it spoke and the reel hears it where it did.
+        @MainActor static func speak(_ utterance: AVSpeechUtterance) async {
+            guard let folder else { return }
+            final class Recording: @unchecked Sendable {
+                var file: AVAudioFile?
+                var frames: AVAudioFramePosition = 0
+                var rate = 22050.0
+                var finished = false
+            }
+            let url = folder.appendingPathComponent("voice-\(take("voice") + 1).caf")
+            let synthesizer = AVSpeechSynthesizer()
+            let recording = Recording()
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                synthesizer.write(utterance) { buffer in
+                    guard !recording.finished, let pcm = buffer as? AVAudioPCMBuffer else { return }
+                    if pcm.frameLength == 0 { recording.finished = true; done.resume(); return }
+                    if recording.file == nil {
+                        recording.rate = pcm.format.sampleRate
+                        recording.file = try? AVAudioFile(forWriting: url, settings: pcm.format.settings,
+                                                          commonFormat: pcm.format.commonFormat, interleaved: pcm.format.isInterleaved)
+                    }
+                    try? recording.file?.write(from: pcm)
+                    recording.frames += AVAudioFramePosition(pcm.frameLength)
+                }
+            }
+            note("say", url.lastPathComponent, utterance.speechString, caption(utterance.speechString))
+            try? await Task.sleep(for: .seconds(Double(recording.frames) / recording.rate))
+            note("say-end")
+        }
+
+        /// The script's answer to one of LampAI's calls: the first unused entry of `ai` for that route ("/ai" when it
+        /// names none) whose `match`, if it has one, is in the request. Its `text` is the answer, `json` an object sent
+        /// as the answer's text, or `reply` the whole reply. A call the script has no answer for fails as AI does
+        /// when it isn't connected.
+        static func answer(_ path: String, _ body: Data) async throws -> [String: Any] {
+            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
+            let request = String(decoding: body, as: UTF8.self)
+            let entries = script["ai"] as? [[String: Any]] ?? []
+            let index: Int? = {
+                lock.lock(); defer { lock.unlock() }
+                let found = entries.indices.first { i in
+                    !answered.contains(i) && (entries[i]["route"] as? String ?? "/ai") == path
+                        && (entries[i]["match"] as? String).map { request.contains($0) } ?? true
+                }
+                if let found { answered.insert(found) }
+                return found
+            }()
+            note("ai", path)
+            try? await Task.sleep(for: .seconds(script["aiSeconds"] as? Double ?? 2.2))
+            note("ai-end", path)
+            guard let index else { throw LampAI.Failure(message: "The AI isn't connected.") }
+            let entry = entries[index]
+            if let reply = entry["reply"] as? [String: Any] { return reply }
+            if let json = entry["json"], let data = try? JSONSerialization.data(withJSONObject: json) {
+                return ["text": String(decoding: data, as: UTF8.self)]
+            }
+            return ["text": entry["text"] as? String ?? ""]
+        }
+
+        /// Where the script says the person is.
+        static var place: LampLocation.Place? {
+            guard let place = script["location"] as? [String: Any], let latitude = place["latitude"] as? Double,
+                  let longitude = place["longitude"] as? Double else { return nil }
+            return LampLocation.Place(latitude: latitude, longitude: longitude, accuracy: 20, date: Date(), name: place["name"] as? String)
+        }
+    }
+    // end LampShowcase
+
     enum LampStore {
         static let folder: URL = {
+            // A reel's take keeps its own, starting empty, so it shows nothing of the person's.
+            if let showcase = LampShowcase.folder {
+                let url = showcase.appendingPathComponent("data")
+                try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                return url
+            }
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             #if os(macOS)
             // On a Mac the data is kept under the app's plain id, whatever the app is signed as: an app made for
@@ -8448,6 +8666,148 @@ enum Template {
     }
     // end LampScreen
 
+    extension LampShowcase {
+        /// Runs once, at launch: the script's steps are played once the window is up.
+        static let start: Void = {
+            guard isOn else { return }
+            Task { @MainActor in await LampDriver.playShowcase() }
+        }()
+    }
+
+    extension LampDriver {
+        /// Plays showcase.json's `steps` on the app's own window, the way `use_app` would, logging where each thing
+        /// it acts on is (fractions of the window: x,y,width,height) so the reel's cursor goes there. A step is one of
+        /// use_app's actions (`{"action": "click", "target": "Take my seat"}`, which waits for its target to be there
+        /// and not dimmed), `{"wait": seconds}`, `{"wait_for": "Speak Italian"}`, `{"focus": "Send my reply"}` (or a
+        /// list of names, "window", or `[x, y, width, height]` in fractions of the window: where the reel's camera goes) or `{"mark": "words"}`. The script's `window`
+        /// (`{"width": 960, "height": 720}`) sizes the window first; it's brought to the front unless `front` is false,
+        /// since a window in the back is drawn with gray controls.
+        static func playShowcase() async {
+            var window: NSWindow?
+            for _ in 0..<150 {
+                window = LampRuntime.windowsOnScreen.first
+                if window != nil { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let window else { LampShowcase.note("missing", "window"); return }
+            if let size = LampShowcase.script["window"] as? [String: Double], let width = size["width"], let height = size["height"] {
+                window.setContentSize(NSSize(width: width, height: height))
+                window.center()
+            }
+            if LampShowcase.script["front"] as? Bool ?? true {
+                NSApp.activate()
+                window.makeKeyAndOrderFront(nil)
+            }
+            try? await Task.sleep(for: .seconds(1))
+            LampShowcase.note("ready", "\(Int(window.frame.width))x\(Int(window.frame.height))")
+            // The steps start once the recording has its first frame (the recorder leaves a `recording` file then),
+            // so nothing happens before the reel can see it. With none after two minutes (no recorder, or macOS still
+            // asking about it), nothing is played: a take without its opening is no reel.
+            let recording = LampShowcase.folder?.appendingPathComponent("recording").path ?? ""
+            for _ in 0..<1200 where !FileManager.default.fileExists(atPath: recording) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard FileManager.default.fileExists(atPath: recording) else {
+                LampShowcase.note("missing", "the recording's first frame")
+                LampShowcase.note("end")
+                return
+            }
+            try? await Task.sleep(for: .seconds(LampShowcase.script["lead"] as? Double ?? 0.8))
+            let steps = LampShowcase.script["steps"] as? [[String: Any]] ?? []
+            // A key held down (a game's controls) belongs to a batch, which lets it go. The person's click or Esc stops
+            // the batch, and the take with it: nothing more is played on an app they took back.
+            let batch = Handover.begin(id: "showcase", count: steps.count) { _ in }
+            for step in steps {
+                guard batch.carriesOn else { LampShowcase.note("missing", "the rest of the steps: the app was taken back"); break }
+                await playShowcase(step)
+            }
+            LampShowcase.note("end")
+        }
+
+        private static func playShowcase(_ step: [String: Any]) async {
+            let timeout = step["timeout"] as? Double ?? 30
+            if let seconds = step["wait"] as? Double { try? await Task.sleep(for: .seconds(seconds)); return }
+            if let target = step["wait_for"] as? String { _ = await showcaseFrame(of: target, timeout: timeout); return }
+            if let mark = step["mark"] as? String { LampShowcase.note("mark", mark); return }
+            if let rect = step["focus"] as? [Double], rect.count == 4 {
+                LampShowcase.note("focus", rect.map { String($0) }.joined(separator: ","), "region"); return
+            }
+            if let focus = step["focus"] {
+                let names = (focus as? [String]) ?? [focus as? String ?? "window"]
+                if names == ["window"] { LampShowcase.note("focus", "0,0,1,1", "window"); return }
+                var union: CGRect?
+                for name in names {
+                    guard let frame = await showcaseFrame(of: name, timeout: timeout, dimmed: true) else { continue }
+                    union = union.map { $0.union(frame) } ?? frame
+                }
+                if let union { LampShowcase.note("focus", showcaseText(union), names.joined(separator: ", ")) }
+                return
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: step),
+                  let action = try? JSONDecoder().decode(Action.self, from: data) else {
+                LampShowcase.note("missing", "a step it can't read"); return
+            }
+            if let target = action.target {
+                guard let frame = await showcaseFrame(of: target, timeout: timeout) else { return }
+                LampShowcase.note("act", showcaseText(frame), action.action, target)
+                // The reel's cursor gets there before anything happens.
+                try? await Task.sleep(for: .seconds(0.3))
+            } else if let x = action.x, let y = action.y, let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview {
+                // A spot given in the picture's pixels (what isn't listed): the reel's cursor goes there too.
+                let scale = LampRuntime.scale(of: window)
+                LampShowcase.note("act", showcaseText(CGRect(x: x / (frame.bounds.width * scale), y: y / (frame.bounds.height * scale), width: 0, height: 0)), action.action, "a spot")
+                try? await Task.sleep(for: .seconds(0.3))
+            }
+            // Taken from a run-loop timer (`after`), as `perform` takes its steps: an action that opens a dialog doesn't
+            // return until it closes, and the steps after it are how it gets answered. Those resume on the main queue,
+            // which keeps running while the dialog is open only because the action isn't itself on that queue.
+            after(0) {
+                guard Handover.current?.carriesOn == true else { return }
+                LampShowcase.note("did", run(action))
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+
+        /// Where `target` is in the front window, as fractions of it, once it's there (and not dimmed, unless that
+        /// doesn't matter: the camera can go to a button that isn't ready yet).
+        private static func showcaseFrame(of target: String, timeout: Double, dimmed: Bool = false) async -> CGRect? {
+            let end = Date().addingTimeInterval(timeout)
+            while Date() < end {
+                if let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview {
+                    let items = elements(in: window).map(\.item)
+                    if case .one(let index) = LampScreen.find(target, in: items), dimmed || !items[index].disabled {
+                        let scale = LampRuntime.scale(of: window)
+                        let size = CGSize(width: frame.bounds.width * scale, height: frame.bounds.height * scale)
+                        let f = items[index].frame
+                        return CGRect(x: f.minX / size.width, y: f.minY / size.height, width: f.width / size.width, height: f.height / size.height)
+                    }
+                }
+                // A page's things are read in the page, which answers a moment later.
+                LampPageItems.refresh? {}
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            LampShowcase.note("missing", target)
+            return nil
+        }
+
+        private static func showcaseText(_ r: CGRect) -> String {
+            String(format: "%.4f,%.4f,%.4f,%.4f", r.minX, r.minY, r.width, r.height)
+        }
+    }
+
+    /// A web page in the app (LampPage.swift's): the accessibility tree `LampDriver.elements` reads stops at a web view's
+    /// edge, so a page lists its own things (`LampPageReader`), in the window's picture's pixels. `refresh` reads them
+    /// again and then calls back; `items` are those last read in a window. Nothing in an app without a page.
+    @MainActor
+    enum LampPageItems {
+        static var refresh: ((@escaping @MainActor () -> Void) -> Void)?
+        static var items: (NSWindow) -> [LampScreen.Item] = { _ in [] }
+        /// Carries out an action aimed at a page (`point`, in the window's frame view, on it; or none, with the page
+        /// holding the keyboard) in the page's own script, which takes it whether or not the app is in front, where
+        /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's.
+        static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
+    }
+
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
     /// menus in the front window, from inside the app, so no Accessibility permission is needed. An action names
     /// what it's for by `target`, an id or name from the screen as text (LampScreen, written beside each picture),
@@ -8529,6 +8889,20 @@ enum Template {
                 held.append((up, timer))
             }
 
+            /// A key held down on a page (LampPage.swift), pressed in the page's own script: `release` lets it go after
+            /// `seconds`, or at once if the batch stops or a newer one takes its place, as `hold`'s keys are.
+            func hold(for seconds: Double, release: @escaping @MainActor () -> Void) {
+                let timer = Timer(timeInterval: seconds, repeats: false) { timer in
+                    MainActor.assumeIsolated {
+                        guard let index = self.pageHeld.firstIndex(where: { $0.timer === timer }) else { return }
+                        self.pageHeld.remove(at: index).release()
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                pageHeld.append((release, timer))
+            }
+            private var pageHeld: [(release: @MainActor () -> Void, timer: Timer)] = []
+
             /// Ends the batch where it is: nothing more is done, keys held down are let go, and Lamp is told.
             func stop() {
                 guard carriesOn else { return }
@@ -8543,6 +8917,11 @@ enum Template {
                     NSApp.postEvent(key.up, atStart: true)
                 }
                 held = []
+                for key in pageHeld {
+                    key.timer.invalidate()
+                    key.release()
+                }
+                pageHeld = []
             }
 
             /// Lamp's Stop for batch `id`, signed with the app's token like the request, so no other process can stop it.
@@ -8573,7 +8952,7 @@ enum Template {
 
         /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
         /// builds that check it; notifications reach every process, so the token itself never travels). Builds
-        /// that take Lamp's Stop (`Handover`) have "lampUseAppStop" in them.
+        /// that take Lamp's Stop (`Handover`) have "lampUseAppStopSignature" in them (older ones "lampUseAppStop").
         static func perform(_ json: String?, id: String?, signature: String?) {
             guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
@@ -8674,6 +9053,8 @@ enum Template {
                         last = (line, window, LampRuntime.picture(of: window))
                     }
                     report[line] = run(action)
+                    // A page reads its things again, for the next action's target: ready well within the pause.
+                    LampPageItems.refresh? {}
                     if action.action != "bar_icon" { keepBarPanel() }
                     tellWindow()
                     // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
@@ -8793,7 +9174,7 @@ enum Template {
             // What the action names, found in the window's own accessibility tree: it's acted on where it has
             // an action of its own, and its middle is the point to click otherwise.
             var action = action
-            var named: (item: LampScreen.Item, id: String, element: AXUIElement)?
+            var named: (item: LampScreen.Item, id: String, element: AXUIElement?)?
             if let target = action.target?.trimmingCharacters(in: .whitespacesAndNewlines), !target.isEmpty, !(window is NSSavePanel) {
                 let elements = elements(in: window)
                 let items = elements.map(\.item)
@@ -8828,6 +9209,11 @@ enum Template {
                     return "\(action.action): " + filePanel(panel)
                 }
             }
+            // On a page (LampPage.swift's), the page carries the action out itself.
+            if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
+               let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
+                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
+            }
             if isBarPanel(window), action.action == "key", action.key?.lowercased() == "escape" {
                 releaseBarPanel()
                 return "pressed escape: closed the menu bar icon's panel"
@@ -8839,9 +9225,9 @@ enum Template {
                 // A thing that presses itself (a button, a switch, a link, a row's disclosure) is asked to, the
                 // way VoiceOver asks it, so the click can't miss. A picker's press would open its menu on the
                 // user's screen, and a row's or field's is a click: those go by the point.
-                if let named, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
+                if let named, let element = named.element, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
                     guard !named.item.disabled else { return label + "it's dimmed right now, so nothing happened" }
-                    if AXUIElementPerformAction(named.element, kAXPressAction as CFString) == .success { return label + "pressed" }
+                    if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success { return label + "pressed" }
                 }
                 guard frame.bounds.contains(point) else { return label + "outside the window, whose picture is \(size) pixels" }
                 guard let view = frame.hitTest(point) else { return label + "nothing there" }
@@ -8857,9 +9243,9 @@ enum Template {
                 if let named, let what {
                     // A slider or stepper takes the number; a field takes the keyboard, with the text in place of
                     // what it held, so a value typed over "0.00" isn't "0.00120".
-                    if named.item.role == "slider" || named.item.role == "stepper" {
+                    if let element = named.element, named.item.role == "slider" || named.item.role == "stepper" {
                         guard let value = Double(text) else { return "type into \(what): give it a number" }
-                        guard AXUIElementSetAttributeValue(named.element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
+                        guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
                             return "type into \(what): it didn't take the number"
                         }
                         return "set \(what) to \(LampScreen.number(value))"
@@ -8894,8 +9280,8 @@ enum Template {
                 }
                 if let named, let what {
                     // Up and down step a slider or stepper; anything else goes to the thing once it has focus.
-                    if named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
-                        let stepped = AXUIElementPerformAction(named.element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
+                    if let element = named.element, named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
+                        let stepped = AXUIElementPerformAction(element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
                         return stepped ? "stepped \(what) \(name)" : "key \(name): \(what) didn't take the step"
                     }
                     if let view = frame.hitTest(point) { _ = click(view, at: point, in: window, count: 1) }
@@ -8951,13 +9337,13 @@ enum Template {
         /// accessibility API on this app's own process, which needs no permission: it's the one way to see
         /// SwiftUI's elements, whose bridge to AppKit stays asleep until an accessibility client asks, and
         /// it shows AppKit's and SwiftUI's alike. Frames are in the picture's pixels.
-        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement)] {
+        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement?)] {
             guard let frame = window.contentView?.superview, let root = axWindow(for: window) else { return [] }
             let scale = LampRuntime.scale(of: window)
             // The accessibility API counts from the top left of the main screen, pictures from the window's.
             let origin = CGPoint(x: window.frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - window.frame.maxY)
             let bounds = CGRect(origin: origin, size: frame.bounds.size)
-            var found: [(item: LampScreen.Item, element: AXUIElement)] = []
+            var found: [(item: LampScreen.Item, element: AXUIElement?)] = []
             func string(_ value: CFTypeRef?) -> String {
                 switch value {
                 case let text as String: text
@@ -9038,7 +9424,8 @@ enum Template {
                 for child in read[10] as? [AXUIElement] ?? [] { visit(child, depth: depth + 1, under: under) }
             }
             visit(root, depth: 0, under: [])
-            return found
+            // A page's own things, read in the page (`LampPageItems`): clicked and typed into at their points.
+            return found + LampPageItems.items(window).map { ($0, nil) }
         }
 
         /// This window as the accessibility API has it: the one of this app's windows, or sheets on them, in
@@ -10411,6 +10798,8 @@ enum Template {
         /// Asks once (while in use, or always for watching in the background); true when allowed. A question
         /// the system won't ask again (refused, restricted, Always asked before) answers straight away.
         static func authorize(always: Bool = false) async -> Bool {
+            // A reel's take is where its script says, or nowhere; the Mac's own location is never asked for.
+            if LampShowcase.isOn { return LampShowcase.place != nil }
             let me = shared
             let status = me.manager.authorizationStatus
             if status == .denied || status == .restricted { return false }
@@ -10463,6 +10852,11 @@ enum Template {
 
         /// Where the person is now, named when the map knows the place.
         static func current() async throws -> Place {
+            if LampShowcase.isOn {
+                guard let place = LampShowcase.place else { throw Failure(message: "The showcase script names no location.") }
+                shared.current = place
+                return place
+            }
             guard await authorize() else { throw Failure(message: "The app isn't allowed to know where the person is. They can allow it in Settings.") }
             let location: CLLocation = try await withCheckedThrowingContinuation { continuation in
                 shared.once.append(continuation)
@@ -10497,6 +10891,8 @@ enum Template {
 
         /// Keeps `current` up as the person moves a few hundred meters or more, sparing the battery.
         func watch() {
+            // A reel's take stays where its script put it: nothing live may move it.
+            if LampShowcase.isOn { current = LampShowcase.place ?? current; return }
             wantsMoves = true
             Task {
                 guard await Self.authorize(), wantsMoves else { return }
@@ -10511,6 +10907,7 @@ enum Template {
         /// Keeps `visits`: where the person stops and for how long, even with the app closed. iPhone only;
         /// needs `always` and the location background mode.
         func watchVisits() {
+            if LampShowcase.isOn { return }
             #if os(iOS)
             wantsVisits = true
             Task {
@@ -11963,592 +12360,6 @@ enum Template {
         }
     }
 
-    #endif
-
-    #if os(macOS)
-    /// This app's sidebar in Chrome, beside the page the person is on: a page of the app's own (`startPage`, below).
-    /// An app built before pages publishes a Surface instead, which Lamp's extension draws, sending each click back
-    /// to `handle`. Every Chrome tab has a sidebar of its
-    /// own: `surface(tab)` draws one tab's, and `event.tab` says which tab a click came from, so keep what a click
-    /// prepares (a preview, a draft) by tab and two pages never mix. Declare where it fits in browser.json at the
-    /// app's root. Start it once, from the app's shared model:
-    ///
-    ///     LampBrowser.start(surface: { tab in model.sidebar(for: tab) }, handle: { event in await model.handle(event) })
-    ///
-    /// A page is read only when a button with `readsPage` (the page's readable text) or `readsSelection` (only the
-    /// passage the person selected) is clicked. Page text is untrusted: give it to LampAI as `data:`.
-    @MainActor
-    enum LampBrowser {
-        /// A heading with text under it, a list (`items`, one line each), or both.
-        struct Section: Codable { var title: String; var text: String = ""; var items: [String] = [] }
-        /// A field the person can change before clicking. `lines` above 1 makes it a box for longer text.
-        struct Field: Codable { var id: String; var label: String; var value: String = ""; var lines: Int = 1 }
-        /// A button. The first is drawn as the main one. Never both `readsPage` and `readsSelection`.
-        struct Action: Codable { var id: String; var label: String; var readsPage: Bool = false; var readsSelection: Bool = false }
-        struct Surface: Codable {
-            var title: String
-            var detail: String = ""
-            var sections: [Section] = []
-            var fields: [Field] = []
-            var actions: [Action] = []
-            var busy: Bool = false
-        }
-        struct Page: Codable {
-            var url: String
-            var title: String
-            /// The page's readable text, or only the selected passage when `scope` is "selection".
-            var text: String
-            var scope: String?
-            /// The page was longer than the 24,000 characters given: what's missing may be further down.
-            var truncated: Bool?
-            var isSelection: Bool { scope == "selection" }
-            /// Whether `quote` is in the page's text word for word, ignoring case, spacing and the style of quote
-            /// marks and dashes. An AI can make a quote up: check each one before showing or saving it as the page's.
-            func contains(_ quote: String) -> Bool {
-                func plain(_ s: String) -> String {
-                    var t = s.lowercased()
-                    for (from, to) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201C}", "\""), ("\u{201D}", "\""),
-                                       ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{00A0}", " ")] { t = t.replacingOccurrences(of: from, with: to) }
-                    return t.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-                }
-                let wanted = plain(quote)
-                return !wanted.isEmpty && plain(text).contains(wanted)
-            }
-        }
-        struct Event: Codable {
-            var id: String
-            /// Which Chrome tab the click came from (or Lamp's own preview of the sidebar).
-            var tab: String
-            var action: String
-            /// What the person typed, by field id.
-            var fields: [String: String]
-            var page: Page?
-        }
-        private static var service: Task<Void, Never>?
-        /// Start once from a shared app model. The sidebar stays up across opening and closing windows.
-        static func start(surface: @escaping (_ tab: String) -> Surface, handle: @escaping (Event) async -> Void) {
-            guard service == nil else { return }
-            service = Task { await serve(surface: surface, handle: handle) }
-        }
-        /// For a sidebar that shows the same on every tab: one that keeps no draft or preview.
-        static func start(surface: @escaping () -> Surface, handle: @escaping (Event) async -> Void) {
-            start(surface: { _ in surface() }, handle: handle)
-        }
-        /// Asks Lamp to show this app's offer to connect Chrome. No browser installation belongs in app code.
-        static func openSetup() async {
-            _ = try? await LampAI.post("/browser/setup", [:], timeout: 10)
-        }
-        /// Publishes the surface twice a second, for each tab the sidebar is open in, and runs one click at a
-        /// time. A click is acknowledged after `handle` returns; make saves idempotent by the page or item.
-        private static func serve(surface: @escaping (String) -> Surface, handle: @escaping (Event) async -> Void) async {
-            let boot = UUID().uuidString
-            var ack: String?
-            var handling: String?
-            var tabs: [String] = []
-            var work: Task<Void, Never>?
-            defer { work?.cancel() }
-            func encoded(_ tab: String) throws -> Any {
-                var published = surface(tab)
-                published.busy = published.busy || handling != nil
-                return try JSONSerialization.jsonObject(with: JSONEncoder().encode(published))
-            }
-            while !Task.isCancelled {
-                var pause = 0.5
-                do {
-                    var body: [String: Any] = ["boot": boot, "surface": try encoded(""),
-                                               "surfaces": try Dictionary(uniqueKeysWithValues: tabs.prefix(16).map { ($0, try encoded($0)) })]
-                    if let ack { body["ack"] = ack }
-                    var request = URLRequest(url: URL(string: lampGateway + "/browser/surface")!)
-                    request.httpMethod = "POST"
-                    request.timeoutInterval = 5
-                    request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    if status == 400, let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        print("The browser sidebar couldn't be drawn: \(reply["error"] as? String ?? "") Check its sizes: up to 8 actions, 12 fields, 20 sections.")
-                    }
-                    // Lamp without the sidebar turned on: asked again now and then, in case it's turned on.
-                    guard status == 200, let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        pause = status == 404 || status == 403 ? 5 : 1
-                        throw CancellationError()
-                    }
-                    tabs = reply["tabs"] as? [String] ?? []
-                    if let rawEvent = reply["event"],
-                       let event = try? JSONDecoder().decode(Event.self, from: JSONSerialization.data(withJSONObject: rawEvent)),
-                       handling == nil, event.id != ack {
-                        handling = event.id
-                        work = Task { await handle(event); ack = event.id; handling = nil }
-                    }
-                } catch { /* Lamp closed or not ready: the sidebar shows again once it answers. */ }
-                do { try await Task.sleep(for: .seconds(pause)) } catch { return }
-            }
-        }
-
-        // MARK: The sidebar as the app's own page
-
-        /// A call from the sidebar page's script, `lamp.call(name, body)`: its name, the Chrome tab it came from
-        /// (keep what one tab prepares apart from another's), and the JSON it sent.
-        struct Call: Sendable {
-            var name: String
-            var tab: String
-            var body: Data
-            func decode<T: Decodable>(_ type: T.Type) throws -> T {
-                try JSONDecoder().decode(T.self, from: body.isEmpty ? Data("null".utf8) : body)
-            }
-        }
-        /// Thrown from a page call: its message is what the page's `lamp.call` rejects with.
-        struct Failure: Error, LocalizedError {
-            var message: String
-            init(_ message: String) { self.message = message }
-            var errorDescription: String? { message }
-        }
-
-        /// The app serves its sidebar page itself (Assets/Sidebar, index.html first) on this Mac's own address, at a
-        /// name and port of its own, so its sidebar works while the app is open whether Lamp is or not. Chrome's
-        /// sidebar frames it; the page asks the app for its data and actions with `lamp.call`, and for the page the
-        /// person is on with `lamp.readPage()` after a click, or when the app's right-click item is chosen (`lamp.onMenu`).
-        /// `api` answers the calls, on the main actor:
-        ///
-        ///     LampBrowser.startPage { call in
-        ///         switch call.name {
-        ///         case "list": return model.saved
-        ///         case "preview": return try await model.preview(call.decode(LampBrowser.Page.self), tab: call.tab)
-        ///         default: throw LampBrowser.Failure("Unknown call \(call.name).")
-        ///         }
-        ///     }
-        ///
-        /// Call `pageChanged()` when what the page shows changed in the app, so `lamp.onChange` fires there.
-        ///
-        /// The page itself (Assets/Sidebar/index.html, its CSS and JavaScript beside it) is described, with a page
-        /// to start from that goes through every state, in Lamp's chrome-sidebar skill: open it with `read_skill`.
-        /// A call that fails throws `Failure`, whose message the page shows; the page loads nothing from the
-        /// internet, so a picture of an item reaches it from the app (`/assets/<file>`, or a `data:` URL).
-        static func startPage(api: @escaping @MainActor (Call) async throws -> any Encodable) {
-            pageAPI = api
-            PageServer.queue.async { PageServer.listen() }
-        }
-        static func pageChanged() { PageServer.queue.async { PageServer.version += 1 } }
-        fileprivate static var pageAPI: (@MainActor (Call) async throws -> any Encodable)?
-
-        /// A small HTTP server for the one page. Only requests naming the app's own host get anything (a website
-        /// that points a name of its own at this Mac is refused), the page's data only with the key Chrome's
-        /// sidebar was given, and only the extension may frame the page.
-        fileprivate enum PageServer {
-            /// The first of the ports the app may use; when another program has it, the next few are tried, as
-            /// Chrome's sidebar and Lamp's preview do. Only this app answers its own name on any of them.
-            static let firstPort = UInt16(clamping: LampInstall.number("sidebarPort"))
-            static let tries = UInt16(clamping: max(1, LampInstall.number("sidebarTries")))
-            nonisolated(unsafe) static var port: UInt16 = firstPort
-            static let host = LampInstall.value("sidebarHost")
-            static let key = LampInstall.value("sidebarKey")
-            static let queue = DispatchQueue(label: "LampBrowser.page")
-            nonisolated(unsafe) static var listeners: [NWListener] = []
-            nonisolated(unsafe) static var version = 0
-            static let policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors \(LampInstall.value("sidebarFramer"))"
-
-            static var folder: URL? { LampAssets.folder?.appendingPathComponent("Sidebar") }
-
-            /// Both of this Mac's own addresses, since Chrome tries `::1` first for a `.localhost` name: a program
-            /// holding either one at a port would otherwise get the page's address, and its key, there. When either is
-            /// taken, the next port is tried for both.
-            static func listen(offset: UInt16 = 0) {
-                guard listeners.isEmpty else { return }
-                guard offset < tries, let endpoint = NWEndpoint.Port(rawValue: firstPort + offset) else {
-                    return print("The sidebar page couldn't be served: other programs have ports \(firstPort)–\(firstPort + tries - 1).")
-                }
-                var made: [NWListener] = []
-                for address in [IPv4Address.loopback as IPAddress, IPv6Address.loopback as IPAddress] {
-                    let parameters = NWParameters.tcp
-                    parameters.requiredLocalEndpoint = .hostPort(host: address is IPv4Address ? .ipv4(.loopback) : .ipv6(.loopback), port: endpoint)
-                    // Network won't hold both addresses at one port without it; another program still can't share it.
-                    parameters.allowLocalEndpointReuse = true
-                    guard let listener = try? NWListener(using: parameters) else { made.forEach { $0.cancel() }; return listen(offset: offset + 1) }
-                    made.append(listener)
-                }
-                listeners = made
-                port = firstPort + offset
-                for listener in made {
-                    listener.newConnectionHandler = { accept($0) }
-                    listener.stateUpdateHandler = { state in
-                        switch state {
-                        case .failed, .waiting:
-                            // One address taken is the port taken: both move on together.
-                            guard listeners.contains(where: { $0 === listener }) else { return }
-                            listeners.forEach { $0.cancel() }
-                            listeners = []
-                            listen(offset: offset + 1)
-                        default: break
-                        }
-                    }
-                    listener.start(queue: queue)
-                }
-            }
-
-            struct Request {
-                var method: String, path: String, headers: [String: String], body: Data
-                /// Nil until the whole request has arrived.
-                init?(_ data: Data) {
-                    guard let end = data.range(of: Data("\r\n\r\n".utf8)),
-                          let head = String(data: data[..<end.lowerBound], encoding: .utf8) else { return nil }
-                    var lines = head.components(separatedBy: "\r\n")
-                    let first = lines.removeFirst().split(separator: " ")
-                    guard first.count >= 2 else { return nil }
-                    method = String(first[0]); path = String(first[1]); headers = [:]
-                    for line in lines {
-                        guard let colon = line.firstIndex(of: ":") else { continue }
-                        headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-                    }
-                    let length = Int(headers["content-length"] ?? "0") ?? 0
-                    guard length >= 0, data.count - end.upperBound >= length else { return nil }
-                    body = data[end.upperBound..<(end.upperBound + length)]
-                }
-            }
-
-            static func accept(_ connection: NWConnection) {
-                connection.start(queue: queue)
-                var received = Data()
-                var arrived = false
-                // A request has a few seconds to arrive whole; the app's answer (an AI answer can take a minute) has
-                // as long as it needs.
-                queue.asyncAfter(deadline: .now() + 15) { if !arrived { connection.cancel() } }
-                func read() {
-                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, complete, error in
-                        if let data { received.append(data) }
-                        if received.count > 1_100_000 { return connection.cancel() }
-                        if let request = Request(received) { arrived = true; return respond(request, on: connection) }
-                        if complete || error != nil { return connection.cancel() }
-                        read()
-                    }
-                }
-                read()
-            }
-
-            /// An SF Symbol as a PNG at `size` points (drawn at twice that), in `color` (hex) or black.
-            @MainActor static func symbolPNG(_ name: String, color: String?, size: Int, weight: String?) -> Data? {
-                let points = CGFloat(min(max(size, 8), 128))
-                let weights: [String: NSFont.Weight] = ["ultralight": .ultraLight, "thin": .thin, "light": .light, "regular": .regular,
-                                                        "medium": .medium, "semibold": .semibold, "bold": .bold, "heavy": .heavy, "black": .black]
-                var tint = NSColor.black
-                if let color, color.count == 6, let rgb = UInt32(color, radix: 16) {
-                    tint = NSColor(srgbRed: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
-                }
-                let config = NSImage.SymbolConfiguration(pointSize: points, weight: weights[weight ?? ""] ?? .regular)
-                    .applying(NSImage.SymbolConfiguration(paletteColors: [tint]))
-                guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return nil }
-                let pixels = NSSize(width: ceil(symbol.size.width * 2), height: ceil(symbol.size.height * 2))
-                guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(pixels.width), pixelsHigh: Int(pixels.height), bitsPerSample: 8,
-                                                 samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-                rep.size = symbol.size
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-                symbol.draw(in: NSRect(origin: .zero, size: symbol.size))
-                NSGraphicsContext.restoreGraphicsState()
-                return rep.representation(using: .png, properties: [:])
-            }
-
-            static func send(_ status: Int, _ type: String, _ body: Data, on connection: NWConnection) {
-                let reason = [200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 421: "Misdirected Request", 503: "Unavailable"][status] ?? "Error"
-                let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n" +
-                    "Content-Security-Policy: \(policy)\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\n" +
-                    "Referrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-                connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
-            }
-            static func json(_ status: Int, _ value: [String: Any], on connection: NWConnection) {
-                send(status, "application/json", (try? JSONSerialization.data(withJSONObject: value)) ?? Data("{}".utf8), on: connection)
-            }
-
-            static func respond(_ request: Request, on connection: NWConnection) {
-                // A website can point any name at this Mac, and another program may have taken the app's first
-                // port: only the app's own name, at the port it has, is answered.
-                guard request.headers["host"] == "\(host):\(port)" else { return json(421, ["error": "Wrong host."], on: connection) }
-                let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
-                // Proof that this is the app, not another program that took one of its ports: the key's signature
-                // over the sidebar's nonce and the port asked, which only the app can make and which fits only the
-                // address it was asked at. Chrome's sidebar hands the page its key only after checking it.
-                if path == "/lamp/proof", request.method == "GET" {
-                    let query = request.path.split(separator: "?", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
-                    guard let nonce = URLComponents(string: "?" + query)?.queryItems?.first(where: { $0.name == "nonce" })?.value,
-                          !nonce.isEmpty, nonce.count <= 100 else { return json(400, ["error": "No nonce."], on: connection) }
-                    let code = HMAC<SHA256>.authenticationCode(for: Data("\(nonce):\(port)".utf8), using: SymmetricKey(data: Data(key.utf8)))
-                    return json(200, ["proof": code.map { String(format: "%02x", $0) }.joined()], on: connection)
-                }
-                // The symbols the window shows, drawn by the app as the window draws them, so the page can use the same.
-                if path.hasPrefix("/symbols/") {
-                    let query = URLComponents(string: request.path)?.queryItems ?? []
-                    let value = { (name: String) in query.first { $0.name == name }?.value }
-                    let name = String(path.dropFirst("/symbols/".count)).replacingOccurrences(of: ".png", with: "")
-                    guard name.count <= 80, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "." }),
-                          let png = DispatchQueue.main.sync(execute: { MainActor.assumeIsolated { symbolPNG(name, color: value("color"),
-                                                                                 size: Int(value("size") ?? "") ?? 32, weight: value("weight")) } }) else {
-                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
-                    }
-                    return send(200, "image/png", png, on: connection)
-                }
-                // The app's own pictures (its Assets folder), so an item shows the picture the window shows for it.
-                if path.hasPrefix("/assets/") {
-                    let parts = path.dropFirst("/assets/".count).split(separator: "/").map { String($0).removingPercentEncoding ?? "" }
-                    let images = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
-                                  "heic": "image/heic", "svg": "image/svg+xml"]
-                    guard let assets = LampAssets.folder, !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") }),
-                          let type = images[(parts.last! as NSString).pathExtension.lowercased()] else {
-                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
-                    }
-                    let root = assets.resolvingSymlinksInPath().path + "/"
-                    let file = parts.reduce(assets) { $0.appendingPathComponent($1) }.resolvingSymlinksInPath()
-                    guard file.path.hasPrefix(root), let data = try? Data(contentsOf: file) else {
-                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
-                    }
-                    return send(200, type, data, on: connection)
-                }
-                if path.hasPrefix("/lamp/") {
-                    // The page's data: only for the key Chrome's sidebar (or Lamp's preview) was given, and never
-                    // for a request another site made.
-                    let site = request.headers["sec-fetch-site"]
-                    guard request.headers["x-lamp-key"] == key, site == nil || site == "same-origin" else {
-                        return json(403, ["error": "Not for this page."], on: connection)
-                    }
-                    if path == "/lamp/version" { return json(200, ["version": version], on: connection) }
-                    guard request.method == "POST", path.hasPrefix("/lamp/call/"),
-                          let name = String(path.dropFirst("/lamp/call/".count)).removingPercentEncoding, !name.isEmpty, name.count <= 100 else {
-                        return json(404, ["error": "Not found."], on: connection)
-                    }
-                    let call = Call(name: name, tab: String((request.headers["x-lamp-tab"] ?? "").prefix(40)), body: request.body)
-                    Task { @MainActor in
-                        guard let api = LampBrowser.pageAPI else { return queue.async { json(503, ["error": "The app isn't ready."], on: connection) } }
-                        do {
-                            let value = try await api(call)
-                            let data = try JSONEncoder().encode(value)
-                            queue.async { send(200, "application/json", data, on: connection) }
-                        } catch {
-                            let message = error is DecodingError ? "The app couldn't read what the page sent."
-                                : (error as? LocalizedError)?.errorDescription ?? "The app couldn't do that."
-                            queue.async { json(400, ["error": message], on: connection) }
-                        }
-                    }
-                    return
-                }
-                guard request.method == "GET" else { return json(404, ["error": "Not found."], on: connection) }
-                if path == "/lamp.js" { return send(200, "text/javascript; charset=utf-8", Data(LampBrowser.script.utf8), on: connection) }
-                if path == "/lamp.css" { return send(200, "text/css; charset=utf-8", Data(LampBrowser.style.utf8), on: connection) }
-                // The page's own files, and nothing outside its folder.
-                let parts = (path == "/" ? "/index.html" : path).split(separator: "/").map { String($0).removingPercentEncoding ?? "" }
-                guard let folder, !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") }) else {
-                    return json(404, ["error": "Not found."], on: connection)
-                }
-                // Links are followed before the check, so one pointing out of the folder is refused like `..`.
-                let root = folder.resolvingSymlinksInPath().path + "/"
-                let file = parts.reduce(folder) { $0.appendingPathComponent($1) }.resolvingSymlinksInPath()
-                guard file.path.hasPrefix(root), let data = try? Data(contentsOf: file) else {
-                    return send(404, "text/plain", Data("Not found".utf8), on: connection)
-                }
-                let types = ["html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
-                             "json": "application/json", "svg": "image/svg+xml", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-                             "gif": "image/gif", "webp": "image/webp", "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf"]
-                send(200, types[file.pathExtension.lowercased()] ?? "application/octet-stream", data, on: connection)
-            }
-        }
-
-        /// `lamp.js`, which the page loads first: `lamp.call`, `lamp.readPage`, `lamp.readSelection`, `lamp.onChange`,
-        /// `lamp.onMenu`.
-        nonisolated fileprivate static let script = """
-        // Lamp's bridge for this app's sidebar page. The page sits in Chrome's sidebar, framed by Lamp's extension;
-        // what it knows of the person's tab comes only through that frame, after a click.
-        (() => {
-          const tab = new URLSearchParams(location.hash.slice(1)).get('tab') || sessionStorage.getItem('lamp.tab') || 'preview';
-          sessionStorage.setItem('lamp.tab', tab);
-          if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-          // The key for the app's data comes from the sidebar, and only once the app has proved it serves this page.
-          let key = '';
-          const preview = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampPreview;
-          const framer = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
-          let next = 0; const waiting = {};
-          addEventListener('message', event => {
-            if (event.source !== parent || event.origin !== framer || !event.data || event.data.lamp !== 'answer') return;
-            const done = waiting[event.data.id]; delete waiting[event.data.id]; if (done) done(event.data);
-          });
-          function ask(body) {
-            if (preview) return preview.postMessage(body);
-            if (parent === window || !framer) return Promise.resolve({error: 'Open this in Chrome’s sidebar.'});
-            return new Promise(resolve => { const id = ++next; waiting[id] = resolve; parent.postMessage({...body, id}, framer); });
-          }
-          let token = '', proving = null;
-          function prove() {
-            proving = proving || (async () => {
-              const hello = await ask({lamp: 'hello'});
-              if (hello && hello.key) { key = hello.key; return; }
-              if (!hello || !hello.nonce) return;
-              const proof = await fetch('/lamp/proof?nonce=' + encodeURIComponent(hello.nonce)).then(r => r.json()).catch(() => ({}));
-              const answer = await ask({lamp: 'proof', nonce: hello.nonce, proof: proof.proof || ''});
-              if (answer && answer.key) { key = answer.key; token = answer.token || ''; }
-            })().finally(() => { proving = null; });
-            return proving;
-          }
-          const ready = prove();
-          // The sidebar asks each document it loads to prove itself again.
-          addEventListener('message', event => {
-            if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'prove') prove();
-          });
-          // The app's right-click item was chosen on this tab: the handler does what the item says, as the person's
-          // click would. Held until the page has given its handler, so one given after the news still gets it.
-          const menuHandlers = []; let menuWaiting = false;
-          function chosen() {
-            if (!menuHandlers.length) { menuWaiting = true; return; }
-            menuWaiting = false;
-            menuHandlers.forEach(f => { try { Promise.resolve(f()).catch(() => {}); } catch {} });
-          }
-          addEventListener('message', event => {
-            if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'menu') chosen();
-          });
-          // Lamp's own preview of the sidebar (the builder's) chooses the item through this, as Chrome's sidebar does above.
-          if (preview) Object.defineProperty(window, '__lampChooseMenu', {value: chosen});
-          async function call(name, body) {
-            await ready;
-            let reply;
-            try {
-              reply = await fetch('/lamp/call/' + encodeURIComponent(name), {method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-Lamp-Key': key, 'X-Lamp-Tab': tab}, body: JSON.stringify(body === undefined ? null : body)});
-            } catch { throw new Error('Open the app on your Mac, then try again.'); }
-            const value = await reply.json().catch(() => null);
-            if (!reply.ok) throw new Error((value && value.error) || 'The app couldn’t do that.');
-            return value;
-          }
-          async function read(scope) {
-            await ready;
-            const answer = await ask({lamp: 'read', scope, token});
-            if (!answer || answer.error) throw new Error((answer && answer.error) || 'The page couldn’t be read.');
-            return answer.page;
-          }
-          // Every second: what changed in the app, and to the sidebar, that the app still answers here (when it
-          // doesn't, the sidebar looks for it again, at whichever of its ports it reopened).
-          const watchers = []; let version = null;
-          async function poll() {
-            try {
-              await ready;
-              const reply = await fetch('/lamp/version', {headers: {'X-Lamp-Key': key}});
-              const value = await reply.json();
-              if (reply.ok && !preview && framer) parent.postMessage({lamp: 'alive'}, framer);
-              if (version !== null && value.version !== version) watchers.forEach(f => { try { f(); } catch {} });
-              version = value.version;
-            } catch {}
-            setTimeout(poll, 1000);
-          }
-          poll();
-          // The page's own colors, so Lamp's strip above it is drawn in them and the two read as one.
-          // Only a solid background goes: a gradient or a see-through one gives its first solid color, or nothing, and
-          // with no background the strip keeps all of its own colors, so its words are never drawn on the wrong one.
-          function solid(value) {
-            const m = /rgba?\\(([^)]*)\\)/.exec(value || '');
-            if (!m) return '';
-            const parts = m[1].split(',').map(p => p.trim());
-            return parts.length < 4 || parseFloat(parts[3]) >= 1 ? 'rgb(' + parts.slice(0, 3).join(', ') + ')' : '';
-          }
-          function tellLook() {
-            if (preview || !framer) return;
-            const html = getComputedStyle(document.documentElement), body = getComputedStyle(document.body);
-            const v = name => html.getPropertyValue(name).trim();
-            const bg = solid(body.backgroundColor) || solid(body.backgroundImage) || solid(html.backgroundColor) || solid(html.backgroundImage);
-            parent.postMessage(bg ? {lamp: 'look', bg, ink: body.color, muted: v('--muted'), line: v('--line'), accent: v('--accent')}
-                                  : {lamp: 'look'}, framer);
-          }
-          if (document.readyState === 'loading') addEventListener('DOMContentLoaded', tellLook); else tellLook();
-          matchMedia('(prefers-color-scheme: dark)').addEventListener('change', tellLook);
-          window.lamp = {
-            tab, call,
-            /// The readable text of the page the person is on: {url, title, text, truncated}. Call it from a click.
-            readPage: () => read('page'),
-            /// Only the passage the person selected on the page. Call it from a click.
-            readSelection: () => read('selection'),
-            /// Called when the app says what the page shows changed (LampBrowser.pageChanged()).
-            onChange(f) { watchers.push(f); },
-            /// Called when the person chose the app's right-click item for this page: do what it says, reading the
-            /// page once with lamp.readPage() or lamp.readSelection() as a click would.
-            onMenu(f) { menuHandlers.push(f); if (menuWaiting) chosen(); },
-          };
-        })();
-        """
-
-        /// `lamp.css`: the sidebar drawn as Apple draws a Mac app's narrow list pane, light and dark: the grouped gray
-        /// background, white rounded groups, rows whose separators start at the words, SF, and one tint, which the page
-        /// chooses with `<html data-tint="green">` among Apple's system colors (text and button shades measured to
-        /// read in both appearances). The parts (groups, rows, pictures, symbols as masks, buttons, fields, the bar at
-        /// the foot) are described in the chrome-sidebar skill, and rearrange themselves at large text sizes. The
-        /// variables `--accent`, `--ink`, `--muted`, `--line` and `--bg` are plain colors because the strip above
-        /// the page takes them (`tellLook`).
-        nonisolated fileprivate static let style = """
-        :root{color-scheme:light dark;--bg:#f2f2f7;--surface:#ffffff;--ink:#1d1d1f;--muted:#6e6e73;--line:#dcdce0;--separator:rgba(60,60,67,.2);--tertiary:rgba(60,60,67,.3);--fill:rgba(120,120,128,.12);--fill-strong:rgba(120,120,128,.2);--hairline:rgba(0,0,0,.06);--raised:#ffffff;--raised-shadow:0 .5px 1px rgba(0,0,0,.12),0 2px 6px rgba(0,0,0,.06);--field:#c7c7cc;--danger:#d70015;--accent:var(--tint-text);--on-accent:var(--on-tint);--font:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;--title-font:var(--font);--title-size:1.25rem;--title-weight:700;--radius:12px;--control-radius:7px;--control-height:28px;--shadow:none;--gutter:16px}
-        @media (prefers-color-scheme:dark){:root{--bg:#1c1c1e;--surface:#2c2c2e;--ink:#f5f5f7;--muted:#98989d;--line:#3a3a3c;--separator:rgba(84,84,88,.65);--tertiary:rgba(235,235,245,.3);--fill:rgba(118,118,128,.24);--fill-strong:rgba(118,118,128,.36);--hairline:rgba(255,255,255,.06);--raised:#636366;--raised-shadow:0 1px 2px rgba(0,0,0,.3);--field:#48484a;--danger:#ff6961}}
-        :root,html[data-tint=blue]{--tint:#007aff;--tint-text:#0063d0;--tint-fill:#0071e3;--on-tint:#ffffff;--tint-wash:#dbecff}
-        html[data-tint=green]{--tint:#34c759;--tint-text:#1f7a35;--tint-fill:#1f7a35;--on-tint:#ffffff;--tint-wash:#e3f7e8}
-        html[data-tint=orange]{--tint:#ff9500;--tint-text:#c93400;--tint-fill:#c93400;--on-tint:#ffffff;--tint-wash:#fff0db}
-        html[data-tint=red]{--tint:#ff3b30;--tint-text:#d10014;--tint-fill:#d70015;--on-tint:#ffffff;--tint-wash:#ffe4e2}
-        html[data-tint=pink]{--tint:#ff2d55;--tint-text:#cd0f43;--tint-fill:#d30f45;--on-tint:#ffffff;--tint-wash:#ffe2e7}
-        html[data-tint=purple]{--tint:#af52de;--tint-text:#8944ab;--tint-fill:#8944ab;--on-tint:#ffffff;--tint-wash:#f4e7fa}
-        html[data-tint=indigo]{--tint:#5856d6;--tint-text:#3634a3;--tint-fill:#3634a3;--on-tint:#ffffff;--tint-wash:#e8e7f9}
-        html[data-tint=teal]{--tint:#30b0c7;--tint-text:#0071a4;--tint-fill:#0071a4;--on-tint:#ffffff;--tint-wash:#e2f4f7}
-        html[data-tint=brown]{--tint:#a2845e;--tint-text:#7f6545;--tint-fill:#7f6545;--on-tint:#ffffff;--tint-wash:#f2eee8}
-        @media (prefers-color-scheme:dark){
-        :root,html[data-tint=blue]{--tint:#0a84ff;--tint-text:#51a5ff;--tint-fill:#0071e3;--on-tint:#ffffff;--tint-wash:#27384b}
-        html[data-tint=green]{--tint:#30d158;--tint-text:#30d158;--tint-fill:#30d158;--on-tint:#002e0f;--tint-wash:#2d4334}
-        html[data-tint=orange]{--tint:#ff9f0a;--tint-text:#ffb340;--tint-fill:#ff9f0a;--on-tint:#3a1d00;--tint-wash:#4a3c29}
-        html[data-tint=red]{--tint:#ff453a;--tint-text:#ff7a73;--tint-fill:#d70015;--on-tint:#ffffff;--tint-wash:#4a3030}
-        html[data-tint=pink]{--tint:#ff375f;--tint-text:#ff728d;--tint-fill:#d30f45;--on-tint:#ffffff;--tint-wash:#4a2e35}
-        html[data-tint=purple]{--tint:#bf5af2;--tint-text:#da8fff;--tint-fill:#8944ab;--on-tint:#ffffff;--tint-wash:#413249}
-        html[data-tint=indigo]{--tint:#5e5ce6;--tint-text:#9694ff;--tint-fill:#3634a3;--on-tint:#ffffff;--tint-wash:#333348}
-        html[data-tint=teal]{--tint:#40c8e0;--tint-text:#5de6ff;--tint-fill:#40c8e0;--on-tint:#002a33;--tint-wash:#2f4247}
-        html[data-tint=brown]{--tint:#ac8e68;--tint-text:#bfa37e;--tint-fill:#ac8e68;--on-tint:#2b1d0e;--tint-wash:#3e3a36}
-        }
-        *{box-sizing:border-box}html{background:var(--bg)}
-        body{margin:0;padding:0 0 24px;background:var(--bg);color:var(--ink);font:400 .8125rem/1.38 var(--font);-webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none;cursor:default}
-        .selectable,input,textarea{-webkit-user-select:text;user-select:text}
-        h1,h2,h3,p{margin:0}h1,.title{font:var(--title-weight) var(--title-size)/1.2 var(--title-font)}h2{font:600 .8125rem/1.3 var(--font)}h3,.headline{font:600 .8125rem/1.3 var(--font)}
-        .muted,.secondary{color:var(--muted)}.tint{color:var(--tint-text)}a{color:var(--tint-text);text-decoration:none}img{-webkit-user-drag:none}
-        .num{font-variant-numeric:tabular-nums}.clamp-1,.clamp-2{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}.clamp-1{-webkit-line-clamp:1}.clamp-2{-webkit-line-clamp:2}
-        :focus-visible{outline:3px solid color-mix(in srgb,var(--tint) 50%,transparent);outline-offset:1px}
-        .sym{display:inline-block;flex:none;width:1.15em;height:1.15em;vertical-align:-.2em;background-color:currentColor;-webkit-mask:var(--sym) center/contain no-repeat;mask:var(--sym) center/contain no-repeat}
-        .symbol{width:1.1em;height:1.1em;vertical-align:-.15em}
-        .collection-header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:20px var(--gutter) 10px calc(var(--gutter) + 2px)}
-        .collection-header .count{color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums;white-space:nowrap}
-        .section-header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font:600 .8125rem/1.3 var(--font);margin:18px calc(var(--gutter) + 4px) 7px}
-        .section-footer{color:var(--muted);font-size:.6875rem;line-height:1.35;margin:7px calc(var(--gutter) + 4px) 0}
-        .group,.box{margin:0 var(--gutter);background:var(--surface);border-radius:var(--radius);corner-shape:superellipse(1.6);box-shadow:0 0 0 .5px var(--hairline);overflow:hidden}
-        .group+.group,.box+.box{margin-top:12px}.box>p{padding:10px 12px}
-        .row{position:relative;display:flex;align-items:center;gap:12px;min-height:44px;padding:9px 12px;--inset:12px}
-        .row.has-thumb{--inset:calc(24px + var(--thumb,44px))}.row.has-dot{--inset:33px;align-items:flex-start;padding-top:11px;padding-bottom:11px}.row.has-dot .dot{margin-top:4px}
-        .row+.row::before,.field+.field::before{content:"";position:absolute;top:0;right:0;left:var(--inset);height:.5px;background:var(--separator)}
-        .row .main,.row .grow{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-        .row .title-line{font:600 .8125rem/1.3 var(--font)}
-        .meta,.row .sub{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;color:var(--muted);font-size:.75rem}.meta>span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.meta .sym{font-size:.6875rem}
-        .row .trailing{flex:none;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums}
-        .row[role=button]:active{background:var(--fill)}.row[role=button]:focus-visible{outline:0;box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--tint) 50%,transparent);border-radius:8px}
-        .facts-line,.facts{display:flex;flex-wrap:wrap;color:var(--muted);font-size:.75rem}.facts-line>span,.facts>span{white-space:nowrap}.facts-line>span:not(:last-child)::after,.facts>span:not(:last-child)::after{content:"·";margin:0 5px}
-        .thumb{flex:none;width:var(--thumb,44px);height:var(--thumb,44px);border-radius:9px;corner-shape:superellipse(1.6);object-fit:cover;background:var(--fill);outline:.5px solid var(--hairline);outline-offset:-.5px}
-        .thumb.placeholder{display:grid;place-items:center;background:var(--tint-wash);color:var(--tint-text);font-size:calc(var(--thumb,44px) * .42)}
-        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:16px 12px;margin:0 var(--gutter)}
-        .card{display:flex;flex-direction:column;gap:6px;min-width:0}.card .picture,.card>img{display:block;width:100%;aspect-ratio:4/3;border-radius:10px;corner-shape:superellipse(1.6);object-fit:cover;background:var(--fill);outline:.5px solid var(--hairline);outline-offset:-.5px}
-        .card .picture.placeholder{display:grid;place-items:center;color:var(--tint-text);font-size:1.875rem;background:var(--tint-wash)}.card .title-line{font:600 .8125rem/1.3 var(--font)}
-        button,.button{-webkit-appearance:none;appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:var(--control-height);padding:0 12px;border:0;border-radius:var(--control-radius);font:500 .8125rem/1.2 var(--font);white-space:nowrap;cursor:default;background:var(--fill-strong);color:var(--ink)}
-        button:active{filter:brightness(.92)}button:disabled{opacity:.45}
-        button.primary{background:var(--tint-fill);color:var(--on-tint);font-weight:600}button.tinted{background:var(--tint-wash);color:var(--tint-text);font-weight:600}button.plain,button.link{background:none;color:var(--tint-text);padding:0 4px;min-height:0}button.capsule{border-radius:999px;padding:0 14px}
-        .offer{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding:12px}.offer .main{flex:1 1 120px;min-width:0}.offer>button{margin-left:auto}.offer .thumb{--thumb:40px}
-        .page-top{height:12px}
-        .segmented{display:flex;margin:0 var(--gutter) 10px;padding:2px;border-radius:8px;background:var(--fill)}.segmented button{flex:1;min-height:24px;border-radius:6px;background:transparent;font-size:.75rem}.segmented button[aria-pressed=true]{background:var(--raised);box-shadow:var(--raised-shadow)}
-        .pill{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 8px;border-radius:999px;font:600 .6875rem/1 var(--font);background:var(--tint-wash);color:var(--tint-text);white-space:nowrap}.pill.neutral{background:var(--fill);color:var(--muted)}
-        .verdict{display:inline-flex;align-items:center;gap:4px;font:600 .8125rem/1.2 var(--font);white-space:nowrap}.verdict .sym{font-size:.75rem}.verdict.bad{color:var(--danger)}.verdict.good{color:var(--tint-text)}.verdict.unknown{color:var(--muted);font-weight:500}
-        .dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--tint)}.dot.off{background:transparent}
-        .status,.status-line{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.75rem;margin:10px calc(var(--gutter) + 4px) 0}.status:empty,.status-line:empty{display:none}.error{color:var(--danger)}
-        .empty{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:36px 28px;color:var(--muted)}.empty .sym{font-size:2.5rem;color:var(--tertiary);margin-bottom:6px}.empty .title{font-size:1.0625rem;font-weight:600;color:var(--ink)}
-        .field{position:relative;display:flex;align-items:center;gap:12px;min-height:40px;padding:0 12px;--inset:12px}.field>label{flex:none;width:84px;margin:0;color:var(--ink)}
-        input,textarea,select{display:block;flex:1;width:100%;min-width:0;margin:6px 0;padding:4px 8px;border:0;border-radius:6px;background:var(--fill);color:var(--ink);font:400 .8125rem/1.38 var(--font)}textarea{resize:vertical}
-        input:focus,textarea:focus,select:focus{outline:3px solid color-mix(in srgb,var(--tint) 50%,transparent);outline-offset:0;background:var(--surface);box-shadow:inset 0 0 0 .5px var(--field)}input::placeholder,textarea::placeholder{color:var(--tertiary)}
-        label{display:block}
-        .bottom-bar,.actions{position:sticky;bottom:0;display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:18px;padding:10px var(--gutter) 14px;background:color-mix(in srgb,var(--bg) 85%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-top:.5px solid var(--separator)}
-        ul.list{list-style:none;margin:0 var(--gutter);padding:0;background:var(--surface);border-radius:var(--radius);overflow:hidden}ul.list li{position:relative;padding:11px 12px}ul.list li+li::before{content:"";position:absolute;top:0;right:0;left:12px;height:.5px;background:var(--separator)}
-        @media (max-width:19em){.offer{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start}.offer>button{grid-column:2;justify-self:start;margin:0}.row{flex-wrap:wrap;align-items:flex-start;--thumb:32px}.row .trailing{flex-basis:100%;padding-left:calc(var(--inset) - 12px)}.meta>span,.facts-line>span,.facts>span,.verdict{white-space:normal}.clamp-1{-webkit-line-clamp:3}.collection-header{flex-wrap:wrap}.field{display:block;padding:8px 12px}.field>label{width:auto}.grid{grid-template-columns:1fr}}
-        [hidden]{display:none!important}
-        """
-    }
     #endif
 
     // LampSecrets
@@ -14008,10 +13819,15 @@ enum Template {
     /// Text calls take a few seconds; decisions well under a second; image calls 10–60 seconds. Show a ProgressView, and show
     /// `error.localizedDescription` on failure. Aspect ratios look like "1:1", "16:9", "3:4".
     ///
-    /// Not every Mac has every kind of AI set up. `await LampAI.isAvailable(.pictures)` (or `.text`, `.decisions`) says
+    /// Not every Mac has every kind of AI set up. `await LampAI.isAvailable(.pictures)` (or `.text`, `.decisions`, `.act`) says
     /// whether it can answer now: check it where a feature depends on it, and show the feature with a short note
     /// ("Pictures need AI set up in Lamp") rather than hiding it or failing at it. A call that fails for that reason has
-    /// `needsSetup` set on its `LampAI.Failure`, and Lamp offers the person a way to set it up.
+    /// `needsSetup` set on its `LampAI.Failure`, and Lamp offers the person a way to set it up. `LampAI.status(_:)` says
+    /// more: what answers, whether on this Mac or at a service, and why not; `LampAI.openSetup(for:)` is the button for it.
+    ///
+    /// To have the app do what the person asks in their own words, give `LampAI.act` (or a `LampActSession`) the app's
+    /// own reads and checked writes: the AI chooses among them, the app checks and runs each, and the result says what
+    /// was done from the tools' receipts.
     enum LampAI {
         struct Failure: LocalizedError {
             let message: String
@@ -14020,7 +13836,8 @@ enum Template {
             var errorDescription: String? { message }
         }
 
-        enum Capability: String { case text, decisions, pictures, browser }
+        /// `act`: the app's own tools doing what the person asks (`LampAI.act`).
+        enum Capability: String { case text, decisions, pictures, act }
 
         /// Whether this kind of AI can answer now. False when Lamp can't be reached and the phone has no key.
         static func isAvailable(_ capability: Capability) async -> Bool {
@@ -14415,6 +14232,7 @@ enum Template {
         }
 
         private static func post(_ path: String, body: Data, timeout: TimeInterval = 240) async throws -> [String: Any] {
+            if LampShowcase.isOn { return try await LampShowcase.answer(path, body) }
             #if os(iOS) && !targetEnvironment(simulator)
             // Away from the Mac, the phone answers for itself when it has a key: when the Mac didn't answer
             // the last check, and when a call to it fails to connect meanwhile.
@@ -14484,6 +14302,601 @@ enum Template {
                   let jpeg = LampImage.lampJPEG(scaled, quality: 0.8)
             else { return nil }
             return ["media_type": "image/jpeg", "data": jpeg.base64EncodedString()]
+        }
+    }
+
+    // MARK: - Doing things for the person
+
+    /// How one kind of AI stands for this app now, as Lamp sees it (`LampAI.status`).
+    struct LampAIStatus {
+        /// Where the AI works out its answer, for telling the person where their words go. A Claude Code or Codex
+        /// sign-in runs on the Mac but sends what it's given to its company: that's `remote`.
+        enum Processing: String { case onDevice, remote, unknown }
+        /// What the person can do when it can't answer: set it up in Lamp, open Lamp, or update Lamp.
+        enum Setup: String { case setUpInLamp = "lamp", openLamp, updateLamp }
+
+        var available: Bool
+        /// What answers, as the person would say it ("Claude Sonnet via Claude Code"); nil when nothing does.
+        var route: String?
+        var processing: Processing
+        /// Why it can't answer, or why it isn't the best it could be, in a sentence to show as it is.
+        var reason: String?
+        var setup: Setup?
+    }
+
+    extension LampAI {
+        /// Whether a kind of AI answers this app now, what answers it, where, and if not, why and what would help. A
+        /// status that says available isn't a promise: a call can still fail (signed out, offline), so keep the
+        /// person's request and show the failure with a way to try again.
+        static func status(_ capability: Capability) async -> LampAIStatus {
+            let reply: [String: Any]
+            do { reply = try await post("/ai/status", [:], timeout: 10) } catch {
+                return LampAIStatus(available: false, route: nil, processing: .unknown,
+                                    reason: "Lamp isn't open, or can't be reached from here.", setup: .openLamp)
+            }
+            guard let details = (reply["details"] as? [String: Any])?[capability.rawValue] as? [String: Any] else {
+                // A Lamp from before `details` answers with booleans alone, and knows nothing of actions.
+                if capability == .act {
+                    return LampAIStatus(available: false, route: nil, processing: .unknown, reason: "This needs a newer Lamp.", setup: .updateLamp)
+                }
+                let on = reply[capability.rawValue] as? Bool ?? false
+                return LampAIStatus(available: on, route: nil, processing: .unknown,
+                                    reason: on ? nil : "AI isn't set up in Lamp yet.", setup: on ? nil : .setUpInLamp)
+            }
+            let available = details["available"] as? Bool ?? false
+            return LampAIStatus(available: available, route: details["route"] as? String,
+                                processing: LampAIStatus.Processing(rawValue: details["where"] as? String ?? "") ?? .unknown,
+                                reason: details["reason"] as? String,
+                                setup: (details["setup"] as? String).flatMap(LampAIStatus.Setup.init(rawValue:)) ?? (available ? nil : .setUpInLamp))
+        }
+
+        /// The person pressed the app's "Set up in Lamp": Lamp shows the ways to set it up in the app's chat, which
+        /// opens beside the window. Only ever from the person's press. Keep what they typed, check `status` again when
+        /// the app comes back to the front, and let them send it again themselves: never run it for them after setup.
+        @MainActor static func openSetup(for capability: Capability) {
+            Task { @MainActor in
+                _ = try? await post("/ai/setup", ["capability": capability.rawValue], timeout: 10)
+                #if os(macOS)
+                LampSidebar.openFromMenu()
+                #endif
+            }
+        }
+
+        /// The person asks the app to do something in their own words, and the app's own tools do it: a few reads and
+        /// checked writes over its data, chosen by the AI, run by the app. `LampActSession` has the details; this starts a
+        /// request in `session`, or in a session of its own when there's none to keep (no questions back can be answered then).
+        @MainActor static func act(request: String, about: String = "", context: (any Encodable)? = nil, tools: [LampActTool],
+                                   session: LampActSession? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn {
+            (session ?? LampActSession(about: about, tools: tools)).ask(request, context: context, onStep: onStep)
+        }
+
+        fileprivate static var actPresent: String { present }
+    }
+
+    /// The shape of one argument of a tool, as Lamp checks it before the app sees the call.
+    struct LampActArg {
+        fileprivate let json: [String: Any]
+
+        private static func make(_ type: String, _ about: String, optional: Bool, _ more: [String: Any] = [:]) -> LampActArg {
+            var json = more
+            json["type"] = type
+            if !about.isEmpty { json["about"] = about }
+            if optional { json["optional"] = true }
+            return LampActArg(json: json)
+        }
+        /// Text; with `oneOf`, one of those exactly (ids, kinds of operation).
+        static func text(_ about: String = "", oneOf: [String] = [], optional: Bool = false) -> LampActArg {
+            make("string", about, optional: optional, oneOf.isEmpty ? [:] : ["oneOf": oneOf])
+        }
+        static func whole(_ about: String = "", min: Int? = nil, max: Int? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = [:]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("integer", about, optional: optional, more)
+        }
+        static func number(_ about: String = "", min: Double? = nil, max: Double? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = [:]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("number", about, optional: optional, more)
+        }
+        static func yesNo(_ about: String = "", optional: Bool = false) -> LampActArg { make("boolean", about, optional: optional) }
+        /// A day, YYYY-MM-DD.
+        static func day(_ about: String = "", optional: Bool = false) -> LampActArg { make("date", about, optional: optional) }
+        /// A date and time, ISO 8601 with its offset.
+        static func moment(_ about: String = "", optional: Bool = false) -> LampActArg { make("datetime", about, optional: optional) }
+        static func list(of item: LampActArg, _ about: String = "", min: Int? = nil, max: Int? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = ["of": item.json]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("list", about, optional: optional, more)
+        }
+
+        fileprivate var optional: Bool { json["optional"] as? Bool == true }
+    }
+
+    /// For a tool that takes no arguments.
+    struct LampActNoArgs: Decodable {}
+
+    /// What a tool's code is told about the call it runs.
+    struct LampActCall {
+        /// The same for the same change asked again in this request, through every question back and answer: make the
+        /// ids of what a write adds from it, so a change delivered twice finds what it added the first time.
+        let key: String
+        /// The AI's id for this call.
+        let id: String
+        /// The person's request, kept through its questions back.
+        let request: String
+        /// When the turn's time runs out. A write that waits (a network call) checks `Task.isCancelled` after it.
+        let deadline: Date
+    }
+
+    /// What a write did, in the app's own words. It's what the person is shown and what the AI is told; never write
+    /// more than the code knows ("Sent" when a device took a command, not "The lights are on").
+    struct LampActReceipt {
+        var summary: String
+        /// Anything else the AI should see, such as the id of what was added. JSON-friendly values only.
+        var details: [String: Any] = [:]
+
+        init(_ summary: String, details: [String: Any] = [:]) {
+            self.summary = summary
+            self.details = details
+        }
+    }
+
+    /// One of the app's tools: a read (looks something up) or a write (changes something), each a few lines over the
+    /// app's own data and commands. A write has a `check` of its own, run right before it, that looks its items up
+    /// again by id and says why it can't be done now; it runs only when the check says nothing.
+    struct LampActTool {
+        let name: String
+        let about: String
+        let reads: Bool
+        let args: [String: LampActArg]
+        fileprivate let check: (@MainActor ([String: Any], LampActCall) async throws -> String?)?
+        fileprivate let perform: @MainActor ([String: Any], LampActCall) async throws -> Any
+
+        fileprivate static func decode<Args: Decodable>(_ args: [String: Any], as type: Args.Type) throws -> Args {
+            guard let data = try? JSONSerialization.data(withJSONObject: args) else { throw LampAI.Failure(message: "Its arguments couldn't be read.") }
+            do { return try JSONDecoder().decode(Args.self, from: data) } catch {
+                throw LampAI.Failure(message: "Its arguments don't fit: \(error.localizedDescription)")
+            }
+        }
+
+        /// A look-up with nothing to say. `run` returns what the AI should see: ids and names, as little as answers it.
+        static func read<Value: Encodable>(_ name: String, _ about: String,
+                                           run: @escaping @MainActor () async throws -> Value) -> LampActTool {
+            read(name, about, args: [:], as: LampActNoArgs.self) { _, _ in try await run() }
+        }
+
+        /// A look-up with arguments, decoded as `type`.
+        static func read<Args: Decodable, Value: Encodable>(_ name: String, _ about: String, args: [String: LampActArg],
+                                                            as type: Args.Type,
+                                                            run: @escaping @MainActor (Args, LampActCall) async throws -> Value) -> LampActTool {
+            LampActTool(name: name, about: about, reads: true, args: args, check: nil) { raw, call in
+                let value = try await run(try decode(raw, as: Args.self), call)
+                let data = try JSONEncoder().encode(value)
+                return try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+            }
+        }
+
+        /// A change. `check` says in a sentence why it can't be done now (the item is gone, the device can't, the value
+        /// is out of range), or nil; `run` does it the way the app's own button does and says what it did.
+        static func write<Args: Decodable>(_ name: String, _ about: String, args: [String: LampActArg],
+                                           as type: Args.Type,
+                                           check: @escaping @MainActor (Args, LampActCall) async -> String?,
+                                           run: @escaping @MainActor (Args, LampActCall) async throws -> LampActReceipt) -> LampActTool {
+            LampActTool(name: name, about: about, reads: false, args: args,
+                        check: { raw, call in await check(try decode(raw, as: Args.self), call) },
+                        perform: { raw, call in try await run(try decode(raw, as: Args.self), call) })
+        }
+
+        fileprivate var declared: [String: Any] {
+            ["name": name, "about": about, "reads": reads, "args": args.mapValues(\.json)]
+        }
+
+        /// The app's own check of a call's shape, beside Lamp's: arguments it declared, none it needs missing.
+        fileprivate func problem(_ given: [String: Any]) -> String? {
+            if let extra = given.keys.sorted().first(where: { args[$0] == nil }) { return "\(name) has no argument \(extra)." }
+            if let missing = args.keys.sorted().first(where: { !args[$0]!.optional && (given[$0] == nil || given[$0] is NSNull) }) {
+                return "\(name) needs \(missing)."
+            }
+            return nil
+        }
+    }
+
+    /// A change the app made, with what its tool said.
+    struct LampActDone {
+        let tool: String
+        let key: String
+        let receipt: LampActReceipt
+    }
+
+    /// A change the app didn't make, and why.
+    struct LampActMiss {
+        let tool: String
+        let reason: String
+        /// It had started when it failed, so some of it may have gone through: it isn't "nothing changed".
+        var partly = false
+    }
+
+    /// What a turn is doing, for showing it as it goes. Called on the main thread.
+    enum LampActStep {
+        case thinking
+        case reading(String)
+        case changing(String)
+        case changed(LampActDone)
+        case failed(LampActMiss)
+    }
+
+    /// How a turn ended.
+    struct LampActResult {
+        enum Stop: String {
+            /// The person (or the app) cancelled, or started something else.
+            case cancelled
+            /// The turn's time ran out.
+            case time
+            /// The AI used all its steps without replying.
+            case steps
+            /// The request asked for more than a request may: changes, questions back, or what a session keeps.
+            case limit
+            /// The AI couldn't answer (signed out, offline, a service down): `error` says how.
+            case error
+            /// Lamp couldn't be reached.
+            case unreachable
+        }
+
+        /// The AI's last words. Show them only for a question, or when nothing was changed; say what was done from `done`.
+        var reply = ""
+        /// The AI's question back, when it needs to know which one, who or when: answer it with `session.answer`.
+        var question: String?
+        /// Two to four short answers to offer as buttons for the question, or none.
+        var choices: [String] = []
+        /// What this turn changed, from the tools' own receipts.
+        var done: [LampActDone] = []
+        var failed: [LampActMiss] = []
+        var skipped: [LampActMiss] = []
+        var stopped: Stop?
+        var error: String?
+
+        /// What to tell the person, from what the app did: the receipts, what failed or was skipped, and why it
+        /// stopped. The AI's reply is added only for a question or when nothing changed.
+        var summary: String {
+            var lines = done.map(\.receipt.summary)
+            lines += failed.map { $0.partly ? "May have partly done \($0.tool): \($0.reason)" : "Didn't \($0.tool): \($0.reason)" }
+            lines += skipped.map { "Skipped \($0.tool): \($0.reason)" }
+            switch stopped {
+            case .cancelled?:
+                let started = !done.isEmpty || failed.contains(where: \.partly)
+                lines.append(started ? "Stopped. Nothing after this was done." : "Stopped before changing anything.")
+            case .time?: lines.append("Ran out of time.")
+            case .steps?: lines.append("Couldn't finish in the steps one request may take.")
+            case .limit?: lines.append(error ?? "That's more than one request can do.")
+            case .error?, .unreachable?: lines.append(error ?? "The AI couldn't answer.")
+            case nil: break
+            }
+            // The AI's words only for its question, or beside "Nothing was changed" when nothing was even tried: what it
+            // says it did is never shown as done.
+            if let question { lines.append(question) }
+            else if lines.isEmpty { lines.append(reply.isEmpty ? "Nothing was changed." : "Nothing was changed. \(reply)") }
+            return lines.joined(separator: "\n")
+        }
+    }
+
+    /// One request being worked on: its result when it's over, and a way to stop it.
+    @MainActor final class LampActTurn {
+        fileprivate var task: Task<LampActResult, Never>?
+        fileprivate weak var session: LampActSession?
+        fileprivate let generation: Int
+
+        fileprivate init(session: LampActSession, generation: Int) {
+            self.session = session
+            self.generation = generation
+        }
+
+        var result: LampActResult {
+            get async { await task?.value ?? LampActResult(stopped: .cancelled) }
+        }
+
+        /// Stops it: nothing more is asked or changed, and a change already under way is kept in the receipts, since it
+        /// can't be taken back. Late answers from the AI run nothing.
+        func cancel() {
+            session?.cancel(generation)
+            task?.cancel()
+        }
+    }
+
+    /// The app's conversation with the AI about doing things: one request at a time, each with any questions back and
+    /// their answers, and every change made, by the app's own tools.
+    ///
+    ///     let session = LampActSession(about: "A grocery list.", tools: [
+    ///         .read("items", "The list's items: id and name.") { list.items.map { ["id": $0.id, "name": $0.name] } },
+    ///         .write("add", "Adds an item.", args: ["name": .text("What to add")], as: Add.self,
+    ///                check: { add, _ in add.name.isEmpty ? "Say what to add." : nil },
+    ///                run: { add, call in list.add(add.name, id: call.key); return LampActReceipt("Added \(add.name)") }),
+    ///     ])
+    ///     let turn = session.ask("add milk and eggs")
+    ///     let result = await turn.result
+    ///     if let question = result.question { show(question, result.choices) } else { show(result.summary) }
+    ///     // later, the person's answer: session.answer("Whole milk")
+    ///
+    /// The AI proposes calls; Lamp checks their shapes; the app's `check` decides whether each change is allowed now and
+    /// its `run` makes it. Reads run first, then changes one at a time, each checked right before it runs; a change that
+    /// fails skips the rest of that step. The same change asked twice in a request runs once. A request may take 4 AI
+    /// steps between questions, 6 changes in all, 3 questions back, and the route's time (25 seconds over OpenRouter, a
+    /// minute through Claude Code, Codex or a model on the Mac); asking something new, cancelling or closing ends it.
+    @MainActor final class LampActSession {
+        static let maxSteps = 4
+        static let maxWrites = 6
+        static let maxQuestions = 3
+        /// What a session keeps of its changes; past this it stops taking changes and says so, rather than forget them.
+        static let maxReceipts = 60
+        static let maxSeconds: Double = 60
+
+        let about: String
+        let tools: [LampActTool]
+        /// Every change this session made, in order.
+        private(set) var receipts: [LampActDone] = []
+        /// The question waiting for the person's answer.
+        private(set) var question: String?
+        private(set) var choices: [String] = []
+
+        private struct Operation {
+            let id = UUID().uuidString
+            let request: String
+            var answers: [(question: String, answer: String)] = []
+            var writes = 0
+        }
+        private var operation: Operation?
+        /// Each change's result by its key, so the same change asked again gets it without running again.
+        private var ran: [String: Any] = [:]
+        private var generation = 0
+        private var cancelled: Set<Int> = []
+        private var closed = false
+        private weak var running: LampActTurn?
+        private let send: ([String: Any], TimeInterval) async throws -> [String: Any]
+
+        /// `send` stands in for Lamp in a test; leave it out.
+        init(about: String = "", tools: [LampActTool], send: (([String: Any], TimeInterval) async throws -> [String: Any])? = nil) {
+            self.about = about
+            self.tools = tools
+            self.send = send ?? { body, timeout in try await LampAI.post("/ai/act", body, timeout: timeout) }
+        }
+
+        /// A new request: whatever was under way or waiting for an answer ends.
+        func ask(_ request: String, context: (any Encodable)? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn {
+            question = nil
+            choices = []
+            operation = Operation(request: request)
+            return start(context: context, onStep: onStep)
+        }
+
+        /// The person's answer to the question waiting. Only the first answer counts: nil when nothing is waiting.
+        func answer(_ text: String, context: (any Encodable)? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn? {
+            guard let asked = question, var op = operation, !closed else { return nil }
+            question = nil
+            choices = []
+            op.answers.append((asked, text))
+            operation = op
+            return start(context: context, onStep: onStep)
+        }
+
+        /// Stops whatever is under way and drops the question waiting.
+        func cancel() { cancel(generation) }
+
+        /// For good: nothing more runs, and anything that comes back is dropped.
+        func close() {
+            closed = true
+            cancel()
+            operation = nil
+        }
+
+        fileprivate func cancel(_ turn: Int) {
+            cancelled.insert(turn)
+            if turn == generation {
+                question = nil
+                choices = []
+                // A request to Lamp still waiting is given up, so the turn ends now rather than when the AI answers.
+                running?.task?.cancel()
+            }
+        }
+
+        private func start(context: (any Encodable)?, onStep: ((LampActStep) -> Void)?) -> LampActTurn {
+            running?.task?.cancel()
+            generation += 1
+            let turn = LampActTurn(session: self, generation: generation)
+            var json: Any?
+            if let context, let data = try? JSONEncoder().encode(context) { json = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) }
+            let mine = generation
+            // The turn keeps its session while it runs, so `LampAI.act` without a session of the app's own still finishes.
+            turn.task = Task { @MainActor in await self.run(mine, context: json, onStep: onStep ?? { _ in }) }
+            running = turn
+            return turn
+        }
+
+        private func run(_ turn: Int, context: Any?, onStep: (LampActStep) -> Void) async -> LampActResult {
+            var out = LampActResult()
+            guard !closed, var op = operation else { out.stopped = .cancelled; return out }
+            if op.answers.count > Self.maxQuestions {
+                out.stopped = .limit
+                out.error = "That took more questions than one request can. Start again, saying which ones."
+                return out
+            }
+            let started = Date()
+            var deadline = started.addingTimeInterval(Self.maxSeconds)
+            func over() -> LampActResult.Stop? {
+                if closed || cancelled.contains(turn) || turn != generation || Task.isCancelled { return .cancelled }
+                if Date() >= deadline { return .time }
+                return nil
+            }
+            var request = op.request
+            for (asked, answer) in op.answers { request += "\n\nYou asked: \(asked)\nThe person answered: \(answer)" }
+            let earlier = receipts.filter { $0.key.hasPrefix(Self.prefix(op)) }.map(\.receipt.summary)
+            if !earlier.isEmpty { request += "\n\nAlready done for this request (don't do these again): " + earlier.joined(separator: "; ") }
+            var steps: [[String: Any]] = []
+            var route: String?
+            while true {
+                if let stop = over() { out.stopped = stop; break }
+                let left = deadline.timeIntervalSinceNow
+                if left <= 0.5 { out.stopped = .time; break }
+                var body: [String: Any] = ["request": request, "about": about, "now": LampAI.actPresent,
+                                           "tools": tools.map(\.declared), "steps": steps, "seconds": Int(left)]
+                if let context { body["context"] = context }
+                if let route { body["route"] = route }
+                if steps.count >= Self.maxSteps - 1 { body["final"] = true }
+                onStep(.thinking)
+                let answer: [String: Any]
+                do { answer = try await send(body, left) } catch {
+                    if let stop = over() { out.stopped = stop; break }
+                    let message = (error as? LampAI.Failure)?.message ?? error.localizedDescription
+                    out.stopped = message.contains("reach Lamp") ? .unreachable : .error
+                    out.error = message
+                    break
+                }
+                // The route's own time for a turn, counted from its start, shortens it; it never lengthens it.
+                if let seconds = (answer["seconds"] as? NSNumber)?.doubleValue, seconds > 0 {
+                    deadline = min(deadline, started.addingTimeInterval(seconds))
+                }
+                // Cancelled, out of time or replaced: an answer that comes late runs nothing.
+                if let stop = over() { out.stopped = stop; break }
+                route = answer["route"] as? String ?? route
+                if let calls = answer["calls"] as? [[String: Any]], !calls.isEmpty {
+                    let ids = calls.compactMap { $0["id"] as? String }
+                    guard ids.count == calls.count, Set(ids).count == ids.count else {
+                        out.stopped = .error
+                        out.error = "The AI gave two calls the same id."
+                        break
+                    }
+                    let results = await runCalls(calls, op: &op, out: &out, deadline: deadline, over: over, onStep: onStep)
+                    operation = turn == generation ? op : operation
+                    steps.append(["calls": calls, "results": calls.map { call -> [String: Any] in
+                        let id = call["id"] as! String
+                        return results[id] ?? ["id": id, "ok": false, "skipped": "Not run."]
+                    }])
+                    if out.stopped != nil { break }
+                    if steps.count >= Self.maxSteps { out.stopped = .steps; break }
+                    continue
+                }
+                out.reply = answer["reply"] as? String ?? ""
+                if answer["ask"] as? Bool == true, op.answers.count >= Self.maxQuestions {
+                    out.reply = ""
+                    out.stopped = .limit
+                    out.error = "That took more questions than one request can. Start again, saying which ones."
+                } else if answer["ask"] as? Bool == true {
+                    out.question = out.reply
+                    let offered = answer["choices"] as? [Any] ?? []
+                    let fit = offered.count >= 2 && offered.count <= 4 && offered.allSatisfy { item in
+                        guard let text = item as? String, !text.trimmingCharacters(in: .whitespaces).isEmpty, text.count <= 24 else { return false }
+                        return text.rangeOfCharacter(from: CharacterSet(charactersIn: "<>*_`#[]{}|\\\n\r\t")) == nil
+                    }
+                    out.choices = fit ? offered.map { ($0 as! String).trimmingCharacters(in: .whitespaces) } : []
+                    question = out.question
+                    choices = out.choices
+                }
+                break
+            }
+            if turn == generation { operation = op }
+            return out
+        }
+
+        private static func prefix(_ op: Operation) -> String { "k" + String(op.id.prefix(8)).lowercased() }
+
+        /// Reads first, one after another; then the changes, each checked right before it runs. A change that fails
+        /// skips the ones after it in this step, which the AI is told.
+        private func runCalls(_ calls: [[String: Any]], op: inout Operation, out: inout LampActResult, deadline: Date,
+                              over: () -> LampActResult.Stop?, onStep: (LampActStep) -> Void) async -> [String: [String: Any]] {
+            var results: [String: [String: Any]] = [:]
+            func tool(_ call: [String: Any]) -> LampActTool? { tools.first { $0.name == call["name"] as? String } }
+            // A null is an argument left out: the same change either way, to the key and to the tool.
+            func args(_ call: [String: Any]) -> [String: Any] { (call["args"] as? [String: Any] ?? [:]).filter { !($0.value is NSNull) } }
+            func callInfo(_ call: [String: Any], key: String) -> LampActCall {
+                LampActCall(key: key, id: call["id"] as! String, request: op.request, deadline: deadline)
+            }
+            for call in calls where tool(call)?.reads != false {
+                let id = call["id"] as! String
+                if let stop = over() { out.stopped = stop; return results }
+                guard let tool = tool(call) else { results[id] = ["id": id, "ok": false, "error": "There's no tool called \(call["name"] as? String ?? "")."]; continue }
+                if let bad = tool.problem(args(call)) { results[id] = ["id": id, "ok": false, "error": bad]; continue }
+                onStep(.reading(tool.name))
+                do {
+                    let value = try await tool.perform(args(call), callInfo(call, key: ""))
+                    results[id] = ["id": id, "ok": true, "value": Self.cut(value)]
+                } catch {
+                    results[id] = ["id": id, "ok": false, "error": Self.words(error)]
+                }
+            }
+            var stopped: String?
+            for call in calls where tool(call)?.reads == false {
+                let id = call["id"] as! String, tool = tool(call)!, given = args(call)
+                func miss(_ reason: String, skipped: Bool = false, partly: Bool = false) {
+                    let entry = LampActMiss(tool: tool.name, reason: reason, partly: partly)
+                    if skipped { out.skipped.append(entry) } else { out.failed.append(entry); onStep(.failed(entry)) }
+                    results[id] = ["id": id, "ok": false, skipped ? "skipped" : "error": reason]
+                    if !skipped { stopped = stopped ?? "An earlier change in this step didn't go through." }
+                }
+                if let stop = over() { out.stopped = stop; return results }
+                if let stopped { miss(stopped, skipped: true); continue }
+                if let bad = tool.problem(given) { miss(bad); continue }
+                let key = Self.prefix(op) + Self.hash(tool.name + "|" + Self.canonical(given))
+                // The same change asked again in this request gets its first result, and doesn't run again: one that
+                // failed while it ran may have done part of it, so it isn't tried again by itself either.
+                if let kept = ran[key] {
+                    if let failed = kept as? [String: Any], let reason = failed["failedWhileRunning"] as? String {
+                        miss("Already tried in this request, and it didn't go through: \(reason)")
+                    } else {
+                        results[id] = ["id": id, "ok": true, "repeat": true, "value": kept]
+                    }
+                    continue
+                }
+                if op.writes >= Self.maxWrites { miss("Over this request's limit of \(Self.maxWrites) changes."); out.stopped = .limit; out.error = "That's more changes than one request can make. Ask for the rest separately."; return results }
+                if receipts.count >= Self.maxReceipts { miss("This conversation has made as many changes as it can keep track of."); out.stopped = .limit; out.error = "Close this and start again to make more changes."; return results }
+                let info = callInfo(call, key: key)
+                let problem: String?
+                do { problem = try await tool.check?(given, info) } catch { problem = Self.words(error) }
+                if let problem { miss(problem); continue }
+                // Cancel and the time are looked at again right before the change, never in the middle of it.
+                if let stop = over() { out.stopped = stop; return results }
+                onStep(.changing(tool.name))
+                op.writes += 1
+                do {
+                    let receipt = try await tool.perform(given, info) as! LampActReceipt
+                    // Done is done, even if the turn was cancelled while it ran: it's kept and shown.
+                    var value = receipt.details.filter { JSONSerialization.isValidJSONObject([$0.value]) }
+                    value["summary"] = receipt.summary
+                    ran[key] = value
+                    let done = LampActDone(tool: tool.name, key: key, receipt: receipt)
+                    out.done.append(done)
+                    receipts.append(done)
+                    results[id] = ["id": id, "ok": true, "value": value]
+                    onStep(.changed(done))
+                } catch {
+                    ran[key] = ["failedWhileRunning": Self.words(error)]
+                    miss(Self.words(error), partly: true)
+                }
+            }
+            return results
+        }
+
+        private static func words(_ error: Error) -> String { (error as? LampAI.Failure)?.message ?? error.localizedDescription }
+
+        /// At most 4 KB of a read goes back to the AI, cut with a note.
+        private static func cut(_ value: Any) -> Any {
+            guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value]) else {
+                return ["note": "The result couldn't be read."]
+            }
+            guard data.count > 4096 else { return value }
+            return ["cut": String(String(decoding: data, as: UTF8.self).prefix(4000)), "note": "Cut short: ask for less."]
+        }
+
+        private static func canonical(_ value: Any) -> String {
+            guard let data = try? JSONSerialization.data(withJSONObject: [value], options: [.sortedKeys]) else { return "" }
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        /// FNV-1a: short and stable, for keys.
+        private static func hash(_ text: String) -> String {
+            var h: UInt64 = 0xcbf29ce484222325
+            for byte in text.utf8 { h = (h ^ UInt64(byte)) &* 0x100000001b3 }
+            return String(h, radix: 16)
         }
     }
 
@@ -14666,9 +15079,9 @@ enum Template {
 
         /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
         /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
-        /// (`LampStore.shared`), 6 the wish's own collections, shared by all its apps; an app from before says none, which
-        /// counts as 1.
-        private static let wire = 6
+        /// (`LampStore.shared`), 6 the wish's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
+        /// before says none, which counts as 1.
+        private static let wire = 7
         /// The wish's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
@@ -14686,6 +15099,11 @@ enum Template {
         private var opener: Sealer?
         private var handshake: (nonce: Data, tag: Data)?
         private var relayIn = false
+        /// Lamp's room said Lamp keeps the wish's shared collections: Lamp is shared with as a copy is, under its own name
+        /// (`keeper`), so a copy that opens alone gets the latest and what it changes reaches the others when they open.
+        /// Never one of the wish's apps or copies.
+        private var lampKeeps = false
+        nonisolated private static let keeper = "lamp"
         private var lampAway = false
         private var alone = false
         /// Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then an
@@ -14823,6 +15241,7 @@ enum Template {
             link.task = nil
             sealer = nil
             relayIn = false
+            lampKeeps = false
             relayPresent = [:]
             dropFiles("The link was stopped.") { _, _ in true }
             for direct in Array(directs.values) + Array(opening.values) { drop(direct) }
@@ -14879,6 +15298,15 @@ enum Template {
                 }
             }
             return true
+        }
+
+        /// A word for Lamp itself, through its room: what a page in this app has of a change Lamp put into it (lamp.js's
+        /// "A change while it's open"). Nothing when Lamp's room isn't reached; it goes nowhere else.
+        func toLamp(_ data: Any) {
+            guard relayIn, JSONSerialization.isValidJSONObject(["data": data]),
+                  let frame = try? JSONSerialization.data(withJSONObject: ["t": "send", "to": "lamp", "data": data]),
+                  frame.count <= Self.messageLimit else { return }
+            say(frame)
         }
 
         /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
@@ -15420,6 +15848,15 @@ enum Template {
                 return transfer
             }
             guard data.count <= LampFiles.largest else { return failed("The file is too big to send: 64 MB at most.") }
+            // A shared file's bytes to Lamp, which keeps them for the copies that open later: through its room alone.
+            if peer == Self.keeper, channel.hasPrefix("store:") {
+                guard relayIn, lampKeeps, outgoing.keys.filter({ $0.hasPrefix(peer + "\t") }).count < LampFiles.transfers,
+                      fileMessage(["t": "file", "id": id, "name": String(name.prefix(200)), "type": String(type.prefix(100)), "size": data.count, "ch": channel],
+                                  to: peer, via: nil) else { return failed("Lamp isn't reachable now.") }
+                outgoing[key] = Outgoing(peer: peer, via: nil, transfer: transfer, bytes: data)
+                pump(key)
+                return transfer
+            }
             guard let app = self.peer(peer) else { return failed("The wish has no app called \"\(given)\".") }
             guard app.isOpen, state == .connected else { return failed(app.status.reason.isEmpty ? "\(Self.title(app.name)) isn't open now." : app.status.reason) }
             guard app.copies.contains(where: { $0.id == peer }) else { return failed("That copy of \(app.name) isn't open now.") }
@@ -15451,7 +15888,7 @@ enum Template {
             }
             var message = message
             message["to"] = peer
-            guard relayIn, relayPresent[peer] != nil, let json = Self.json(message) else { return false }
+            guard relayIn, relayPresent[peer] != nil || (peer == Self.keeper && lampKeeps), let json = Self.json(message) else { return false }
             say(json)
             return true
         }
@@ -15745,6 +16182,7 @@ enum Template {
                 undeliveredSaid = []
                 lampAway = false
                 relayIn = true
+                lampKeeps = m["keeps"] as? Bool == true
                 reported = ""
                 if let name = m["peer"] as? String, Self.isName(name) { me = Self.app(of: name) }
                 setRoster(m["apps"] as? [[String: Any]] ?? [])
@@ -15752,6 +16190,8 @@ enum Template {
                 for seen in m["peers"] as? [[String: Any]] ?? [] { present(seen) }
                 tellWhereIListen()
                 rebuild()
+                // Lamp keeps what the copies share: each tells the other what it has, as two copies do when they meet.
+                if lampKeeps, !me.isEmpty { sendSums(to: Self.keeper); fetchFiles() }
             case "joined":
                 if let joined = m["peer"] as? [String: Any] { present(joined) }
                 rebuild()
@@ -15808,6 +16248,7 @@ enum Template {
             opener = nil
             handshake = nil
             relayIn = false
+            lampKeeps = false
             relayPresent = [:]
             dropFiles("The link was lost.") { _, way in way == nil }
             // Turned away, or the room ended, or dropped before it was let in: the relay may have moved, or this app may
@@ -16829,13 +17270,13 @@ enum Template {
         /// and the copies of the wish's other apps that speak 6, which share only the wish's own (`shares`).
         private var storePeers: [String] {
             guard !me.isEmpty else { return [] }
-            return copies(for: nil).filter { $0 != copy && wire(of: $0) >= (Self.app(of: $0) == me ? 5 : 6) }
+            return copies(for: nil).filter { $0 != copy && wire(of: $0) >= (Self.app(of: $0) == me ? 5 : 6) } + (relayIn && lampKeeps ? [Self.keeper] : [])
         }
 
         /// Whether a collection goes to another copy and is taken from it: this app's own collections only between its own
         /// copies, never another app's of the wish; the wish's own between every app of it.
         private func shares(_ name: String, with peer: String) -> Bool {
-            !me.isEmpty && peer != copy && (Self.app(of: peer) == me || Self.isWishWide(name))
+            !me.isEmpty && peer != copy && (Self.app(of: peer) == me || Self.isWishWide(name) || peer == Self.keeper)
         }
 
         private func heardStore(_ m: [String: Any], from peer: String) {
@@ -16925,8 +17366,12 @@ enum Template {
             keepValues()
             if !changed.isEmpty { itemsChanged(name, changed, from: peer) } else if !collectionsUnsaved.isEmpty { saveCollectionsSoon() }
             // Passed on as values are: to the copies open now that the one it came from may not reach.
+            // Lamp tells each copy in its room what it keeps, so what came from Lamp goes no further; what came straight from a
+            // copy Lamp's room doesn't have goes on to Lamp.
             for each in storePeers where each != peer && !taken.isEmpty && shares(name, with: each) {
-                if directs[each]?.ready == true || (relayPresent[peer] == nil && relayPresent[each] != nil) { shareItems(name, taken, to: each) }
+                if directs[each]?.ready == true || (peer != Self.keeper && relayPresent[peer] == nil && (relayPresent[each] != nil || each == Self.keeper)) {
+                    shareItems(name, taken, to: each)
+                }
             }
         }
 
@@ -16955,7 +17400,7 @@ enum Template {
             frame["t"] = "store"
             if let direct = directs[peer], direct.ready {
                 if let json = Self.json(frame) { sealed(json, on: direct) }
-            } else if relayPresent[peer] != nil {
+            } else if relayPresent[peer] != nil || (peer == Self.keeper && relayIn && lampKeeps) {
                 frame["to"] = peer
                 if let json = Self.json(frame) { say(json) }
             }
@@ -17624,7 +18069,7 @@ enum Template {
         }
 
         private func arm() {
-            guard running == nil else { return }
+            guard running == nil, !LampShowcase.isOn else { return }
             timer?.invalidate()
             let delay = max(0, due.timeIntervalSinceNow)
             timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in self?.fire() }
@@ -17709,7 +18154,7 @@ enum Template {
         }
 
         private func arm() {
-            guard running == nil else { return }
+            guard running == nil, !LampShowcase.isOn else { return }
             timer?.invalidate()
             let delay = max(0, due.timeIntervalSinceNow)
             timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
@@ -18530,6 +18975,11 @@ enum Template {
 
         static func send(_ title: String, body: String = "", sound: Bool = true, at date: Date? = nil, id: String? = nil,
                          actions: [String] = [], timeSensitive: Bool = false) {
+            // A reel shows what would arrive now; what's planned for later days isn't part of it.
+            if LampShowcase.isOn {
+                if (date ?? Date()).timeIntervalSinceNow < 60 { LampShowcase.note("notification", title, body) }
+                return
+            }
             let center = UNUserNotificationCenter.current()
             if center.delegate == nil { center.delegate = presenter }
             let id = id ?? UUID().uuidString
@@ -20646,6 +21096,8 @@ enum Template {
     {{MAC_USAGE}}
     </dict></plist>
     PLIST
+    # The app's own files (LampAssets). A live build reads them from the app's folder.
+    if [[ -d Assets && "${LAMP_LIVE:-}" != 1 ]]; then rm -rf "$APP/Contents/Resources/Assets"; mkdir -p "$APP/Contents/Resources"; cp -R Assets "$APP/Contents/Resources/Assets"; fi
     intents {{EXE}} "$APP" "{{BUNDLE}}" Sources
     codesign --force -s - "$APP"
     echo "Built $APP"

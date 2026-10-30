@@ -184,20 +184,31 @@ enum AppName {
     /// (`device_integration`) and make the app for it once it can, rather than starting it as something else; a wish
     /// to control any device (a remote for the speakers, buttons that open the Roku's apps) is an app on this Mac or
     /// a phone like any other.
+    ///
+    /// Only devices set up with Lamp are the person's: one only found on the network may be a neighbor's, so it's listed
+    /// apart and answered only when the request names it, never for "my TV" alone.
     static func seen(_ devices: [Device]) -> String {
-        let listed = devices.compactMap { device -> String? in
-            guard let answer = answer(for: device) else { return nil }
-            let what = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
-            let name = device.name.isEmpty || device.name == device.model ? what : "\(device.name) (\(what))"
-            return "- \(name.replacingOccurrences(of: "\n", with: " ").prefix(80)): [\"\(answer)\"]"
+        func listed(_ devices: [Device]) -> [String] {
+            devices.compactMap { device -> String? in
+                guard let answer = answer(for: device) else { return nil }
+                let what = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
+                let name = device.name.isEmpty || device.name == device.model ? what : "\(device.name) (\(what))"
+                return "- \(name.replacingOccurrences(of: "\n", with: " ").prefix(80)): [\"\(answer)\"]"
+            }
         }
-        guard !listed.isEmpty else { return "" }
-        return "\n\nThe person's devices, found just now, with what to answer when the request is for one of them (by its name, "
-            + "its maker, its model or what it is: \"my TV\" is the TV here). These answers come before the rules above. "
+        let mine = listed(devices.filter(\.isSetUp)), possible = listed(devices.filter { !$0.isSetUp })
+        guard !mine.isEmpty || !possible.isEmpty else { return "" }
+        var text = mine.isEmpty ? "" : "\n\nThe person's devices, set up with Lamp, with what to answer when the request is for one of them (by its name, "
+            + "its maker, its model or what it is: \"my TV\" is the TV here).\n" + mine.prefix(20).joined(separator: "\n")
+        if !possible.isEmpty {
+            text += "\n\nAlso found on the network just now but not set up with Lamp, so they may not be the person's, with what to answer "
+                + "only when the request names one of them by its name, maker or model (\"my TV\" alone isn't one of these).\n"
+                + possible.prefix(20).joined(separator: "\n")
+        }
+        return text + "\n\nThese answers come before the rules above. "
             + "Answer a device only when what's asked for runs on that device itself (a game or a channel on it); an app that "
             + "plays to it, controls it or reads it doesn't run on it, and is answered by the rules above. [\"other\"] is a device "
-            + "Lamp can't put apps on yet: answer it alone, with \"devices_by_user\" true.\n"
-            + listed.prefix(20).joined(separator: "\n")
+            + "Lamp can't put apps on yet: answer it alone, with \"devices_by_user\" true."
     }
 
     /// What the naming call answers for a wish that's for this device, or nil to leave it off the list: this Mac and

@@ -81,7 +81,8 @@ struct NetworkHost: Hashable, Identifiable {
 }
 
 /// One Bonjour service on the network: its type, the name it goes by, its host and what its record says that tells
-/// what the device is (model keys only; nothing that identifies the device or the person further).
+/// what the device is (model keys, and a Cast device's own name, which is like the host's names; nothing that
+/// identifies the device or the person further).
 struct BonjourService: Hashable {
     let type: String
     /// The name it goes by. AirPlay's speaker service puts the device's hardware id before it ("F21FB5024962@Kitchen"),
@@ -100,7 +101,7 @@ struct BonjourService: Hashable {
     /// The host's name without ".local.": "Kitchen-Speaker".
     var hostLabel: String { host.components(separatedBy: ".").first ?? host }
 
-    static let modelKeys: Set<String> = ["md", "model", "am", "ty", "usb_MFG", "usb_MDL", "product", "manufacturer"]
+    static let modelKeys: Set<String> = ["md", "model", "am", "ty", "usb_MFG", "usb_MDL", "product", "manufacturer", "fn"]
 }
 
 enum HomeNetwork {
@@ -239,11 +240,14 @@ enum HomeNetwork {
         return device
     }
 
-    /// The list as Your Devices shows it: what Lamp makes apps for or controls, in the order Lamp found them; then the
-    /// devices Lamp could learn; then every other host on the network, and a count of those with private addresses
-    /// that say nothing else, since nothing tells one such phone from another.
+    /// The list as Your Devices shows it: the person's devices, set up with Lamp (away or part-way through setup too), in
+    /// the order Lamp found them; then what Lamp only found on the network that it makes apps for or controls, which may
+    /// be a neighbor's; then the devices Lamp could learn; then every other host on the network, and a count of those
+    /// with private addresses that say nothing else, since nothing tells one such phone from another.
     struct List {
         var works: [Device] = []
+        /// Found, not set up, and of a kind Lamp works with: a TV, a device an integration knows, one an app can control.
+        var possible: [Device] = []
         var couldLearn: [Device] = []
         var others: [NetworkHost] = []
         var unnamed = 0
@@ -256,12 +260,14 @@ enum HomeNetwork {
                 if device.kind == .other, device.integration == nil {
                     if let words = HomeNetwork.controls(device, host: device.address.flatMap { byAddress[$0] }) {
                         controls[device.id] = words
-                        works.append(device)
+                        possible.append(device)
                     } else {
                         couldLearn.append(device)
                     }
-                } else {
+                } else if device.isSetUp {
                     works.append(device)
+                } else {
+                    possible.append(device)
                 }
             }
             let listed = Set(devices.compactMap(\.address))
@@ -537,7 +543,7 @@ enum Bonjour {
     static let browseFor: Duration = .seconds(3)
     /// Browsed whether or not the meta-query names them: a device that's asleep often misses that one answer, and
     /// these are the services that say most about what a quiet device is (a Cast device, a printer, a gadget's web page).
-    static let alwaysBrowse = ["_googlecast._tcp", "_ipp._tcp", "_printer._tcp", "_http._tcp", "_esphomelib._tcp"]
+    static let alwaysBrowse = ["_googlecast._tcp", "_androidtvremote2._tcp", "_ipp._tcp", "_printer._tcp", "_http._tcp", "_esphomelib._tcp"]
 
     static func everything() async -> [Found] {
         let types = await browse("_services._dns-sd._udp").map { name, type in
@@ -611,7 +617,8 @@ enum Bonjour {
                 let data = Data(bytes: record, count: Int(length))
                 for (key, value) in NetService.dictionary(fromTXTRecord: data) where BonjourService.modelKeys.contains(key) {
                     // A Cast device's "md" is its model; AirPlay's is the kinds of metadata it takes.
-                    if key == "md", !(fullName.map { String(cString: $0) } ?? "").contains("._googlecast._tcp.") { continue }
+                    // Its "fn" is the name the person gave it ("Living Room TV"), kept as the host's other names are.
+                    if key == "md" || key == "fn", !(fullName.map { String(cString: $0) } ?? "").contains("._googlecast._tcp.") { continue }
                     let text = String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                     if !text.isEmpty, text.count <= 80, !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) { txt[key] = text }
                 }

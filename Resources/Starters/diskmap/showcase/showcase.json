@@ -1,0 +1,20 @@
+{
+  "window": { "width": 1120, "height": 630 },
+  "cleanMachine": true,
+  "steps": [
+    { "wait_for": "Macintosh HD", "timeout": 30 },
+    { "mark": "cut" },
+    { "wait": 1.8 },
+    { "mark": "resume" },
+    { "action": "click", "target": "Macintosh HD" },
+    { "wait": 4 },
+    { "mark": "cut" },
+    { "wait": 5 },
+    { "mark": "resume" },
+    { "wait": 1.5 },
+    { "action": "double_click", "x": 74, "y": 508 },
+    { "wait": 3.5 },
+    { "action": "double_click", "x": 121, "y": 628 },
+    { "wait": 4 }
+  ]
+}

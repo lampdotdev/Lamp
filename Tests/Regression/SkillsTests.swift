@@ -38,12 +38,12 @@ final class SkillsTests: XCTestCase {
     /// Every skill a prompt can offer is in the bundle and reads as an Agent Skills file: a folder named as the
     /// skill, a one-line description within the format's limit, and instructions.
     func testEveryOfferedSkillShipsAndReads() {
-        XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design", "phone-controllers",
+        XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "device-integrations", "android-design", "phone-controllers",
                                            "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
-                                           "scripting", "game", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
+                                           "scripting", "game", "game-ui", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
                                            "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode",
-                                           "roku-developer-mode", "more-apps"])
+                                           "roku-developer-mode", "more-apps", "github-projects", "assets"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -54,25 +54,37 @@ final class SkillsTests: XCTestCase {
         // whose code has one; designing for a TV by the TV rows of the table (`Place.skills`), to an app on one, whatever
         // its kind; a device's setup step by the skill itself (`SetupGuides`), to Lamp's setup alone; every other one is offered to some prompt. How an app's copies and a wish's apps share data
         // is offered to every kind that carries `LampWish`, which is every kind but a device's.
-        let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) + Skills.named($0) }
+        let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0) + Skills.named($0) }
         if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design"])
                                                        .subtracting(SetupGuides.registrations(shipped).map(\.skill))) }
         XCTAssertTrue(shipped["phone-controllers"]!.body.contains("phone-pages skill"))
-        // How an app is made and on which devices, games, 3D in a page, web apps, phones as controllers, and whether a
-        // request is for one more app or a change to the one the wish has are offered to every kind, first, whatever the
-        // app is now.
-        let everywhere = ["web-or-native", "game", "2d-game", "3d-game", "web-app", "phone-controllers", "more-apps"]
+        // How an app is made and on which devices, games and their screens, 3D in a page, web apps, phones as controllers, and whether a
+        // request is for one more app or a change to the one the wish has, and someone's project on GitHub, are offered to
+        // every kind, first, whatever the app is now.
+        let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
         XCTAssertEqual(Skills.offered(.android), everywhere + ["android-design", "wish-links"])
         XCTAssertEqual(Skills.offered(.tv), everywhere + ["wish-links"])
         XCTAssertEqual(Skills.offered(.device), everywhere)
         XCTAssertEqual(Skills.offered(.iphone), everywhere + ["app-kinds", "iphone-hardware", "iphone-widgets", "apple-watch", "wish-links"])
         // An app for both has the Mac half's menu bar and the iPhone half's widgets, but no desktop widget or 3D.
         XCTAssertEqual(Skills.offered(.universal), everywhere + ["app-kinds", "menu-bar", "iphone-hardware", "iphone-widgets", "apple-watch", "wish-links"])
-        // The sidebar's page is offered wherever the prompt has the sidebar's rule, an app for both included.
-        XCTAssertEqual(Skills.offered(.universal, sidebar: true).last, "chrome-sidebar")
     }
 
     /// The Android prompt names its design skill, and the list it offers carries the skill's description.
+    /// A no to AI holds for the app it was said in, and nowhere else: every engine's rules, the notes rule when Lamp's
+    /// notes are on, and the app-ai skill keep it in that app's APP.md and still offer AI in other apps.
+    func testANoToAIHoldsForThatAppAlone() {
+        let rules = Agent.tryRules
+        XCTAssertTrue(rules.contains("A no is for that app alone"), "the AI rule doesn't scope a no to its app")
+        XCTAssertTrue(rules.contains("never in Lamp's notes about the person"), "a no could be saved where every app reads it")
+        XCTAssertTrue(rules.contains("still offer it in other apps where it fits"), "a no could stop AI being offered anywhere")
+        XCTAssertFalse(rules.contains("don't offer it again unless they bring it up"), "an unscoped \"never again\" is back")
+        if Memory.isOn { XCTAssertTrue(rules.contains("A no to AI in one app isn't one of these")) }
+        let skill = shipped["app-ai"]!.body.replacingOccurrences(of: "\n", with: " ")
+        XCTAssertTrue(skill.contains("A no is for that app alone"), "the skill doesn't scope a no to its app")
+        XCTAssertTrue(skill.contains("still offer it in other apps where it fits"))
+    }
+
     func testAndroidPromptOffersDesignSkill() {
         XCTAssertTrue(Agent.androidPrompt().contains("open the android-design skill"))
         let index = Skills.index(Skills.offered(.android), from: shipped)
@@ -93,9 +105,9 @@ final class SkillsTests: XCTestCase {
         XCTAssertTrue(shipped["maps"]!.body.contains("Overpass"))
     }
 
-    /// What only some apps need (how each kind of app looks, the menu bar, widgets, the watch, the phone's hardware,
-    /// the Chrome sidebar's details) is in skills: each prompt lists the ones it offers, names each where its short
-    /// rule is, and no longer carries what they say.
+    /// What only some apps need (how each kind of app looks, the menu bar, widgets, the watch, the phone's hardware)
+    /// is in skills: each prompt lists the ones it offers, names each where its short rule is, and no longer carries
+    /// what they say.
     func testPromptsListTheSkillsInsteadOfCarryingThem() {
         let moved: [String: [String]] = [
             "app-kinds": ["LazyVGrid", "kAXFocusedUIElementAttribute", "nonactivatingPanel", "a spring animation"],
@@ -104,17 +116,14 @@ final class SkillsTests: XCTestCase {
             "iphone-widgets": ["LAMP_WIDGET", "ControlWidgetButton", "Activity.request"],
             "apple-watch": ["LampWatched", "LampWorkout", "accessoryCorner"],
             "iphone-hardware": ["dailyTotals", "bonjourServices", "DataScannerViewController"],
-            "chrome-sidebar": ["data-lamp-reads", "LampBrowser.pageChanged", "lamp.onMenu"],
         ]
         for (name, phrases) in moved {
             for phrase in phrases { XCTAssertTrue(shipped[name]!.body.contains(phrase), "\(name) says \(phrase)") }
         }
-        BrowserBridge.testOverride = true
-        defer { BrowserBridge.testOverride = nil }
         let prompts: [(String, String, [String])] = [
-            ("Mac", Agent.systemPrompt, Skills.offered(.mac, sidebar: true)),
+            ("Mac", Agent.systemPrompt, Skills.offered(.mac)),
             ("iPhone", Agent.iPhonePrompt(for: .iphone), Skills.offered(.iphone)),
-            ("Mac and iPhone", Agent.universalPrompt(for: .iphone), Skills.offered(.universal, sidebar: true)),
+            ("Mac and iPhone", Agent.universalPrompt(for: .iphone), Skills.offered(.universal)),
         ]
         for (kind, prompt, offered) in prompts {
             let index = Skills.index(offered, from: shipped)
@@ -174,7 +183,7 @@ final class SkillsTests: XCTestCase {
     func testTVPromptOffersThePhoneSkill() throws {
         let prompt = Agent.tvPrompt(skills: shipped)
         XCTAssertTrue(prompt.contains("  • phone-controllers: \(shipped["phone-controllers"]!.description)\n"))
-        XCTAssertTrue(prompt.contains("Open the phone-controllers skill"))
+        XCTAssertTrue(prompt.contains("the phone-controllers skill says what each choice needs. Open it first"))
         XCTAssertFalse(prompt.contains("LampController.connect"), "the phone page's instructions belong in the skill")
         XCTAssertTrue(shipped["phone-pages"]!.body.contains("LampController.connect"))
         XCTAssertTrue(shipped["phone-pages"]!.body.contains("Lamp.onPhonePage"))
@@ -254,8 +263,8 @@ final class SkillsTests: XCTestCase {
         XCTAssertFalse(DeviceSupport.usesPhaser(app(.game), page: "Web"), "Phaser goes into a page only once its own files use it")
 
         try "import * as THREE from 'three';\nimport { game } from './lamp-game.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
-        let found = Skills.applying(to: app(.game)).filter { ["game", "3d-game"].contains($0.name) }
-        XCTAssertEqual(found.map(\.name), ["game", "3d-game"])
+        let found = Skills.applying(to: app(.game)).filter { ["game", "game-ui", "3d-game"].contains($0.name) }
+        XCTAssertEqual(found.map(\.name), ["game", "game-ui", "3d-game"])
         XCTAssertEqual(found.first?.because, "its page runs on Lamp's game runtime")
         try "import * as Phaser from 'phaser';\nimport { phaser } from './lamp-phaser.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
         XCTAssertEqual(Skills.applying(to: app(.game)).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.map(\.name), ["game", "2d-game"])
@@ -263,7 +272,7 @@ final class SkillsTests: XCTestCase {
 
         try FileManager.default.removeItem(at: web)
         try source("Scene.swift", "import SpriteKit\n")
-        XCTAssertEqual(Skills.applying(to: app(.iphone)).filter { $0.name == "game" }.map(\.because), ["it's a SpriteKit game"])
+        XCTAssertEqual(Skills.applying(to: app(.iphone)).filter { ["game", "game-ui"].contains($0.name) }.map(\.because), ["it's a SpriteKit game", "it's a SpriteKit game"])
     }
 
     /// A TV app's page brings in three.js by the path of Lamp's copy as well as by the import map's name, in a module
@@ -288,7 +297,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, game-ui, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
     }
 
     func testParsing() {

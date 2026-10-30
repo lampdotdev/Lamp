@@ -1,0 +1,4 @@
+{
+  "call" : "{\"calls\":[{\"args\":{},\"name\":\"groceries\"}],\"reply\":null}",
+  "reply" : "{\"calls\":[],\"reply\":{\"ask\":false,\"choices\":[],\"text\":\"Added bananas to the shopping list.\"}}"
+}

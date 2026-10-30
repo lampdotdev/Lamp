@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import LampSidebarKit
 
-/// Publishing a game drawn with three.js as a page anyone can play in a browser: a public repository on the person's own
+/// Publishing a web game as a page anyone can play in a browser: a public repository on the person's own
 /// GitHub account, served by GitHub Pages, made with GitHub's own command-line tool (`gh`) and their sign-in there.
 /// Nothing goes through Lamp's servers: the person's account holds the page, under GitHub's terms, and Lamp pays nothing
 /// for its plays.
@@ -19,7 +19,7 @@ enum Publish {
     nonisolated static let switchKey = "experimentPublishPages"
     nonisolated static var enabled: Bool { Edition.isDev && UserDefaults.standard.bool(forKey: switchKey) }
 
-    /// A wish whose one app is a game drawn with three.js: its page is the whole game.
+    /// A wish whose one app is a web game: its page is the whole game.
     static func canPublish(_ project: LampProject) -> Bool {
         enabled && project.holdsApp && GameKit.isGame(project) && GameKit.engine(project) == .web
             && Parts.folders(in: project.dir).isEmpty
@@ -84,9 +84,13 @@ enum Publish {
     /// to, through Share Link's own card, where they see and change what it shows): that page works for someone without
     /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"). With no link, the
     /// wish as a shared file, which goes beside the page either way, for the README's download: the exact game.
+    /// `origin` is what the page is a copy of, when that's somewhere Lamp can copy it from again: the starter a
+    /// starter's own page is (`StarterRepos.stagePage`), or the repository the wish was put on, while it's public and up to date (`GitHubRepo.remixOrigin`).
+    /// The Remix panel's request goes with it (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version.
     struct OpenInLamp: Equatable {
         var link: URL?
         var file: String?
+        var origin: RemixLink.Origin? = nil
     }
 
     /// What will go up, staged in a folder of its own, checked.
@@ -133,7 +137,8 @@ enum Publish {
         let shared = try Sharing.export(project)
         defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
         try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
-        let open = OpenInLamp(link: link, file: fileName)
+        // A wish on GitHub is remixed from there, while its repository is public and holds the wish as it is now.
+        let open = OpenInLamp(link: link, file: fileName, origin: GitHubRepo.remixOrigin(for: project))
         let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
         try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
 
@@ -167,9 +172,10 @@ enum Publish {
     static func withCreditBar(_ html: String, credits: Credits, open: OpenInLamp, suggestions: [RemixIdea] = RemixOffer.fallback,
                               name: String = "", about: String? = nil) -> String {
         var parts: [String] = []
-        if let source = credits.upstream.first {
+        // The work it's built on, else the first thing it uses: a library is credited, never as what it's based on.
+        if let source = credits.basis ?? credits.upstream.first {
             let name = source.url.map { "<a href=\"\(escaped($0))\" target=\"_blank\" rel=\"noopener\">\(escaped(source.name))</a>" } ?? escaped(source.name)
-            parts.append("Based on \(name)" + (source.author.map { " by \(escaped($0))" } ?? ""))
+            parts.append((credits.basis != nil ? "Based on " : "Uses ") + name + (source.author.map { " by \(escaped($0))" } ?? ""))
         }
         if !credits.generated.isEmpty { parts.append(escaped(Credits.generatedLine(credits.generated.count))) }
         if let link = open.link {
@@ -182,11 +188,14 @@ enum Publish {
             parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Made with Lamp</a>")
         }
         // Remix…: a panel over the page with three things to change and a box for the player's own words. Continue with
-        // Lamp opens the wish's Share Link page with the request (which gives this exact wish, with Lamp or by getting
-        // it), or Lamp's site with a request that names the game. Nothing leaves the page until that press.
+        // Lamp goes where `RemixLink.url` sends the panel beside an app: Lamp's site with what to copy (a starter, or the
+        // repository the wish is on) and the request; else the wish's Share Link page with the request (which gives this
+        // exact wish, with Lamp or by getting it); else Lamp's site with a request that names the game. Nothing leaves
+        // the page until that press.
         parts.append("<a href=\"#\" id=\"lamp-remix-open\">Remix…</a>")
-        let offer = RemixOffer(name: name, about: about, suggestions: suggestions, shareLink: open.link)
-        let target: [String: Any] = ["link": open.link?.absoluteString as Any, "request": RemixLink.request(for: offer, ask: "{ask}")]
+        let offer = RemixOffer(name: name, about: about, suggestions: suggestions, shareLink: open.link, origin: open.origin)
+        let target: [String: Any] = ["link": open.link?.absoluteString as Any, "origin": open.origin?.json as Any,
+                                     "request": RemixLink.request(for: offer, ask: "{ask}")]
         let targetJSON = (try? JSONSerialization.data(withJSONObject: target)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let buttons = offer.suggestions.map { "<button type=\"button\" class=\"lamp-remix-pick\">\(escaped($0.text))</button>" }.joined()
         let panel = """
@@ -196,7 +205,7 @@ enum Publish {
               \(buttons)
               <textarea id="lamp-remix-ask" rows="3" placeholder="Or say it your way"></textarea>
               <button type="button" id="lamp-remix-go" disabled>Continue with Lamp</button>
-              <p class="lamp-remix-note">\(open.link == nil ? "Opens lamp.dev with your request. Lamp is a free Mac app; it makes its own version and changes it as you ask." : "Opens this wish's page with your request. Lamp is a free Mac app; it opens on this exact wish and changes it as you ask.")</p>
+              <p class="lamp-remix-note">\(escaped(RemixLink.note(for: offer)))</p>
             </div>
             <script type="application/json" id="lamp-remix-target">\(targetJSON.replacingOccurrences(of: "<", with: "\\u003c"))</script>
             <script>
@@ -207,7 +216,9 @@ enum Publish {
             var picks=p.querySelectorAll('.lamp-remix-pick');for(var i=0;i<picks.length;i++)picks[i].addEventListener('click',function(e){a.value=e.currentTarget.textContent;g.disabled=false;a.focus();});
             a.addEventListener('input',function(){g.disabled=!a.value.trim();});
             g.addEventListener('click',function(){var ask=a.value.trim().slice(0,\(RemixLink.askLimit));if(!ask)return;
-              var u=new URL(t.link||'https://lamp.dev/');u.searchParams.set('ask',t.link?ask:String(t.request||'{ask}').replace('{ask}',ask));window.open(u.href,'_blank','noopener');});})();
+              var f=t.origin&&typeof t.origin==='object'?t.origin:null,u=new URL(f?'https://lamp.dev/':(t.link||'https://lamp.dev/'));
+              if(f)for(var k in f)u.searchParams.set(k,String(f[k]));u.searchParams.set('from','page');
+              u.searchParams.set('ask',f||t.link?ask:String(t.request||'{ask}').replace('{ask}',ask));window.open(u.href,'_blank','noopener');});})();
             </script>
             """
         let bar = """
@@ -254,7 +265,7 @@ enum Publish {
         if let link = open.link { text += " [Make your own](\(link.absoluteString)) from the same wish, with Lamp or by downloading it." }
         if let file = open.file { text += " Or download [\(file)](\(file)) and open it with Lamp: it's this exact wish, yours to remix, with the credits above kept." }
         text += "\n\n"
-        text += "`lamp-game.js`, `lamp-phaser.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js`, `three/` and `phaser/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`), and so is Phaser (`phaser/LICENSE.md`)."
+        text += "`lamp-game.js`, `lamp-phaser.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js`, `three/` and `phaser/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`), and so are Phaser (`phaser/LICENSE.md`) and the QR code encoder inside `lamp.js` (its license is there)."
         text += GameKit.usesRapier(project) ? " `rapier/` is Rapier, its physics, under the Apache License 2.0 (`rapier/LICENSE`).\n" : "\n"
         return text
     }
@@ -265,9 +276,9 @@ enum Publish {
         var text = ""
         if !credits.upstream.isEmpty {
             text += "## Credits\n\n"
-            for (index, source) in credits.upstream.enumerated() {
+            for (index, source) in credits.basisFirst.enumerated() {
                 let name = source.url.map { "[\(source.name)](\($0))" } ?? source.name
-                var line = (index == 0 ? "Based on " : "Uses ") + name + (source.author.map { " by \($0)" } ?? "")
+                var line = (index == 0 && credits.basis != nil ? "Based on " : "Uses ") + name + (source.author.map { " by \($0)" } ?? "")
                 if let license = source.license { line += ", \(license)" }
                 if let commit = source.commit { line += ", at commit `\(commit.prefix(12))`" }
                 if let file = source.licenseFile { line += " (license: `\(file.hasPrefix("Web/") ? String(file.dropFirst(4)) : file)`)" }
@@ -281,7 +292,9 @@ enum Publish {
                 + credits.generated.map { "`\($0.file)`" }.joined(separator: ", ") + ".\n\n"
         }
         if !credits.remixOf.isEmpty {
-            text += "Remixed from " + credits.remixOf.map { $0.name + ($0.starter != nil ? " (a Lamp starter)" : "") }.joined(separator: ", then ") + ".\n\n"
+            text += "Remixed from " + credits.remixOf.map { remix in
+                (remix.url.map { "[\(remix.name)](\($0))" } ?? remix.name) + (remix.starter != nil ? " (a Lamp starter)" : "")
+            }.joined(separator: ", then ") + ".\n\n"
         }
         return text
     }

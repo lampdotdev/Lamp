@@ -2,18 +2,25 @@ import AppKit
 import LampSidebarKit
 
 /// The wishes Lamp comes with: working apps on a new person's desk from the start, to use as they are and to
-/// change into their own, which shows what Lamp does better than a question about what to make. Each is a
-/// folder in Resources/Starters: the app's code (Sources/, Widget/, Share/), its pictures (Assets/), APP.md for the agent that changes it,
-/// icon.json, about.json, capabilities.json when it needs one, preview.png (the picture the desk shows on hover),
-/// and starter.md, which is Lamp's: the wish's name and what the sidebar offers to change first. They're copied once, on the first launch, and from then on
-/// they're the person's like any other wish; a later Lamp with other starters gives those only to new people.
+/// change into their own, which shows what Lamp does better than a question about what to make. Each is made in a
+/// repository of its own on GitHub (`StarterRepos`), and is a folder in Resources/Starters holding starter.md, which
+/// is Lamp's (the wish's name, what the sidebar offers to change first, and where the starter lives: `repository:`
+/// and the `commit:` of it this Lamp ships, moved on by `scripts/pull-starters.sh`), and `tree/`, that repository at
+/// that commit, fetched by `scripts/fetch-starters.sh` before a build and never committed here: the app's code and
+/// files, APP.md, lamp-app.json (what it is), credits.json, and in `.github/` the pictures (`preview.png`, the picture
+/// the desk shows on hover, and `icon/`, the icon drawn once). A starter goes onto the desk as a repository opens
+/// (`copy`: read as the import reads one, installed as the import installs one), once, on the first launch; the desk lists
+/// every starter under Starter apps, copying one with no untouched copy there only when it's opened (`DeskList.Fresh`).
 /// `scripts/check-starters.sh` type-checks them against this checkout's LampSupport.swift.
 /// A release ships each one built as well (`PrebuiltStarters`), so it's ready before Apple's build tools are.
 enum Starters {
     static let installedKey = "startersInstalled"
 
     struct Starter: Equatable {
+        /// Resources/Starters/<folder>: starter.md, and the fetched tree.
         let folder: URL
+        /// The repository as fetched at `commit`, laid out as Put on GitHub lays a wish out: what's copied to the desk.
+        var tree: URL
         let name: String
         /// The first thing the app's chat offers: a line inviting a change, and three changes to choose from: a new look,
         /// a new thing it does and a new subject, to show how far the app can go.
@@ -21,6 +28,26 @@ enum Starters {
         let tweaks: [Tweak]
         /// What kind of wish it is (`kind:` in starter.md): a Mac app unless it says otherwise, as a game does.
         var kind: Platform = .mac
+        /// Where the starter lives on GitHub (`repository:`), laid out as Put on GitHub lays a wish out
+        /// (`StarterRepos`), and the commit there this Lamp ships (`commit:`).
+        var repository: String? = nil
+        var commit: String? = nil
+    }
+
+    /// Where Lamp's own starters live: a repository each, named as the starter's folder is, in the Lamp team's
+    /// account on GitHub for them.
+    static let account = "lampdotdev"
+    static func repositoryName(of folder: String) -> String { folder }
+
+    /// A starter's link on a copy's chain, with where the starter lives filled in from the starter this Lamp ships
+    /// when the copy was made before starters named one: the address only, since the commit the copy came from isn't
+    /// known (an update then merges against the version the copy began with).
+    static func located(_ link: Credits.Remix) -> Credits.Remix {
+        guard link.url == nil, let folder = link.starter,
+              let shipped = bundled.first(where: { $0.folder.lastPathComponent == folder }), let url = shipped.repository else { return link }
+        var link = link
+        link.url = url
+        return link
     }
 
     /// A change the chat offers, with the symbol on its tile (`- drop.fill: Add a water counter` in starter.md;
@@ -32,34 +59,40 @@ enum Starters {
 
     static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Starters") }
 
+    static let treeFolder = "tree"
+    /// Where a starter's repository keeps the pictures Lamp shows for it: the desk's preview and the drawn icon.
+    static let picturesFolder = ".github"
+
+    /// The starters this Lamp ships: those whose tree is here (one not fetched before the build isn't, and says so).
     static var bundled: [Starter] {
         guard let folder else { return [] }
         let folders = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return folders.sorted { $0.lastPathComponent < $1.lastPathComponent }.filter(runsHere).compactMap(read)
+        return folders.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap(read).filter { runsHere($0.tree) }
     }
 
     /// Whether a starter runs on this Mac. One with a 3D scene needs macOS 15 (RealityView begins there), so on an
     /// older Mac it isn't put on the desk or offered, rather than greeting someone with a game that won't open; it's
     /// offered once the Mac is updated (`missing`).
-    static func runsHere(_ folder: URL) -> Bool {
-        Agent.Rules.scenes || !Template.importsRealityKit(folder.appendingPathComponent("Sources"))
+    static func runsHere(_ tree: URL) -> Bool {
+        Agent.Rules.scenes || !Template.importsRealityKit(tree.appendingPathComponent("Sources"))
     }
 
-    /// The starters this Lamp ships that aren't on the desk: never added, or deleted since. The desk offers them
-    /// (`MoreFromLamp`).
-    static func missing(from projects: [LampProject]) -> [Starter] {
-        let here = Set(projects.compactMap { starter(of: $0)?.name })
-        return bundled.filter { !here.contains($0.name) }
-    }
+    /// Where a starter's drawn icon is in its tree (`iconFolder` under the pictures), and its preview.
+    static func iconFolder(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(iconFolder) }
+    static func preview(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent("preview.png") }
+    /// Its reel, when one's been recorded (scripts/showcase-starters.sh): reel.mp4, loop.webp and poster.png. Only its
+    /// repository has it; Lamp's bundle leaves it out (build.sh).
+    static func showcase(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(showcaseFolder) }
+    static let showcaseFolder = "showcase"
 
     /// The icon a starter ships with, drawn from its icon.json (`StarterIconsTests`).
     static func icon(of starter: Starter) -> NSImage? {
-        NSImage(contentsOf: starter.folder.appendingPathComponent(iconFolder).appendingPathComponent("icon.png"))
+        NSImage(contentsOf: iconFolder(of: starter).appendingPathComponent("icon.png"))
     }
 
-    /// The starter's line saying what it is, from its about.json.
+    /// The starter's line saying what it is, from its manifest (the description a shared file carries).
     static func about(_ starter: Starter) -> String? {
-        AppDescription.description(at: starter.folder.appendingPathComponent(AppDescription.file))
+        AppDescription.description(at: starter.tree.appendingPathComponent("lamp-app.json"))
     }
 
     /// Where an app keeps its starter.md once copied: Lamp's, beside meta.json, out of the agent's way.
@@ -75,7 +108,7 @@ enum Starters {
     /// by the name in its starter.md, which stays the starter's even when the app is renamed.
     static func shippedPreview(of project: LampProject) -> URL? {
         guard let name = starter(of: project)?.name,
-              let shipped = bundled.first(where: { $0.name == name })?.folder.appendingPathComponent("preview.png"),
+              let shipped = bundled.first(where: { $0.name == name }).map(preview(of:)),
               FileManager.default.fileExists(atPath: shipped.path) else { return nil }
         return shipped
     }
@@ -95,9 +128,32 @@ enum Starters {
         return parse(text, folder: project.dir)
     }
 
-    private static func read(_ folder: URL) -> Starter? {
-        guard let text = try? String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8) else { return nil }
-        return parse(text, folder: folder)
+    /// Where a remix keeps the starter.md of the starter it was made from, when it was remixed with no change asked:
+    /// its chat offers the same changes to try. Kept apart from starter.md, which says the app came with Lamp.
+    static func suggestionsFile(of project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/starter-suggestions.md") }
+
+    /// What an app's chat offers to change first: its starter's, or the one of the starter it was remixed from.
+    static func suggestions(of project: LampProject) -> Starter? {
+        if let starter = starter(of: project) { return starter }
+        guard let text = try? String(contentsOf: suggestionsFile(of: project), encoding: .utf8) else { return nil }
+        return parse(text, folder: project.dir)
+    }
+
+    /// The file holding what an app's chat offers to change first, for a remix of it to offer too.
+    static func suggestionsSource(of project: LampProject) -> URL? {
+        [file(of: project), suggestionsFile(of: project)].first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// The starter in a folder: its starter.md, with its tree beside it. Nil without a tree (not fetched), which is
+    /// said once, since a build without it ships a starter short.
+    static func read(_ folder: URL) -> Starter? {
+        guard let text = try? String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8),
+              let starter = parse(text, folder: folder) else { return nil }
+        guard FileManager.default.fileExists(atPath: starter.tree.appendingPathComponent("lamp-app.json").path) else {
+            NSLog("Lamp: the starter in %@ has no tree: run scripts/fetch-starters.sh", folder.lastPathComponent)
+            return nil
+        }
+        return starter
     }
 
     /// starter.md's front matter: `name:`, `offer:`, and `tweaks:` followed by `  - ` lines. That's all it holds,
@@ -106,7 +162,7 @@ enum Starters {
         var lines = text.components(separatedBy: .newlines)[...]
         guard lines.first?.trimmed == "---" else { return nil }
         lines = lines.dropFirst()
-        var name = "", offer = "", tweaks: [Tweak] = [], kind = Platform.mac
+        var name = "", offer = "", tweaks: [Tweak] = [], kind = Platform.mac, repository: String? = nil, commit: String? = nil
         for line in lines {
             let trimmed = line.trimmed
             if trimmed == "---" { break }
@@ -118,12 +174,15 @@ enum Starters {
                 case "name": name = value
                 case "offer": offer = value
                 case "kind": kind = Targets.all.first { $0.platform.rawValue == value }?.platform ?? .mac
+                case "repository": repository = Credits.validURL(value)
+                case "commit": commit = Credits.validCommit(value)
                 default: break
                 }
             }
         }
         guard !name.isEmpty else { return nil }
-        return Starter(folder: folder, name: name, offer: offer, tweaks: tweaks, kind: kind)
+        return Starter(folder: folder, tree: folder.appendingPathComponent(treeFolder), name: name, offer: offer, tweaks: tweaks, kind: kind,
+                       repository: repository, commit: commit)
     }
 
     /// A symbol's name is lowercase words joined by dots, so `Group: by client` stays words.
@@ -156,12 +215,8 @@ enum Starters {
         return value
     }
 
-    /// What a starter's folder gives the app, beside its scaffold (which is replaced): the agent and the build
-    /// read these where any app keeps them.
-    private static let copied = ["Sources", "Widget", "Share", "Assets", "Web", "APP.md", "icon.json", "about.json", "capabilities.json"]
-
-    /// A starter's icon, drawn once from its icon.json (`StarterIconsTests`) and shipped with Lamp, so it's on the desk
-    /// as soon as the starter is: the files `Icons.write` makes, which go into the app's .lamp folder, the
+    /// A starter's icon, drawn once from its icon.json (`StarterIconsTests`) and kept in its repository, so it's on the
+    /// desk as soon as the starter is: the files `Icons.write` makes, which go into the app's .lamp folder, the
     /// icon.json they were drawn from, and the artwork (`artFile`).
     static let iconFolder = "icon"
 
@@ -187,43 +242,27 @@ enum Starters {
         return (try? JSONDecoder().decode(IconSpec.self, from: drawn)) == (try? JSONDecoder().decode(IconSpec.self, from: current))
     }
 
-    /// Puts a starter's files into a scaffolded app: its Sources replace the scaffold's (LampSupport.swift,
-    /// which Lamp writes before every build, stays), and starter.md goes into .lamp.
-    static func copy(_ starter: Starter, into project: LampProject) throws {
+    /// Puts a starter into a scaffolded app the way a repository opens: its tree read as the import reads one
+    /// (`RepoImport.open`: the code the review would read, never Lamp's own files) and installed as the import installs
+    /// one (`Sharing.install`: code, files, notes, description, credits, licenses, the icon's design and artwork), with
+    /// the starter named where it lives and at the commit this Lamp ships on the chain's link (what Update from GitHub…
+    /// merges against and Send Changes Back… goes on top of). starter.md goes into .lamp; the drawn icon and the
+    /// preview come from the tree's pictures. `package` stands in for the tree when given (a wish on this Mac being
+    /// made a starter, `StarterRepos`).
+    /// `replacing` puts the starter in place of a copy's own files (`Store.bringUp`), as an update replaces a wish's.
+    static func copy(_ starter: Starter, into project: LampProject, package given: Sharing.Package? = nil, replacing: Bool = false) throws {
         let fm = FileManager.default
-        let sources = project.dir.appendingPathComponent("Sources")
-        for scaffold in ["App.swift", "ContentView.swift"] {
-            try? fm.removeItem(at: sources.appendingPathComponent(scaffold))
-        }
-        for name in copied {
-            let from = starter.folder.appendingPathComponent(name)
-            guard fm.fileExists(atPath: from.path) else { continue }
-            let to = project.dir.appendingPathComponent(name)
-            if name == "Sources" {
-                // Into the existing folder, file by file, around LampSupport.swift.
-                for file in (try? fm.subpathsOfDirectory(atPath: from.path)) ?? [] {
-                    let source = from.appendingPathComponent(file)
-                    var isFolder: ObjCBool = false
-                    fm.fileExists(atPath: source.path, isDirectory: &isFolder)
-                    let target = to.appendingPathComponent(file)
-                    if isFolder.boolValue {
-                        try fm.createDirectory(at: target, withIntermediateDirectories: true)
-                    } else {
-                        try? fm.removeItem(at: target)
-                        try fm.copyItem(at: source, to: target)
-                    }
-                }
-            } else {
-                try? fm.removeItem(at: to)
-                try fm.copyItem(at: from, to: to)
-            }
-        }
-        try fm.copyItem(at: starter.folder.appendingPathComponent("starter.md"), to: file(of: project))
-        // Its credits, the work it's built on (credits.json in the starter's folder), with the starter itself as the
-        // first wish it was remixed from.
-        let credits = Credits.read(starter.folder.appendingPathComponent(Credits.file)) ?? Credits()
-        try Credits.arrive(credits.remixed(from: Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent)), in: project)
-        let icon = starter.folder.appendingPathComponent(iconFolder)
+        let package = try given.map { given in
+            var package = given
+            package.credits = linked(RepoImport.naming(given.credits, repository: starter.repository, commit: starter.commit,
+                                                       name: starter.name, identity: given.identity), to: starter)
+            return package
+        } ?? self.package(of: starter)
+        defer { if given == nil { try? fm.removeItem(at: package.folder) } }
+        try Sharing.install(package, into: project, replacing: replacing)
+        try keepFile(of: starter, in: project)
+        try Credits.arrive(linked(Credits.load(project), to: starter), in: project)
+        let icon = iconFolder(of: starter)
         for made in iconFiles(of: project) {
             let shipped = icon.appendingPathComponent(made.lastPathComponent)
             guard fm.fileExists(atPath: shipped.path) else { continue }
@@ -231,7 +270,10 @@ enum Starters {
             try fm.copyItem(at: shipped, to: made)
         }
         let spec = icon.appendingPathComponent("icon.json")
-        if fm.fileExists(atPath: spec.path) { try fm.copyItem(at: spec, to: drawnFrom(project)) }
+        if fm.fileExists(atPath: spec.path) {
+            try? fm.removeItem(at: drawnFrom(project))
+            try fm.copyItem(at: spec, to: drawnFrom(project))
+        }
         if let drawn = Icons.load(project) {
             if let glass = GlassArt.load(from: icon.appendingPathComponent(glassFile)) {
                 try Icons.save(glass, for: project, spec: drawn)
@@ -244,10 +286,83 @@ enum Starters {
         }
         // A picture of it for the desk, since it's built out of sight and nobody has opened it yet: its first
         // launch replaces it.
-        let preview = starter.folder.appendingPathComponent("preview.png")
+        let preview = preview(of: starter)
         if fm.fileExists(atPath: preview.path) {
             try? fm.createDirectory(at: Runtime.macFolder(project), withIntermediateDirectories: true)
+            if replacing { try? fm.removeItem(at: Runtime.previewURL(project)) }
             try? fm.copyItem(at: preview, to: Runtime.previewURL(project))
         }
     }
+
+    /// The starter as a repository opens (`RepoImport.open`), its credits naming it where it lives and at the commit this
+    /// Lamp ships. Its folder is the caller's to remove.
+    static func package(of starter: Starter) throws -> Sharing.Package {
+        var package = try RepoImport.open(folder: starter.tree)
+        package.credits = linked(RepoImport.naming(package.credits, repository: starter.repository, commit: starter.commit,
+                                                   name: starter.name, identity: package.identity), to: starter)
+        return package
+    }
+
+    /// Credits with the starter as the chain's last link, where it lives and at the commit this Lamp ships. The link names
+    /// the starter (`starter`), which is how a copy is known as one wherever its name goes.
+    static func linked(_ credits: Credits?, to starter: Starter) -> Credits {
+        var credits = credits ?? Credits()
+        let link = Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent, url: starter.repository, commit: starter.commit)
+        if let last = credits.remixOf.indices.last, credits.remixOf[last].sameLink(as: link) || credits.remixOf[last].url == nil {
+            credits.remixOf[last] = link
+        } else {
+            credits = credits.remixed(from: link)
+        }
+        return credits
+    }
+
+    /// The starter's starter.md, as this Lamp ships it, into the copy's .lamp: its changes to offer, and its commit.
+    static func keepFile(of starter: Starter, in project: LampProject) throws {
+        try? FileManager.default.removeItem(at: file(of: project))
+        try FileManager.default.copyItem(at: starter.folder.appendingPathComponent("starter.md"), to: file(of: project))
+    }
+
+    // MARK: Keeping copies current
+
+    /// The starter a copy was made from, as this Lamp ships it: found by the name in its starter.md, which stays the
+    /// starter's when the wish is renamed, else by the folder its link names. Nil for one this Lamp doesn't ship.
+    static func shipped(of project: LampProject) -> Starter? {
+        let bundled = self.bundled
+        if let name = starter(of: project)?.name, let found = bundled.first(where: { $0.name == name }) { return found }
+        guard let folder = Credits.load(project).remixOf.last(where: { $0.starter != nil })?.starter else { return nil }
+        return bundled.first { $0.folder.lastPathComponent == folder }
+    }
+
+    /// The commit of its starter a copy has: its link's in credits.json, which goes with the copy's versions, so Undo of
+    /// an update takes it back too (`.lamp`'s records stay as they are). Nil for a copy made before starters named one.
+    static func commit(of project: LampProject) -> String? {
+        Credits.read(project.dir.appendingPathComponent(Credits.file))?.remixOf.last { $0.starter != nil }?.commit
+    }
+
+    /// The starter a copy was made from as this Lamp ships it, when the copy can take it: the same kind of wish. "The
+    /// original" is always this, whatever the copy arrived as: what Start Over lands on.
+    static func original(for project: LampProject) -> Starter? {
+        guard !project.isPart, isStarter(project), let shipped = shipped(of: project), shipped.commit != nil,
+              shipped.kind == project.platform else { return nil }
+        return shipped
+    }
+
+    /// The original, when it's newer than what the copy has. A copy that names no commit is behind; a starter not put
+    /// on GitHub yet has no commit to be behind.
+    static func newer(for project: LampProject) -> Starter? {
+        guard let shipped = original(for: project), let pin = shipped.commit,
+              commit(of: project)?.lowercased() != pin.lowercased() else { return nil }
+        return shipped
+    }
+}
+
+/// The chat's card for a copy of a starter changed here, when this Lamp ships a newer one: Update brings it in, keeping
+/// the person's changes (`Store.updateFromOriginal`). Said once for each newer starter; its text is the starter's commit,
+/// with `done` before it once it's in.
+enum NewerOriginalLine {
+    static let done = "updated:"
+    static func isDone(_ text: String) -> Bool { text.hasPrefix(done) }
+    static func title(done: Bool) -> String { done ? "Updated from the original" : "A newer original is available" }
+    static let button = "Update"
+    static let symbol = "arrow.down.circle"
 }

@@ -1,0 +1,125 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "steps": [
+    {
+      "wait": 10
+    },
+    {
+      "action": "click",
+      "x": 1000,
+      "y": 450
+    },
+    {
+      "wait": 1
+    },
+    {
+      "action": "key",
+      "key": "U"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "N"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "I"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "O"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "N"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "tab"
+    },
+    {
+      "wait": 1
+    },
+    {
+      "action": "key",
+      "key": "B"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "R"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "O"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "O"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "K"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "L"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "Y"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "action": "key",
+      "key": "N"
+    },
+    {
+      "wait": 0.25
+    },
+    {
+      "wait": 2
+    }
+  ],
+  "location": {
+    "latitude": 40.671,
+    "longitude": -73.9814,
+    "name": "Park Slope"
+  }
+}

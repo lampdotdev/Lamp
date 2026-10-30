@@ -132,7 +132,7 @@ enum AppKinds {
 
     /// What an app of this make and intent on these devices is today, or why there's no such app. A native app is the
     /// kind of its rows' one code, whichever intent it has: a game and an app are written in the same code. A web game is
-    /// a game (three.js, Lamp's game runtime); a web app is a web app at home on the Mac that goes wherever a page goes,
+    /// a web game on Lamp's game runtime (Phaser for 2D, three.js for 3D); a web app is a web app at home on the Mac that goes wherever a page goes,
     /// or a TV app where only Samsung or LG TVs are asked for, whose package is the TVs' own. `keeping` is the kind of the
     /// app being changed (`make_app_for`'s `app`), kept when it's a web app that still reaches every row: a screen made
     /// before stays one, with its origin and saves. The devices never choose between a game and an app.

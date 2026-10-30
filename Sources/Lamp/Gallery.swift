@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + remixEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -79,6 +79,13 @@ enum Gallery {
     /// that isn't a Mac window beside the chat, a setup card's header and its sheet, Agent Details' output, and a phone
     /// that didn't take the app.
     private static let screenEntries: [Entry] = [
+        // Beside an app, when Lamp is open but nothing it sent could be shown for a while (`ChatWait`).
+        Entry(group: "Chat screen", name: "Couldn't open beside the app") {
+            let chat = GalleryChat(nil)
+            chat.connected = false
+            chat.stuck = true
+            return AnyView(ChatScreen().environmentObject(chat as ChatLink).frame(height: 640))
+        },
         screen("A new wish", group: "Chat screen", []) { state in
             state.toolbar = nil
             state.intro = SidebarIntro(icon: nil, name: nil, namePrompt: "", line: introLine, ideas: ideas, canRename: true)
@@ -156,6 +163,18 @@ enum Gallery {
             LogLine(kind: .user, text: "put it on my phone"),
             LogLine(kind: .oldCopy, text: "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),
             LogLine(kind: .status, text: "Today is ready on the iPhone"),
+        ]),
+        screen("A newer original", group: "Chat screen", [
+            LogLine(kind: .user, text: "Make it a snowy winter night"),
+            LogLine(kind: .agent, text: "Snow falls over the whole city now, and the streets have drifts."),
+            LogLine(kind: .newerOriginal, text: "e21e2de686a12bb7ca08e7c549cd5f088cc590b6"),
+        ]),
+        screen("A newer original, brought in", group: "Chat screen", [
+            LogLine(kind: .newerOriginal, text: NewerOriginalLine.done + "e21e2de686a12bb7ca08e7c549cd5f088cc590b6"),
+            LogLine(kind: .status, text: "Brought in what's new from the original, keeping your changes. Building it now…"),
+        ]),
+        screen("Started over", group: "Chat screen", [
+            LogLine(kind: .status, text: Conversation.startedOverFromLatest),
         ]),
         screen("The old team's copy, kept and removed", group: "Chat screen", [
             LogLine(kind: .oldCopy, text: OldCopyLine.kept + "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),
@@ -324,6 +343,8 @@ enum Gallery {
         offer: true)),
         // Lamp's card before the agent changes one of the person's devices (`device_permission`): only theirs to answer.
         ask("A device of the person's", DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")),
+        // The same for a device Lamp only found on the network, which may not be theirs.
+        ask("A device found on the network", DevicePermissions.card(device: "Samsung TV", doing: "Press Home and open Netflix to check the buttons", setUp: false)),
         ask("A device of the person's, answered", {
             var card = DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")
             card.answers = [DevicePermissions.allowOnce]
@@ -671,6 +692,12 @@ enum Gallery {
                 ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Hot Shelf"), button: "Reload", prominent: true) {}
             })
         },
+        // A wish on several places: Reload says where it opens the app again and where it only puts the change.
+        Entry(group: "Activity", name: "Reload on every place") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise",
+                                        text: ReloadLine.text("Home HQ", reopens: ["this Mac", "Kitchen iPad"], updates: ["Living Room TV"]),
+                                        button: "Reload", prominent: true) {})
+        },
         // Reload pressed while the agent is still at work on the app: it goes in once that's done.
         Entry(group: "Activity", name: "Reload, waiting for the request") {
             AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.queued("Hot Shelf"), button: "Reload",
@@ -730,8 +757,14 @@ enum Gallery {
         review("Partly checked", ImportReview(
             summary: "A 3D driving game that builds real streets and buildings from map data for any place you search, starting in San Francisco, with cars, people, trains and street furniture.",
             capabilities: ["Downloads maps of the places you drive", "Remembers the places you searched"],
-            concerns: [ImportReview.tooLarge], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
             asked: true, detected: found("Uses the camera or microphone", "Connects to the internet"), partial: true),
+               description: "A driving game through real streets anywhere in the world, starting in San Francisco."),
+        review("Checked in parts", ImportReview(
+            summary: "A 3D driving game that builds real streets and buildings from map data for any place you search, starting in San Francisco, with cars, people, trains and street furniture.",
+            capabilities: ["Downloads maps of the places you drive", "Remembers the places you searched"],
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Connects to the internet"), split: true),
                description: "A driving game through real streets anywhere in the world, starting in San Francisco."),
         review("Looks risky", ImportReview(
             summary: "Shows a daily quote, and also reads your browser's saved data and sends it to a website.",
@@ -752,6 +785,16 @@ enum Gallery {
                                             capabilities: [], concerns: [], risk: .low,
                                             reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
                app: "Plant Care", existing: "Balcony Plants"),
+        review("Already here, changed here", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
+                                                          capabilities: [], concerns: [], risk: .low,
+                                                          reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
+               app: "Plant Care", existing: "Plant Care", changedHere: true),
+        review("Prepared update", ImportReview(
+            summary: "A 3D game of Manhattan you can explore on foot, by car, by bike or by helicopter, with synthesized city sounds.",
+            capabilities: ["Draws a 3D Manhattan you can explore", "Plays synthesized city sounds"],
+            concerns: [], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Connects to the internet"), partial: true),
+               app: "New York Update", existing: "New York", prepared: true),
         review("Android app", ImportReview(summary: "Counts your taps on one screen and remembers the count after closing.",
                                            capabilities: [], concerns: [], risk: .low,
                                            reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
@@ -766,10 +809,11 @@ enum Gallery {
     }
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
-                               existing: String? = nil, android: Bool = false) -> Entry {
+                               existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false) -> Entry {
         Entry(group: "Shared wish", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
-                                     icon: nil, review: review, existing: existing, cancel: {}, open: {}, update: {}, android: android)
+                                     icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android,
+                                     prepared: prepared)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
@@ -808,7 +852,7 @@ enum Gallery {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
-                icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) },
+                icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) },
                 picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
@@ -849,7 +893,7 @@ enum Gallery {
         Entry(group: "Publish", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
-            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                    stage: stage, repo: ready ? "someone/new-york" : nil, page: page ? "https://someone.github.io/new-york/" : nil,
                                    credit: "Based on Slop New York by Mr.doob",
                                    openInLamp: page ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
@@ -871,6 +915,7 @@ enum Gallery {
         repo("Needs a sign-in", stage: .needsGitHub(.signIn)),
         repo("No license", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no license. It can still be used on this Mac.")),
         repo("Ready, first time", stage: .ready),
+        repo("Ready, public", stage: .ready, remix: true),
         repo("Ready, with a share link", stage: .ready, link: true),
         repo("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."], canChooseLicense: false),
         repo("Working", stage: .working("Uploading…")),
@@ -882,14 +927,53 @@ enum Gallery {
         repo("Up, wide", stage: .done(unchanged: false), up: true, width: 480),
     ]
 
+    /// The card that sends a remix's changes back to the repository it came from, from checking them to the pull
+    /// request being open, in the chat's place at its narrowest and widest.
+    private static let contributeEntries: [Entry] = [
+        contribute("Checking", stage: .preparing),
+        contribute("Needs GitHub's tool", stage: .needsGitHub(.install)),
+        contribute("Needs a sign-in", stage: .needsGitHub(.signIn)),
+        contribute("Own repository", stage: .refused("github.com/someone/new-york is your own repository: Put on GitHub updates it.")),
+        contribute("Ready", stage: .ready),
+        contribute("Ready, no fork yet", stage: .ready, fork: false,
+                   notes: ["You have no fork of someone/new-york yet: Lamp makes one on your account (else/new-york) first."]),
+        contribute("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."]),
+        contribute("Working", stage: .working("Opening the pull request…")),
+        contribute("Couldn't send", stage: .failed("GitHub didn't take it: the connection was lost.")),
+        contribute("Nothing to send", stage: .failed("someone/new-york already has everything this wish has: there's nothing to send.")),
+        contribute("Sent", stage: .done("https://github.com/someone/new-york/pull/4")),
+        contribute("Sent and copied", stage: .done("https://github.com/someone/new-york/pull/4"), copied: true),
+        contribute("Sent, wide", stage: .done("https://github.com/someone/new-york/pull/4"), width: 480),
+    ]
+
+    private static func contribute(_ name: String, stage: ContributeCard.Stage, fork: Bool = true, notes: [String] = [], copied: Bool = false,
+                                   width: CGFloat? = nil) -> Entry {
+        Entry(group: "GitHub", name: "Send back: " + name) {
+            let folder = Starters.folder?.appendingPathComponent("newyork")
+            let ready = stage != .preparing
+            let card = ContributeCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
+                                      stage: stage, upstream: ready ? "someone/new-york" : nil, fork: ready && fork ? "else/new-york" : nil,
+                                      credit: "Based on Slop New York by Mr.doob", notes: notes, size: ready ? "38 files · 1.2 MB" : nil, copied: copied,
+                                      canSend: stage == .ready || { if case .failed = stage { true } else { false } }(),
+                                      send: {}, fix: {}, openRequest: {}, copy: {}, close: {}, width: width)
+            return AnyView(card
+                .frame(width: width == nil ? 340 : nil)
+                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize(horizontal: false, vertical: true))
+        }
+    }
+
     private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
-                             canChooseLicense: Bool = true, width: CGFloat? = nil) -> Entry {
+                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false) -> Entry {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
-            let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+            let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                 stage: stage, repo: ready ? "someone/new-york" : nil, url: up ? "https://github.com/someone/new-york" : nil,
-                                credit: "Based on Slop New York by Mr.doob", openInLamp: link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
+                                credit: "Based on Slop New York by Mr.doob",
+                                openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
                                 canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: false, license: canChooseLicense,
                                 canChooseLicense: canChooseLicense, put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
@@ -907,6 +991,7 @@ enum Gallery {
     private static let remixEntries: [Entry] = [
         remix("With a share link", link: true),
         remix("Without a share link"),
+        remix("On GitHub", link: true, origin: .repository(url: "https://github.com/someone/new-york", commit: "b95d5012397fa3fa345505f428f1189271218753")),
         remix("Lamp's own suggestions", link: true, suggestions: RemixOffer.fallback),
         remix("Wide", link: true, width: 480),
     ]
@@ -915,10 +1000,10 @@ enum Gallery {
                               suggestions: [RemixIdea] = [RemixIdea(text: "Add a helicopter tour of Central Park", symbol: "airplane"),
                                                           RemixIdea(text: "Let me race a friend on the same phone", symbol: "flag.checkered"),
                                                           RemixIdea(text: "Show the time of day as it is in New York", symbol: "clock")],
-                              width: CGFloat? = nil) -> Entry {
+                              width: CGFloat? = nil, origin: RemixLink.Origin? = nil) -> Entry {
         Entry(group: "Remix", name: name) {
             let offer = RemixOffer(name: "New York", about: "Explore Manhattan on foot, by car, by bike or by helicopter.", suggestions: suggestions,
-                                   shareLink: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil)
+                                   shareLink: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, origin: origin)
             return AnyView(RemixPanel(offer: offer) { _ in }
                 .frame(width: width ?? 320)
                 .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))

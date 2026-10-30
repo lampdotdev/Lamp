@@ -8,10 +8,7 @@ import XCTest
 /// is an error, with a made-up home folder, so what it saves is real and nobody's own.
 final class WeddingWordsRetryTests: XCTestCase {
     func testAFailedReplyIsKeptAndSentOnceMore() throws {
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let folder = repo.appendingPathComponent("Resources/Starters/weddingwords")
-        let starter = try XCTUnwrap(Starters.parse(String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8),
-                                                   folder: folder))
+        let starter = try StarterTrees.starter("weddingwords")
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-weddingwords-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: work) }
         let project = try Template.draft(name: starter.name, in: work.appendingPathComponent("apps"))

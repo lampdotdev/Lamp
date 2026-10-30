@@ -39,7 +39,7 @@ struct AboutView: View {
                 .frame(width: 128, height: 128)
                 .padding(.bottom, 12)
             Text("Lamp").font(.title2.bold())
-            Text("What do you wish you had?")
+            Text("Remixable software for the things you already own.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)

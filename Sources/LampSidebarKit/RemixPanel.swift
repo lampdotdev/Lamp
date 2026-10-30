@@ -11,12 +11,15 @@ public struct RemixOffer: Equatable {
     public var suggestions: [RemixIdea]
     /// The wish's Share Link, when the person who made the app shared one: the page that gives this exact wish.
     public var shareLink: URL?
+    /// What the app can be copied from, when it's a starter or lives on GitHub: Lamp starts from a copy of that.
+    public var origin: RemixLink.Origin?
 
-    public init(name: String, about: String?, suggestions: [RemixIdea], shareLink: URL?) {
+    public init(name: String, about: String?, suggestions: [RemixIdea], shareLink: URL?, origin: RemixLink.Origin? = nil) {
         self.name = name
         self.about = about
         self.suggestions = suggestions.isEmpty ? Self.fallback : suggestions
         self.shareLink = shareLink
+        self.origin = origin
     }
 
     /// What's offered when Lamp never wrote suggestions for the app: true of any app.
@@ -60,16 +63,76 @@ public enum RemixLink {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The page for the request: the wish's Share Link with the request as `ask`, which the page adds to the wish's
-    /// words, or Lamp's site with a request that names the app, since without the link Lamp makes its own version.
-    public static func url(for offer: RemixOffer, ask: String) -> URL? {
+    /// What a remix starts from: a starter Lamp ships (by its folder, "newyork"), or a repository on GitHub at a commit.
+    /// Lamp's site takes these beside `ask` (`remixFrom` in lib/wish.js) and hands them to Lamp (`Wish.Remix`), which
+    /// puts a copy of that on the desk with the request in its chat's box.
+    public enum Origin: Equatable {
+        case starter(String)
+        case repository(url: String, commit: String?)
+
+        /// The site's parameters for it, beside `ask`.
+        public var queryItems: [URLQueryItem] {
+            switch self {
+            case .starter(let id): [URLQueryItem(name: "starter", value: id)]
+            case .repository(let url, let commit): [URLQueryItem(name: "repo", value: url)] + (commit.map { [URLQueryItem(name: "commit", value: $0)] } ?? [])
+            }
+        }
+
+        /// A repository as Lamp wrote it into an app's chat (`Sidebar.install`), checked as the site and Lamp check a link's:
+        /// an https github.com address of an owner and a name, and a full commit of 40 hex digits. Nil for anything else.
+        public static func repository(_ url: String?, commit: String?) -> Origin? {
+            guard let url, let rest = url.hasPrefix("https://github.com/") ? url.dropFirst("https://github.com/".count) : nil else { return nil }
+            let parts = rest.split(separator: "/", omittingEmptySubsequences: false)
+            let plain = { (part: Substring) in !part.isEmpty && !part.hasPrefix("-") && !part.hasPrefix(".")
+                && part.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) } }
+            guard parts.count == 2, plain(parts[0]), plain(parts[1]) else { return nil }
+            let commit = commit.flatMap { $0.isEmpty ? nil : $0 }
+            if let commit, !(commit.count == 40 && commit.allSatisfy(\.isHexDigit)) { return nil }
+            return .repository(url: url, commit: commit)
+        }
+
+        /// The same as JSON, for a page's own script (`Publish.withCreditBar`).
+        public var json: [String: String] {
+            Dictionary(uniqueKeysWithValues: queryItems.compactMap { item in item.value.map { (item.name, $0) } })
+        }
+    }
+
+    /// The page for the request. With an origin, Lamp's site with it and the request as it is, since Lamp starts from a
+    /// copy of that; else the wish's Share Link with the request as `ask`, which the page adds to the wish's words; else
+    /// Lamp's site with a request that names the app, since without either Lamp makes its own version.
+    /// `from` says where the link was pressed, for the site's counts: "app" (this panel), "page" (a published page's,
+    /// `Publish.withCreditBar`), "readme" and "github" (a repository's README and website, `GitHubRepo`).
+    public static func url(for offer: RemixOffer, ask: String, from: String = "app") -> URL? {
         let words = tidy(ask)
         guard !words.isEmpty else { return nil }
-        let base = offer.shareLink ?? site
-        guard var parts = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        if let origin = offer.origin { return site(for: origin, ask: words, from: from) }
+        guard var parts = URLComponents(url: offer.shareLink ?? site, resolvingAgainstBaseURL: false) else { return nil }
         let request = offer.shareLink == nil ? tidy(self.request(for: offer, ask: words)) : words
-        parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "ask" } + [URLQueryItem(name: "ask", value: request)]
+        let mine: Set = ["ask", "starter", "repo", "commit", "from"]
+        parts.queryItems = (parts.queryItems ?? []).filter { !mine.contains($0.name) }
+            + [URLQueryItem(name: "from", value: from), URLQueryItem(name: "ask", value: request)]
         return parts.url
+    }
+
+    /// Lamp's site with a remix of `origin`: the dialog that opens Lamp on a fresh copy of it, with the request (if any)
+    /// in its chat's box. Spaces are written as %20, as Lamp and the site read them either way.
+    public static func site(for origin: Origin, ask: String? = nil, from: String) -> URL {
+        var parts = URLComponents(url: site, resolvingAgainstBaseURL: false)!
+        let words = ask.map(tidy) ?? ""
+        parts.queryItems = origin.queryItems + [URLQueryItem(name: "from", value: from)]
+            + (words.isEmpty ? [] : [URLQueryItem(name: "ask", value: words)])
+        return parts.url!
+    }
+
+    /// What pressing Continue with Lamp means, in one line under it: the only thing the person has to accept.
+    public static func note(for offer: RemixOffer) -> String {
+        if offer.origin != nil {
+            return "Opens lamp.dev with your request. Lamp is a free Mac app; it opens a copy of \(offer.name.isEmpty ? "it" : offer.name) with your request ready to send."
+        }
+        if offer.shareLink != nil {
+            return "Opens this wish's page with your request. Lamp is a free Mac app; it opens on this exact wish and changes it as you ask."
+        }
+        return "Opens lamp.dev with your request. Lamp is a free Mac app; it makes its own version of \(offer.name.isEmpty ? "it" : offer.name) and changes it as you ask."
     }
 
     /// A wish for an app like this one, then the change: what Lamp's welcome gets when there's no link to the exact wish.
@@ -139,9 +202,7 @@ public struct RemixPanel: View {
             }
             .cardButtons()
             // What pressing it means, in one line: the only thing the person has to accept.
-            Text(offer.shareLink == nil
-                 ? "Opens lamp.dev with your request. Lamp is a free Mac app; it makes its own version of \(offer.name) and changes it as you ask."
-                 : "Opens this wish's page with your request. Lamp is a free Mac app; it opens on this exact wish and changes it as you ask.")
+            Text(RemixLink.note(for: offer))
                 .font(.footnote).foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }

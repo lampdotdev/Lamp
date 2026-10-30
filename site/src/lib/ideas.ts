@@ -3,7 +3,7 @@
 // That's what the page is for: someone reads one and thinks "I don't have that, but I have something like it".
 //
 // Each wish is one person's, in their own words, with the details that make it theirs (names, numbers, places),
-// like the carousel's on the homepage. `about` is two short lines on the card: who it's for and the trouble it
+// `about` is two short lines on the card: who it's for and the trouble it
 // saves them. `form` is where it lives on their Mac or phone (a menu bar item or a widget is as much a wish as a
 // window), which shapes its picture (scripts/idea-art); the card shows only its platform (`platform`). Nothing
 // here should be a thing you'd find in the App Store already, done well enough.

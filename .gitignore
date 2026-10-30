@@ -4,3 +4,5 @@ build/
 vendor/
 .claude/
 dist/
+Resources/Starters/*/tree/
+__pycache__/

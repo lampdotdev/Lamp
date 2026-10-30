@@ -17,26 +17,32 @@ struct ContentView: View {
             if !onboarded && !store.welcomeFinished {
                 OnboardingView().ignoresSafeArea()
             } else {
-                Group {
-                    // Only Apple's tools missing (say, still installing after the welcome): Lamp stays usable,
-                    // and anything asked for waits in its chat until they're in.
-                    if store.setup.checked && !store.setup.ready && !(store.setup.hasBuilder && store.setup.hasAgent) {
-                        SetupView()
-                    } else {
-                        main
-                    }
-                }
-                .frame(minWidth: 760, minHeight: 480)
+                // Nothing set up, the desk still opens and its wishes run: what's missing is asked for when a change
+                // needs it, and the request waits in its chat until it's done.
+                main
+                    .frame(minWidth: 760, minHeight: 480)
+                    .sheet(isPresented: settingUp) { SetupView { store.askingForSetup = false } }
             }
         }
         .modifier(StoreDialogs(active: store.selection == nil))
-        .background(WindowKeyWatcher { store.selection = nil })
+        .background(WindowKeyWatcher(became: {
+            store.selection = nil
+            DeskPick.shared.deskIsKey = true
+        }, resigned: { DeskPick.shared.deskIsKey = false }))
+        .background(DeskWindowMarker())
         .onAppear { LampWindows.open = openWindow }
+    }
+
+    /// Up while a request waits for what builds, and gone once that's chosen, with Apple's tools left to the banner.
+    private var settingUp: Binding<Bool> {
+        Binding(get: { store.askingForSetup && !(store.setup.hasBuilder && store.setup.hasAgent) },
+                set: { store.askingForSetup = $0 })
     }
 
     private var main: some View {
         VStack(spacing: 0) {
-            if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
+            // While they install, or while a request waits for them: games and screens are made without them.
+            if store.setup.checked && !store.setup.hasBuildTools && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) { BuildToolsBanner() }
             WishDesk()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -241,8 +247,8 @@ struct AppMenu: View {
 
     var body: some View {
         let busy = store.busy.contains(project.id)
-        // The whole wish, as Play and Stop are: each app's own menu in the toolbar is for that app alone.
-        Button("Open") { store.openWish(project) }
+        // The whole wish, as Play and Stop are: each app's own menu in the toolbar is for that app alone. Open and Remix
+        // are the desk's own, above it (`DeskWishMenu`).
         Button("Rebuild & Open") { store.runPrepared(project) }
             .disabled(busy)
         Button("Quit") { Task { await store.quitWish(project) } }
@@ -257,8 +263,6 @@ struct AppMenu: View {
         Button("Rename…") { store.renaming = project }
             // Still being found: the wish it becomes names it. A device's setup is never named.
             .disabled(busy || project.makesNoApp)
-        Button("Duplicate") { Task { await store.duplicate(project) } }
-            .disabled(busy || !project.scaffolded || project.untitled)
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
         // Only once there's an app to show: a wish not yet made has nothing in Finder.
@@ -286,6 +290,22 @@ struct AppMenu: View {
 enum AppInfoView {
     static let useSettingsChoices = "settingsChoices"
     static let basedOnPage = "basedOnPage"
+    static let remixedFromPage = "remixedFromPage"
+    static let updateFromRepository = "updateFromRepository"
+    static let startAgain = "startAgain"
+
+    /// Where the wish came from, when that's a repository on GitHub: the chain's last link naming one that isn't where
+    /// this wish was put (`Credits.origin`), a starter's link filled in for a copy made before starters named theirs
+    /// (`Starters.located`).
+    static func origin(of project: LampProject) -> Credits.Remix? {
+        located(Credits.load(project)).origin(own: GitHubRepo.kept(for: project)?.url)
+    }
+
+    static func located(_ credits: Credits) -> Credits {
+        var credits = credits
+        credits.remixOf = credits.remixOf.map(Starters.located)
+        return credits
+    }
 
     /// A button of the panel's, here or in the chat beside the app: Settings opened at its tab, the app or its code
     /// shown in Finder, or this app's own model choices undone.
@@ -296,14 +316,29 @@ enum AppInfoView {
         case "showApp": NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         case "showSource": NSWorkspace.shared.activateFileViewerSelecting([project.dir])
         case basedOnPage:
-            if let page = Credits.load(project).upstream.first?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+            if let page = Credits.load(project).basis?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+        case remixedFromPage:
+            if let page = origin(of: project)?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+        case updateFromRepository:
+            // Check for Updates… asks; Review Update…, once there is one, brings it in (`AppUpdates`): a wish in a
+            // repository through the same review as the first time, a wish made from someone's project by the agent.
+            if Store.shared.updateAvailability(of: project)?.reviews == true {
+                Store.shared.reviewUpdate(project)
+            } else {
+                Store.shared.checkForUpdates(project)
+            }
+        case startAgain:
+            // From the chat, which is open already.
+            Task { await Store.shared.startAgain(project, opening: false) }
         default: break
         }
     }
 
     /// What the panel says, as plain rows (a nil value is Not Ready) and the buttons under them: drawn here and in
     /// the chat beside the app (`SidebarServer`) from this one list, so the two never say different things.
-    @MainActor static func sections(for project: LampProject, models: AppModels, store: Store) -> [SidebarInfoSection] {
+    /// `changedFromOriginal` is whether the wish has changed since it arrived, as last read (`Store.original(toStartAgain:)`).
+    @MainActor static func sections(for project: LampProject, models: AppModels, store: Store,
+                                    changedFromOriginal: Bool = false) -> [SidebarInfoSection] {
         let usage = store.usage[project.id] ?? AppUsage()
         let requests = (store.logs[project.id] ?? []).filter { $0.kind == .user }.count
         var sections = [SidebarInfoSection(title: "Usage", rows: [
@@ -316,11 +351,11 @@ enum AppInfoView {
         func answer(_ title: String, _ resolution: Resolution) -> SidebarInfoRow {
             SidebarInfoRow(label: title, value: resolution.tier == .none ? nil : short(resolution.answer ?? ""))
         }
-        var ai = Capability.allCases.filter { $0 != .browser }.map { answer($0.title, AppAI.resolve($0, for: project)) }
+        var ai = Capability.allCases.map { answer($0.title, AppAI.resolve($0, for: project)) }
         if project.hasIOS {
             // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
             if Provider.hasKey {
-                ai += Capability.allCases.filter { $0 != .browser }.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
+                ai += Capability.allCases.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
             } else {
                 ai.append(SidebarInfoRow(label: "Away from this Mac", value: nil))
             }
@@ -329,7 +364,9 @@ enum AppInfoView {
         // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
         if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }
         sections.append(SidebarInfoSection(title: "AI inside this app", rows: ai, buttons: aiButtons))
-        if let credits = creditsSection(Credits.load(project)) { sections.insert(credits, at: 0) }
+        if let credits = creditsSection(located(Credits.load(project)), own: GitHubRepo.kept(for: project)?.url,
+                                        update: store.updateAvailability(of: project),
+                                        changedFromOriginal: changedFromOriginal) { sections.insert(credits, at: 0) }
         var building = [SidebarInfoRow(label: "Agent", value: Builder.engine.title)]
         if Builder.engine == .claude || Builder.engine == .codex {
             let model = Builder.engineModel(Builder.engine)
@@ -360,16 +397,21 @@ enum AppInfoView {
 
     /// Where the wish came from, first, since it's the one thing here that's about someone else: the work it's based on
     /// and its license, anything else it uses, and the wishes it was remixed from. A wish with no credits has none.
-    static func creditsSection(_ credits: Credits) -> SidebarInfoSection? {
+    /// `own` is where this wish was put on GitHub, which isn't where it came from.
+    /// `update` is what was last heard of an update (`AppUpdates`): a row of its own, and the button that checks or
+    /// reviews it, for a wish with somewhere to be updated from.
+    /// `changedFromOriginal` says so in a row, with the button that starts over from the original (`Store.startAgain`).
+    static func creditsSection(_ credits: Credits, own: String?, update: AppUpdates.Availability? = nil,
+                               changedFromOriginal: Bool = false) -> SidebarInfoSection? {
         guard !credits.isEmpty else { return nil }
         var rows: [SidebarInfoRow] = []
         // The work it's based on and its license, each a row; anything else it uses a row of its own, named after it, with
         // who made it and its license when that's a plain id (terms of its own, `LicenseRef-`, would make the row too long
         // for the panel's one line; they're in the About window). Every row's label is its own: the panel tells rows apart
         // by their labels.
-        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from"]
-        for (index, source) in credits.upstream.enumerated() {
-            if index == 0 {
+        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from", "Updates", "Your copy"]
+        for (index, source) in credits.basisFirst.enumerated() {
+            if index == 0, credits.basis != nil {
                 rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
                 rows.append(SidebarInfoRow(label: "License", value: source.license ?? "None given"))
                 continue
@@ -383,10 +425,33 @@ enum AppInfoView {
             rows.append(SidebarInfoRow(label: "Made with AI", value: credits.generated.count == 1 ? "1 picture" : "\(credits.generated.count) pictures"))
         }
         if !credits.remixOf.isEmpty {
-            rows.append(SidebarInfoRow(label: "Remixed from", value: credits.remixOf.map { $0.name + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: " → ")))
+            // The same wish at two places (opened from one repository, put on another) is one name here.
+            var names: [String] = []
+            for remix in credits.remixOf {
+                let name = remix.name + (remix.starter != nil ? " (Lamp)" : "")
+                if names.last != name { names.append(name) }
+            }
+            rows.append(SidebarInfoRow(label: "Remixed from", value: names.joined(separator: " → ")))
         }
-        let page = credits.upstream.first.flatMap { source in source.url.map { _ in SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage) } }
-        return SidebarInfoSection(title: "Credits", rows: rows, buttons: page.map { [$0] } ?? [])
+        let route = AppUpdates.route(for: credits, own: own)
+        if route != nil, let update { rows.append(SidebarInfoRow(label: "Updates", value: update.line)) }
+        if changedFromOriginal { rows.append(SidebarInfoRow(label: "Your copy", value: "Changed from the original")) }
+        var buttons: [SidebarInfoButton] = []
+        if let source = credits.basis, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
+        // The wish this one was most directly remixed from, where it lives (its repository on GitHub, not the one this
+        // wish was put on).
+        if let remix = credits.origin(own: own) {
+            buttons.append(SidebarInfoButton(title: "Visit \(remix.name) on GitHub", action: remixedFromPage))
+        }
+        // The same button whichever way the wish came: it checks, and once there's an update, it brings it in.
+        // A starter's copy takes the starter Lamp ships with no review: it's Lamp's own.
+        if route != nil {
+            let starter = credits.origin(own: own)?.starter != nil
+            let title = update?.reviews == true ? (starter ? "Update from the Original" : "Review Update…") : "Check for Updates…"
+            buttons.append(SidebarInfoButton(title: title, action: updateFromRepository))
+        }
+        if changedFromOriginal { buttons.append(SidebarInfoButton(title: "Start Over", action: startAgain)) }
+        return SidebarInfoSection(title: "Credits", rows: rows, buttons: buttons)
     }
 
     /// A model's name without the description Settings shows: "Fast & cheap (Claude Haiku)" → "Claude Haiku",
@@ -410,14 +475,14 @@ enum AppInfoView {
     private static func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 }
 
-/// While Apple's tools install, above everything: what's happening, and that requests wait for it.
+/// While Apple's tools install, above everything: what's happening, and that the requests that need them wait for it.
 struct BuildToolsBanner: View {
     @EnvironmentObject private var store: Store
 
     var body: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
-            Text("Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.")
+            Text("Installing Apple's app-building tools. Apps that need them start as soon as they're in.")
                 .font(.callout)
             Spacer()
             Button(store.setup.installRequested ? "Show Installer" : "Install…") {
@@ -468,9 +533,9 @@ struct ImportReviewView: View {
 
     var body: some View {
         ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
-                         review: pending.review, existing: pending.existing?.name, room: room,
+                         review: pending.review, existing: pending.existing?.name, changedHere: pending.changedHere, room: room,
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
-                         android: pending.package.platform.target.recipe.language == .kotlin)
+                         android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
@@ -501,12 +566,16 @@ struct ImportReviewCard: View {
     let review: ImportReview?
     /// The name of the wish already here that this file is another version of, if any.
     let existing: String?
+    /// That wish was changed here since it arrived: Update merges the new code into those changes, keeping them.
+    var changedHere = false
     var room = CGFloat.infinity
     let cancel: () -> Void
     let open: () -> Void
     let update: () -> Void
     /// An Android app's reach is the phone's, not the Mac's.
     var android = false
+    /// An update Lamp prepared in a copy of `existing` (`AppUpdates`): nobody shared it, and Update puts that copy in place.
+    var prepared = false
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -514,20 +583,36 @@ struct ImportReviewCard: View {
     private enum Part { case name, summary, existing, buttons }
     /// The height of Things to consider as laid out in full; nil when there's nothing to consider.
     @State private var considering: CGFloat?
-    /// What the two scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's
-    /// padding (48) and a 16-point gap after each part but the last (the fixed ones, and the two that scroll).
-    private var budget: CGFloat {
-        let scrolling: CGFloat = considering == nil ? 1 : 2
-        return room - fixed.values.reduce(0, +) - 48 - 16 * (CGFloat(fixed.count) + scrolling - 1)
+    /// The height of the features under What it does as laid out in full; nil when the reviewer named none.
+    @State private var featuring: CGFloat?
+    private var heights: Heights {
+        Self.heights(room: room, fixed: Array(fixed.values), considering: considering, featuring: featuring)
     }
-    /// The two share what's left and never take more between them, whatever the screen: Things to consider is
-    /// shown whole when it fits, and otherwise scrolls, leaving what the app can do a few rows, or half when
-    /// there isn't room for that. A long list of concerns never pushes the buttons off the screen, and Lamp's
-    /// verdict, its first lines, is what stays in view. Below 48 points nothing could be read, so that's the floor.
-    private var shared: CGFloat { max(48, budget) }
-    private var considerLimit: CGFloat { min(considering ?? 0, max(shared - 120, shared / 2)) }
-    /// How tall what the app can do may be: the height a long review always stopped at, or what's left.
-    private var limit: CGFloat { min(460, shared - (considering == nil ? 0 : considerLimit)) }
+
+    /// How tall each part that scrolls may be.
+    struct Heights: Equatable {
+        var considering: CGFloat
+        var featuring: CGFloat
+        var capabilities: CGFloat
+    }
+
+    /// What the scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's padding (48)
+    /// and a 16-point gap after each part but the last (8 above the features, which go on from the summary). They
+    /// never take more between them, whatever the screen: Things to consider is shown whole when it fits, and
+    /// otherwise scrolls, leaving the rest a few rows, or half when there isn't room for that; the features then
+    /// take what they need of that the same way, and what the app can do the rest. A long list of concerns or
+    /// features never pushes the buttons off the screen, and Lamp's verdict, its first lines, is what stays in view.
+    /// Below 48 points nothing could be read, so that's the floor.
+    static func heights(room: CGFloat, fixed: [CGFloat], considering: CGFloat?, featuring: CGFloat?) -> Heights {
+        let scrolling = 1 + (considering == nil ? 0 : 1) + (featuring == nil ? 0 : 1)
+        let budget = room - fixed.reduce(0, +) - 48 - 16 * CGFloat(fixed.count + scrolling - 1) + (featuring == nil ? 0 : 8)
+        let shared = max(48, budget)
+        func part(_ height: CGFloat?, of room: CGFloat) -> CGFloat { min(height ?? 0, max(room - 120, room / 2)) }
+        let consider = part(considering, of: shared)
+        let feature = part(featuring, of: shared - consider)
+        // What the app can do: the height a long review always stopped at, or what's left.
+        return Heights(considering: consider, featuring: feature, capabilities: min(460, shared - consider - feature))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -542,10 +627,10 @@ struct ImportReviewCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     // The name is the sender's: shown as written, never as formatting, and on one line whose
                     // end (the closing quote and the question mark) stays in view however long it is.
-                    Text(verbatim: "Open “\(name)”?").font(.title2.bold())
+                    Text(verbatim: prepared ? "Your update is ready" : "Open “\(name)”?").font(.title2.bold())
                         .lineLimit(1).truncationMode(.middle)
                     // The sender's words, said to be theirs.
-                    if let description {
+                    if let description, !prepared {
                         Text(verbatim: "Described by the person who shared it with you as: \(description)")
                             .font(.callout).foregroundStyle(.secondary).lineLimit(5)
                             .fixedSize(horizontal: false, vertical: true)
@@ -564,7 +649,29 @@ struct ImportReviewCard: View {
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.summary] = $0 }
                 }
-                let considerations = Self.considerations(review)
+                if !review.capabilities.isEmpty {
+                    // What the reviewer saw it do for the person: features, said with what the app is, not as
+                    // permissions beside what Lamp's own checks found in the code. Up to eight, so they scroll.
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(review.capabilities, id: \.self) { feature in
+                                Label {
+                                    Text(verbatim: feature).lineLimit(2).fixedSize(horizontal: false, vertical: true).help(feature)
+                                } icon: {
+                                    // A plain mark: what's listed is what the app does, not something Lamp approved.
+                                    Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(.secondary)
+                                }
+                                .font(.callout)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { featuring = $0 }
+                    }
+                    .frame(maxHeight: heights.featuring)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, review.summary.isEmpty ? 0 : -8)
+                }
+                let considerations = Self.considerations(review, prepared: prepared)
                 if !considerations.isEmpty {
                     ScrollView {
                         section("Things to consider") {
@@ -575,7 +682,7 @@ struct ImportReviewCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { considering = $0 }
                     }
-                    .frame(maxHeight: considerLimit)
+                    .frame(maxHeight: heights.considering)
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 ScrollView {
@@ -583,7 +690,7 @@ struct ImportReviewCard: View {
                     section(android ? "What it can do" : "What it can do on your Mac") { capabilities(review) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: limit)
+                .frame(maxHeight: heights.capabilities)
                 .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
             } else {
                 HStack(spacing: 10) {
@@ -596,7 +703,12 @@ struct ImportReviewCard: View {
             if let existing {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
-                    Text(verbatim: "You already have this wish\(existing == name ? "" : ", as “\(existing)”"). Updating keeps your data, and you can go back if you change your mind.")
+                    Text(verbatim: prepared
+                         ? "Update puts it in place of “\(existing)” and keeps your data, and you can go back if you change your mind. Keep Both keeps it as a separate app."
+                         : "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
+                         + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself"
+                                        : ". Updating keeps your data")
+                         + ", and you can go back if you change your mind.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
@@ -664,14 +776,24 @@ struct ImportReviewCard: View {
         var id: String { text }
     }
 
+    static let partlyChecked = "AI didn't check all of its code. Open only if you trust the sender"
+
     /// The verdict first, unless it's an all-clear (said by nothing being here), then each concern.
-    static func considerations(_ review: ImportReview) -> [Consideration] {
+    /// `prepared` is an update Lamp prepared for an app here: there's no sender to trust, only the update to look at.
+    static func considerations(_ review: ImportReview, prepared: Bool = false) -> [Consideration] {
         var list: [Consideration] = []
         switch review.verdict {
+        case .risky where prepared:
+            list.append(Consideration(text: "Looks risky. Don't update unless you expected this", weight: .warning, icon: "xmark.octagon.fill"))
+        case .partlyChecked where prepared:
+            list.append(Consideration(text: "AI didn't check all of its code. Update only if you trust where the app came from", weight: .caution))
         case .risky: list.append(Consideration(text: "Looks risky. Don't open unless you trust the sender", weight: .warning, icon: "xmark.octagon.fill"))
         case .sensitive: list.append(Consideration(text: "Does sensitive things. Open only if you expected that", weight: .warning, icon: "exclamationmark.octagon.fill"))
-        case .partlyChecked: list.append(Consideration(text: "Only partly checked. Open only if you trust the sender", weight: .caution))
+        case .partlyChecked: list.append(Consideration(text: Self.partlyChecked, weight: .caution))
         case .powerful: list.append(Consideration(text: "Powerful. Check it's what you expect", weight: .caution))
+        case .checkedInParts:
+            list.append(Consideration(text: prepared ? "AI checked its code in parts. Update only if you trust where the app came from"
+                                                     : "AI checked its code in parts. Open only if you trust the sender", weight: .caution))
         case .checkedOnThisMac: list.append(Consideration(text: "Nothing worrying found, but not by a check Lamp can vouch for", weight: .caution))
         case .unchecked: list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
         case .safe: break
@@ -680,6 +802,10 @@ struct ImportReviewCard: View {
         // in red, that no AI read it, and why.
         if review.risk == nil, review.verdict != .unchecked, review.asked || review.note != nil {
             list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
+        }
+        // A worse verdict leads, and unread code is still said, once.
+        if review.partial, review.risk != nil, review.verdict != .partlyChecked {
+            list.append(Consideration(text: "AI didn't check all of its code", weight: .caution))
         }
         // A high rating makes each reason for it as serious as the rating.
         let weight: Consideration.Weight = review.risk == .high ? .warning : .caution
@@ -707,12 +833,11 @@ struct ImportReviewCard: View {
     }
 
     /// One row per thing the app can do, like the permissions list in System Settings: what Lamp's own checks
-    /// found in the code, worst first, then what the AI noticed beyond them, each an icon in a tinted square and
-    /// a line in plain words.
+    /// found in the code, worst first, each an icon in a tinted square and a line in plain words. What the AI saw it
+    /// do for the person is under What it does.
     private func capabilities(_ review: ImportReview) -> some View {
         let found = review.detected.sorted { $0.level > $1.level }
         let rows = found.map { Row(icon: $0.icon, tint: tint(for: $0.level), text: $0.label) }
-            + review.capabilities.map { Row(icon: "sparkle.magnifyingglass", tint: .purple, text: $0) }
         return VStack(spacing: 0) {
             if rows.isEmpty {
                 // Says what the checks found, not what the app can't do.

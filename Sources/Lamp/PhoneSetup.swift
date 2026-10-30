@@ -280,8 +280,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
             guard let viewer = Simulator.viewer(in: developer) else { return }
             open(viewer)
         case .settings:
-            UserDefaults.standard.set("building", forKey: "settingsTab")
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            SettingsMenu.show(tab: "building")
         case .membership:
             open(URL(string: "https://developer.apple.com/programs/")!)
         case .updatePhone:

@@ -7,6 +7,9 @@ and `Package.swift` are written afresh before every build (`Template.writeOwnedF
 that fails. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
 Package.swift as a program), so they're replaced rather than checked: nothing the agent's file tools wrote
 into them, with no card, can run. Shared apps never carry them: import writes its own.
+What a shared file says still reaches build.sh: the app's name and its permission reasons. They are never pasted into
+the script's code: `Template.write` sets them in single quotes at the script's top (`Template.shellWords`) and the
+script reads them as variables, so no name runs, ends a heredoc or breaks a quote, and names stay as free as they are.
 Replacing them isn't enough on its own: they sit in the agent's folder, and a command it left running can put
 its own there between Lamp writing them and running them. So the build runs as the agent's commands do, in the
 app's sandbox (`Store.runBuild`, through `Sandbox.run`), and so does everything else Lamp runs over what's in
@@ -24,7 +27,10 @@ app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp). The stamp is read where the app runs from: a Mac
 app's installed copy, an iPhone app's own build (what the simulator gets), and never a Mac copy for the iPhone half of
-an app for both.
+an app for both. A game's or a screen's Mac copy made from Lamp's player carries the player's version too
+(`BuildStamp.player`), and is made again, in a second, when it's another player's or the app has come to be compiled
+("Lamp's player" in the devices guide). LampSupport.swift is compiled into the player as well, so a change to it reaches
+games and screens with the next Lamp build, and nothing else needs bumping for them.
 
 A Mac app's reasons for its permissions are one list, `Template.macUsageDescriptions`, written by build.sh, the
 Mac half of an app for both (`universalMacInfoPlist`) and `Store.deploy`: macOS kills an app that asks for
@@ -36,14 +42,26 @@ reason was added are rebuilt when next opened.
 `use_app` on a Mac app is carried out by the app itself (`LampDriver`, reached by a distributed notification
 signed with the app's token, `Store.use`), so no Accessibility permission is needed. With every picture the
 app writes its front window as text (`LampScreen` in LampSupport.swift, `.lamp/runtime/screen.txt`): one line
-per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included),
-with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
+per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included; a web
+view's insides are never walked, so a page in LampPage.swift's host adds its own things through `LampPageItems`, read
+by a script in the page, "Where the agent looks at it" in the devices guide), with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
 return it beside the picture (`Runtime.screenText`), the same lines the iPhone driver writes. An action names
 what it's for by `target` (an id or exact name, `LampScreen.find`): a button, switch, link or choice is asked
 to press itself (`accessibilityPerformPress`), a field takes the text in place of what it held, a slider or
 stepper takes a number or a step, and what has no action of its own, or isn't listed (a drawing, a canvas),
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
+
+**Showcase mode.** An app opened with `LAMP_SHOWCASE` set to a folder holding a showcase.json is being recorded for
+a reel (`LampShowcase`; "A starter's reel" in the desk guide): it keeps its data in that folder, starting empty
+(LampStore imports any `data/<name>.json` there), LampAI's calls are answered from the script (every route, through
+`LampAI.post`), LampLocation is where the script says, notifications are logged and not sent, and no `LampSchedule`
+runs. Once its window is up, and the recorder has its first frame (it leaves a `recording` file in the folder; with
+none in two minutes it plays nothing and logs why), it plays the script's steps on it with `LampDriver`'s own actions
+(`LampDriver.playShowcase`), so it needs no Accessibility permission, and logs everything to events.tsv with the
+time and the frame of what it acted on, which the reel's edit lines up with the recording. The app's own code for its
+microphone, camera or speech asks the script while it's on (`LampShowcase.hear`, `speak`, `file`, `line`); nothing of
+the person's is read, so the reel shows none of it.
 
 `use_app` happens in plain sight, and the person can take the app back at any moment (`Handover`). While the
 actions run, the window in use glows, Lamp's cursor (a fingertip over the simulator) goes to each spot before
@@ -119,7 +137,12 @@ included, out of an extension's folder, so a socket there can't be made), and La
 after finding which process is on its other end (`Sidebar.app(on:)`, by the connection's port among the processes
 running a sidebar) and checking that it runs the very extension Lamp signed for that app: the hash of what was
 signed is kept in Lamp's own folder (`Sidebar.remember`), and the extension is signed with the hardened runtime so
-nothing can be loaded into it. The extension must start as Apple's own do, through `_NSExtensionMain` (the linker's
+nothing can be loaded into it. Lamp writes each hash it keeps (or why it couldn't), each copy swapped in, and each
+connection it turns away with the check that failed, to the unified log (`Sidebar.log`, category `sidebar`, with the
+same category on the extension's side), so a chat that never came up can be traced. A refused sidebar tries again
+twice a second; once it has gone `ChatWait.patience` without a chat it could show, however often it reconnected, it
+says Lamp couldn't open the chat there and offers Open in Lamp, which shows the wish's chat in Lamp's panel
+(`lamp://chat`, `Store.showChatInLamp`). The extension must start as Apple's own do, through `_NSExtensionMain` (the linker's
 entry point), or it crashes before its code runs. Whatever the app's process can do, its generated code can, so the
 app has no way to speak to the agent that builds it: it only shows the chat, says where its window is, and closes or
 moves the panel when the chat asks (`LampSidebarHost`, the one thing the chat asks of it). The draft
@@ -131,8 +154,8 @@ keep what the person was looking at in `@SceneStorage`, so it comes back as they
 runtime folder (`LampMagic.leavePlace`), and the new copy opens its first window in the same place (`putBack`). Lamp
 puts no picture of the window in its place meanwhile: a copy that opens no window (a menu bar app) left one standing
 until it timed out.
-While Lamp builds a change for a Mac app that's open, smoke in many colors curls up from the bottom of the app's
-windows, with a faint glow round their edges, and as the change goes in a level band of white whooshes up across them (`AppTransition`, drawn by
+While Lamp builds a change for a Mac app that's open, smoke in Lamp's stripe colors curls up from the bottom of the app's
+windows, with a faint glow round their edges, and as the change goes in the stripes roll up across them on the slant, covering the window at the middle of the roll (`AppTransition`, drawn by
 `LampTransition` in LampSupport.swift). It starts in `Store.build`,
 lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
 kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app
@@ -189,9 +212,13 @@ closes (`MagicPanel.chatOpenedInApp`). Where there's no Mac window to put it bes
 a menu bar app, a widget, a background app, an iPhone app, an app built by a Lamp from before the sidebar) the chat is in
 Lamp's panel, and setup cards' keys, sign-ins and Image Playground are in Lamp's sheet (`SetupSheet`), "The chat's one
 screen" in the chat guide. An app opened for its chat that never connects one (it couldn't start) has its chat shown in
-Lamp's panel (`MagicPanel.showChatIfAppNeverComes`), and so does one that crashes, or quits while a turn is going on,
-with its chat beside it (`MagicPanel.showChatAfterQuit`, once three seconds have passed with no copy running: a change
-that reopens the app leaves a moment with none). The chat is drawn by another process, which AppKit's focus doesn't follow
+Lamp's panel (`MagicPanel.showChatIfAppNeverComes`), and so does one that crashes, quits while a turn is going on, or
+quits because it moved off the Mac (to a TV, a phone or another device, whether the place was chosen just before the quit
+or just after), with its chat beside it (`MagicPanel.showChatAfterQuit`, once three seconds have passed with no copy
+running: a change that reopens the app leaves a moment with none). A plain quit of an app that still opens on the Mac
+leaves its chat closed, and so does a later change of device for an app whose chat the person closed (`ChatReturn`).
+Closing the chat beside the app only hides it, and its connection stays, so the app tells Lamp it was closed
+(`LampSidebar.close`, `MagicPanel.closedInApp`): a chat the person closed there stays closed when the app moves off the Mac. The chat is drawn by another process, which AppKit's focus doesn't follow
 (what had the keyboard, a list say, keeps it through a click in the chat), so once a click in the chat has landed the
 keyboard goes to it (`LampSidebar.watchClicks`). Point at the Screen is an item of the + by the message box, beside
 Attach a File…, in both chats (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the app is open on this Mac (`MagicPanel.point`; from Lamp's panel, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), kept above the app's own panels, sheets and alerts however high they float, but no higher, so other apps' windows still cover it (`Picker.keepOnTop`), and what's in them is pointed at and pictured as shown, outlines the smallest named
@@ -201,49 +228,6 @@ picture in its runtime folder and says what it is (an area is named by where it 
 thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder. In both chats' message boxes it is
 one pill (`ChatLook.PointedPill`: what it is and what it's part of, from the app's own row or the heading above it),
 which a click points again and its × lets go; pointing again replaces it, and nothing is left drawn over the app.
-
-A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
-Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
-The sidebar is a web page of the app's own (`Assets/Sidebar/`), which the app serves itself on this Mac's own
-address (`LampBrowser.startPage` in LampSupport.swift), at a name under `.localhost` and a port of its own
-(`Template.sidebarHost`, `sidebarPort`, trying the next few when another program has it), so it works while the app
-is open whether Lamp is or not. One extension frames every app's page: it keeps the app's name and consent
-line above the frame (the page makes its own offer), gives the page no browser powers, and is the page's only way to the person's tab (a read only
-when the page's file declares it, once per click in it). The page asks its app for everything else (`lamp.call`,
-with a key Lamp hands the extension, which passes it on only once the page proves it's the app's: the key's
-signature over a nonce and the port); the app answers only its own name, only that key, never a request another
-site made, and lets only the extension frame the page, whose own policy keeps it talking to the app alone. The page
-looks as if Apple made it, not like a web page and not like a copy of the window's own theme: `/lamp.css` is
-Apple's system look for a narrow Mac list pane, light and dark (grouped gray ground, rounded groups, inset
-separators, SF, parts that rearrange at large text), and an app stands out only through one tint, chosen among
-Apple's system colors with `data-tint` (each shade measured to read, `SidebarTintTests`), and its own content.
-How a page is built (layout, pictures, every state from reading to a failed save, what to check) is the
-`chrome-sidebar` skill, which the builder opens before writing the page. The app serves its own pictures
-(`/assets/`, or hands one it keeps with an item to the page as a `data:` URL) and SF Symbols (`/symbols/`, drawn by
-the app, used as masks), and the extension draws its strip above the page in the page's colors (`look`, plain
-colors only). Apps built before pages still publish a
-surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
-`browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the extension reading the page. The
-builder decides from the wish (`Agent.Rules.browserCompanion`, which leaves the rest to the `chrome-sidebar` skill) and tries the sidebar with `look_at_app` and
-`use_app` given `sidebar` and `page`: Lamp opens the app's page itself, out of sight at the sidebar's width
-(`PagePreview`), shows it light, dark and at 200% zoom with the app's window beside it, says what it measured there
-(contrast, the system font, small words, pictures and symbols that didn't load, sideways scrolling, words cut off,
-parts out of line),
-and hands it the page beside it, so every engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
-Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
-page prepared never shows on another; keep that when changing either side. The builder may also give an app a
-right-click item (`menu` in browser.json) for what its sidebar does with a page, whatever that is (save it, explain,
-summarize or translate it, answer something about it): it opens that app's sidebar, and shows only on pages a fit
-names by address, the one thing Chrome can check before its menu opens.
-**The one exception to "once per click in it"**: choosing an app's right-click item counts as the person's click in
-that app's page. The sidebar tells that page once (`lamp.onMenu`) and lets it read once without a click in it, only
-within 15 seconds of the choice, only with the proof the page gave in that sidebar, and only of the page the item was
-chosen on (the extension checks the tab's address before reading). A choice the page gets too late (a slow-starting
-app) doesn't run, and the sidebar says so and that choosing the item again runs it. Nothing else stands in for a click: not the
-toolbar icon, not opening the sidebar, not the page asking on its own. From the item a page may also go straight
-through a step it would otherwise stop at for a look first (a save's check, say), since choosing the item already
-said what to do; it then shows what it did where it can be changed or undone. Widening this needs the same say-so as
-making it.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
@@ -264,27 +248,185 @@ is what lost people's work.
 A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`, its card `GitHubRepoCards` and
 `RepoCard`, from the chat's Share menu): the shared file's contents (`Sharing.export`, so the same checks and the same
 credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
-the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`), the shared file itself, a
-README whose remix link is the wish's Share Link when it has one, and an MIT license by choice, never offered when
-something the wish is based on is share-alike. The README promises `./build.sh` only for a kind whose script builds
+the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`; for a page, the app around it,
+`ScreenKit.paths`), the shared file itself, a
+README, and an MIT license by choice, never offered when
+something the wish is based on is share-alike. The README promises `zsh build.sh` only for a kind whose script builds
 with Apple's tools and nothing of Lamp's (`Recipe.buildsAlone`: the Mac app's; an app for the Mac and the iPhone is
-built by Xcode from a project Lamp keeps, so its README says Lamp builds it). One commit per Put on GitHub, on top of
+built by Xcode from a project Lamp keeps, so its README says Lamp builds it). The README leads with trying the wish
+before changing it: in a public repository, an Open in Lamp button (`GitHubRepo.openButton`, drawn into `.github/` by
+`writeButtons` as lamp.dev's buttons are, words alone), after Play in your browser for a game with a page, both to lamp.dev's remix link
+(`GitHubRepo.remixLink`, `RemixLink.site`: the repository without a commit, so it's always the latest, and `from=readme`
+for the site's counts); then the wish's ideas (`RemixSuggestions`, a starter's tweaks), each that link with its request.
+A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and the shared file instead; the
+card stages again when a new repository is made private (`setPrivate`). A public repository with no website of its own
+gets the remix link as its website (`offerRemixAsWebsite`, `from=github`); one the person set is left alone. One commit per Put on GitHub, on top of
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
 own history, which holds every version and the chat's attachments. The repository is remembered by the wish's instance
 in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to), as a
-published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them.
+published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them. The file's credits
+name the repository on the chain's last link (`Credits.Remix.url`, `Sharing.export(repository:)`), so a remix opened
+from there links where it came from.
+
+A repository opens in Lamp as a shared file does (`RepoImport`): File → Open from GitHub… takes its address (owner and
+name, with a branch, tag or commit after `/tree/` or `/commit/`; `RepoImport.source`), Import Shared Wish… takes a
+folder it was cloned into, and a wish's link may name it (`lamp://wish?file=https://github.com/…`, `Store.take(exact:)`).
+The tree is fetched one commit deep with Lamp's own git, confined as every git command of Lamp's is (`Versions.git`, in
+a folder of Lamp's with the network open, never asking for a sign-in), then copied into an import folder without the
+repository's records (`.git`, builds) and the shared file beside the code, held to a shared file's limits, and read as
+a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the same checks, Lamp's own files written
+afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
+the install does). A folder holding only a shared file opens that file. The chain's last link takes the repository's
+address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
+The person's folder is only read, never changed or removed. The chain's last link also takes the commit the tree is
+at (`Credits.Remix.commit`, from the clone's HEAD, `RepoImport.repository`): the commit of its repository the wish
+has, which an update is merged from and a contribution goes back on top of. Put on GitHub keeps the commit it pushed
+in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept repository and commit on the chain when
+its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
+A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
+`Remix.sameLink`): the chain keeps where it came from, and `Credits.origin(own:)`, the last link naming a repository
+that isn't the wish's own, is what the info panel's Visit and Check for Updates… and Send Changes Back go by
+(`AppInfoView.origin`).
+
+Every wish with somewhere to be updated from has the same Check for Updates… in its Credits, Review Update… once
+there is one, with a row that says "An update is available" or "Your app is up to date" (`AppUpdates`). The check asks
+GitHub for the default branch's latest commit (`git ls-remote`, confined, no sign-in, no clone, no model), at most daily
+by itself and coalesced across wishes following the same repository, and compares it with the commit the wish has.
+Which repository a wish follows (`AppUpdates.route`): a wish from another wish follows that wish (below); a wish the agent
+made from someone's own project follows the work it's based on (`Credits.basis`: the source marked `adapted`, else the
+first with no mark either way, as credits from before the mark have it; a source marked `adapted: false` is never it, so
+a wish that only uses a library has no route), when that's on GitHub with the commit it was taken at. A source with
+no commit is offered nothing. A wish made from a tag or a branch other than the default is credited at that exact
+commit, and its updates follow the default branch from there.
+
+### Someone's project on GitHub, made into a Lamp app by the agent
+
+A wish never guesses from a link what the person wants: a request naming a project on GitHub goes to the agent as
+typed, with a line naming the github-projects skill (`GitHubProjects.note`), and the agent does what it asks. It reads
+the project in a git clone of its own (`.lamp/reference/<name>`, an approved command like any other). To make an app
+from it, it calls `lampify` (`Store.lampify`, `GitHubProjects`) before using any of its code and again when the app is
+done. lampify's work is all Lamp's, so it asks no approval, and it never runs what the project holds.
+
+- **The commit is pinned once.** The commit given is the one used; with none, the one the wish is already credited at;
+  with none of those, the commit the address names, or its branch, tag or default branch read once
+  (`GitHubProjects.pin`). A later call never moves a branch on by itself, and a commit other than the credited one is
+  refused: moving on is an update's.
+- **What's credited is what Lamp read.** The agent's clone proves nothing about what was copied, so lampify keeps its
+  own untouched copy at the pinned commit in `.lamp/lampify/<owner>/<name>@<commit>`, checked to be that commit of that
+  repository, and before each reuse checked file by file against that commit's tree, computed by Lamp rather than by
+  `git status`, which could run what the copy's own git configuration names (`GitHubProjects.untouched`); a changed
+  copy is fetched again (`GitHubProjects.snapshot`). It's fetched with Lamp's confined git (`RepoImport.clone`), and
+  with the person's sign-in through `gh` for a project only they can read (`GitHubProjects.fetchAnyway`, as Put on
+  GitHub… signs in): the agent's sandbox can't see that sign-in, so a private project reaches the wish this way. With
+  `read_only` it only fetches and gives the copy's path, for explaining a private project: nothing is credited.
+- **The credit** goes in through `Credits.add`, Lamp's own record included: the canonical address, the owner as author,
+  the commit. Every license and notice file anywhere in the project (not its tools': `.git`, `node_modules`, …) is copied
+  as it came into `Licenses/<owner>/<name>/` (two folders, so `foo-bar/baz` and `foo/bar-baz` never share one) at its
+  path in the project (`RepoLicenses`): the license at its top in `licenseFile`, the rest in `noticeFiles`. The SPDX id is recorded only when Lamp can tell it for certain from a single
+  license at the top; otherwise the credit says `LicenseRef-<owner>.<name>`, terms of its own with the texts as the
+  authority, never a guessed id (GPL texts don't say "only" or "or later"). `adapted` marks the project the wish is
+  made from, which its updates follow; a wish has one, and a library or assets it uses are credited `adapted: false`.
+  At most 200 license and notice files are kept, the project's own first; more than that is said in the answer as
+  something missing, never dropped silently. Every file a credit names goes with the shared file and comes back on import (`Credits.Source.termsFiles`,
+  `Sharing.export`, `Sharing.open`), and sharing is refused while one is missing (`ShareCheck`).
+- **The shape** (`GitHubProjects.shape`): the app's structure (`make_app_for`), its line (`Sharing.description`, the
+  wish's or its root app's) and an APP.md naming what it's based on are looked for in the wish; then the wish is made as
+  Put on GitHub… would put it up (`GitHubRepo.stage` with no repository: lamp-app.json from the shared file's manifest,
+  credits.json, the icon, the license files, Lamp's own files, README) and opened again as Open from GitHub… does
+  (`RepoImport.open`). Whatever sharing refuses (a license missing, a key in the code) is reported as something still
+  missing, with the rest. The tree is kept in `.lamp/repository` for a look; nothing goes anywhere until the person
+  chooses Put on GitHub….
+- **A Lamp wish on GitHub** isn't rebuilt: the skill, and lampify when it's called on one, send the person to File →
+  Open from GitHub….
+
+That the agent lampifies a project before copying from it is the skill's instruction and the tool's answer; nothing
+checks what was copied, so a project read in a clone and copied without lampify goes uncredited.
+
+An adapted wish's Review Update… says what preparing it costs, then (`Store.prepareUpdate`) saves the wish as a version
+and makes a separate copy of it, unsaved changes included (`Sharing.export`, then a wish of its own with Lamp's files
+written afresh, "<Name> Update"): its own app, bundle id, data and agent session, so nothing the agent does or runs
+reaches the wish. The update is fetched into the copy's `.lamp/update/` (blobless, pinned to the commit the check saw:
+`latest/`, `files.txt`, `log.txt`, `changes.diff`, and the fetched `repo` for files as they were) and the request goes to
+the copy, with a note saying where it all is and how to port it (`AppUpdates.note`). The job, in the copy's
+`.lamp/update/job.json`, names the wish and the wish's version when the copy was made. After a turn in the copy that
+finished with no error (`Store.settleUpdate`) the copy takes the update's commit in its credits and the review opens
+(`Store.openPreparedReview`: `Sharing.review` of the copy as exported, `PendingImport.prepared`). Update puts the copy's
+files in place of the wish's through the ordinary update path, never `mergeUpdate`, since the copy already has the
+wish's changes; the wish keeps its own credits with the commit moved on, and the copy is deleted. If the wish changed
+since the copy was made (`AppUpdates.isStale`), Update offers to prepare it again instead. Keep Both keeps the copy as an
+app of its own, renamed after the wish; Cancel deletes it. Review Update… while a copy exists shows its chat, or its
+review once it's ready. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
+from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
+
+A wish whose chain names where it came from is updated as it was opened
+(`AppInfoView.updateFromRepository`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
+which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that
+waits for setup, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's
+copy or a second copy made with Keep Both is the one updated). A wish unchanged since it arrived
+(`Store.changedSinceArrival`: its files are the last version Lamp saved as an arrival, and nothing is unsaved; looked
+at again once the update owns the wish, since a turn may have run while the review waited) takes the new code in
+place. One changed here is merged by git (`Upstream.merge`, from `Store.mergeUpdate`), never replaced: the wish's own
+git gets the repository as its `upstream` remote and fetches the recorded commit one deep (through `Versions.git`, so
+confined to the wish's folder with the network open, and only ever fetched from); that commit's tree is read as a
+repository is (`RepoImport.open`) and staged as the import would install it, and so is the reviewed package
+(`Upstream.stage`: the code the review read, an Android app's moved into this Mac's package as `AndroidFiles.install`
+moves it, the app's files, its notes and declarations, never Lamp's own files or the icon's pictures), each a tree in
+the wish's git made in an index of the merge's own (`.lamp/merge`), the second committed on top of the first at
+`refs/lamp/upstream`. `git merge-tree` merges the wish's files, the base and that commit three ways and the result
+goes into the index and the files (`git read-tree --reset -u`), with the version saved first so Versions can bring the
+wish back. What changed only upstream or only here is in place with no agent; the icon's pictures follow when the
+icon changed upstream, for the design as git merged it (`Sharing.installArtwork`, never the file's design in place of
+one changed here), the description when it changed upstream and not here, and an app the package brings that the
+wish doesn't have is made as an update makes one (`Store.installParts`, `Merged.newParts`). A clean merge is saved
+("Merged the latest from GitHub"), noted for the agent (`Versions.rememberMerged`) and built. Files both sides changed
+in the same place keep git's conflict markers, and a request goes to the agent with a note naming them
+(`Versions.rememberConflicts`: what the markers mean, `git show HEAD:<path>` and `git show refs/lamp/upstream:<path>`
+for each side), to settle the obvious itself and ask (`ask`) only where it can't tell. The credits are merged by Lamp
+either way, which moves the chain's commit on to the one fetched, so the next update is measured from there; the
+wish's history stays a line (the merge is one version, never a merge commit), and nothing of it leaves.
+
+The base, in order (`Upstream.Base`): the repository's commit, fetched; else the version of this wish's own history
+the file says it was made from (`Upstream.ownVersion`: a file shared from a wish that lives nowhere names the version
+its export was made from, `Sharing.export`, and a copy sharing on keeps that rather than naming its own, so a file
+that comes back from whoever it was sent to merges against the version they were given, with no repository anywhere),
+unless the last update brought in was measured against that same version (a file coming back again names the version
+it was first given; the kept commit records its base as a trailer), in which case what that update brought in
+(`refs/lamp/upstream`: a change the sender took back since is then taken back here, rather than read as unchanged);
+else that, for a wish from a file updated more than once; else the version that arrived (its tree as a shared file
+carries it, `Upstream.filteredTree`); else nothing. A part the package brings that the wish doesn't have is in the
+kept tree (staged as the app it will be) but not in what's merged. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
+changed here" in the gallery).
+
+A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share menu
+(`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
+GitHub's). It stages the wish as Put on GitHub does (`GitHubRepo.stage`: the same checks for licenses and keys), forks
+the repository to the person's account with `gh` when they have no fork (`Contribute.fork`), fetches the recorded
+commit into a folder of Lamp's, puts the staged tree over it with the repository's README and license left as its
+owner wrote them (read first) and its credits.json keeping its chain and taking only what the wish newly uses, commits that once in the person's name,
+pushes it to a branch of the fork and opens a pull request on the repository (`Contribute.send`). The request's text
+(`Contribute.summary`) is the wish's line, the names its versions since it arrived were given (never the requests
+themselves, never the chat) and the files changed. The person's own repository is refused (Put on GitHub updates it).
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
 nothing to connect to: once Lamp has been away a few seconds and macOS says no Lamp is installed (`Link.lampInstalled`,
 from the `LampHost` Lamp wrote into the extension's Info.plist), it shows `RemixPanel` (LampSidebarKit): the app's name
-and line, three things to change and a box; Continue with Lamp opens the wish's Share Link page with the request as
-`ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js), or lamp.dev with a request that names the app
-(`RemixLink`), since without the link Lamp makes its own version. The three things come from `RemixSuggestions`: written by
+and line, three things to change and a box; Continue with Lamp goes where `RemixLink.url` says: lamp.dev with what the
+app is a copy of (`RemixLink.Origin`: a starter's id, or a repository and commit) beside the request as `ask`, when the
+offer names one (a published page does, "Remixing a published page" in the wishes guide, and so does an app whose wish
+is on GitHub, below); else the wish's Share Link
+page with the request as `ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js); else lamp.dev with a
+request that names the app, since without either Lamp makes its own version. The line under the button says which
+(`RemixLink.note`). The three things come from `RemixSuggestions`: written by
 the helper model after a change lands (`Store`, beside the version's title), kept in `.lamp/suggestions.json` with a
 stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
 `LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then
-(`RemixOffer.fallback`). When suggestions arrive after an install, or a Share Link is made or taken down, the installed
+(`RemixOffer.fallback`). A wish that's been Put on GitHub also has its repository and the commit last pushed there
+(`LampRepository`, `LampCommit`), while the repository is public and holds this version (`GitHubRepo.remixOrigin`, by the app's wish for an app in
+a folder of its own; a push refreshes every app of the wish), so
+the panel's request goes with them and Lamp starts from a copy of this exact wish; a
+starter's copy doesn't name the starter, since it may have been changed. When suggestions arrive after an install, a
+Share Link is made or taken down, or Put on GitHub pushes a new commit, the installed
 copy is made again from the build on disk and signed as before (`Store.refreshInstalled`: now if the app isn't open,
 else at its next quit), so a copy taken off this Mac carries them. On a Mac with Lamp, a request that came with a wish's
 link goes with the exact wish through a link of Lamp's own (`lamp://wish?file=…&text=…`, `exactWishLink` in
@@ -294,13 +436,18 @@ declared length and cut off as it comes, `Store.fetch`), keeps the request besid
 opened by hand, and the request is in the wish's box once it's here (`PendingImport.request`, `finishImport`, and `confirmUpdate` for a
 file that's another version of an app already here). The clipboard isn't used: macOS 15.4 asks before a browser's copy is read. A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
 Where the wand would otherwise fall back to Lamp's window (`LampSidebar.fallback`, `openFromMenu`), a Mac without Lamp
-goes to lamp.dev: that's all an app built from its repository with `./build.sh` can do, since the extension is Lamp's
-and goes into an app only as Lamp installs it (`Sidebar.install`).
+goes to lamp.dev: that's all an app built from its repository with `zsh build.sh` can do, since the extension is Lamp's
+and goes into an app only as Lamp installs it (`Sidebar.install`). An app with no extension in its bundle goes there at
+once, without the few seconds' wait for a chat that was never put in.
 
 A Mac app's About window credits what the wish is based on: Lamp writes `Contents/Resources/Credits.html` from the
 wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About
-window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)", linked), so no app code is needed and an
-app with no credits has none.
+window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)", linked); an app with no credits has
+none. A change that goes into the open app (`LiveReload`, `PageLive`) installs nothing, so a credit the same change added
+(work the agent brought in) would wait for the next install: the app's About command
+(`LampAbout` in LampSupport, through `LampCommands`) asks Lamp for the page as it is now (`/app/credits`) and shows that,
+and the bundle's page only when Lamp doesn't answer within a moment. Only `Credits.basis` is "Based on", there, in the info panel, the README and the credit
+bar; everything else, and a library in a wish with no basis, is "Uses".
 
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac

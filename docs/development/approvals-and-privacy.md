@@ -30,7 +30,8 @@ A capability given to one engine must be given to all of them that can take it, 
   Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
   that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
-  where it looks. Codex's commands run in Codex's own sandbox instead, which its reviewer works with and which can't
+  where it looks. Lamp's own builds run under the same profile, a game's or a screen's with Lamp's player opened for
+  reading only (`Store.runBuild`), since its build copies the player rather than compile. Codex's commands run in Codex's own sandbox instead, which its reviewer works with and which can't
   start inside Lamp's: a permission profile (`Sandbox.codexPermissions`, `-c permissions.lamp=…`, a Beta feature of
   Codex's) that closes everything and opens what Lamp's opens, by name: the app's folder (its `.git` kept read-only by
   Codex), the runtime, the developer tools, Homebrew's and the applications for reading, caches and temporary folders,
@@ -53,7 +54,8 @@ A capability given to one engine must be given to all of them that can take it, 
   the one before it, none of them a link, and only a plain file read. That's what reaches the agent (what the app
   printed, its screen as text, its answers to Lamp, its pictures and their copies, the app's notes and what was taken
   back from them, the note after a restore), what Lamp writes into the app's code or hands an engine (its secrets,
-  `Template.ownSecret`, and the conversation ids), and what Lamp rewrites in place (the migration, a rename, the
+  `Template.ownSecret`, and the conversation ids, set aside under `.lamp/set-aside` and brought back through `AppFolder`),
+  and what Lamp rewrites in place (the migration, a rename, the
   live layout), which would otherwise bring what a link leads to into the folder. A new such read belongs there. Lamp's own
   writes there around a build go through `AppFolder` on the same terms (see "Generated apps").
   Lamp's adb server and Android emulators (the phone and the TV) run on ports of each Lamp's own (`Edition.androidPorts`), never adb's usual
@@ -64,7 +66,7 @@ A capability given to one engine must be given to all of them that can take it, 
   what's there stays open): they're on the path of everything Lamp runs as itself, so a command could otherwise
   leave a program there for Lamp to run unconfined. The agent can't `brew install`. `/Applications` and the developer folder in use
   (`Sandbox.developerFolders`: `DEVELOPER_DIR` and xcode-select's choice, the whole Xcode wherever it is) are closed
-  for writing the same way: an Xcode dragged there is the person's to write, and Lamp runs its tools as itself. A program Lamp runs outside
+  for writing the same way: an Xcode dragged there is the person's to write, and Lamp runs its tools as itself. The developer folder is opened for reading even where the profile closes everything else (an Xcode kept on another disk, under `/Volumes`), or no compile would find its SDK. A program Lamp runs outside
   the sandbox (in a `Shell.run` command, `signing-identity.sh`, Claude Code's hook) is named by its full path
   (`/usr/bin/codesign`), never found on the path. Apple's developer tools are the exception to `/usr/bin`: `xcrun`, `xcodebuild`,
   `git`, `swift` and the rest there are wrappers that find the real program through a cache in the temporary
@@ -87,15 +89,36 @@ A capability given to one engine must be given to all of them that can take it, 
   could only stall a save.
   Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
   or live, Lamp copies its LampStore database into its Backups folder, named after the version that wrote it
-  (`DataSnapshots`, beside the app's own once-a-launch copies).
+  (`DataSnapshots`, beside the app's own once-a-launch copies). A page's preview on this Mac starts from a copy of what
+  the page in its Mac copy saved (`PageLive.saved`, asked of the open copy with its own token): held in Lamp's memory
+  only, written nowhere but the preview's own store, and never sent back, so the agent's tries there leave the person's
+  data alone (the devices guide, "The preview holds the person's data, one way").
+- **A wish's shared data on this Mac** (`WishKeeper`, "Lamp keeps them too" in the wishes guide): Lamp keeps what a
+  wish's copies share in collections and shared files, which is the family's, in its own folder (Shared Data, by the
+  wish's tag), sealed with a key from the wish's key, and it leaves the Mac only as the copies' own sealed messages on the
+  home network. The agent doesn't read it: the sandbox closes every Lamp's folders, no tool answers with it, and the
+  agent sees an app's data as before, only as the app shows it (`look_at_app`, `use_app`, what the app prints) and in the
+  preview's one-way copy of what the Mac copy saved; a seeded preview never joins the room, so it never reaches Lamp's
+  copy either. It goes with the wish.
+- **Files Lamp fetches for an app** (`assets`, "3D scenes and games"): Lamp itself downloads them, unconfined, but only
+  from the addresses in its own index, checks each against the hash the index pins, and writes it into the app's folder
+  with `AppFolder` (never through a link). They're data: a model, a picture, an atlas's XML; nothing is run, opened or
+  made executable, and an archive is read by Lamp for the files the index names, never unpacked. No command runs, so
+  there's nothing to approve; what the agent fetches with its own commands is still judged as fetching (#830).
 - **The person's devices**: the agent may read a device on the network freely, but changes one (a key press, opening
   an app, volume, input, power, a setting) only once the person has said yes on Lamp's own card (`device_permission`,
-  `DevicePermissions`): "Try it on your <device>?", answered Allow once (until the person next writes), Always for the
+  `DevicePermissions`): "Try it on your <device>?" ("Try it on <device>?" for one Lamp only found, which may not be the person's), answered Allow once (until the person next writes), Always for the
   device (the wish's life) or Not now, with no "Decide for me" (`TalkCard.Question.personOnly`). Lamp keeps the answer
   from the click once it's delivered as the person's message (an answer taken back while it waited in line allows
   nothing), in its own folder by the wish's instance, never in the app's folder, which the agent can write.
   `use_app` on an app that reaches devices (`DevicePermissions.reachesDevices`: LampRoku or LampNetwork in its code, or a
   local network reason or Bonjour types in capabilities.json) is refused unless its `device` names one the person allowed.
+  A game on Lamp's web runtime is the one exception (`DevicePermissions.useStaysInPreview`): phones joining it declare the
+  local network too, and `use_app` plays it only in the hidden preview, which is held off every network for such a game
+  (`GameKit.previewPolicy`), shared or not, and whose TypeScript build runs with no network at all, since a Bun macro is
+  the game's code run at build time (`Sandbox.run`'s `offline`). A compiled game's preview, a process nothing holds, and a
+  page with its own loop aren't. All of this reads what the game declares, which the agent can change, as the gate itself
+  always has: it stops a mistaken press, not an agent set on one.
   Each engine's command check carries the same rule (`DevicePermissions.commandRule`): pi's `CommandRisk` counts such a
   command as reaching beyond the app, so it gets Lamp's card; Claude Code's auto mode gets it as a `soft_deny` rule after
   its own (`$defaults`, `Engines.swift`); Codex's reviewer is told to refuse it (`CodexReview`), but sees only what needs

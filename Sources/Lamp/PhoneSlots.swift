@@ -25,7 +25,8 @@ enum PhoneSlots {
     /// Whether the bundle id is an app any Lamp on this Mac made (`Edition.appBundlePrefix`): the release's "dev.lamp.app.",
     /// Lamp Dev's "dev.lamp.dev.app.", or an instance's "dev.lamp.dev.<instance>.app.".
     static func isLampApp(_ bundleID: String) -> Bool {
-        bundleID.range(of: #"^dev\.lamp\.(dev\.([a-z0-9-]+\.)?)?app\."#, options: .regularExpression) != nil
+        // Every Lamp's: dev.lamp.app., dev.lamp.dev.[instance.]app. and dev.lamp.nightly.app. (`Edition.appBundlePrefix`).
+        bundleID.range(of: #"^dev\.lamp\.(dev\.([a-z0-9-]+\.)?|nightly\.)?app\."#, options: .regularExpression) != nil
     }
 
     /// One of the person's apps Lamp knows on the phone: its bundle id there, and when its copy runs out.

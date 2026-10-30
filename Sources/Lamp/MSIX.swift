@@ -322,7 +322,7 @@ enum MSIX {
             let dataStart = offset + 30 + u16(offset + 26) + u16(offset + 28)
             guard dataStart <= bytes.count, compressed <= bytes.count - dataStart else { throw Failure(message: "The package step's zip is cut short.") }
             total += size
-            guard total <= DeviceHTTP.limit else { throw Failure(message: "The app is bigger than Lamp sends to a device.") }
+            guard total <= DeviceApps.packageLimit else { throw Failure(message: "The app is bigger than Lamp sends to a device (\(DeviceApps.packageLimit >> 30) GB).") }
             let raw = Data(bytes[dataStart..<(dataStart + compressed)])
             switch method {
             case 0: files.append((name, raw))

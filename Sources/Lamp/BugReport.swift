@@ -23,6 +23,8 @@ enum BugReport {
             return "Returning to an earlier version failed."
         case ErrorMessages.providerBusy:
             return "The AI provider rate-limited the request."
+        case ErrorMessages.connectionFailed:
+            return "The connection to the AI failed."
         case ErrorMessages.localServerUnreachable:
             return "The local model server could not be reached."
         default:
