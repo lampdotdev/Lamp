@@ -135,11 +135,8 @@ enum PageCopies {
 
     /// The change for a copy that said what it has (`shell`, nil when it said nothing: an earlier Lamp's lamp.js); nil when
     /// it has the page as it is.
-    /// `checked`: the page as it was checked (`Store.publishPages`). Nil when the folder has moved on from it, so a copy
-    /// is never given a change that's half written.
-    static func change(for project: LampProject, at place: Destination, shell: String?, given: [String: String]?, checked: [String: String]? = nil) -> Change? {
+    static func change(for project: LampProject, at place: Destination, shell: String?, given: [String: String]?) -> Change? {
         let now = hashes(of: project)
-        if let checked, checked != now { return nil }
         let changed = given.map { given in Set(now.keys).union(given.keys).filter { now[$0] != given[$0] } } ?? Set(now.keys)
         let around = hasShell(place) && shell != nil && shell != native(of: project)
         guard !changed.isEmpty || shell == nil || around else { return nil }
@@ -147,7 +144,6 @@ enum PageCopies {
         var files: [String: Data] = [:]
         for path in now.keys {
             guard let data = AppFile.read(web.appendingPathComponent(path), in: project) else { continue }
-            if let checked, checked[path] != name(of: data) { return nil }
             files[path] = data
         }
         var change = Change(files: files, gone: [], changed: changed.sorted())
@@ -245,78 +241,50 @@ enum PageCopies {
     }
 
     /// Puts the page as it is now into every copy of `project` open in its wish's room on a device Lamp doesn't reach
-    /// itself: each is asked what it has, given the change when it can take it, and counted once it says it did. Each copy
-    /// goes at its own pace, so one that's slow or gone holds back none of the others. `checked`: as for `change`.
-    @MainActor static func put(_ project: LampProject, wish: LampProject, checked: [String: String]? = nil) async -> Outcome {
+    /// itself: each is asked what it has, given the change when it can take it, and counted once it says it did.
+    @MainActor static func put(_ project: LampProject, wish: LampProject) async -> Outcome {
         guard project.platform.target.changesAreWeb(project) else { return Outcome() }
         let room = WishRooms.key(for: wish), app = WishRooms.peer(project, in: wish)
         var outcome = Outcome()
         // The pages as they were sent, by copy: what each that takes it then has, though the folder may change meanwhile.
         var sentPages: [[String: String]] = []
-        let results = await withTaskGroup(of: CopyResult?.self) { group in
-            for member in WishRooms.presence(of: wish) {
-                guard let copy = member["peer"] as? String, WishChannel.app(of: copy) == app,
-                      var place = (member["device"] as? String).flatMap(place(of:)) else { continue }
-                // Android's phone and TV places are one app: the copy is on whichever was built.
-                if place == .android, built(project, at: .android) == nil, built(project, at: .androidTV) != nil { place = .androidTV }
-                let at = place
-                group.addTask { @MainActor in await give(project, to: copy, at: at, in: room, checked: checked) }
+        for member in WishRooms.presence(of: wish) {
+            guard let copy = member["peer"] as? String, WishChannel.app(of: copy) == app,
+                  var place = (member["device"] as? String).flatMap(place(of:)) else { continue }
+            // Android's phone and TV places are one app: the copy is on whichever was built.
+            if place == .android, built(project, at: .android) == nil, built(project, at: .androidTV) != nil { place = .androidTV }
+            let key = project.id + "\t" + copy
+            // What it has: an earlier Lamp's lamp.js says nothing.
+            let asking = Task { await Self.answer(from: copy, in: room, id: "", seconds: 6) }
+            guard await ControllerRelay.say(in: room, to: [copy], data: ["lampPage": ["ask": true]]) == [copy] else { asking.cancel(); continue }
+            let here = await asking.value
+            guard let change = change(for: project, at: place, shell: here?["shell"] as? String, given: given[key]) else { continue }
+            if let why = change.cannot { outcome.waiting[place] = why; continue }
+            let id = UUID().uuidString.lowercased()
+            let sent = change.files.mapValues { name(of: $0) }
+            sentPages.append(sent)
+            // Its answer comes once the page has opened again from the change, which can take a TV a while.
+            let answer = Task { await Self.answer(from: copy, in: room, id: id, seconds: 45) }
+            var went = true
+            for word in words(change, id: id) where went {
+                went = await ControllerRelay.say(in: room, to: [copy], data: word) == [copy]
             }
-            var all: [CopyResult] = []
-            for await result in group { if let result { all.append(result) } }
-            return all
-        }
-        for result in results {
-            if let sent = result.sent { sentPages.append(sent) }
-            switch result.state {
-            case .took: outcome.took.insert(result.place)
-            case .waiting(let why): outcome.waiting[result.place] = why
-            case .silent: outcome.silent.insert(result.place)
+            let said = went ? await answer.value : nil
+            if !went { answer.cancel() }
+            switch said?["state"] as? String {
+            case "took":
+                given[key] = sent
+                outcome.took.insert(place)
+            case "failed":
+                given[key] = nil
+                outcome.waiting[place] = (said?["why"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "the page couldn't take it"
+            default:
+                outcome.silent.insert(place)
             }
         }
         let now = hashes(of: project)
         outcome.stale = sentPages.contains { $0 != now }
         return outcome
-    }
-
-    /// What became of a change for one copy, and the page it was sent, when it was.
-    private struct CopyResult {
-        enum State { case took, waiting(String), silent }
-        var place: Destination
-        var state: State
-        var sent: [String: String]?
-    }
-
-    /// One copy's part of `put`: nil when it has the page already, or the folder moved on, or it couldn't be reached.
-    @MainActor private static func give(_ project: LampProject, to copy: String, at place: Destination, in room: String, checked: [String: String]?) async -> CopyResult? {
-        let key = project.id + "\t" + copy
-        // What it has: an earlier Lamp's lamp.js says nothing.
-        let asking = Task { await Self.answer(from: copy, in: room, id: "", seconds: 6) }
-        guard await ControllerRelay.say(in: room, to: [copy], data: ["lampPage": ["ask": true]]) == [copy] else { asking.cancel(); return nil }
-        let here = await asking.value
-        guard let change = change(for: project, at: place, shell: here?["shell"] as? String, given: given[key], checked: checked) else { return nil }
-        if let why = change.cannot { return CopyResult(place: place, state: .waiting(why)) }
-        let id = UUID().uuidString.lowercased()
-        let sent = change.files.mapValues { name(of: $0) }
-        // Its answer comes once the page has opened again from the change, which can take a TV a while.
-        let answer = Task { await Self.answer(from: copy, in: room, id: id, seconds: 45) }
-        var went = true
-        for word in words(change, id: id) where went {
-            went = await ControllerRelay.say(in: room, to: [copy], data: word) == [copy]
-        }
-        let said = went ? await answer.value : nil
-        if !went { answer.cancel() }
-        switch said?["state"] as? String {
-        case "took":
-            given[key] = sent
-            return CopyResult(place: place, state: .took, sent: sent)
-        case "failed":
-            given[key] = nil
-            let why = (said?["why"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "the page couldn't take it"
-            return CopyResult(place: place, state: .waiting(why), sent: sent)
-        default:
-            return CopyResult(place: place, state: .silent, sent: sent)
-        }
     }
 
     /// The copies were given the app again (Reload, Play): what each has is its build's.

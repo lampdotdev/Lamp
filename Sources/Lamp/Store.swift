@@ -776,8 +776,19 @@ final class Store: ObservableObject {
         var applying: Task<Void, Never>?
         var applyingSources = ""
         var autoApplied = 0
-        /// Sends each change the agent saves to what shows the page away from this Mac (`publishPages`).
-        var publishPages: Task<Void, Never>?
+        /// The sources a step of the agent's saves put into the game open on this Mac (`stepPage`): a build of the same
+        /// sources has nothing to show the person, so it says nothing in the chat.
+        var shownSources = ""
+        /// When a change last went in by itself as the agent saved (`autoApply`): what went in next is what the agent
+        /// did since (`stepWords`).
+        var lastStepAt: Date?
+        /// The game's page as the last step put it in (`pageSignature`): a save that leaves it the same puts nothing in.
+        var shownPage = ""
+        /// Stops the agent's look playing the game in the hidden copy (`playGame`), set while it plays: a message from the
+        /// person stops it (`stoppedForMessage`), so they never wait behind Lamp's own checking. It stops that play alone,
+        /// for the game being played (a wish's part, under the wish's turn), never a build the turn runs beside it.
+        var stopHidden: (@MainActor () -> Void)?
+        var stoppedForMessage = false
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
@@ -3956,6 +3967,11 @@ final class Store: ObservableObject {
             saveChat(project)
         }
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
+        // A message never waits behind Lamp's own checking: a play in the hidden copy stops, so the turn goes on to it.
+        if let turn = turns[project.id], let stop = turn.stopHidden {
+            turn.stoppedForMessage = true
+            stop()
+        }
         // Keeping the wish's other places current gives way to a request: they're tried again once it's done.
         for app in apps(of: wish(of: project)) where turns[app.id]?.updatingPlaces == true { turns[app.id]?.cancel() }
         startQueued(project)
@@ -5204,16 +5220,12 @@ final class Store: ObservableObject {
             turn.autoApply?.cancel()
             if turn.warming == nil, let current = current(project), isRunning(current) { turn.warming = warmLive(current) }
             turn.autoApply = autoApply(project, in: turn)
-            turn.publishPages?.cancel()
-            turn.publishPages = publishPages(project, in: turn)
             turn.endedAfterAnswer = false
             status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
                                      started: { turn.agent = $0 }, onLine: onLine)
             if turn.endedAfterAnswer { status = 0 }
             turn.autoApply?.cancel()
             turn.autoApply = nil
-            turn.publishPages?.cancel()
-            turn.publishPages = nil
             await turn.applying?.value
             // Codex was interrupted to be given the person's messages (`steer`): it goes on in the same
             // conversation with them, unless the turn was stopped or ended meanwhile, or Lamp stopped the model.
@@ -7731,23 +7743,6 @@ final class Store: ObservableObject {
         apps(of: self.wish(of: wish)).contains { placesAwaitReload[$0.id]?.isEmpty == false }
     }
 
-    /// Wishes whose page is on its way to their copies: a copy answers one change at a time.
-    private var pagesGoing: Set<String> = []
-
-    /// One app's page into its copies, one change at a time for a wish, however many ask (`publishPages` as the agent
-    /// works, `updatePlaces` as it stops). What a copy took is no longer waiting for Reload; what it can't take is said by
-    /// `pageToCopies` at the turn's end, once.
-    private func pageToCopiesNow(_ app: LampProject, in wish: LampProject, checked: [String: String]? = nil) async -> PageCopies.Outcome {
-        while !pagesGoing.insert(wish.id).inserted { try? await Task.sleep(for: .milliseconds(100)) }
-        defer { pagesGoing.remove(wish.id) }
-        let outcome = await PageCopies.put(app, wish: wish, checked: checked)
-        if checked != nil, var waiting = placesAwaitReload[app.id] {
-            for place in outcome.took { waiting[place] = nil }
-            placesAwaitReload[app.id] = waiting.isEmpty ? nil : waiting
-        }
-        return outcome
-    }
-
     /// Puts each page's change into its copies open on the person's other devices, through the wish's room
     /// (`PageCopies.put`): a place counts as reached only once its copy says it took the change. A copy that can't take it
     /// in place (or said why it couldn't) waits for Reload, which the chat shows; one that didn't answer is said in the
@@ -7755,7 +7750,7 @@ final class Store: ObservableObject {
     @discardableResult private func pageToCopies(_ wish: LampProject) async -> (took: [String: Set<Destination>], silent: [String: Set<Destination>]) {
         var took: [String: Set<Destination>] = [:], silent: [String: Set<Destination>] = [:]
         for app in apps(of: wish) where app.platform.target.changesAreWeb(app) {
-            let outcome = await pageToCopiesNow(app, in: wish)
+            let outcome = await PageCopies.put(app, wish: wish)
             // Changed again while its copies took it (their answers can take a while): they're given the newer page once
             // this pass is over.
             if outcome.stale { pagesAgain.insert(wish.id) }
@@ -8324,7 +8319,8 @@ final class Store: ObservableObject {
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
         if !ownStep { await owner?.applying?.value }
         await owner?.warming?.value
-        log(project, .status, "Building…")
+        // Not said when the game open on this Mac already shows these sources: a step put them in.
+        if owner?.shownSources.isEmpty != false || owner?.shownSources != Runtime.fingerprint(project) { log(project, .status, "Building…") }
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
         // its install comes after the package is made, so the icon is brought up to date first, not there.
         if project.onDevice, !DeviceSupport.icons(for: project).isEmpty { await prepareIcon(project) }
@@ -8578,7 +8574,7 @@ final class Store: ObservableObject {
     /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
     private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
         Task { [weak self] in
-            var seen = "", tried = "", seenAt = Date(), lastPageStep = Date.distantPast
+            var seen = "", tried = "", seenAt = Date()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 // Reload pressed while the agent works goes in here, between its steps, inside this turn.
@@ -8587,11 +8583,11 @@ final class Store: ObservableObject {
                     continue
                 }
                 // A game's page also takes a step while the agent's look plays the game in the hidden copy, which can
-                // run for minutes: only the look's build, which writes the same folders, is waited for.
+                // run for minutes. Not before: a look puts its change into the open game itself, first.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.building, !turn.keptOpen, turn.applying == nil,
                       let current = current(project), LiveReload.eligible(current) || stepsPage(current),
-                      !turn.look.inProgress || stepsPage(current),
+                      !turn.look.inProgress || (stepsPage(current) && turn.stopHidden != nil),
                       isRunning(current), !Runtime.waitsForReload(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false
@@ -8601,13 +8597,14 @@ final class Store: ObservableObject {
                 if now != seen { seen = now; seenAt = Date(); continue }
                 // A game's page takes a change once the saving has paused a while, and no more often than every 15 s:
                 // each can hold the picture for a moment, and a run of small ones, seconds apart, reads as stutter.
-                if stepsPage(current), Date().timeIntervalSince(seenAt) < 6 || Date().timeIntervalSince(lastPageStep) < 15 { continue }
+                // A game's page takes a change once the agent has said in a progress line what's in it (`progressSinceStep`),
+                // so each change the person sees is one they're told of, and the saving has paused a moment.
+                if stepsPage(current), Date().timeIntervalSince(seenAt) < 3 || progressSinceStep(current, turn) == nil { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
                 let saved = seenAt
                 turn.applyingSources = now
                 if stepsPage(current) {
-                    lastPageStep = Date()
                     turn.applying = Task { [weak self] in
                         guard let self else { return }
                         defer { turn.applying = nil }
@@ -8644,7 +8641,7 @@ final class Store: ObservableObject {
                         turn.autoApplied += 1
                         // A step, not the turn's end: "is updated" is said once the request is done, and here the
                         // agent is still at work on it.
-                        log(current, .status, "Put the change into \(current.name)")
+                        log(current, .status, stepWords(current, turn))
                         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
                             + (warmWait > 1 ? ", \(Int(warmWait.rounded())) s of them waiting for the warm-up." : "."))
                     } else {
@@ -8659,88 +8656,6 @@ final class Store: ObservableObject {
         }
     }
 
-    /// How long a page's saving must have paused, and the least time between changes, for the screens a change reaches
-    /// while the agent works: as for a game on this Mac (`autoApply`), each can hold a picture for a moment.
-    private static let publishQuiet: TimeInterval = 6
-    private static let publishSpacing: TimeInterval = 15
-
-    /// While the agent works, each change it saves to a page also goes to whatever already shows that page away from this
-    /// Mac, without waiting for the turn's end and whether or not a Mac copy is open: copies in the wish's room (a TV, the
-    /// Xbox, an iPad, an Android device: `PageCopies`) and phones on a page Lamp serves (a phone's page finds the newer
-    /// version itself: `TVs.phoneVersion`). Only a state that has held still and whose code parses goes, and only that
-    /// state: what's sent is compared with what was checked, so a save made meanwhile waits for the next round. This is
-    /// the page alone: builds and installs still wait for the turn's end, and what can't be taken in place (a module
-    /// script, a change of the app around the page) stays for it, with its Reload.
-    private func publishPages(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
-        Task { [weak self] in
-            var seen: [String: PageState] = [:], published: [String: PageState] = [:], seenAt = Date(), last = Date.distantPast
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil, !turn.building else { continue }
-                let wish = wish(of: project)
-                let inRoom = !WishRooms.presence(of: wish).isEmpty
-                var now: [String: PageState] = [:]
-                for app in apps(of: wish) where app.platform.target.changesAreWeb(app) && (inRoom || Self.servesPhonePage(app)) {
-                    now[app.id] = PageState(of: app)
-                }
-                if published.isEmpty { published = now }
-                for (id, state) in now where published[id] == nil { published[id] = state }
-                if now != seen { seen = now; seenAt = Date(); continue }
-                guard now != published, Date().timeIntervalSince(seenAt) >= Self.publishQuiet, Date().timeIntervalSince(last) >= Self.publishSpacing else { continue }
-                last = Date()
-                let saved = seenAt
-                for app in apps(of: wish) {
-                    guard let state = now[app.id], state != published[app.id], let app = current(app) else { continue }
-                    published[app.id] = await publish(app, in: wish, state, after: published[app.id], saved: saved)
-                }
-            }
-        }
-    }
-
-    /// A page's saved state, as far as a change of it goes anywhere: its files and its phone page's.
-    private struct PageState: Equatable {
-        var web: [String: String]
-        var phone: String
-
-        init(of app: LampProject) {
-            web = PageCopies.hashes(of: app)
-            phone = (try? ControllerSnapshot.read(app.dir.appendingPathComponent(TVTemplate.phoneFolder)))?.version ?? ""
-        }
-    }
-
-    /// One state of a page put wherever it's shown: answers the state each part has gone out as, so a part that wasn't
-    /// sent (it doesn't parse, or it moved on while it was checked) is tried again once it changes.
-    private func publish(_ app: LampProject, in wish: LampProject, _ state: PageState, after before: PageState?, saved: Date) async -> PageState {
-        var out = before ?? state
-        if state.phone != out.phone {
-            if Self.servesPhonePage(app), await GameKit.codeProblem(app, in: TVTemplate.phoneFolder) == nil, PageState(of: app).phone == state.phone {
-                do {
-                    try await TVs.stagePhone(app)
-                    out.phone = state.phone
-                    log(app, .status, "Updated the phone page")
-                    log(app, .detail, "The phone page was published \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
-                } catch {
-                    log(app, .detail, "The phone page wasn't published: \(error.localizedDescription)")
-                }
-            } else if !Self.servesPhonePage(app) {
-                out.phone = state.phone
-            }
-        }
-        guard state.web != out.web else { return out }
-        if GameKit.compilesSource(app) { try? await GameKit.compileSource(app) }
-        guard await GameKit.codeProblem(app) == nil else { return out }
-        let checked = PageCopies.hashes(of: app)
-        // Moved on meanwhile: the next state goes instead.
-        guard GameKit.compilesSource(app) || checked == state.web else { return out }
-        let outcome = await pageToCopiesNow(app, in: wish, checked: checked)
-        out.web = state.web
-        guard !outcome.took.isEmpty else { return out }
-        let places = app.openPlaces.filter(outcome.took.contains)
-        log(app, .status, "Put the change on \(GameKit.spoken(places))")
-        log(app, .detail, "The change reached \(GameKit.spoken(places)) \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
-        return out
-    }
-
     /// A game whose page is open on this Mac takes each change the agent saves the same way, once it compiles: the page
     /// is built (a TypeScript game bundled, which fails on what doesn't) and put into the open game (`pageInPlace`), which
     /// swaps it in or runs the game's code again from where the player is, the smoke over the window until it's on
@@ -8751,9 +8666,51 @@ final class Store: ObservableObject {
         PageLive.takes(project) && PageLive.shared.isOpen(project, at: .mac)
     }
 
+    /// What a change that went in as the agent saved was, in the agent's own words for the steps it took since the last
+    /// one went in ("Put into New York: Switching the car to rainbow paint"), never its files; the plain line when it
+    /// named none.
+    private func stepWords(_ project: LampProject, _ turn: Turn) -> String {
+        let since = turn.lastStepAt ?? turn.began
+        turn.lastStepAt = Date()
+        let lines = logs[wish(of: project).id] ?? []
+        var words: [String] = []
+        for line in lines where line.kind == .tool && (line.at ?? .distantPast) >= since {
+            guard let said = line.said?.trimmed, !said.isEmpty, !line.text.hasPrefix("look_at_app"), !line.text.hasPrefix("use_app"),
+                  !words.contains(said) else { continue }
+            words.append(said)
+        }
+        guard !words.isEmpty else { return "Put the change into \(project.name)" }
+        return "Put into \(project.name): " + words.suffix(3).joined(separator: "; ")
+    }
+
+    /// The agent's latest progress line since a change last went in as it saved, or nil.
+    private func progressSinceStep(_ project: LampProject, _ turn: Turn) -> String? {
+        let since = turn.lastStepAt ?? turn.began
+        return logs[wish(of: project).id]?.last { $0.kind == .progress && ($0.at ?? .distantPast) >= since }?.text
+    }
+
+    /// The game's page as it is (each file's path, size and time), to tell a save that changed what's shown from one that
+    /// changed nothing the page is made of (notes, APP.md, a file saved again as it was).
+    private func pageSignature(_ project: LampProject) -> String {
+        let web = project.dir.appendingPathComponent(GameKit.webFolder)
+        var hasher = SHA256()
+        let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])?.allObjects as? [URL] ?? [])
+            .sorted { $0.path < $1.path }
+        for file in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            hasher.update(data: Data("\(file.path)\n\(values?.fileSize ?? 0)\n\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)".utf8))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
+        // Nothing the page is made of changed since the last step: nothing to put in, nor to say.
+        let page = pageSignature(project)
+        guard page != turn.shownPage else { return }
+        // The line this step goes in for, and where it starts: a line the agent posts while it goes in is the next step's.
+        let words = progressSinceStep(project, turn), boundary = Date()
         // Still being written, or broken: tried again once it changes.
-        guard await GameKit.codeProblem(project) == nil, await GameKit.codeProblem(project, in: TVTemplate.phoneFolder) == nil else { return }
+        guard await GameKit.codeProblem(project) == nil else { return }
         // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
         var mac = project
         mac.chosen = .mac
@@ -8765,8 +8722,11 @@ final class Store: ObservableObject {
         }
         // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
         guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
+        turn.shownSources = Runtime.fingerprint(current)
+        turn.shownPage = page
+        turn.lastStepAt = boundary
         turn.autoApplied += 1
-        log(current, .status, "Put the change into \(current.name)")
+        log(current, .status, words.map { "Put into \(current.name): " + $0 } ?? "Put the change into \(current.name)")
         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
     }
 
@@ -8881,10 +8841,9 @@ final class Store: ObservableObject {
     /// installed as usual (a change of its Swift, a copy Lamp isn't hearing from, a page that didn't answer).
     private func pageInPlace(_ project: LampProject, at place: PageLive.Place, owner: Turn?, inFront: Bool) async -> Bool {
         guard PageLive.takes(project), PageLive.shared.isOpen(project, at: place) else { return false }
-        // The game on the Mac serves its phone page from its bundle, where nothing has handed it a newer one: a change to the
-        // page goes in with the game installed again, so the open game, its phones and any that join have the same page.
-        // One built by an earlier Lamp, that is: this Lamp's serves the page it's handed as it's played (`PageLive`).
-        if place == .mac, GamePhones.changed(project), !PageLive.shared.takesPhonePage(project, at: place) { return false }
+        // The game on the Mac serves its phone page from its bundle: a change to the page goes in with the game installed
+        // again, so the open game, its phones and any that join have the same page.
+        if place == .mac, GamePhones.changed(project) { return false }
         note("Updating \(project.name) in place…", for: project)
         let outcome = await PageLive.shared.put(project, at: place)
         switch outcome {
@@ -8900,13 +8859,17 @@ final class Store: ObservableObject {
             // Only the game runtime says `shown`: a screen, a web app or a game running its own loop opens again with its
             // own page, and the smoke goes as before (`install`).
             let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
-            if outcome == .went("swapped") || outcome == .went("phone") { AppTransition.land(project) }
+            if outcome == .went("swapped") { AppTransition.land(project) }
             else if saysShown, outcome == .went("rerun") || outcome == .went("reloading") {
                 awaitShown(project)
                 // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
                 await untilShown(project)
                 try? await Task.sleep(for: .milliseconds(400))
             }
+            // In: the activity line says what the agent is doing again (its look, or thinking), not the update now over.
+            if let owner, owner.look.inProgress, let doing = logs[wish(of: project).id]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty {
+                note(doing, for: project)
+            } else { note(Activity.thinking, for: project) }
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.pageReopened = outcome == .went("reloading")
@@ -9925,7 +9888,6 @@ final class Store: ObservableObject {
     /// The preview's build, or what stops it, in the words the agent is given.
     private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
         // The preview is drawn out of sight, often while the person plays the game itself: these say it's a copy.
-        note("Building a hidden copy…", for: project)
         // Its copy of the page is made from the same folders a step of the agent's saves builds from (a TypeScript game's
         // Web/app/ among them): one going in is waited for, and none starts until the copy is made (`autoApply` waits
         // while the turn builds); the preview then plays from its own copy, alongside any step.
@@ -9947,14 +9909,37 @@ final class Store: ObservableObject {
     }
 
     private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
-        note("Trying the change in a hidden copy", for: project)
+        // Lamp's own checking, out of sight: nothing in the chat says it's happening. The change is in the open game by now,
+        // so the activity line says what the agent said it's checking, never the updating that came before.
+        let wish = self.wish(of: project).id
+        if let doing = logs[wish]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty { note(doing, for: project) }
         let played: GameKit.Played
+        var hiddenProcess: Process?
+        let id = project.id
+        owner.stopHidden = {
+            WebGamePreview.stop(for: id)
+            if let process = hiddenProcess { Subprocess.terminateTree(process) }
+        }
+        defer { owner.stopHidden = nil }
         do {
             played = GameKit.engine(project) == .web ? try await GameKit.playWeb(project, script: script)
-                : try await GameKit.play(project, script: script, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+                : try await GameKit.play(project, script: script, started: { [weak self] in
+                    self?.turns[project.id]?.build = $0
+                    hiddenProcess = $0
+                })
             turns[project.id]?.build = nil
         } catch {
             turns[project.id]?.build = nil
+            if owner.stoppedForMessage {
+                owner.stoppedForMessage = false
+                // Nothing in it for the person: the change is in their game, and they've moved on. The agent says nothing of it.
+                // Said to be on screen only when a step put these very sources into the open game.
+                var mac = project
+                mac.chosen = .mac
+                let shown = !owner.shownSources.isEmpty && owner.shownSources == Runtime.fingerprint(mac)
+                return (200, ["text": (shown ? "Your change is in the game open on the person's Mac, and they've written again" : "The person has written again")
+                    + ": go on with their new message. This is Lamp's own detail, not something to tell them."])
+            }
             return (200, ["text": error.localizedDescription])
         }
         guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
@@ -12184,18 +12169,11 @@ final class Store: ObservableObject {
             }
             return Gateway.Page(status: 200, type: Self.pageType("json"), body: body)
         }
-        // Which version of the page is published now, for a page already open on a phone to find a newer one.
-        if names == [PhonePageServer.versionFile] {
-            guard let version = TVs.phoneVersion(of: project) else { return missing }
-            return Gateway.Page(status: 200, type: Self.pageType("json"), body: PhonePageServer.versionAnswer(version))
-        }
         // Only the staged copy's own files: no step up, nothing hidden, no empty name, nothing that isn't a plain file.
         guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") && !$0.contains("\0") }) else { return missing }
         guard let file = TVs.phoneFile(names, in: TVs.phoneFolder(for: project)),
               let data = try? Data(contentsOf: file) else { return missing }
-        let html = ["html", "htm"].contains(file.pathExtension.lowercased())
-        let body = html ? TVs.phoneVersion(of: project).map { PhonePageServer.marked(data, version: $0) } ?? data : data
-        return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: body)
+        return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: data)
     }
 
     /// The type a page's file is served as: the list a game's own phone page is served by too (`PhonePageServer`).
