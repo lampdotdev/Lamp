@@ -8454,7 +8454,7 @@ final class Store: ObservableObject {
     /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
     private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
         Task { [weak self] in
-            var seen = "", tried = "", seenAt = Date()
+            var seen = "", tried = "", seenAt = Date(), lastPageStep = Date.distantPast
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 // Reload pressed while the agent works goes in here, between its steps, inside this turn.
@@ -8472,11 +8472,15 @@ final class Store: ObservableObject {
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
                 if now != seen { seen = now; seenAt = Date(); continue }
+                // A game's page takes a change once the saving has paused a while, and no more often than every 15 s:
+                // each can hold the picture for a moment, and a run of small ones, seconds apart, reads as stutter.
+                if stepsPage(current), Date().timeIntervalSince(seenAt) < 6 || Date().timeIntervalSince(lastPageStep) < 15 { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
                 let saved = seenAt
                 turn.applyingSources = now
                 if stepsPage(current) {
+                    lastPageStep = Date()
                     turn.applying = Task { [weak self] in
                         guard let self else { return }
                         defer { turn.applying = nil }
@@ -8540,7 +8544,7 @@ final class Store: ObservableObject {
 
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
         // Still being written, or broken: tried again once it changes.
-        guard GameKit.codeProblem(project) == nil else { return }
+        guard await GameKit.codeProblem(project) == nil else { return }
         // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
         var mac = project
         mac.chosen = .mac
