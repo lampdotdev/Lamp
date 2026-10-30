@@ -17,24 +17,31 @@ public enum PhonePagePolicy {
         case only([String])
     }
 
-    /// Where a game's bundle, an LG TV's service and an Xbox package keep the page's `Reach` beside its files, written by
-    /// Lamp in place of any file of the app's by that name (`json(_:)`); a server that finds none allows no sites.
+    /// Where a game's bundle, an LG TV's service and an Xbox package keep a held page's sites beside its files, written by
+    /// Lamp in place of any file of the app's by that name (`file(for:)`). Its being there is what holds the page: an app the
+    /// person made gets none, as no page from before these rules has one, and is served as it always was; one that's there
+    /// but can't be read as a list of sites holds the page to none.
     public static let reachFile = "lamp-reach.json"
 
-    public static func json(_ reach: Reach) -> Data {
-        let object: [String: Any]
-        switch reach {
-        case .unrestricted: object = ["unrestricted": true]
-        case .only(let sites): object = ["only": sites]
-        }
-        return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+    /// The reach file for a page, nil for an unrestricted one, which has none.
+    public static func file(for reach: Reach) -> Data? {
+        guard case .only(let sites) = reach else { return nil }
+        return try? JSONSerialization.data(withJSONObject: ["only": sites], options: [.sortedKeys])
     }
 
-    /// A reach file's `Reach`: no sites when it's missing or unreadable.
+    /// A reach file's `Reach`: unrestricted when there's none (nil), no sites when it can't be read as a list of them.
     public static func reach(json data: Data?) -> Reach {
-        guard let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return .only([]) }
-        if object["unrestricted"] as? Bool == true { return .unrestricted }
-        return .only((object["only"] as? [Any])?.compactMap { $0 as? String } ?? [])
+        guard let data else { return .unrestricted }
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let sites = object["only"] as? [Any] else {
+            return .only([])
+        }
+        return .only(sites.compactMap { $0 as? String })
+    }
+
+    /// The `Reach` of the page whose reach file would be at `url`: a file that's there but can't be read holds it to none.
+    public static func reach(fileAt url: URL) -> Reach {
+        guard FileManager.default.fileExists(atPath: url.path) else { return .unrestricted }
+        return reach(json: (try? Data(contentsOf: url)) ?? Data())
     }
 
     /// The header's value for a page asked for by `host` (the request's Host header), with the relay at `relayPort`; nil

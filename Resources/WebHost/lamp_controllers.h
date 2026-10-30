@@ -500,12 +500,13 @@ inline std::optional<std::string> policy_source(std::string text) {
     return plain_host(host) ? std::optional(scheme + "://" + rest) : std::nullopt;
 }
 
-// The reach file's sites: nullopt for an unrestricted page (an app the person made), else only those named.
+// The reach file's sites: nullopt for an unrestricted page, which has no reach file (an app the person made, as every
+// page from before these rules), none when one is there but can't be read as a list of them.
 inline std::optional<std::vector<std::string>> reach(std::optional<std::string> const& file) {
+    if (!file) return std::nullopt;
     std::vector<std::string> only;
-    auto json = file ? Json::parse(*file) : std::nullopt;
+    auto json = Json::parse(*file);
     if (!json) return only;
-    if (json->is_true("unrestricted")) return std::nullopt;
     if (auto list = json->get("only"); list && list->type == Json::Type::array)
         for (auto const& item : list->a) if (item.type == Json::Type::string) only.push_back(item.s);
     return only;
@@ -594,8 +595,10 @@ inline std::optional<std::string> percent_decoded(std::string_view text) {
 // Reads a file of the page by its steps, each already checked; nil when there's no such plain file.
 using Reader = std::function<std::optional<std::string>(std::vector<std::string> const& steps)>;
 
+// `held`: the page has rules, which lamp-relay.json says (policy), so lamp-controller.js only ever takes a refused socket
+// for a moved relay on a page given rules.
 inline Answer answer_path(std::string const& full, std::optional<std::string> const& host, std::set<std::string> const& hosts,
-                          std::optional<uint16_t> relay_port, std::string const& app, Reader const& read) {
+                          std::optional<uint16_t> relay_port, std::string const& app, Reader const& read, bool held = false) {
     if (!names(host, hosts)) return { 403, "text/plain; charset=utf-8", "Not for this host." };
     Answer missing{ 404, "text/plain; charset=utf-8", "Nothing here. Open the game first." };
     std::string path = full.substr(0, full.find('?'));
@@ -616,6 +619,7 @@ inline Answer answer_path(std::string const& full, std::optional<std::string> co
         Json body = Json::object();
         body["port"] = (int)*relay_port;
         body["app"] = app;
+        if (held) body["policy"] = true;
         return { 200, type_for("json"), body.dump() };
     }
     size_t length = 0;
@@ -659,9 +663,10 @@ inline Answer answer(std::string_view head, std::set<std::string> const& hosts, 
     std::string target = first.substr(space + 1, end == std::string::npos ? std::string::npos : end - space - 1);
     if (method != "GET" && method != "HEAD") return { 405, "text/plain; charset=utf-8", "Not allowed" };
     auto host = header(lines, "host");
-    auto page = answer_path(target, host, hosts, relay_port, app, read);
+    auto sites = reach(read({ reach_file }));
+    auto page = answer_path(target, host, hosts, relay_port, app, read, sites.has_value());
     page.head = method == "HEAD";
-    if (names(host, hosts)) page.policy = policy(host, relay_port, reach(read({ reach_file })));
+    if (names(host, hosts)) page.policy = policy(host, relay_port, sites);
     return page;
 }
 

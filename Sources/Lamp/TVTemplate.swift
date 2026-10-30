@@ -3636,7 +3636,9 @@ extension TVTemplate {
             function state(s) { if (handlers.onState) handlers.onState(s); }
             // Once for each port the relay was refused at, keeping the credential so the page comes back as the same
             // player; a second refusal there is the page's rules, not a move, and it goes on trying as for any lost link.
-            var trying = null;
+            // Only on a page Lamp gave rules to (a shared app's), which its lamp-relay.json says (policy): an app's own page
+            // has none, and never reloads for a refused socket.
+            var trying = null, held = false;
             function refused(port, credential) {
               var key = 'lamp-controller-reloaded:' + base;
               if (sessionStorage.getItem(key) === String(port)) { later(); return; }
@@ -3646,7 +3648,7 @@ extension TVTemplate {
               location.reload();
             }
             if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('securitypolicyviolation', function (event) {
-              if (!trying || !socket || String(event.blockedURI || '').replace(/\/?$/, '/') !== trying) return;
+              if (!event.isTrusted || !held || !trying || !socket || String(event.blockedURI || '').replace(/\/?$/, '/') !== trying) return;
               var s = socket; socket = null; s.onclose = null; s.close();
               refused(new URL(trying).port, join || sessionStorage.getItem(keyName));
             });
@@ -3673,7 +3675,8 @@ extension TVTemplate {
                 // The page's rules name the relay where it was as the page was served: one that has moved since is
                 // refused, so the page is loaded again under rules that name where it is now.
                 trying = address;
-                try { s = new WebSocket(address); } catch (e) { if (e && e.name === 'SecurityError') { refused(relay.port, credential); return; } throw e; }
+                held = relay.policy === true;
+                try { s = new WebSocket(address); } catch (e) { if (held && e && e.name === 'SecurityError') { refused(relay.port, credential); return; } throw e; }
                 s.binaryType = 'arraybuffer';
                 socket = s;
                 s.onopen = function () {

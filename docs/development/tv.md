@@ -124,10 +124,13 @@ through `PhonePageReach`: an app the person made, a starter, or one they let rea
 page goes out with no rules at all, as before phone pages had any. For a held page nothing is allowed unless it's
 named: the page's own files; its game's relay, by the name the phone used and at the port it listens on as the page is
 served, and no other address on the network; and the sites its safety review named. Sites the person allowed on a
-device are that device's, so a phone page doesn't get them. Lamp writes which it is beside the page it puts in a game's
-bundle, an LG TV's service or an Xbox package (`lamp-reach.json`, in place of any file of the app's by that name); a
-server that finds none allows no sites. A relay that moved after a held page loaded is outside its rules, so
-lamp-controller.js loads the page again, once for each port, keeping the phone's credential, when its socket is refused.
+device are that device's, so a phone page doesn't get them. Lamp writes a held page's sites beside the page it puts in
+a game's bundle, an LG TV's service or an Xbox package (`lamp-reach.json`, in place of any file of the app's by that
+name), and nothing for an unrestricted one, so its page is what it was before these rules; a server that finds a reach
+file it can't read holds the page to no sites. A held page's lamp-relay.json says so (`policy`). A relay that moved
+after a held page loaded is outside its rules, so lamp-controller.js loads the page again, once for each port, keeping
+the phone's credential, when its socket is refused, and only on such a page: an own page never reloads for a refused
+socket. Lamp waits for the relay before answering only a held page, whose rules name its port.
 A rule a browser can't enforce is not one: a page can still leave by navigating (`location`), and a page reached by an
 IPv6 address has no relay in its rules, since a policy can't name one. The Xbox's shipped host (`App.exe`) isn't built
 from the current `lamp_controllers.h` yet, so on the Xbox a shared app's phone page goes without its rules for now.

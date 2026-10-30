@@ -87,7 +87,7 @@ try {
   for (const path of ['/../secret.txt', '/%2e%2e/secret.txt', '/.hidden', '/a%2fb', '/CON', '/index.html:stream', '/missing.js'])
     assert.equal((await get(pagePort, path)).status, 404, path);
   r = await get(pagePort, '/lamp-relay.json');
-  assert.deepEqual(JSON.parse(r.body), { app: 'game.test', port: relayPort });
+  assert.deepEqual(JSON.parse(r.body), { app: 'game.test', port: relayPort, policy: true });
   step('the page is served as its own files, to the console\'s names only');
 
   // The page's rules, word for word those of the LG service and of Lamp (PhonePagePolicyTests holds Swift to relay.js):
@@ -101,10 +101,11 @@ try {
   assert.match((await get(pagePort, '/')).policy, new RegExp(`connect-src 'self' ws://127\\.0\\.0\\.1:${relayPort} api\\.example\\.com;`));
   // An app the person made: no policy at all, as before phone pages had one.
   const shared = fs.readFileSync(path.join(root, 'lamp-reach.json'));
-  fs.writeFileSync(path.join(root, 'lamp-reach.json'), '{"unrestricted":true}');
+  fs.unlinkSync(path.join(root, 'lamp-reach.json'));
   r = await get(pagePort, '/');
   assert.equal(r.status, 200);
   assert.equal(r.policy, undefined, 'an own app\'s phone page has no policy');
+  assert.deepEqual(JSON.parse((await get(pagePort, '/lamp-relay.json')).body), { app: 'game.test', port: relayPort });
   fs.writeFileSync(path.join(root, 'lamp-reach.json'), shared);
   step('the page\'s rules name only its relay and the sites its reach file names, as the LG service writes them; an own app\'s page has none');
 

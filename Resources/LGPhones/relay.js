@@ -164,18 +164,21 @@ function policySource(text) {
   return plainHost(host) ? scheme + '://' + rest : null;
 }
 
+// A reach file's sites; one that can't be read as a list of them holds the page to none.
 function readReachJSON(text) {
   try {
     var object = JSON.parse(text);
-    if (object && object.unrestricted === true) return { unrestricted: true };
-    return { only: Array.isArray(object && object.only) ? object.only.filter(function (s) { return typeof s === 'string'; }) : [] };
-  } catch (e) {
-    return { only: [] };
-  }
+    if (object && Array.isArray(object.only)) return { only: object.only.filter(function (s) { return typeof s === 'string'; }) };
+  } catch (e) {}
+  return { only: [] };
 }
 
+// The page's reach: unrestricted when Lamp wrote no reach file (an app the person made, as every page from before these
+// rules), held to none when one is there but can't be read.
 function readReach(root) {
-  try { return readReachJSON(fs.readFileSync(path.join(root, REACH_FILE), 'utf8')); } catch (e) { return { only: [] }; }
+  var text;
+  try { text = fs.readFileSync(path.join(root, REACH_FILE), 'utf8'); } catch (e) { return e && e.code === 'ENOENT' ? { unrestricted: true } : { only: [] }; }
+  return readReachJSON(text);
 }
 
 // Null for an unrestricted page (an app the person made), which goes out with no header.
@@ -749,12 +752,15 @@ Session.prototype.makePageServer = function () {
     req.socket.answered = true;
     var game = self.game;
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { 'Content-Type': TYPES.txt }); return res.end('Not allowed'); }
-    var page = answer(self.root, req.url, req.headers.host, game ? game.hosts : [], game ? { port: self.relayPort, app: self.app } : null);
+    var reach = readReach(self.root), relay = null;
+    // A held page's lamp-relay.json says so (policy), so lamp-controller.js takes a refused socket for a moved relay there only.
+    if (game) { relay = { port: self.relayPort, app: self.app }; if (!reach.unrestricted) relay.policy = true; }
+    var page = answer(self.root, req.url, req.headers.host, game ? game.hosts : [], relay);
     var headers = {
       'Content-Type': page.type, 'Content-Length': page.file ? page.size : page.body.length, 'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Connection': 'close'
     };
-    var rules = policy(req.headers.host, game ? self.relayPort : null, readReach(self.root));
+    var rules = policy(req.headers.host, game ? self.relayPort : null, reach);
     if (rules) headers['Content-Security-Policy'] = rules;
     res.writeHead(page.status, headers);
     if (req.method === 'HEAD') return res.end();

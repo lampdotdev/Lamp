@@ -134,21 +134,25 @@ public final class PhonePageServer: @unchecked Sendable {
     /// name lead here (DNS rebinding) reads nothing.
     public func answer(path full: String, host: String?) -> Page {
         guard Self.names(host, among: hosts()) else { return Page(status: 403, body: Data("Not for this host.".utf8)) }
-        var page = file(path: full)
-        let reach = PhonePagePolicy.reach(json: try? Data(contentsOf: root.appendingPathComponent(PhonePagePolicy.reachFile)))
+        let reach = PhonePagePolicy.reach(fileAt: root.appendingPathComponent(PhonePagePolicy.reachFile))
+        var page = file(path: full, held: reach != .unrestricted)
         page.policy = PhonePagePolicy.header(host: host, relayPort: relayPort(), reach: reach)
         return page
     }
 
-    private func file(path full: String) -> Page {
+    /// `held`: the page has rules, which lamp-relay.json says (`policy`), so lamp-controller.js only ever takes a refused
+    /// socket for a moved relay on a page Lamp gave rules to.
+    private func file(path full: String, held: Bool) -> Page {
         let missing = Page(status: 404, body: Data("Nothing here. Open the game first.".utf8))
         let path = full.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
         guard path.hasPrefix("/") else { return missing }
         var names = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false).map { $0.removingPercentEncoding ?? "\0" }
         if names.last == "" { names[names.count - 1] = "index.html" }
         if names == ["lamp-relay.json"] {
-            guard let port = relayPort(),
-                  let body = try? JSONSerialization.data(withJSONObject: ["port": Int(port), "app": app]) else {
+            let port = relayPort()
+            var said: [String: Any] = ["port": Int(port ?? 0), "app": app]
+            if held { said["policy"] = true }
+            guard port != nil, let body = try? JSONSerialization.data(withJSONObject: said) else {
                 return Page(status: 503, body: Data("The link for controllers isn't open.".utf8))
             }
             return Page(status: 200, type: Self.type(for: "json"), body: body)

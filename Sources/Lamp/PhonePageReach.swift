@@ -17,12 +17,16 @@ enum PhonePageReach {
         return .only(policy.origins)
     }
 
-    /// A page's files as a game's bundle, an LG TV or an Xbox package carries it: Lamp's lamp-controller.js and the reach
-    /// file in place of any of the app's own by those names.
+    /// A page's files as a game's bundle, an LG TV or an Xbox package carries it: Lamp's lamp-controller.js, and for a held
+    /// page its reach file, in place of any of the app's own by those names. An own app's page carries no reach file.
     static func snapshot(_ published: ControllerSnapshot, of project: LampProject, controller: Data) -> ControllerSnapshot {
+        snapshot(published, reach: reach(project), controller: controller)
+    }
+
+    static func snapshot(_ published: ControllerSnapshot, reach: PhonePagePolicy.Reach, controller: Data) -> ControllerSnapshot {
         let lamps: Set<String> = ["lamp-controller.js", PhonePagePolicy.reachFile]
-        return ControllerSnapshot(files: published.files.filter { !lamps.contains($0.path) }
-            + [ControllerSnapshot.File(path: "lamp-controller.js", data: controller),
-               ControllerSnapshot.File(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.json(reach(project)))])
+        var files = published.files.filter { !lamps.contains($0.path) } + [ControllerSnapshot.File(path: "lamp-controller.js", data: controller)]
+        if let rules = PhonePagePolicy.file(for: reach) { files.append(ControllerSnapshot.File(path: PhonePagePolicy.reachFile, data: rules)) }
+        return ControllerSnapshot(files: files)
     }
 }

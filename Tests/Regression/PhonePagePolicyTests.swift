@@ -22,7 +22,7 @@ final class PhonePagePolicyTests: XCTestCase {
 
     func testAGamesOwnPageServerSendsAPolicyNamingOnlyItsRelayAndItsSites() async throws {
         let page = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<title>Pad</title>".utf8)),
-                                              .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.json(.only(Self.hostile)))])
+                                              .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.file(for: .only(Self.hostile))!)])
         try page.write(to: folder)
         let runtime = ControllerRuntime(app: "padgame", page: folder)
         runtime.hosts = { ["127.0.0.1", "localhost"] }
@@ -52,7 +52,7 @@ final class PhonePagePolicyTests: XCTestCase {
         XCTAssertEqual(PhonePageReach.reach(NetworkPolicy(origins: [], unrestricted: true)), .unrestricted)
 
         let page = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<title>Pad</title>".utf8)),
-                                              .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.json(PhonePageReach.reach(shared)))])
+                                              .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.file(for: PhonePageReach.reach(shared))!)])
         try page.write(to: folder)
         let runtime = ControllerRuntime(app: "homehq", page: folder)
         runtime.hosts = { ["127.0.0.1"] }
@@ -67,11 +67,10 @@ final class PhonePagePolicyTests: XCTestCase {
         XCTAssertFalse(policy.contains("https:;") || policy.contains("https: ") || policy.contains("wss:"), "no site beyond the policy's: \(policy)")
     }
 
-    /// An app the person made (or a starter) has no shared policy, and its phone page is served as it was before phone
-    /// pages had rules: no policy header at all, from a game's own server as from Lamp's.
+    /// An app the person made (or a starter) has no shared policy, so its page carries no reach file, as a page from before
+    /// phone pages had rules doesn't either, and it's served as it always was: no policy header at all.
     func testAnOwnAppsPhonePageGetsNoPolicy() async throws {
-        let page = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<title>Pad</title>".utf8)),
-                                              .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.json(PhonePageReach.reach(nil)))])
+        let page = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<title>Pad</title>".utf8))])
         try page.write(to: folder)
         let runtime = ControllerRuntime(app: "mygame", page: folder)
         runtime.hosts = { ["127.0.0.1"] }
@@ -84,8 +83,20 @@ final class PhonePagePolicyTests: XCTestCase {
         XCTAssertNil(http.value(forHTTPHeaderField: "Content-Security-Policy"), "an own app's phone page is served with no policy")
     }
 
-    func testAPageWithNoReachFileReachesNoSites() {
-        let policy = PhonePagePolicy.header(host: "192.168.1.20:52000", relayPort: 52001, reach: PhonePagePolicy.reach(json: nil)) ?? ""
+    /// The page Lamp puts in a bundle or package carries a reach file only when it's held: an own app's is the app's files
+    /// and lamp-controller.js, as before these rules, with any reach file of the app's own taken out.
+    func testOnlyAHeldPagesSnapshotCarriesAReachFile() {
+        let published = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<p>pad</p>".utf8)),
+                                                   .init(path: PhonePagePolicy.reachFile, data: Data(#"{"only":["https://anything.example"]}"#.utf8))])
+        let own = PhonePageReach.snapshot(published, reach: .unrestricted, controller: Data("// Lamp's".utf8))
+        XCTAssertEqual(own.files.map(\.path), ["index.html", "lamp-controller.js"])
+        let shared = PhonePageReach.snapshot(published, reach: .only(["https://api.example.org"]), controller: Data("// Lamp's".utf8))
+        XCTAssertEqual(shared.files.first { $0.path == PhonePagePolicy.reachFile }?.data, PhonePagePolicy.file(for: .only(["https://api.example.org"])))
+    }
+
+    /// A reach file that's there but can't be read as one holds the page to no sites: a shared page fails closed.
+    func testAnUnreadableReachFileReachesNoSites() {
+        let policy = PhonePagePolicy.header(host: "192.168.1.20:52000", relayPort: 52001, reach: PhonePagePolicy.reach(json: Data("not json".utf8))) ?? ""
         XCTAssertTrue(policy.contains("connect-src 'self' ws://192.168.1.20:52001;"), policy)
         XCTAssertFalse(policy.contains("https:"), policy)
     }
@@ -97,16 +108,19 @@ final class PhonePagePolicyTests: XCTestCase {
         guard let node else { throw XCTSkip("Node isn't installed") }
         let relay = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Resources/LGPhones/relay.js")
-        let cases: [(String?, UInt16?, PhonePagePolicy.Reach)] = [
-            ("192.168.1.20:52000", 52001, .only(Self.hostile)), ("Mac.local", 60000, .unrestricted), ("[fe80::1]:5000", 5001, .only([])),
-            (nil, 5001, .only(["a.test"])), ("localhost:9", nil, .unrestricted),
+        // Each page's reach file as Lamp writes it (nil: none, an own app's), and one that can't be read.
+        let cases: [(String?, UInt16?, Data?)] = [
+            ("192.168.1.20:52000", 52001, PhonePagePolicy.file(for: .only(Self.hostile))), ("Mac.local", 60000, nil),
+            ("[fe80::1]:5000", 5001, PhonePagePolicy.file(for: .only([]))), (nil, 5001, PhonePagePolicy.file(for: .only(["a.test"]))),
+            ("localhost:9", nil, nil), ("10.0.0.2:80", 81, Data("not json".utf8)),
         ]
-        for (host, port, reach) in cases {
-            let script = "var r = require(process.argv[1]); process.stdout.write(r.policy(JSON.parse(process.argv[2]), JSON.parse(process.argv[3]), r.readReachJSON(process.argv[4])) || '')"
+        for (host, port, file) in cases {
+            let reach = PhonePagePolicy.reach(json: file)
+            let script = "var r = require(process.argv[1]); var f = process.argv[4]; process.stdout.write(r.policy(JSON.parse(process.argv[2]), JSON.parse(process.argv[3]), f === '-' ? { unrestricted: true } : r.readReachJSON(f)) || '')"
             let process = Process()
             process.executableURL = URL(fileURLWithPath: node)
             let hostJSON = host.map { "\"\($0)\"" } ?? "null"
-            process.arguments = ["-e", script, relay.path, hostJSON, port.map(String.init) ?? "null", String(decoding: PhonePagePolicy.json(reach), as: UTF8.self)]
+            process.arguments = ["-e", script, relay.path, hostJSON, port.map(String.init) ?? "null", file.map { String(decoding: $0, as: UTF8.self) } ?? "-"]
             let out = Pipe()
             process.standardOutput = out
             try process.run()
