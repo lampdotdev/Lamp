@@ -730,6 +730,8 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     renderer = given;
     fills = fill;
     adapting = !sharp && !fill;
+    // Drawn at full size from here (setSize below), however small the code run before drew it.
+    level = 0; rateBefore = 0; check.times = []; check.time = 0; check.warm = false;
     frameFunction = frame;
     hooks = { snapshot, restore, busy, assetChanged, dispose };
     // A renderer the new code didn't keep goes with the old code (its canvas went with the old page).
@@ -778,8 +780,8 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         last = now;
         measure(now);
         try { step(dt); } catch (e) {
-            // New code swapped in that fails as it runs goes back out the safe way: the page opens again from where
-            // the player was before it.
+            // New code swapped in or run again that fails as it runs goes back out the safe way: the page opens again
+            // from where the player was before it.
             if (swapGuard) { log(`Error: ${e && e.message || e}`); return swapFailed(e); }
             throw e;
         }
@@ -808,19 +810,20 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
 //   have changed as it ran, stay), and each exported array the new contents when the change changed them. A module that doesn't take its changes is swapped through the modules that import
 //   it: when every one of them, or one above it, takes them, it runs again for them, and they take theirs.
 //
-// Anything else opens the page again with the new code, keeping the player's place: the HTML, a module nothing above
-// takes changes for (the one that starts the game, as a rule), a module that imports others in a circle, a class whose
-// constructor or fields changed (objects already made have the old fields) or that has private members (#name), an
-// exported function or value that changed (whoever imported it holds the old one), or code a module's exported
-// functions may use, changed outside its classes. The log says which, and why. Just before, `snapshot()` gives what matters of where the game is (the level,
-// the player's position, the camera, the score, the mode, which menu or overlay is open…) as plain JSON. The new copy
-// starts straight there: `pendingRestore()` gives that state while the game starts (in init, or in a Phaser scene's
+// Anything else runs the game's code again in place, keeping the player's place, the page, the renderer and what the
+// game kept (see "Running the game's code again" below): the HTML, a module nothing above takes changes for (the one
+// that starts the game, as a rule), a class whose constructor or fields changed (objects already made have the old
+// fields) or that has private members (#name), an exported function or value that changed (whoever imported it holds
+// the old one), or code a module's exported functions may use, changed outside its classes. Where that can't be done
+// (a change to the import map, modules that import each other in a circle) the page opens again. The log says which,
+// and why. Just before, `snapshot()` gives what matters of where the game is (the level, the player's position, the
+// camera, the score, the mode, which menu or overlay is open…) as plain JSON. The new code starts straight there: `pendingRestore()` gives that state while the game starts (in init, or in a Phaser scene's
 // init or create), so the game builds the place it was in rather than its title or intro, and the runtime calls
 // nothing more. A game that doesn't read it and has `restore(state)` is started as usual and then given the state,
 // before its first frame is drawn. A game without either starts again, from its own save() and load(). If starting
 // from the state throws (init, a scene's create, restore or the first frame), the game starts fresh, and the log says
-// so. New code swapped in that throws in its first second opens the page again from the place before the swap.
-// While `busy()` is true (a match or a round under way, a race, a fight) a change that opens the page again waits, and
+// so. New code swapped in or run again that throws in its first second opens the page again from the place before.
+// While `busy()` is true (a match or a round under way, a race, a fight) a change that runs the code again waits, and
 // goes in at the next moment busy() is false (a pause, between rounds); the person can also put it in at once. A swap
 // goes in at once, busy or not. Where the app around the page has no Reload of Lamp's own, the page shows a small
 // "Reload to apply" to press.
@@ -833,11 +836,11 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
 //
 // and keeps its state in objects made from the classes it exports (the game holds them: `new Traffic(scene)`), with
 // its tuning in constants or plain objects it reads where it uses them, rather than copied into fields as an object is
-// made: what a constructor built or copied stays as it was until the page opens again. Everything a module defines
+// made: what a constructor built or copied stays as it was until the code runs again. Everything a module defines
 // that the game calls goes out through its exports, classes above all; a class it keeps to itself keeps its old
 // methods. `accept(next, { changed })` takes a function, called once the new version is in, with its exports and the
 // names of what changed in them (`Traffic.update`, `TUNING.topSpeed`); it does what the change needs done that the
-// swap doesn't (build again what a changed method built once), and returns false to have the page opened again
+// swap doesn't (build again what a changed method built once), and returns false to have the code run again
 // instead. For what a module makes at its top level (a listener, an element, a timer), `hot(import.meta).dispose(data
 // => …)` takes it away as the old version goes, keeping in `data` what the next needs, which reads it as
 // `hot(import.meta).data`. Nothing here runs in Lamp's preview or where changes come by an install.
@@ -998,7 +1001,7 @@ export function hot(meta) {
         data: entry.data,
         accept(callback) { entry.accepts = true; entry.onAccept = typeof callback === 'function' ? callback : null; },
         dispose(callback) { if (typeof callback === 'function') entry.disposers.push(callback); },
-        keep(key, build, dispose) { return keep(path, key, build, dispose); },
+        keep(key, build, options) { return keep(path, key, build, options); },
     };
 }
 
@@ -1332,15 +1335,17 @@ function putClass(C, N) {
 // pendingRestore(), or given to restore()). What stays is what a reload loses: the WebGL or WebGPU context and the
 // shaders compiled for it, the files the runtime loaded, the sound, the controllers, and every part the game kept.
 //
-// A part is kept with `hot(import.meta).keep(key, build)`: the first time it calls build() and returns what that made
-// (or its promise), and when the code runs again it returns the same thing without building it, unless the module that
-// kept it, or one it imports, changed since, or the build function's own code changed. The module that starts the game
-// changes often, so a change of its own code outside the build function keeps what it kept. A part that's built again,
-// or not asked for any more, goes: `dispose(value)` when given, else a three.js object is taken out of its scene and its
-// geometry and materials let go, and anything with dispose() or destroy() has it called.
+// A part is kept with `hot(import.meta).keep(key, build, { inputs, dispose })`: the first time it calls build() and
+// returns what that made (or its promise), and when the code runs again it returns the same thing without building it,
+// unless the module that kept it, or one it imports, changed since, the build function's own code changed, or one of
+// `inputs` isn't the same as before (another part's result it's built from, as a dependency list goes). The module that
+// starts the game imports everything and changes often, so what it keeps goes by the modules whose imports the build
+// function names, and theirs: a change of its own code outside the build function keeps what it kept. A part that's
+// built again, or not asked for any more, goes: `dispose(value)` when given, else a three.js object is taken out of its
+// scene and its geometry and materials let go, and anything with dispose() or destroy() has it called.
 //
 //   const renderer = await hot(import.meta).keep('renderer', async () => { const r = new THREE.WebGPURenderer(); await r.init(); return r; });
-//   export function buildTrees(scene) { const trees = live.keep('trees', () => makeTrees()); scene.add(trees); return trees; }
+//   const blocks = live.keep('blocks', () => buildBlocks(landmarks.colliders), { inputs: [landmarks] });
 //
 // What the game's code leaves running is watched from the start: listeners it adds (to the window, the document or
 // anything else), timers, sound contexts it makes itself and workers. Each is taken away when the code runs again,
@@ -1356,15 +1361,17 @@ const kept = new Map();
 // Above 0 while a part's build function runs: what it starts belongs to the part, and stays.
 let keeping = 0;
 
-function keep(path, key, build, dispose) {
+function keep(path, key, build, options = {}) {
+    const { dispose, inputs = [] } = typeof options === 'function' ? { dispose: options } : options;
     const id = `${path} ${key}`, text = source(build), had = kept.get(id), again = runningAgain;
-    if (had && !had.stale && had.text === text) {
+    const same = had && had.inputs.length === inputs.length && inputs.every((v, i) => Object.is(v, had.inputs[i]));
+    if (had && !had.stale && had.text === text && same) {
         had.used = true;
         if (again) again.kept.push(key);
         return had.value;
     }
     if (had) letGo(had);
-    const entry = { path, key, text, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false, value: undefined, made: undefined };
+    const entry = { path, key, text, inputs, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false, value: undefined, made: undefined };
     keeping++;
     let value;
     try { value = build(); } catch (e) { keeping--; throw e; }
@@ -1407,7 +1414,8 @@ function markStale(paths) {
     for (const k of kept.values()) {
         if (k.stale) continue;
         let deps;
-        if (rootPaths.includes(k.path)) {
+        // A game bundled into one file (from TypeScript) imports nothing of its own: a change anywhere in it is its own.
+        if (rootPaths.includes(k.path) && (bindings.get(k.path) || new Map()).size) {
             deps = new Set();
             for (const [name, from] of bindings.get(k.path) || []) {
                 if (!new RegExp(`(^|[^\\w$.])${name.replace(/\$/g, '\\$')}\\b`).test(k.text)) continue;
