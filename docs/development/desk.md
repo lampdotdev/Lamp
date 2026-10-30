@@ -119,20 +119,31 @@ isn't an answer to a card names it like any first request and ends `finding`.
 A new person's desk isn't empty: Lamp comes with fifteen wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello, and ends on the desk with nothing set up: a starter runs from the copy
-Lamp ships built, and the first request to any wish asks for what builds in its chat (`Store.askForSetup`, `BuilderLine`),
-offering Claude Code or Codex as a click where one is on this Mac and signed in, never choosing it for the person, with
-the rest in Lamp's sheet (`SetupView`, `SetupSheet`); Apple's tools are asked for after that, only where the request needs
-them, the request waiting in its chat and starting once. A shared file or repository opened with nothing set up goes
-straight to its review (`Store.importApp`), the welcome's hello giving way to it, and says it wasn't checked by AI; building
-it takes a click, a request that came with it stays in the box, and something compiled then waits for Apple's tools. A
-starter from the site opens at once, and only a wish from the site, which has to be made, goes on to the welcome's setup. They're copied once, on the first launch, each saved as its first version ("From Lamp"),
-so they open at once: a later Lamp with other starters lists those under Starter apps, copied when they're opened, and
-brings the copies of the ones it still ships up to them ("The original", below). As soon
-as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
-their chats; nothing on the desk shows it; one clicked before its build is done glows, says it's opening, and opens when it's
-ready (`openWhenReady`). A prebuilt copy this Mac refuses, with no tools to build one, is tried again only when the person
-opens that starter (`refusedPrebuilt`): its chat then waits for Apple's tools, Stop giving up on it, and the starter is built
-and opened when they arrive (`awaitToolsToOpen`). A
+Lamp's release built (`PrebuiltStarters`), and the first request to any wish asks for what builds in its chat
+(`Store.askForSetup`, `BuilderLine`), offering Claude Code or Codex as a click where one is on this Mac and signed in,
+never choosing it for the person, with the rest in Lamp's sheet (`SetupView`, `SetupSheet`); Apple's tools are asked for
+after that, only where the request needs them, the request waiting in its chat and starting once. A shared file or
+repository opened with nothing set up goes straight to its review (`Store.importApp`), the welcome's hello giving way to
+it, and says it wasn't checked by AI; building it takes a click, a request that came with it stays in the box, and
+something compiled then waits for Apple's tools. A starter from the site opens once it's fetched, and only a wish from
+the site, which has to be made, goes on to the welcome's setup.
+
+**Starters are fetched when they're first opened.** Lamp's bundle carries only what the desk lists each one by
+(`Starters.Listed`, in `listing/` beside its starter.md: its line, credits, picture and icon, and the commit object
+the fetch is checked against), so on the first launch every starter is under Starter apps and none is on the desk yet.
+Opening or remixing one (the desk, a remix link, New Copy of the Original) fetches it (`Store.fetching`,
+`StarterDownloads`): its repository at the pinned commit as GitHub's archive of that commit (no git needed, which a
+new person's Mac doesn't have yet), checked as git hashes a tree against the tree the pinned commit names, and, from a
+release, the starter's prebuilt app, an asset of Lamp's release pinned by size and SHA-256 and checked for Lamp's own
+signature before it's used (one no longer there, an old nightly's, is done without: the starter waits for Apple's tools
+as below). Meanwhile its row says "Getting it ready…" as a build's wait does; without a connection
+it says so in one gray line with Try Again (an alert with Try Again for a link or a menu command). What's fetched is
+kept in Lamp's folder by edition (`StarterDownloads.cache`), so the next copy needs no download; a starter's older
+trees and prebuilt apps go when a newer one comes. Then it's copied (`put(starter:)`), saved as its first version
+("From Lamp") and built out of sight from the prebuilt app when it can be (`Store.prepareStarters`), with nothing in
+its chat, and opens when it's ready (`openWhenReady`). A prebuilt copy this Mac refuses, with no tools to build one, is
+tried again only when the person opens that starter (`refusedPrebuilt`): its chat then waits for Apple's tools, Stop
+giving up on it, and the starter is built and opened when they arrive (`awaitToolsToOpen`). A
 starter opens with its chat beside it the first time (`MagicPanel.startWithChat`, the hand-off a new app gets after
 its first build); one that opens no window has its chat opened in Lamp the first time it's used. The chat opens on
 Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line and its three changes, each sent as
@@ -162,7 +173,8 @@ around them (so `zsh build.sh` builds it there too), an MIT license, a README an
 drawn icon and the desk's preview. Lamp's repository holds only what names each one: `Resources/Starters/<folder>/
 starter.md`, with the starter's line and three changes, where it lives (`repository:`) and the commit this Lamp ships
 (`commit:`). The tree at that commit is fetched beside it (`scripts/fetch-starters.sh`, into `tree/`, never
-committed) by `build.sh`, CI and anyone running the tests, bundled without its git history, and read as a repository
+committed) by `build.sh`, CI and anyone running the tests; build.sh bundles only its listing (above), and a person's
+Lamp fetches the tree itself when the starter is opened. It's read as a repository
 is opened (`Starters.copy`: `RepoImport.open` and `Sharing.install`, so Lamp's own files in it are never copied, and
 the copy names the starter at that commit on its chain, which Update from GitHub… merges against and Send Changes
 Back… goes on top of). A copy made before starters named a repository gets the address from the starter this Lamp
@@ -213,14 +225,14 @@ or offered at all (`Starters.runsHere`), and it's offered once the Mac is update
 **"The original" is the starter as this Lamp ships it**, never the version a copy happened to arrive as, so a copy
 follows the pin as it moves (`Starters.newer`: the commit on the copy's link in its credits.json, which goes with its
 versions so Undo takes it back too, isn't the pin; a copy that names none, made before starters named theirs, is behind). Once a launch, when git is there
-(`Store.bringStartersUp`, from `prepareStarters`), a copy unchanged since it arrived takes the new starter's files in
+(`Store.bringStartersUp`, from `prepareStarters`), a copy unchanged since it arrived takes the new starter's files (fetched for it) in
 place of its own (`Store.bringUp`: `Starters.copy` replacing, as an update replaces a wish's), keeping its name, data and
 chat, saved as a new "From Lamp" version, so it's what the copy arrived as from now on and Undo takes it back; its link,
 credits and starter.md move to the pin, and it's built again out of sight with the starters' first builds, from the
 prebuilt copy when it's the starter's (`PrebuiltStarters`), so a release costs no build for an unchanged copy. One open
-or busy then waits for the next launch. A changed copy isn't touched: its chat gets a card, once for each newer
+or busy then, or one whose starter couldn't be fetched, waits for the next launch. A changed copy isn't touched: its chat gets a card, once for each newer
 starter (`NewerOriginalLine`, "A newer original is available" with Update), the panel says the same with Update beside
-it, and its menu has Update from the Original (`Store.updateFromOriginal`), which merges the starter from Lamp's bundle
+it, and its menu has Update from the Original (`Store.updateFromOriginal`), which merges the starter this Lamp pins (fetched first)
 into the person's changes as an update from GitHub merges (`Store.mergeUpdate`, `Upstream`: three ways, against the
 commit the copy has, fetched when it can be and else the version it began with), the agent settling only what both
 sides changed. Wish Info's Check for Updates… compares a starter's copy with the pin, never GitHub's latest
@@ -232,8 +244,8 @@ GitHub or a shared file still goes back to what arrived.
 A changed starter's copy deletes as any wish does, and the starter is still listed under Starter apps. An untouched copy
 deleted some other way (an earlier Lamp, the chat) is never stuck gone: the starter is listed in its place. Opening it
 there, or a remix of it from the site, puts a fresh copy back (`Store.put(starter:)`, through `Store.add(starter:)`, the
-one way a starter is put on the desk, which the first launch uses too), saved and built out of sight like the first
-launch's; one opened before its build is done says "Getting it ready…" (`openWhenReady`).
+one way a starter is put on the desk), fetched first, then saved and built out of sight; one opened before it's
+fetched or built says "Getting it ready…" (`fetchingStarters`, `openWhenReady`).
 
 **A starter added or changed in how it looks gets a new preview in the same change** (`StartersTests` fails
 without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,

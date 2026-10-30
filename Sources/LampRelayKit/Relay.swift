@@ -161,10 +161,14 @@ public final class Relay: @unchecked Sendable {
     }
 
     public let queue = DispatchQueue(label: "dev.lamp.relay")
-    private let key: SymmetricKey
+    private var key: SymmetricKey
     private var listener: NWListener?
+    /// Where phones join a relay whose own listener is on this device alone (`openToPhones`).
+    private var phoneListener: NWListener?
     /// The listener stopped after it was ready (the network went away under it): whoever runs the relay starts it again.
     public var onStopped: @Sendable () -> Void = {}
+    /// The same for `phoneListener`; the relay's own listener goes on.
+    public var onPhonesStopped: @Sendable () -> Void = {}
     private var games: [String: Game] = [:]
     private var rooms: [String: Room] = [:]
     /// Each room by its tag, which is all a hello says of which wish it's for.
@@ -197,11 +201,31 @@ public final class Relay: @unchecked Sendable {
 
     /// Starts listening on every address, at `port` when it's free (the one it had before, so phones' pages find it
     /// where they last did), else wherever the system gives. `ready` hears the port once, nil when it couldn't.
-    public func start(port: UInt16 = 0, ready: @escaping @Sendable (UInt16?) -> Void) {
-        queue.async { self.listen(port, ready: ready) }
+    /// `thisDeviceOnly`: on 127.0.0.1 alone, reached from nowhere else until `openToPhones`.
+    public func start(port: UInt16 = 0, thisDeviceOnly: Bool = false, ready: @escaping @Sendable (UInt16?) -> Void) {
+        queue.async { self.listen(port, thisDeviceOnly: thisDeviceOnly, into: \.listener, ready: ready) }
     }
 
-    private func listen(_ port: UInt16, ready: @escaping @Sendable (UInt16?) -> Void) {
+    /// Lets phones in, on every address at a port the system gives, beside a listener on this device alone.
+    public func openToPhones(ready: @escaping @Sendable (UInt16?) -> Void) {
+        queue.async { self.listen(0, thisDeviceOnly: false, into: \.phoneListener, ready: ready) }
+    }
+
+    public func closeToPhones() {
+        queue.async {
+            self.phoneListener?.cancel()
+            self.phoneListener = nil
+        }
+    }
+
+    /// Signs and checks with this key from now on, for a relay that outlasts its sessions: a new session's credentials
+    /// get in, and nothing handed out under the old key does.
+    public func use(key: SymmetricKey) {
+        queue.async { self.key = key }
+    }
+
+    private func listen(_ port: UInt16, thisDeviceOnly: Bool, into place: ReferenceWritableKeyPath<Relay, NWListener?>,
+                        ready: @escaping @Sendable (UInt16?) -> Void) {
         let socket = NWProtocolWebSocket.Options()
         socket.autoReplyPing = true
         socket.maximumMessageSize = Self.messageLimit
@@ -211,8 +235,10 @@ public final class Relay: @unchecked Sendable {
         }
         let parameters = NWParameters.tcp
         parameters.defaultProtocolStack.applicationProtocols.insert(socket, at: 0)
-        guard let listener = try? NWListener(using: parameters, on: port == 0 ? .any : (NWEndpoint.Port(rawValue: port) ?? .any)) else {
-            return port == 0 ? ready(nil) : listen(0, ready: ready)
+        let asked: NWEndpoint.Port = port == 0 ? .any : (NWEndpoint.Port(rawValue: port) ?? .any)
+        if thisDeviceOnly { parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: asked) }
+        guard let listener = try? thisDeviceOnly ? NWListener(using: parameters) : NWListener(using: parameters, on: asked) else {
+            return port == 0 ? ready(nil) : listen(0, thisDeviceOnly: thisDeviceOnly, into: place, ready: ready)
         }
         var told = false
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
@@ -225,16 +251,16 @@ public final class Relay: @unchecked Sendable {
                 ready(listener?.port?.rawValue)
             case .failed:
                 listener?.cancel()
-                if self.listener === listener { self.listener = nil }
-                guard !told else { return self.onStopped() }
+                if self[keyPath: place] === listener { self[keyPath: place] = nil }
+                guard !told else { return place == \.listener ? self.onStopped() : self.onPhonesStopped() }
                 told = true
                 // The port it had before is someone else's now: anywhere will do.
-                if port != 0 { self.listen(0, ready: ready) } else { ready(nil) }
+                if port != 0 { self.listen(0, thisDeviceOnly: thisDeviceOnly, into: place, ready: ready) } else { ready(nil) }
             default:
                 break
             }
         }
-        self.listener = listener
+        self[keyPath: place] = listener
         listener.start(queue: queue)
     }
 
@@ -262,6 +288,8 @@ public final class Relay: @unchecked Sendable {
         queue.async {
             self.listener?.cancel()
             self.listener = nil
+            self.phoneListener?.cancel()
+            self.phoneListener = nil
             for app in Array(self.games.keys) { self.endGame(app) }
             for room in Array(self.rooms.keys) { self.endRoom(room) }
             for waiting in self.greeting.values { waiting.peer.close(code: 1001) }

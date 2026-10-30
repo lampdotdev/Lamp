@@ -72,8 +72,9 @@ async function settled(g) {
 // Phaser's game config (`render`, `fps`…), never its size, scale, input, audio or loop, which are Lamp's. `snapshot`,
 // `restore`, `busy`, `assetChanged` and `dispose` keep the player's place through a change, as game() takes them; when
 // the game's code runs again for a change, this Phaser.Game goes and the new code's starts. The scenes are
-// made during game()'s init, so pendingRestore() from lamp-game.js gives the snapshot in the first scene's init or
-// create, and a game goes straight to where the player was without showing its title.
+// made during game()'s init, so the state a game registered (`hot(import.meta).state`) is back by the first scene's init
+// or create, as is what pendingRestore() from lamp-game.js gives, and a game goes straight to where the player was
+// without showing its title.
 export async function phaser({ scenes, pixelArt = false, physics, background = '#000000', touch, keyboard, config = {},
                                snapshot, restore, busy, assetChanged, dispose }) {
     // What lamp-game.js fits to the screen at 1920x1080's shape: Phaser fits its canvas inside it (Phaser's FIT, so a

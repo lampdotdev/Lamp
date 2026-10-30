@@ -525,15 +525,27 @@ disposers run, and what it left running is taken away (lamp-game.js watches the 
 contexts and workers from the start, the runtime's own going through the browser's functions it kept first); the
 page's head (all but its scripts) and body are put back as the HTML now has them, Lamp's elements kept; every module
 of the game runs again in order, loaded from its source with its imports pointed at the new versions; and the module
-that starts the game calls game() again, whose init starts from the snapshot taken before (`pendingRestore()`, as after
-a reload). What stays is what a reload loses: the WebGL or WebGPU context and its compiled shaders, the files the
+that starts the game calls game() again, whose init starts from what it registered and the snapshot taken before
+(`pendingRestore()`, as after a reload). What stays is what a reload loses: the WebGL or WebGPU context and its compiled shaders, the files the
 runtime loaded, the sound, the controllers, and the parts the game kept with `hot(import.meta).keep(key, build, {
 inputs })`. A kept part is built again when the module that kept it or one it imports changed, its build function's
 code changed, or one of its `inputs` isn't the same object (a part built again builds again the parts made from it);
 for the module that starts the game, which imports everything, it goes by the modules whose imports the build function
 names, and a game bundled from TypeScript, one file, builds again everything it kept. New York keeps its renderer, the
 ground's heights and each part of the city, so a change to its HUD runs again in about 2 s instead of a 16 s start,
-and a change to its trees builds only the street details, traffic and road paint again. While the code runs again, the last frame and
+and a change to its trees builds only the street details, traffic and road paint again. What a game registers lasts
+beyond that (lamp-game.js, "What the game registers"; the scaffold and the game skill start every new game with it):
+`live.renderer(build)` is one entry of `keep` outside any module (`lasting`, so no change of a module marks it stale,
+only its build's own code), `live.camera` keeps the object and its pose, lens and target, and `live.state` a plain
+object filled in place, so whoever holds it keeps holding it. All of it is `heldNow()`, plain JSON beside the game's own
+snapshot in what `takeSnapshot` gives (`held`), so it goes wherever a snapshot goes: taken again as the old code stops
+for a run in place, kept in sessionStorage for a page that opens again, and in localStorage for a newer install. It's
+put back after `claim()` and before init, since what's registered at a module's top level runs before the page knows
+where it starts, and the cameras again after init, so what a start sets on one doesn't win. A swap keeps what's
+registered as it is, so a new version that declares any of it differently refuses the swap (`redeclare`) and the code
+runs again, from what was held before that swap, which a swap gone wrong may have changed. This is a promise about
+what's registered only: `game({ renderer })` gets a renderer after it's built, so one the game makes for itself can't
+be reused, and three.js code the runtime never sees can't be kept. While the code runs again, the last frame and
 the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
 Lamp's light crosses the window (`Store.pageShown`): the smoke built over the window stays through the run, rather than
 going as the page first answers. A swap gets the light at once; a page that opens again says `shown` at its first frame;
@@ -569,7 +581,12 @@ the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) 
 Swift built into the player and every compiled game as one file (`GameKit.controllerKit`, which build.sh writes). As
 `Lamp.controllers` starts, it serves the page (`PhonePageServer`) and runs a `Relay` in the game's process, each on a
 port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
-the game quitting close both. The session is the page's, so it outlives a run of the game's code: lamp.js's service
+the game quitting close both. A shared game's page is held to its sites by rules fixed as its document loads, so its
+relay comes first: a port on 127.0.0.1 alone is taken before the document is served and named in its rules for
+connecting only (`ControllerRuntime.pageSites`), phones join at a port of their own that opens with the session, and
+the held port stays the game's through every stop until it quits, so nothing else can take a port a live page may
+reach. One lost anyway is asked for back, and if it's gone the pages open again under the new one
+(`onPagePortMoved`, `LampPageGuard.retirePages`). The session is the page's, so it outlives a run of the game's code: lamp.js's service
 takes its timers from the browser as the page loads, before `watch` wraps them, so `takeAwayLeft` never reaches its
 beat, its renewal or its link. A run's own callbacks are the run's (`watchPhones`, as `watch` follows its listeners; a
 kept part's stay with the part): the old run's end as it stops (`holdPhones`), a `stop()` from its `dispose` is

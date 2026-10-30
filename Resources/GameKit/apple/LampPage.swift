@@ -138,10 +138,15 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
 /// would leave phones holding buttons on a game that can't hear them, so leaving ends the session (every phone let go,
 /// both listeners closed) and coming back opens a new one at the page's next ask, which phones join by scanning its
 /// code again. A moment away that isn't leaving (a permission's alert, the app switcher pulled half up) ends nothing.
+///
+/// A page held to its sites keeps the port it reaches the relay at through all of that, on this device alone, since its
+/// rules name that port for as long as it's open (`ControllerRuntime`'s `holdingPagePort`).
 enum LampControllers {
     private static let runtime: ControllerRuntime = {
         let runtime = ControllerRuntime(app: LampInstall.slug.isEmpty ? (Bundle.main.bundleIdentifier ?? "game") : LampInstall.slug,
-                                        page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"))
+                                        page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"),
+                                        holdingPagePort: LampPageGuard.current != nil)
+        runtime.onPagePortMoved = { DispatchQueue.main.async { MainActor.assumeIsolated { LampPageGuard.retirePages() } } }
         #if os(iOS)
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
             runtime.stop {}
@@ -149,6 +154,9 @@ enum LampControllers {
         #endif
         return runtime
     }()
+
+    /// What a held page's rules let it connect to for its phones.
+    static var pageSites: [String] { runtime.pageSites() }
 
     /// Serves this phone page from now on, under the session that's open (`LampPageLive`). Nil: the bundle's, by its own
     /// version.
@@ -704,7 +712,9 @@ enum LampPageGuard {
 
     /// The headers every file of the page is served with.
     static func headers(scheme: String) -> [String: String] {
-        guard let csp = current?.contentSecurityPolicy(own: own(scheme)) else { return [:] }
+        // The game's own relay is its host's to name, for this launch only: it's never one of the page's sites, kept with
+        // the ones the person allowed, or anything the page says.
+        guard let held = current, let csp = held.contentSecurityPolicy(own: own(scheme), connect: LampControllers.pageSites) else { return [:] }
         // A name looked up ahead is a request too: a page could spell what it has in one.
         return ["Content-Security-Policy": csp, "X-DNS-Prefetch-Control": "off"]
     }
@@ -713,6 +723,7 @@ enum LampPageGuard {
     /// of Lamp's own the page can't reach (it hears only refusals WebKit made, never ones the page made up).
     @MainActor static func attach(to configuration: WKWebViewConfiguration, scheme: String) {
         guard policy != nil else { return }
+        forgetOldRelays()
         let world = WKContentWorld.world(name: "LampGuard")
         configuration.userContentController.add(LampPageRefused(scheme: scheme), contentWorld: world, name: "lampRefused")
         configuration.userContentController.addUserScript(WKUserScript(source: """
@@ -725,6 +736,16 @@ enum LampPageGuard {
         NetworkPolicy.holdBack(configuration.preferences)
     }
 
+    /// A game's relay was once refused here, and the port the person allowed for it was that launch's alone: what's left
+    /// of those is a port on this device nothing should be able to reach, so it goes, once, for a game that takes phones.
+    private static func forgetOldRelays() {
+        let done = "LampRelayAllowancesForgotten"
+        guard !UserDefaults.standard.bool(forKey: done),
+              let phone = Bundle.main.resourceURL?.appendingPathComponent("Phone/index.html"), FileManager.default.fileExists(atPath: phone.path) else { return }
+        UserDefaults.standard.set(allowed.filter { !$0.hasPrefix("ws://127.0.0.1:") }, forKey: allowedKey)
+        UserDefaults.standard.set(true, forKey: done)
+    }
+
     private static let watchers = NSMapTable<WKWebView, LampPageWatcher>.weakToStrongObjects()
 
     /// Where the page may go, decided for every navigation of its window and frames.
@@ -734,6 +755,11 @@ enum LampPageGuard {
         watchers.setObject(watcher, forKey: view)
         view.navigationDelegate = watcher
         view.uiDelegate = watcher
+    }
+
+    /// Every page opened again, for rules that have changed under them: what it runs goes with it, its workers too.
+    @MainActor static func retirePages() {
+        for case let view as WKWebView in watchers.keyEnumerator().allObjects { view.reload() }
     }
 
     /// Lets the page reach `site` from now on, on this device, and opens the page again with it.
@@ -834,7 +860,8 @@ enum LampPageGuard {
               let view = message.webView, let policy = LampPageGuard.current else { return }
         let site = NetworkPolicy.origin(address)
         FileHandle.standardError.write(Data("Lamp blocked this shared app's request to \(site ?? String(address.prefix(200))) (\(said["what"] as? String ?? ""))\n".utf8))
-        guard policy.mayConnect, let site, !shown.contains(site) else { return }
+        // The game's own relay is never offered: an allowance is kept, and that port is this launch's.
+        guard policy.mayConnect, let site, !shown.contains(site), !LampControllers.pageSites.contains(site) else { return }
         shown.insert(site)
         waiting.append(site)
         showNext(over: view)

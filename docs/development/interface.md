@@ -57,7 +57,9 @@ end in "Configure providers…", which leads here); **Memory**, what Lamp rememb
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),
-`ImageModelRow`, and `.settingsPane()` at the end of each tab. A PR that adds to Settings says which tab, and why the option needs to exist at all.
+`ImageModelRow`, and `.settingsPane()` at the end of each tab. Something a choice needs fetched first (MLX's install,
+llama.cpp for a GGUF model) is one orange line under it, "Needs a one-time …", with its button and then its progress
+in the button's place, as a model's download shows. A PR that adds to Settings says which tab, and why the option needs to exist at all.
 
 ### The app's info panel
 

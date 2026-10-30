@@ -230,7 +230,7 @@ struct WishDesk: View {
     private func open(_ item: DeskList.Item, asking request: String = "") {
         switch item {
         case .wish(let row): store.change(row.project, asking: request)
-        case .fresh(let fresh): if let copy = store.open(starter: fresh.starter, asking: request) { picked = copy.id }
+        case .fresh(let fresh): store.open(starter: fresh.starter, asking: request) { picked = $0.id }
         }
     }
 
@@ -1329,23 +1329,33 @@ extension Store {
     /// New Copy of the Original: a fresh copy of the starter a copy came from, as this Lamp ships it, put on the desk as a
     /// remix link from the site puts one (`put(starter:)`), and opened with its chat. The copy it was asked from stays.
     func duplicateOriginal(of project: LampProject) {
-        guard let starter = Starters.shipped(of: project), let copy = put(starter: starter) else {
-            NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of the original \(project.name).")).runModal()
+        let refused = Sharing.ImportError("Lamp couldn't make a copy of the original \(project.name).")
+        guard let starter = Starters.shipped(of: project) else {
+            NSAlert(error: refused).runModal()
             return
         }
-        open(fromDesk: copy)
+        fetching(starter, asking: "duplicate", alerting: true) { [self] starter in
+            guard let copy = put(starter: starter) else {
+                NSAlert(error: refused).runModal()
+                return
+            }
+            open(fromDesk: copy)
+        }
     }
 
-    /// A starter under the desk's Starter apps with no untouched copy on the desk, opened or remixed there: copied now,
-    /// as a remix link from the site copies one (`put(starter:)`), then opened as Open opens any wish, asking `request`
-    /// of it when there is one. So a starter waits on disk only as Lamp ships it, never as a second wish.
-    @discardableResult func open(starter: Starters.Starter, asking request: String = "") -> LampProject? {
-        guard let copy = put(starter: starter) else {
-            NSAlert(error: Sharing.ImportError("Lamp couldn't open \(starter.name).")).runModal()
-            return nil
+    /// A starter under the desk's Starter apps with no untouched copy on the desk, opened or remixed there: its files
+    /// fetched when they aren't here (`fetching`, its row saying "Getting it ready…" meanwhile), copied as a remix link
+    /// from the site copies one (`put(starter:)`), then opened as Open opens any wish, asking `request` of it when there
+    /// is one, and handed to `opened`. So a starter waits on disk only as Lamp ships it, never as a second wish.
+    func open(starter: Starters.Starter, asking request: String = "", opened: @escaping @MainActor (LampProject) -> Void = { _ in }) {
+        fetching(starter, asking: "open:" + request) { [self] starter in
+            guard let copy = put(starter: starter) else {
+                NSAlert(error: Sharing.ImportError("Lamp couldn't open \(starter.name).")).runModal()
+                return
+            }
+            change(copy, asking: request)
+            opened(copy)
         }
-        change(copy, asking: request)
-        return copy
     }
 
     /// Send Changes Back… from the desk: the wish's chat, with the card that sends them (`ContributeCards`), as the

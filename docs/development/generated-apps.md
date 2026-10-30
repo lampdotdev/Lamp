@@ -272,7 +272,8 @@ A repository opens in Lamp as a shared file does (`RepoImport`): File → Open f
 name, with a branch, tag or commit after `/tree/` or `/commit/`; `RepoImport.source`), Import Shared Wish… takes a
 folder it was cloned into, and a wish's link may name it (`lamp://wish?file=https://github.com/…`, `Store.take(exact:)`).
 The tree is fetched one commit deep with Lamp's own git, confined as every git command of Lamp's is (`Versions.git`, in
-a folder of Lamp's with the network open, never asking for a sign-in), then copied into an import folder without the
+a folder of Lamp's with the network open, never asking for a sign-in), or with no git on the Mac from GitHub's archive
+(`RepoArchive`, below), then copied into an import folder without the
 repository's records (`.git`, builds) and the shared file beside the code, held to a shared file's limits, and read as
 a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the same checks, Lamp's own files written
 afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
@@ -287,6 +288,18 @@ A wish opened from one repository and put on another gets a second link for the 
 `Remix.sameLink`): the chain keeps where it came from, and `Credits.origin(own:)`, the last link naming a repository
 that isn't the wish's own, is what the info panel's Visit and Check for Updates… and Send Changes Back go by
 (`AppInfoView.origin`).
+
+A Mac without Apple's tools has no git (`/usr/bin/git` only opens their installer), so a repository link fetches the
+archive GitHub makes of one commit (`RepoArchive`), over a session of its own with no cookies, nothing of the person's
+and no redirects: the branch or tag is settled to a commit first (`resolve`), and the archive is held to that commit by
+the two places it names it. Lamp reads the tar itself rather than handing it to a tool. Everything is checked before
+anything is written, and one bad entry refuses the whole repository: an absolute path or a step up, a link, anything
+but a plain folder or file, two names the disk would take for one, a file where a folder is, or more than a shared file
+may hold (the download, what it unpacks to, and how many files). It's written into a new folder open only to this user,
+with no file left runnable. What was fetched goes through the import beside the tree (`RepoArchive.Fetched`, kept by
+`WaitingImport` in its own folder over the tree), so the credits name the repository and commit Lamp asked for, read from
+nothing in the repository, and no `.git` is made up. A tree that holds no wish goes the way a project does
+(`offerToAdapt`). An update is a merge, which takes git, so it waits for Apple's tools.
 
 Every wish with somewhere to be updated from has the same Check for Updates… in its Credits, Review Update… once
 there is one, with a row that says "An update is available" or "Your app is up to date" (`AppUpdates`). The check asks

@@ -384,7 +384,7 @@ extension Store {
     func reviewUpdate(_ project: LampProject) {
         // The copy itself: its chat is where its update is.
         if AppUpdates.Job.load(project) != nil { return showChat(project.id) }
-        // A starter's copy takes the starter in Lamp's bundle, from its chat (Wish Info is there).
+        // A starter's copy takes the starter this Lamp pins, from its chat (Wish Info is there).
         if Self.followsShippedStarter(project) { return updateFromOriginal(project, opening: false) }
         // Being set up: one copy at a time.
         if preparingUpdates.contains(project.id) { return }

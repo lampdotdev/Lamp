@@ -73,6 +73,13 @@ final class StartersTests: XCTestCase {
             XCTAssertEqual(try String(contentsOf: starter.tree.appendingPathComponent(".git/HEAD"), encoding: .utf8)
                 .trimmingCharacters(in: .whitespacesAndNewlines), commit, "\(name)'s tree isn't at its commit: run scripts/fetch-starters.sh")
             let tree = starter.tree
+            // A starter's tree is fetched as GitHub's archive of its commit and checked against the pin as git hashes it
+            // (`StarterDownloads`): were Lamp's hash ever to differ from git's, no starter would open.
+            let object = try git(["cat-file", "commit", "HEAD"], in: tree)
+            let named = try XCTUnwrap(StarterDownloads.treeNamed(by: object, commit: commit), "\(name)'s commit object isn't its commit")
+            if try git(["status", "--porcelain"], in: tree).isEmpty {
+                XCTAssertEqual(try StarterDownloads.treeHash(of: tree), named, "\(name): Lamp hashes its tree as git doesn't")
+            }
             XCTAssertTrue(fm.fileExists(atPath: tree.appendingPathComponent("APP.md").path), name)
             // A Mac app's code starts at App.swift; a game or a screen is its page (Lamp writes the Swift around it).
             let entry = starter.kind.target.recipe.language == .swift ? "Sources/App.swift" : "Web/index.html"
@@ -96,5 +103,17 @@ final class StartersTests: XCTestCase {
             // What the desk shows when the pointer rests on it, before anyone has opened it.
             XCTAssertNotNil(NSImage(contentsOf: Starters.preview(of: starter)), "\(name) ships no preview.png")
         }
+    }
+
+    private func git(_ arguments: [String], in folder: URL) throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["git", "-C", folder.path] + arguments
+        let out = Pipe()
+        process.standardOutput = out
+        try process.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return data
     }
 }

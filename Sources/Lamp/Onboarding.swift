@@ -663,7 +663,12 @@ private struct LampAgentOptions: View {
         case .openRouter:
             if KeyStore.key(for: "openrouter") != nil { use(provider: "openrouter", model: nil) }
         case .onThisMac:
-            if localChoice.hasPrefix("installed:") { use(provider: Builder.localProvider, model: String(localChoice.dropFirst(10))) }
+            if localChoice.hasPrefix("installed:") {
+                let id = String(localChoice.dropFirst(10))
+                use(provider: Builder.localProvider, model: id)
+                // Picked to run here: what runs it comes now, rather than with the first request.
+                if LocalModels.model(id)?.format == .gguf { local.getServer() }
+            }
         default:
             break
         }
@@ -777,6 +782,18 @@ private struct LampAgentOptions: View {
             }
             if let error = local.errors[spec.id] {
                 Text(error).font(.system(size: 12)).foregroundStyle(.orange)
+            }
+        } else if let progress = local.progress[LocalModels.serverID] {
+            HStack(spacing: 10) {
+                Text("Downloading what runs it on this Mac.").font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+                ProgressView(value: progress).frame(width: 100)
+            }
+        } else if let error = local.errors[LocalModels.serverID] {
+            HStack(spacing: 10) {
+                Text(error).font(.system(size: 12)).foregroundStyle(.orange)
+                Spacer()
+                Button("Try Again") { local.getServer() }.buttonStyle(PaperButtonStyle(.outline))
             }
         } else if isUsing(.onThisMac) {
             ready("\(local.installed.first { "installed:" + $0.id == localChoice }?.name ?? "This model") will make your apps.")
