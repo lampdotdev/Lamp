@@ -652,8 +652,13 @@ inline std::vector<std::string> lines_of(std::string_view head) {
 }
 
 // The answer to a request's head (its request line and headers, without the blank line).
+// Whether anything is at a page's steps, readable or not, so a reach file that's there but can't be read (`Reader` gives
+// nothing for both) holds the page to no sites rather than none at all. A host that gives none takes every reach file as
+// there: a page fails closed.
+using Exists = std::function<bool(std::vector<std::string> const& steps)>;
+
 inline Answer answer(std::string_view head, std::set<std::string> const& hosts, std::optional<uint16_t> relay_port,
-                     std::string const& app, Reader const& read) {
+                     std::string const& app, Reader const& read, Exists const& exists = {}) {
     auto lines = lines_of(head);
     std::string const& first = lines[0];
     auto space = first.find(' ');
@@ -663,7 +668,8 @@ inline Answer answer(std::string_view head, std::set<std::string> const& hosts, 
     std::string target = first.substr(space + 1, end == std::string::npos ? std::string::npos : end - space - 1);
     if (method != "GET" && method != "HEAD") return { 405, "text/plain; charset=utf-8", "Not allowed" };
     auto host = header(lines, "host");
-    auto sites = reach(read({ reach_file }));
+    auto file = read({ reach_file });
+    auto sites = file || !exists || exists({ reach_file }) ? reach(file ? file : std::optional<std::string>("")) : std::nullopt;
     auto page = answer_path(target, host, hosts, relay_port, app, read, sites.has_value());
     page.head = method == "HEAD";
     if (names(host, hosts)) page.policy = policy(host, relay_port, sites);

@@ -910,7 +910,8 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         conn->answered = true;
         if (session != phone_session || !phones) { try { conn->socket.Close(); } catch (...) {} return; }
         if (!conn->relay) {
-            auto answer = lampc::page::answer(head, phone_hosts, relay_port, phone_app, [this](auto const& steps) { return phone_file(steps); });
+            auto answer = lampc::page::answer(head, phone_hosts, relay_port, phone_app, [this](auto const& steps) { return phone_file(steps); },
+                                              [this](auto const& steps) { return phone_exists(steps); });
             return phone_write_then_close(conn, lampc::page::response(answer));
         }
         auto upgrade = lampc::ws::upgrade(head);
@@ -942,6 +943,16 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         fclose(file);
         if (read != out.size()) return std::nullopt;
         return out;
+    }
+
+    // Whether anything is at the steps in the package, readable or not: only a name that isn't there at all is absent, so
+    // a reach file that can't be read holds the page to no sites.
+    bool phone_exists(std::vector<std::string> const& steps) {
+        std::wstring path = installed + L"\\Phone";
+        for (auto const& step : steps) path += L"\\" + std::wstring(to_hstring(step));
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return true;
+        DWORD error = GetLastError();
+        return error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND;
     }
 
     // The page opening its link to the relay: the link goes into the relay here, as the one peer that may be the game's host.

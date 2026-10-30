@@ -107,7 +107,12 @@ try {
   assert.equal(r.policy, undefined, 'an own app\'s phone page has no policy');
   assert.deepEqual(JSON.parse((await get(pagePort, '/lamp-relay.json')).body), { app: 'game.test', port: relayPort });
   fs.writeFileSync(path.join(root, 'lamp-reach.json'), shared);
-  step('the page\'s rules name only its relay and the sites its reach file names, as the LG service writes them; an own app\'s page has none');
+  // A reach file that's there but can't be read holds the page to no sites: never to none at all.
+  fs.chmodSync(path.join(root, 'lamp-reach.json'), 0o000);
+  r = await get(pagePort, '/');
+  fs.chmodSync(path.join(root, 'lamp-reach.json'), 0o644);
+  assert.equal(r.policy, lg.policy(`127.0.0.1:${pagePort}`, relayPort, { only: [] }), 'an unreadable reach file holds the page to no sites');
+  step('the page\'s rules name only its relay and the sites its reach file names, as the LG service writes them; an own app\'s page has none, and an unreadable reach file holds a page to no sites');
 
   // A socket from another site's page is refused before it's a WebSocket.
   const refused = await new Promise((resolve) => {

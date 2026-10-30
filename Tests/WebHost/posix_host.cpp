@@ -134,10 +134,19 @@ static std::optional<std::string> file(std::vector<std::string> const& steps) {
     struct stat st;
     if (lstat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) return std::nullopt;
     FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return std::nullopt;
     std::string out(st.st_size, '\0');
     fread(out.data(), 1, out.size(), f);
     fclose(f);
     return out;
+}
+
+// Whether anything is at the steps, readable or not: only a name that isn't there at all is absent.
+static bool exists(std::vector<std::string> const& steps) {
+    std::string path = root;
+    for (auto const& s : steps) path += "/" + s;
+    struct stat st;
+    return lstat(path.c_str(), &st) == 0 || (errno != ENOENT && errno != ENOTDIR);
 }
 
 static void heard(std::shared_ptr<Conn> const& c, std::string_view bytes) {
@@ -149,7 +158,7 @@ static void heard(std::shared_ptr<Conn> const& c, std::string_view bytes) {
     std::string head = c->buffer.substr(0, end), rest = c->buffer.substr(end + 4);
     c->answered = true;
     if (!phones) { c->dead = true; return; }
-    if (!c->relay) { c->out += page::response(page::answer(head, hosts, relay_port, "game.test", file)); c->close_after = true; return; }
+    if (!c->relay) { c->out += page::response(page::answer(head, hosts, relay_port, "game.test", file, exists)); c->close_after = true; return; }
     auto up = ws::upgrade(head);
     if (!up) { c->out += ws::refused(400); c->close_after = true; return; }
     if (!phones->admits(up->origin)) { c->out += ws::refused(403); c->close_after = true; return; }
