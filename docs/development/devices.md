@@ -479,14 +479,30 @@ is the same, `Store.pageInPlace` answers with every file that differs from the i
 fetches each (`/app/page/file`), serves it in place of its bundle's (`LampPageFiles`) and keeps it for the next launch of
 the same bundle, then tells the page (`window.__lampLive`). lamp-game.js decides, and says which to Lamp
 (`/app/page/state`), which waits for that word: files the runtime loaded (`asset`, `texture`, `model`, `sound.load`) go into the
-running game, with the game's `assetChanged(path)` for what it made of them ("swapped"); anything else (code, or a file
-nothing put in) opens the page again with the game's `snapshot()` kept in sessionStorage ("reloading"). The new copy takes
+running game, with the game's `assetChanged(path)` for what it made of them, and so does code where it can ("swapped"):
+a stylesheet the page links is replaced, and a changed module is imported again under a new query and put into what
+the running game holds. A module that takes its changes calls `hot(import.meta).accept()` (lamp-game.js, "Swapping code
+in"); the runtime reads the game's modules from the page for what imports what, and a changed module that doesn't take
+its changes runs again for those above it that do (loaded from its source, with their imports pointed at the new
+versions and `import.meta` written out), up to each module that does, as Vite's hot updates go. There each exported
+class gets the new version's methods on its prototype (every version's, so objects made by any version run the new
+code with their fields kept; `Symbol.hasInstance` makes one an instance of every version), and each exported plain
+object the values the change changed, told from what the game changed as it ran by the values each version made. Native
+modules can't rebind an importer's bindings, so a change those can't take opens the page again: a class whose
+constructor or fields changed (read off its source without its methods) or that has private members (their brand is
+the old class's), an exported function or value that changed,
+or code outside the classes of a module exporting functions; and the HTML, a module nothing takes changes for (the one
+that builds the world), a circle of imports, or new code throwing in its first second (`swapGuard`), which opens it
+from the snapshot taken before the swap. The game's `accept((next, { changed }) => …)` may build again what a changed
+method built once, or return false to open the page again. Anything else (a file nothing put in, or code that can't be
+swapped) opens the page again with the game's `snapshot()` kept in sessionStorage ("reloading", with the page's reason
+as `why`, which the agent's look is told: `PageLive.reason`). The new copy takes
 it before init (`claim`), and the game reads it with `pendingRestore()` as it starts, in init or its first Phaser scene,
 so it builds the place the player was in and never shows its title first; a game that doesn't read it is given it in
 `restore(state)` after init, before the first frame. Either way it's taken from storage as it's read, so it's restored
 once, and an error while starting from it (init, a scene's create, restore, the first frame) opens the page once more,
 fresh, and the log says so; while `busy()` is true it waits
-for the next moment it isn't ("held"), which the chat shows as its Reload line and the Mac's title bar as its Reload
+for the next moment it isn't ("held"; a swap goes in at once, busy or not), which the chat shows as its Reload line and the Mac's title bar as its Reload
 (`awaitReload`); Reload puts it in at once (`PageLive.putInNow`), and the page shows "Reload to apply" itself where the
 app has no Reload of Lamp's (the simulator). No word within 20 s, or a copy Lamp hasn't heard from, and the app is
 installed as before. On the Mac the build is installed when the app closes (`LiveReload.awaitInstall`). The input the

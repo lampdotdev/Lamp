@@ -862,7 +862,8 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
 /// Lamp's changes to the page while the app is open. The app asks Lamp what has changed (a request Lamp answers when
 /// there's a change, or after a while with nothing), fetches the files that differ from its bundle into its caches, has
 /// `LampPageFiles` serve them in place of the bundle's, and tells the page (`window.__lampLive` in lamp-game.js), which
-/// puts new pictures, models and sounds in as it runs and opens itself again for new code, keeping the player's place.
+/// puts new pictures, models, sounds and the code its modules take in as it runs, and opens itself again for code they
+/// don't, keeping the player's place.
 /// What the page did is told back to Lamp, which says so in the chat. The files are kept for the next launch of this
 /// same bundle, so the app opens as Lamp last changed it; a new bundle (Lamp installed the app again) starts from its own.
 @MainActor final class LampPageLive: NSObject, WKScriptMessageHandler {
@@ -985,11 +986,14 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     /// What the page did with a change (lamp-game.js): put in, reopened, waiting for a pause, back where it was.
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, let said = message.body as? [String: Any], let state = said["state"] as? String else { return }
-        tell(said["gen"] as? Int ?? gen, state)
+        tell(said["gen"] as? Int ?? gen, state, why: said["why"] as? String)
     }
 
-    private func tell(_ gen: Int, _ state: String) {
-        Task { _ = try? await call("/app/page/state", ["gen": gen, "state": state, "epoch": epoch, "place": Self.place], timeout: 10) }
+    /// `why` is the page's reason for opening again or holding a change: code it couldn't swap in.
+    private func tell(_ gen: Int, _ state: String, why: String? = nil) {
+        var body: [String: Any] = ["gen": gen, "state": state, "epoch": epoch, "place": Self.place]
+        if let why { body["why"] = String(why.prefix(300)) }
+        Task { _ = try? await call("/app/page/state", body, timeout: 10) }
     }
 
     private func call(_ path: String, _ body: [String: Any], timeout: TimeInterval) async throws -> [String: Any] {

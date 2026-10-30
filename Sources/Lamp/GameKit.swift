@@ -1149,8 +1149,15 @@ extension Agent.Rules {
     data through lamp-game.js (`texture('bricks.png')`, `model('car.glb')`, `sound.load('hit.wav')`, `asset('level.json')`), \
     never by a URL of your own, so a new copy goes into the running game; where the game makes something of its own from \
     a file (a material from shader source, clones of a model, a level from JSON), give game() `assetChanged(path)`, which \
-    makes it again and returns true. While a match, race or round is on, `busy()` returns true: a change of code waits \
-    for the next pause and the person can press Reload. A change of code with no snapshot starts the game again.
+    makes it again and returns true. A change of code goes into the running game without the page opening again \
+    where the game's modules take it: keep the world (the city, the level's geometry, what's slow to build) in a module \
+    that rarely changes, and what changes often (vehicles and their tuning, missions, the HUD's code, enemies, shader \
+    settings) in modules that end with `hot(import.meta).accept()` from lamp-game.js, keeping their state in objects of \
+    the classes they export; the game skill ("Changes while it's played") says how, and the log says what was swapped \
+    and why a change wasn't. A stylesheet swaps by itself; the HTML, the world's module and the module that starts the \
+    game open the page again from the snapshot. While a match, race or round is on, `busy()` returns true: a change \
+    that opens the page again waits for the next pause and the person can press Reload. A change of code with no \
+    snapshot that can't be swapped starts the game again.
     """
 
     static let gameWebSound = """

@@ -143,14 +143,44 @@ game is written to keep the player's place through one:
   prompt, a fade in) built or shown at all. One start path, given the state or not, is the pattern: never start fresh
   and then put the place back, which leaves the title over the game and input in the title's mode. Keep snapshot()
   current as state is added, and let the start take an older snapshot: a field it lacks keeps its start value. Without
-  a snapshot a change of code starts the game again, from its saves. (`restore(state)`, called after init when the
+  a snapshot a change of code that can't be swapped in (below) starts the game again, from its saves. (`restore(state)`, called after init when the
   game didn't read pendingRestore(), is still taken from games written that way; a new game reads the state at start.)
 - Pictures, models, sounds and data load through the runtime (`texture()`, `model()`, `sound.load()`, `asset()`), never
   by a URL of the game's own: a new copy of one of those goes into the running game with no reload. What the game makes
   of a file itself (a material from shader source, clones of a model, a mixer for its animations, a level from JSON) is
   made again in `assetChanged(path)`, which returns true when it has.
-- `busy()` is true while a match, race or round is on: a change of code then waits for the next pause, and the person
-  can put it in at once with Reload.
+- Code goes into the running game too, with no reload, wherever the game's modules take it, and that's how a game is
+  written, so the world it built (the scene, the geometry, the compiled shaders) and the player stay through most
+  changes. Build the world, and anything slow to build, in a module that rarely changes (`world.js`, the level's
+  geometry), and start the game from one that only puts the parts together (`game.js`). Put what changes as the
+  person plays (a vehicle and its tuning, the player's moves, missions, enemies, the HUD's code, the camera, a
+  shader's settings) in modules of their own, each a class the game makes an object of, with the object holding the
+  state and the module ending with `hot(import.meta).accept()` from lamp-game.js:
+
+  ```js
+  import { hot } from '../lamp-game.js';
+  const CAR = { topSpeed: 36, acceleration: 4.5 };   // tuning, read where it's used
+  export class Car {
+      constructor(scene) { this.mesh = buildCar(); scene.add(this.mesh); this.speed = 0; }
+      update(dt, pad) { this.speed = Math.min(CAR.topSpeed, this.speed + pad.rt * CAR.acceleration * dt); … }
+  }
+  hot(import.meta).accept();
+  ```
+
+  When Car's methods change, every Car the game made runs the new ones with its fields (its speed, its mesh) kept, and
+  the new constants with them. Keep it so: export every class a module defines and the game calls (one kept to itself
+  keeps its old methods), read tuning where it's used rather than copying it into fields in the constructor, and keep
+  state in the objects, not in variables at the module's top. An exported plain object (`export const TUNING = {…}`)
+  takes the values a change changed and keeps the rest. What the constructor built once stays as built: when a change
+  is to that (the car's shape), give `accept((next, { changed }) => …)` the rebuild, or have it return false, which
+  opens the page again. `hot(import.meta).dispose(data => …)` takes away what a version made at its top level (a
+  listener, an element), keeping in `data` what the next version reads as `hot(import.meta).data`. A stylesheet goes
+  in by itself. The page opens again from the snapshot for the HTML, the world's module and the one that starts the
+  game, and for a change to a class's constructor or fields (or to a class with private `#` members), to an exported function or value, or anywhere in a
+  module that doesn't take its changes and that no module above it takes them for; the log says what was swapped
+  and, when it wasn't, why. A game bundled from TypeScript is one file, so its code always opens the page again.
+- `busy()` is true while a match, race or round is on: a change that opens the page again then waits for the next
+  pause, and the person can put it in at once with Reload. A swap goes in at once.
 - On a phone, Android, a TV or the Xbox a change arrives when Lamp installs the game again, and the runtime restores the
   last snapshot then, once.
 

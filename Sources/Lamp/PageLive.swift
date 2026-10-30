@@ -7,8 +7,9 @@ import Foundation
 /// there's a change or a while has passed. When a build changes only the page (Web/: its code, pictures, models,
 /// sounds), Lamp answers with the files that differ from what that copy of the app was installed with, which the app
 /// fetches and serves in place of its own; a page without the game runtime opens itself again; a game's (lamp-game.js) puts new pictures, models and sounds into the running
-/// game, opens itself again for new code keeping the player's place (`snapshot()` and `restore()`), or, while the game
-/// says a match is on (`busy()`), waits for a pause. The app tells Lamp which it did, and the chat says so: a change that
+/// game, and new code where its modules take it (`hot(import.meta).accept()`), opens itself again for code that can't be
+/// swapped in, keeping the player's place (`snapshot()` and `restore()`), or, while the game says a match is on
+/// (`busy()`), waits for a pause. The app tells Lamp which it did, and the chat says so: a change that
 /// waits shows the chat's Reload, which puts it in at once.
 /// Anything else in the build (the app's Swift, its package, what it declares) reopens the app as before. So does a
 /// copy Lamp didn't install or isn't hearing from.
@@ -25,7 +26,7 @@ import Foundation
         case cannot
         /// The open copy already has it.
         case unchanged
-        /// In, as the page says it went (`swapped`, `reloading`…).
+        /// In, as the page says it went: `swapped` into the running game, or `reloading` with the player's place kept.
         case went(String)
         /// Waiting for a pause in the game, or the person's Reload.
         case held
@@ -60,6 +61,9 @@ import Foundation
     private var listening: [Key: [(id: UUID, waiter: CheckedContinuation<Void, Never>)]] = [:]
     private var deciding: [Key: (gen: Int, answer: CheckedContinuation<String?, Never>)] = [:]
     private var held: Set<Key> = []
+    /// Why the page last said it had to open again, or hold a change for a pause (code that couldn't be swapped in), by
+    /// app: for the agent's look, so its next change can be one that swaps.
+    private var reasons: [String: String] = [:]
     /// Asked of the copy on the Mac: what its page has saved, for a preview to start from (`saved(of:)`).
     private var asking: [String: CheckedContinuation<[String: String]?, Never>] = [:]
     /// What each app's copy on the Mac last said it had saved, by app, kept only while Lamp runs.
@@ -191,6 +195,9 @@ import Foundation
         return asked
     }
 
+    /// Why the page last opened again or held a change, in its words (lamp-game.js); nil after a swap.
+    func reason(_ project: LampProject) -> String? { reasons[project.id] }
+
     /// Whether a copy is holding a change for a pause.
     func holds(_ project: LampProject) -> Bool { held.contains { $0.id == project.id } }
 
@@ -295,6 +302,7 @@ import Foundation
         }
         let key = Key(id: project.id, place: place)
         let gen = body["gen"] as? Int ?? 0
+        if ["held", "reloading", "swapped"].contains(state) { reasons[project.id] = (body["why"] as? String).map { String($0.prefix(300)) } }
         if state == "held" { held.insert(key) }
         if let change = lastGiven(project, key), ["held", "swapped", "reloading"].contains(state) {
             var marked = change
