@@ -419,7 +419,7 @@ final class WishKeeper {
         guard Self.checksum(file.data) == file.sum, let sealed = try? AES.GCM.seal(file.data, using: sealing).combined else { return fetchFiles() }
         let url = bytesURL(file.scope, file.name, id: file.id, sum: file.sum)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        guard (try? sealed.write(to: url, options: .atomic)) != nil else { return }
+        guard Self.write(sealed, to: url) else { return }
         fileTries[file.scope + "\t" + file.name + "\t" + file.id] = nil
         dropStaleBytes(file.scope, file.name, id: file.id)
         fetchFiles()
@@ -493,9 +493,17 @@ final class WishKeeper {
             guard let plain = Self.json(list.mapValues { $0.mapValues(\.entry.json) }),
                   let sealed = try? AES.GCM.seal(plain, using: sealing).combined else { continue }
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try? sealed.write(to: url, options: .atomic)
+            Self.write(sealed, to: url)
         }
         unsaved = []
+    }
+
+    /// Written whole, readable by this account alone.
+    @discardableResult
+    private static func write(_ data: Data, to url: URL) -> Bool {
+        guard (try? data.write(to: url, options: .atomic)) != nil else { return false }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return true
     }
 
     // MARK: As the libraries have them
