@@ -666,7 +666,7 @@ enum AppAct {
                 // the schema leaves no room for the thinking, and a small model on this Mac can think past the
                 // turn's minute before it gives the step's few lines. Templates without the switch ignore it.
                 let (system, prompt) = planPrompt(r, tag: tag, retry: retry, schemaInPrompt: false)
-                let (text, _) = try await AppAI.viaOpenAICompatible("\(base)/v1/chat/completions", key: nil, prompt: prompt, images: [],
+                let (text, _) = try await AppAI.viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey, prompt: prompt, images: [],
                                                                     system: system, model: model, schema: planSchema(r), timeout: left,
                                                                     templateArgs: ["enable_thinking": false])
                 return (parse(plan: text, for: r), 0)
@@ -679,7 +679,7 @@ enum AppAct {
             }
             // An older mlx-lm takes neither tools nor a schema: the shape is asked for in words and checked here.
             let (system, prompt) = planPrompt(r, tag: tag, retry: retry, schemaInPrompt: true)
-            let (text, _) = try await AppAI.viaOpenAICompatible("\(base)/v1/chat/completions", key: nil, prompt: prompt, images: [],
+            let (text, _) = try await AppAI.viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey, prompt: prompt, images: [],
                                                                 system: system, model: model, timeout: left)
             return (parse(plan: text, for: r), 0)
         }
@@ -690,6 +690,7 @@ enum AppAct {
         var request = URLRequest(url: URL(string: "\(base)/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
+        request.setValue("Bearer \(LocalModels.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)

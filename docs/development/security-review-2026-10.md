@@ -7,11 +7,13 @@ medium or high) and the fix. Fixes small enough went into the same change as thi
 the rest are recommendations. The rules the design follows are in [approvals and privacy](approvals-and-privacy.md);
 what's in scope for a report is in `SECURITY.md`.
 
-**The short version.** No route on the Mac answers without something only its caller should hold: an app's token,
-the agent's token for the turn, a one-time ticket, a claim from a device's own address, or a process check by code
-signature. Websites can't reach any of it: a browser can't add the `Authorization` header without a preflight, the
-preflight is refused on the loopback listener, and a page that rebinds its name to this Mac is turned away by the Host
-check. What the design does not try to stop is a program running as the same person, which can read the same files
+**The short version.** No route of Lamp's own on the Mac answers without something only its caller should hold: an
+app's token, the agent's token for the turn, a one-time ticket, a claim from a device's own address, or a process
+check by code signature. Websites can't reach any of it: a browser can't add the `Authorization` header without a
+preflight, the preflight is refused on the loopback listener, and a page that rebinds its name to this Mac is turned
+away by the Host check. The two model servers Lamp starts beside its gateway are not Lamp's own code and had none of
+this: they answered anyone, websites included. The llama.cpp one now takes a key (**fixed**); the MLX one has no key
+to give and stays open (medium, below). What the design does not try to stop is a program running as the same person, which can read the same files
 Lamp reads; that is the Mac's own model and is said where it matters. The medium findings are about what crosses the
 local network in clear while an app is on a phone or TV, and about what an anonymous caller can cost the hosted
 functions at volume. There is no high finding.
@@ -106,6 +108,29 @@ package origin and the token is what's checked. Findings:
 - **Every interface, not just the Wi-Fi** (low). The network listener and the relay bind every interface, so a VPN or
   tunnel the Mac is on is "the local network" too. Fix: bind only interfaces of the Wi-Fi and wired kinds
   (`NWParameters.requiredInterfaceType` won't take two, so a listener per kind), when someone reports it.
+
+### The model servers: 127.0.0.1:47812 and 47813 (`LocalModels`)
+
+Models that run on this Mac are served by two programs Lamp starts and talks to over HTTP, neither of which goes through
+the gateway's checks: the bundled llama.cpp server (`llama-server`, router mode, for GGUF models) on 47812 and
+`mlx_lm.server` on 47813 when the person installed it. Both bind the loopback address only. Both answer any origin:
+llama.cpp reflects the page's `Origin` with `Access-Control-Allow-Credentials: true` and `Allow-Headers: *` and answers
+preflights, and mlx_lm sends `Access-Control-Allow-Origin: *`. So as started before this change, any page in any
+browser on this Mac, and any program, could run the person's model: a chat completion with the page's own prompt and
+the answer read back, the model loaded and unloaded (llama.cpp's router), the Mac's GPU and memory used for as long
+as the page liked. Nothing of the person's comes out that way (the servers hold no files or keys), and the agent's
+commands can reach them too, which is what pi does. Medium.
+
+- **llama.cpp** (**fixed**): Lamp now starts it with `--api-key`, a key made once and kept at
+  `~/Library/Application Support/Lamp/local-model-key` (mode 0600, closed to the agent's commands), and sends it from
+  every call of its own and in pi's `models.json`. Without the key the server answers 401, with the CORS headers but
+  no completion; `/health` stays open, which is what Lamp's own check reads. A server a previous Lamp left running
+  keeps the key it started with, and one from before there was a key takes any, so an update never locks Lamp out of
+  its own model.
+- **mlx_lm.server** (recommended): it takes no key, so it stays reachable by any page while an MLX model is loaded.
+  Fix: put Lamp's gateway in front of it (the app routes already go there) and bind it to a Unix socket or a random
+  port Lamp alone knows, or ask upstream for an API key option; until then, the MLX provider is the one to turn off
+  on a Mac that browses untrusted sites with a model loaded.
 
 ### A TV app's phone page: 47840 to 47855 (`PhoneSites`, `Gateway.startSite`)
 
@@ -263,7 +288,8 @@ switch is.
 | Bug reports are anonymous text, 30 a day | Low | None |
 | Wish card redrawn per `?v=` | Low | Recommended: one address |
 | Concurrent parts can orphan a blob | Low | Recommended with the byte budget |
+| The model servers answered any page and any program | Medium | Fixed for llama.cpp (a key); recommended for mlx_lm |
 | Usage counts had no switch | Low | Fixed |
 
-No route on the Mac was found answering without the check it should have, and no function was found without a size
-cap or a quota.
+Of Lamp's own routes on the Mac, none was found answering without the check it should have; the two model servers
+were, and one is fixed here. No function was found without a size cap or a quota.
