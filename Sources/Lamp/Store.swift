@@ -8470,8 +8470,9 @@ final class Store: ObservableObject {
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
         if !ownStep { await owner?.applying?.value }
         await owner?.warming?.value
-        // Not said when the game open on this Mac already shows these sources: a step put them in.
-        if owner?.shownSources.isEmpty != false || owner?.shownSources != Runtime.fingerprint(project) { log(project, .status, "Building…") }
+        // Not said when the game open on this Mac already shows these sources (a step put them in), nor for a step's own
+        // build, which runs beside the agent's work and is said once it's in ("Put into …"): the person waits on neither.
+        if !ownStep, owner?.shownSources.isEmpty != false || owner?.shownSources != Runtime.fingerprint(project) { log(project, .status, "Building…") }
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
         // its install comes after the package is made, so the icon is brought up to date first, not there.
         if project.onDevice, !DeviceSupport.icons(for: project).isEmpty { await prepareIcon(project) }
@@ -8827,14 +8828,14 @@ final class Store: ObservableObject {
         return words.map { "Put into \(project.name): " + $0 } ?? "Put the change into \(project.name)"
     }
 
-    /// What the agent said its steps were for since a change last went in, the last three at most, never its looks; nil
-    /// when it named none.
+    /// What the agent said its steps were for since a change last went in, the last three at most, never its looks or
+    /// reads (what it read changed nothing); nil when it named none.
     private func doingSinceStep(_ project: LampProject, _ turn: Turn) -> String? {
         let since = turn.lastStepAt ?? turn.began
         var words: [String] = []
         for line in logs[wish(of: project).id] ?? [] where line.kind == .tool && (line.at ?? .distantPast) >= since {
             guard let said = line.said?.trimmed, !said.isEmpty, !line.text.hasPrefix("look_at_app"), !line.text.hasPrefix("use_app"),
-                  !words.contains(said) else { continue }
+                  ![.read, .search, .list].contains(ToolCall(line.text).action), !words.contains(said) else { continue }
             words.append(said)
         }
         return words.isEmpty ? nil : words.suffix(3).joined(separator: "; ")
