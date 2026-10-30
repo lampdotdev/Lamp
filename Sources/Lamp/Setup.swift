@@ -108,6 +108,8 @@ struct SetupCheck {
 
 struct SetupView: View {
     @EnvironmentObject private var store: Store
+    /// Puts it off: the request stays in its chat, and the next one asks again.
+    let later: () -> Void
     @State private var key = ""
     @State private var checkingKey = false
     @State private var keyProblem: String?
@@ -131,8 +133,8 @@ struct SetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Lamp can't build apps right now").font(.largeTitle.bold())
-            Text("Finish what's left below. Your apps and chats are kept.")
+            Text("Get Lamp ready").font(.largeTitle.bold())
+            Text("Your request starts as soon as this is done.")
                 .foregroundStyle(.secondary)
 
             if !store.setup.hasAgent {
@@ -200,9 +202,15 @@ struct SetupView: View {
                 }
                 .padding(.leading, 36)
             }
+            HStack {
+                Spacer()
+                Button("Not Now", action: later).keyboardShortcut(.cancelAction)
+            }
         }
         .padding(40)
-        .frame(maxWidth: 600)
+        .frame(width: 600)
+        // As tall as what's in it: a sheet would otherwise take all the height it's offered.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @Environment(\.openSettings) private var openSettingsAction

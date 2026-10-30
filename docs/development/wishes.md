@@ -336,8 +336,8 @@ first build out of sight isn't asking, and the copy the last link opened is take
 else a fresh copy, made as the first launch makes one (`put(starter:)`, its chain naming the
 starter at the commit this Lamp ships). A link without a request opens it with an empty box. A repository
 goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
-box. Nothing is sent or built from the link. During the welcome a starter's remix waits (`Onboarding.keptRemix`, saved
-like the welcome's wish) and opens once setup is done, in the desk's own copy of the starter, put there moments
+box. Nothing is sent or built from the link. During the welcome a starter's remix waits a moment (`Onboarding.keptRemix`, saved
+like the welcome's wish) and opens as the welcome gives way to the desk, with nothing set up, in the desk's own copy of the starter, put there moments
 before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
 links are read as a browser's form writes them too (`Wish.items`: "+" is a space).
 

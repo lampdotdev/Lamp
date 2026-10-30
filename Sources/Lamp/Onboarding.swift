@@ -2,16 +2,17 @@ import SwiftUI
 import AppKit
 import LampSidebarKit
 
-/// The first-launch welcome: what Lamp is and getting set up, then the desk, where the wishes Lamp comes
-/// with (`Starters`) are waiting to be used and changed. A wish brought from the site skips the hello and is
-/// made once setup is done. It lives in the main window, dressed up without the usual window chrome, and the
+/// The first-launch welcome: what Lamp is, then the desk, where the wishes Lamp comes with (`Starters`) are waiting
+/// to be used before anything is set up; the first change asked for asks for setup (`Store.askForSetup`). A starter
+/// brought from the site opens at once, and a wish brought from the site, which has to be made, goes on to setup and
+/// is made once that's done. It lives in the main window, dressed up without the usual window chrome, and the
 /// window grows into Lamp itself at the end.
 enum Onboarding {
     static let key = "onboarded"
     /// A wish from the site and how far the welcome got. Saved, so that quitting during setup, or losing the
     /// window while away at an installer or a sign-in in the browser, comes back to setup with the wish intact.
     static let ideaKey = "welcomeIdea"
-    /// A remix from the site (a starter and the request), kept the same way: made once setup is done, in its place.
+    /// A remix from the site (a starter and the request), kept until the welcome hands over to the desk, which opens it.
     static let remixKey = "welcomeRemix"
     static var keptRemix: Wish.Remix? {
         get { UserDefaults.standard.data(forKey: remixKey).flatMap { try? JSONDecoder().decode(Wish.Remix.self, from: $0) } }
@@ -71,7 +72,8 @@ struct OnboardingView: View {
         ZStack {
             ZStack {
                 switch step {
-                case .hello: HelloStep { go(to: .setup) }
+                // Setup is for what has to be made: with no wish from the site, the desk comes next.
+                case .hello: HelloStep { if prompt.trimmed.isEmpty { finish() } else { go(to: .setup) } }
                 case .setup: SetupStep(back: { go(to: .hello) }, start: finish)
                 }
             }
@@ -135,8 +137,8 @@ struct OnboardingView: View {
 
     /// Takes a wish from the site: one its link brought or, the first time the welcome is ever shown, one its
     /// Download button left on the clipboard. That one look is all Lamp takes by itself.
-    /// A remix (a starter's, with a request) is kept in place of a wish and opened once setup is done; one of a
-    /// repository goes to the store, which keeps it for after setup as any repository opened then.
+    /// A remix (a starter's, with a request) is there to be tried, so it goes straight to the desk and opens; one of a
+    /// repository goes to the store, which keeps it for after the welcome as any repository opened then.
     private func arrive(animated: Bool) {
         var found = store.arrivedWish
         if found != nil { store.arrivedWish = nil }
@@ -156,7 +158,12 @@ struct OnboardingView: View {
         }
         if let remix {
             Onboarding.keptRemix = remix
-            receive(remix.text ?? "", animated: animated)
+            // A moment for the window to be found, on the launch a link or the clipboard brought it to: it's what
+            // grows into Lamp's size.
+            Task {
+                try? await Task.sleep(for: .seconds(0.1))
+                finish()
+            }
         } else if let found {
             Onboarding.keptRemix = nil
             receive(found, animated: animated)
@@ -166,8 +173,7 @@ struct OnboardingView: View {
     /// Goes on to setup with the wish, with no hello in between: they have already said what they want, and
     /// it's made as soon as Lamp is ready. A dawn that fades meets them, as the site left off.
     private func receive(_ text: String, animated: Bool = true) {
-        // A remix's request waits for its copy, not for a new wish of its own.
-        prompt = Onboarding.keptRemix == nil ? text : ""
+        prompt = text
         if step != .setup {
             if animated { go(to: .setup) } else { step = .setup }
         }
@@ -181,6 +187,7 @@ struct OnboardingView: View {
 
     /// Fades the welcome out and grows the window into Lamp's desk, with a wish from the site started there.
     private func finish() {
+        guard !leaving else { return }
         withAnimation(.easeIn(duration: 0.3)) { leaving = true }
         Task {
             try? await Task.sleep(for: .seconds(0.3))

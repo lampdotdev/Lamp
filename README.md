@@ -14,7 +14,7 @@ Some things people build with it:
 
 Each Mac app is a real `.app` in `~/Applications/Lamp Apps`, with a wand at its top right and **Customize with Lamp (⇧⌘E)** in its menu, which open its chat beside it for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt. iPhone and iPad apps open in the simulator on your Mac, or on your own phone (see [iPhone and iPad apps](#iphone-and-ipad-apps)).
 
-[Download Lamp](https://lamp.dev) and open it. The welcome has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), then opens on your desk, where ten apps that come with Lamp are ready to use and to change into your own.
+[Download Lamp](https://lamp.dev) and open it. It opens on your desk, where the apps that come with Lamp are ready to use. The first time you ask for a change, Lamp has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent).
 
 ## Requirements
 
@@ -53,9 +53,9 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
 
    The first build takes about a minute. It also creates a self-signed **Lamp App Signing** certificate in Lamp's own keychain, `~/Library/Application Support/Lamp/Signing` (see `scripts/signing-identity.sh`). That gives every build the same signature. Lamp's keychain has a password Lamp generated and keeps beside it, so signing never asks for keychain access the way the login keychain does. It's only used to sign Lamp on your Mac. It produces `build/Lamp Dev.app`: the development build, a separate app from the Lamp you install (its own icon, folders, apps and settings), so you can keep both. `scripts/dev-data.sh` copies your apps, keys and settings from the installed Lamp into it.
 
-3. **Finish setup in the app.** On first launch, Lamp checks for anything missing:
-   - **App-building tools:** if the Command Line Tools are missing, Lamp opens Apple's installer right away (click **Install**, then **Agree**). It then checks every few seconds and carries on by itself when they're installed, so there's no button to press afterwards.
-   - **An OpenRouter key:** paste one from [openrouter.ai/keys](https://openrouter.ai/keys) while the tools install. Lamp checks it with OpenRouter before saving, so a mistyped key or an account with no credit shows up straight away. One key covers building and everything AI inside apps. Under **Use something you already have instead**, you can pick Claude Code or ChatGPT Codex (Lamp uses the copy already on your Mac, or downloads its own, and you sign in with your Claude or ChatGPT subscription if you haven't already), **A model on this Mac…**, or **Other providers…**. Keys are stored per provider. Releases signed with an Apple Developer ID keep them in your login Keychain. Local builds have no Team ID, and macOS would ask for Keychain access again after every rebuild, so they keep them in `~/Library/Application Support/Lamp/keys.json`, readable only by your user account.
+3. **Finish setup in the app.** The first time you ask for a change, Lamp asks for anything missing:
+   - **App-building tools:** if the Command Line Tools are missing, Lamp opens Apple's installer (click **Install**, then **Agree**). It then checks every few seconds and carries on by itself when they're installed, so there's no button to press afterwards.
+   - **An OpenRouter key:** paste one from [openrouter.ai/keys](https://openrouter.ai/keys). Lamp checks it with OpenRouter before saving, so a mistyped key or an account with no credit shows up straight away. One key covers building and everything AI inside apps. Under **Use something you already have instead**, you can pick Claude Code or ChatGPT Codex (Lamp uses the copy already on your Mac, or downloads its own, and you sign in with your Claude or ChatGPT subscription if you haven't already), **A model on this Mac…**, or **Other providers…**. Keys are stored per provider. Releases signed with an Apple Developer ID keep them in your login Keychain. Local builds have no Team ID, and macOS would ask for Keychain access again after every rebuild, so they keep them in `~/Library/Application Support/Lamp/keys.json`, readable only by your user account.
 
    You can change the key and models later in **Lamp → Settings (⌘,)**.
 
