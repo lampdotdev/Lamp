@@ -1081,6 +1081,9 @@ enum Agent {
             "PI_TELEMETRY": "0",
             // Lamp's extension compacts pi's conversation here (lamp-tools.ts), as the other engines are told to.
             "LAMP_COMPACT_TOKENS": String(Conversation.compactAt),
+            // And keeps its pictures few the way Lamp does for the others (`keepsPicturesFew` there).
+            "LAMP_KEEP_PICTURES": String(Conversation.keepPictures),
+            "LAMP_TRIM_PICTURES": String(Conversation.trimAbove),
         ]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor

@@ -94,12 +94,13 @@ A capability given to one engine must be given to all of them that can take it, 
   LampSupport.swift), which still reads its words; art is shrunk to 1024 px. Lamp
   writes the copies unconfined, so their folder and file are checked like `Store.artDestination` checks art. Only the
   newest few pictures stay in what each engine sends: pi's extension (`keepsPicturesFew` in
-  `lamp-tools.ts`) takes the older ones out after each turn, with pi's
+  `lamp-tools.ts`) takes the older ones out, with pi's
   context edits (the session file keeps them), and when a request is refused as too big all the same it drops
   every picture and sends once more. Claude Code and Codex can't drop a picture, so Lamp does it in their own files
   before resuming them (`Conversation.keepPicturesFew`): once a conversation holds more than 12, all but the newest 6
   become a line saying a picture was taken out, in the engine's own spelling, the rest of the file left as it was.
-  In a batch, not each turn, since each change to a conversation's beginning costs its cached copy at the provider.
+  pi's extension goes by the same numbers (and a byte budget besides). In a batch, not each turn, for every engine,
+  since each change to a conversation's beginning costs its cached copy at the provider.
 - **How big a conversation grows** (`Conversation`): every engine sends its whole conversation with each request, so a
   wish worked on for days grows past what one request can carry (about 32 MB at Anthropic) long before a model with a
   million tokens fills its window and compacts. So every engine compacts at `Conversation.compactAt` (200k tokens):

@@ -18,7 +18,7 @@ enum Conversation {
 
     /// The pictures kept in what an engine is sent, newest first, and how many there may be before the older ones are
     /// taken out: in a batch, not one at each turn, since each change to the conversation's earlier part costs its
-    /// cached copy at the provider. pi's extension keeps its own (`keepsPicturesFew` in lamp-tools.ts).
+    /// cached copy at the provider. pi's extension does the same with these numbers (`keepsPicturesFew` in lamp-tools.ts).
     static let keepPictures = 6
     static let trimAbove = 12
 
