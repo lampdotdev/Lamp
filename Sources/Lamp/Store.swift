@@ -5500,6 +5500,8 @@ final class Store: ObservableObject {
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
         if project.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(project) }
+        // What Lamp kept of what its apps share goes before the key that reads it.
+        WishKeep.forget(project)
         WishKeys.forget(project)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil

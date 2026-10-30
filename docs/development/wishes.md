@@ -608,6 +608,28 @@ then as it changes (`items`), and puts, publishes and fetches a file's bytes thr
 `GameAndroid.pageWish`). `WishSharedStoreTests` has a Swift app and a TV page, copies of one app, each change different
 items before they meet, then end with both and with the Swift copy's file on the page.
 
+**Lamp keeps them too.** Copies alone only merge when two are open at once, and a new screen is often the only thing
+open; Lamp runs on the Mac all day. So while Lamp runs, it's a member of every wish's room that keeps every collection
+its copies share (`WishKeeper`, in the relay): each app's own, by that app, and the wish's own, with the shared files'
+bytes. It speaks the copies' own `store` messages under the relay's own name, `lamp` (`WishChannel.relayName`, which no
+app of a wish may take): told the room keeps (`keeps` in the `welcome`), a copy that speaks 7 counts Lamp among those it
+shares collections with (`storePeers`, `shares`: all of them, as if Lamp were a copy of its own app and of every other),
+and sends it its sums, items and files as it would another copy; Lamp answers the same way, with its sums as a copy
+joins and once a minute, asks for what it lacks, and asks a copy for a file's bytes it hasn't got. It never sets an item:
+it merges by the same rules (item by item, the latest setting winning, a deletion kept a month, within what a copy holds
+from others) and passes on nothing, since each copy in the room hears from it; a copy passes Lamp what it took from
+a copy Lamp's room doesn't have (`pass`). So a copy that opens while no other is open gets the latest from Lamp, and
+what it changes while only Lamp is there reaches the others when they open. Lamp is never one of the wish's apps or
+copies: it isn't in the room's list (`roster`) or members, so `peers`, `apps()` and their `copies` never show it, and a
+screen alone with Lamp is still `alone`. What copies that speak less say to each other through the room is kept as well
+(`overheard`), though Lamp sends them nothing. Lamp keeps it in its own folder, under Shared Data by the wish's tag
+(`WishKeep`, `Edition.supportFolder`, so each Lamp Dev instance has its own), sealed with AES-GCM under a key from the
+wish's key (`lamp-wish keep`), which is kept apart (`WishKeys`): the room's `keep`, read when a room opens and written a
+moment after a change. Deleting the wish removes it, before its key (`WishKeep.forget`, `end-room` with `forget`); taking
+one app away keeps its collections, as Undo can bring it back. With Lamp closed, copies meet straight as before, and
+Lamp catches up from them when it next runs. `WishSharedStoreTests` has a TV page put a list and a file and close, the
+relay start again, and later pages opening alone get both and pass a change on.
+
 Besides messages and values, a wish's apps send each other **files** (`LampWish.sendFile`, `onFile` in Swift and Kotlin;
 `Lamp.wish.sendFile`, `onFile` in lamp.js): up to 64 MB to one app open now, in pieces under the controllers' flow
 (`ControllerWire`: 64 KB a piece, never more than 512 KB past what the receiver has acknowledged, two at a time each way
@@ -631,14 +653,14 @@ On a TV every piece goes through lamp.js's own AES-GCM, so a big file is slow th
 two Swift apps through the room and straight, and between a TV page and a Mac app; `WishRoomTests` holds the relay to
 them.
 
-What a wish's apps say to each other is numbered (`wire` in each library: 6 since the wish's own collections, 5 shared collections, 4 brought copies,
+What a wish's apps say to each other is numbered (`wire` in each library: 7 since Lamp keeps shared collections, 6 the wish's own collections, 5 shared collections, 4 brought copies,
 3 files and a game's controls, 2 values; an app from before says none,
 which counts as 1). Each says its number in its join, to the relay and on a direct link, and the relay passes each
 member's on (`welcome`, `joined`). An open app whose number differs is **out of date** (`outOfDate`), still open, so
 messages still go, with a reason: "The TV app is out of date. Open it from Lamp on your Mac to update it.", or, for one
 newer than this one, "This app is older than the TV app. Open it from Lamp on your Mac to update it."; values go only to
 an app that speaks 2 or more, files and a game's controls only to one that speaks 3, shared collections only to one
-that speaks 5, and the wish's own only to one that speaks 6 (an older copy keeps its own and catches up once it's rebuilt). The builder's note says when an app in the room was built by an earlier Lamp
+that speaks 5, the wish's own only to one that speaks 6, and Lamp's own keeping only to one that speaks 7 (an older copy keeps its own and catches up once it's rebuilt). The builder's note says when an app in the room was built by an earlier Lamp
 (`WishRooms.wire`). Opening such an app from Lamp builds it again: a Mac or iPhone app of several is stamped with a
 fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an Android one is compared by its
 LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`
