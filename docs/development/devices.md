@@ -298,8 +298,10 @@ taken out of every frame before the page runs. The `http` bridge goes only to La
 to a listed site or a relay Lamp's own answer named (phones Lamp holds, a wish's room). A game's own phones (`host:
 'game'`) are untouched: their link never leaves the host. A policy file that's there but can't be read guards the app
 with nothing listed; an app with none runs as before. The EdgeHTML host can't be held to a policy, so a shared app is
-never put there. `scripts/check-web-host-guard.sh` runs the rules on the Mac, and a hostile page in headless Chrome with
-DevTools standing in for WebView2's request event; the host itself only runs on a console.
+never put there. Nor is it put beside a host built before the guard (one whose program doesn't name
+`network-policy.json`, `WebHost.readsPolicy`): `App.exe` has to be built again (`scripts/build-web-host.sh`) for a
+shared app to go on an Xbox. `scripts/check-web-host-guard.sh` runs the rules on the Mac, and a hostile page in headless
+Chrome with DevTools standing in for WebView2's request event; the host itself only runs on a console.
 
 **What's on the network, for an app** (`LampNetwork`, in LampSupport.swift): a wish's Mac or iPhone app finds the
 person's devices itself, for the ones Lamp has no block for. `requestAccess()` is the system's Local Network question,

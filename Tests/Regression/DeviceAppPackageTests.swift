@@ -66,8 +66,11 @@ final class DeviceAppPackageTests: XCTestCase {
     /// closed (lamp_web_guard.h, which scripts/check-web-host-guard.sh runs): the policy Lamp kept at import, exact,
     /// with Lamp's own addresses for the page's calls to it. A file of the app's own by that name stays the app's, in Web/.
     func testASharedAppsXboxPackageCarriesItsSites() throws {
-        let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Resources/WebHost")
+        let resources = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-web-host-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: resources) }
+        try Data("MZ host reading network-policy.json".utf8).write(to: resources.appendingPathComponent(WebHost.program))
+        try Data("library".utf8).write(to: resources.appendingPathComponent(WebHost.library))
         let kept = NetworkPolicy(origins: ["https://API.Open-Meteo.com/v1/forecast", "wss://relay.example:8443/"], mayConnect: true)
         let policy = WebHost.policy(from: kept, lamp: ["http://Test-Mac.local:7777", "http://192.168.1.5:7777"])
         let own = Data(#"{"format":1,"origins":["https://evil.example"]}"#.utf8)
@@ -85,6 +88,10 @@ final class DeviceAppPackageTests: XCTestCase {
         XCTAssertNil(WebHost.policy(from: nil, lamp: []))
         XCTAssertNil(WebHost.policy(from: NetworkPolicy(origins: ["https://a.example"], unrestricted: true), lamp: []))
         XCTAssertFalse(try WebHost.payload([], from: resources).contains { $0.path == WebHost.policyFile })
+        // A host built before the guard would run the page unheld: a shared app isn't put beside it, an own app still is.
+        try Data("MZ host from before".utf8).write(to: resources.appendingPathComponent(WebHost.program))
+        XCTAssertThrowsError(try WebHost.payload([("index.html", Data("<p>".utf8))], policy: policy, from: resources))
+        XCTAssertNoThrow(try WebHost.payload([("index.html", Data("<p>".utf8))], from: resources))
     }
 
     /// The import map the rules give names the library where the page finds it, nested folders included.

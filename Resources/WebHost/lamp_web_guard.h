@@ -20,6 +20,8 @@ namespace lampg {
 
 using lampc::Json;
 
+// Kept a plain string in the built host: Lamp looks for it there before it puts a shared app beside the host
+// (`WebHost.readsPolicy`), so a host built before the guard never carries one.
 constexpr const char* policy_file = "network-policy.json";
 constexpr const char* own_origin = "https://lamp.example";
 // The format of network-policy.json this host reads; WebHost.Policy.format on the Mac.

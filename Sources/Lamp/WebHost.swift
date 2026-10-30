@@ -42,6 +42,10 @@ enum WebHost {
     }
     static let policyFile = "network-policy.json"
 
+    /// Whether a built host keeps to `policyFile`: one that does names it (`lampg::policy_file`, a plain string in the
+    /// program), one built before the guard doesn't.
+    static func readsPolicy(_ host: Data) -> Bool { host.range(of: Data(policyFile.utf8)) != nil }
+
     /// The policy for an app shared with the person, from what Lamp keeps for it (`SharedNetwork`); nil for one of their
     /// own, or one they let reach every site, which the host leaves as it is.
     static func policy(for project: LampProject) -> Policy? {
@@ -66,6 +70,11 @@ enum WebHost {
               let host = try? Data(contentsOf: resources.appendingPathComponent(program)),
               let core = try? Data(contentsOf: resources.appendingPathComponent(library)) else {
             throw MSIX.Failure(message: "Lamp's web host for the Xbox is missing from Lamp itself.")
+        }
+        // A host built before the guard runs a shared page unheld, its policy file unread: a shared app never goes out
+        // with one.
+        if policy != nil, !readsPolicy(host) {
+            throw MSIX.Failure(message: "This app was shared with you, and this copy of Lamp can't keep it to the sites it was shared with on an Xbox yet, so it isn't put there.")
         }
         let rule = try policy.map { [(policyFile, try JSONEncoder().encode($0))] } ?? []
         return [(program, host), (library, core)] + rule + files.map { (folder + "/" + $0.path, $0.data) }
