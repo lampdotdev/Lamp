@@ -50,7 +50,10 @@ const nextFrame = fn => browser.frame.call(window, fn);
 
 let seed = preview ? 1n : BigInt(Date.now()) | 1n;
 const mask = (1n << 64n) - 1n;
+// How many have been drawn, so a part that's kept rather than built again can skip the draws its build made.
+let draws = 0;
 export function random() {
+    draws++;
     seed ^= seed >> 12n; seed ^= (seed << 25n) & mask; seed ^= seed >> 27n;
     return Number(((seed * 0x2545F4914F6CDD1Dn) & mask) >> 40n) / 16777216;
 }
@@ -90,7 +93,7 @@ export function load(name) {
 // a file Lamp changes while the game is played can be put into it without starting again (see "Changes while it's
 // played" below).
 export async function asset(path) {
-    loaded.add(clean(path));
+    took(clean(path));
     const answer = await fetch(fresh(path));
     if (!answer.ok) { log(`asset: no ${path}`); return null; }
     return answer.arrayBuffer();
@@ -110,7 +113,7 @@ export async function texture(path, setup) {
     const loader = new THREE.TextureLoader();
     const made = await loader.loadAsync(fresh(path));
     if (setup) setup(made);
-    loaded.add(clean(path));
+    took(clean(path));
     swaps.set(clean(path), [...(swaps.get(clean(path)) || []), async () => {
         const again = await loader.loadAsync(fresh(path));
         made.image = again.image;
@@ -131,7 +134,7 @@ export async function model(path) {
     const fill = gltf => { group.clear(); group.add(gltf.scene); group.animations = gltf.animations; };
     fill(await loader.loadAsync(fresh(path)));
     group.name = clean(path);
-    loaded.add(clean(path));
+    took(clean(path));
     swaps.set(clean(path), [...(swaps.get(clean(path)) || []), async () => {
         const old = [...group.children];
         fill(await loader.loadAsync(fresh(path)));
@@ -208,7 +211,7 @@ export const sound = {
             if (!ctx) return;
             try { s.buffer = await ctx.decodeAudioData(await (await fetch(fresh(path))).arrayBuffer()); } catch (e) { log(`sound: couldn't load ${path}`); }
         };
-        loaded.add(clean(path));
+        took(clean(path));
         swaps.set(clean(path), [...(swaps.get(clean(path)) || []), decode]);
         await decode();
         return s;
@@ -904,7 +907,9 @@ async function apply(change) {
         let done = false;
         for (const swap of swaps.get(path) || []) { try { await swap(); done = true; } catch (e) { log(`Lamp: couldn't put in the new ${path} (${e && e.message || e}).`); } }
         if (hooks.assetChanged) { try { if (await hooks.assetChanged(path)) done = true; } catch (e) { log(`Error: assetChanged('${path}'): ${e && e.message || e}`); } }
-        if (done) said.push(path); else why = why || `nothing the game loaded through lamp-game.js is made from ${path}`;
+        if (done) said.push(path);
+        else why = why || (loaded.has(path) ? `${path} changed, and nothing in the running game takes the new one in`
+            : `nothing the game loaded through lamp-game.js is made from ${path}`);
     }
     const code = paths.filter(p => CODE.test(p));
     if (!why && code.length) {
@@ -1345,7 +1350,8 @@ function putClass(C, N) {
 // A part is kept with `hot(import.meta).keep(key, build, { inputs, dispose })`: the first time it calls build() and
 // returns what that made (or its promise), and when the code runs again it returns the same thing without building it,
 // unless the module that kept it, or one it imports, changed since, the build function's own code changed, or one of
-// `inputs` isn't the same as before (another part's result it's built from, as a dependency list goes). The module that
+// `inputs` isn't the same as before (another part's result it's built from, as a dependency list goes), or a file it
+// loaded through the runtime (asset(), texture(), model(), sound.load()) changed. The module that
 // starts the game imports everything and changes often, so what it keeps goes by the modules whose imports the build
 // function names, and theirs: a change of its own code outside the build function keeps what it kept. A part that's
 // built again, or not asked for any more, goes: `dispose(value)` when given, else a three.js object is taken out of its
@@ -1375,10 +1381,13 @@ function keep(path, key, build, options = {}) {
     if (had && !had.stale && had.text === text && same) {
         had.used = true;
         if (again) again.kept.push(key);
+        // The random numbers its build drew are drawn past, so what comes after gets the numbers it got then.
+        for (let i = 0; i < had.draws; i++) random();
         return had.value;
     }
     if (had) letGo(had);
-    const entry = { path, key, text, inputs, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false, value: undefined, made: undefined };
+    const entry = { path, key, text, inputs, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false,
+                    value: undefined, made: undefined, assets: new Set(), draws: 0 };
     // What the build starts as it runs belongs to the part. An async build's later work can't be told from other code
     // that runs while it waits, so of what's started meanwhile only what's the part's own stays with it: listeners on
     // the part (its object, its canvas, an element inside it) and a worker or sound context that is the part or one of
@@ -1386,10 +1395,12 @@ function keep(path, key, build, options = {}) {
     // started one still running is built again when the code next runs (a part keeps a timer it starts before its first
     // await).
     keeping++;
+    building.push(entry);
+    const drawn = draws;
     let value;
-    try { value = build(); } finally { keeping--; }
+    try { value = build(); } finally { keeping--; building.pop(); entry.draws = draws - drawn; }
     if (value && typeof value.then === 'function') {
-        const waiting = { added: [], made: [], timers: [] };
+        const waiting = { added: [], made: [], timers: [], assets: entry.assets };
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
         value.then(v => { entry.made = v; entry.timers = waiting.timers; own(v, waiting); }, () => { if (kept.get(id) === entry) kept.delete(id); });
@@ -1404,6 +1415,14 @@ const isKept = v => [...kept.values()].some(k => k.made === v);
 
 // Async builds still running, each with the listeners added while it ran.
 const keepsWaiting = new Set();
+// The parts whose build is running now, and the files the runtime loaded for each (`took`): a change to one of those
+// files builds the part again.
+const building = [];
+function took(path) {
+    loaded.add(path);
+    for (const entry of building) entry.assets.add(path);
+    for (const waiting of keepsWaiting) waiting.assets.add(path);
+}
 // The parts' timer lists a timer's callback runs for, while it runs.
 let timedFor = null;
 function own(made, waiting) {
@@ -1454,7 +1473,7 @@ function markStale(paths) {
                 for (const dep of below(from)) deps.add(dep);
             }
         } else { deps = below(k.path); deps.add(k.path); }
-        if (paths.some(p => deps.has(p))) k.stale = true;
+        if (paths.some(p => deps.has(p) || k.assets.has(p))) k.stale = true;
     }
 }
 
@@ -1850,12 +1869,15 @@ function hidePill() { if (pill) pill.style.display = 'none'; }
 // A preview Lamp keeps open between looks (`warm`) is handed each new play with the files changed since the last:
 // the game's code runs again in place from a fresh start (see "Running the game's code again"), with the clock, the
 // seed, the saves and the log as a new page has them, keeping what the game keeps, and the script plays. So only the
-// first play of a while builds the whole game; the same script then gives the same pictures each play while the parts
-// it kept stay. Returns false when it can't (the game hasn't started, or is starting), and Lamp opens a new preview.
+// first play of a while builds the whole game. A kept part skips the random numbers its build drew, so the same script
+// gives the same pictures as a cold play (exactly, when an async build draws before its first await). Returns false
+// when it can't (the game hasn't started, or is starting), and Lamp opens a new preview.
 if (preview && preview.warm) {
     window.__lampPreviewAgain = next => {
         if (!frameFunction || runningAgain) return false;
         preview.script = next.script || [];
+        // Files loaded afresh, under a new query, as a change in the open game has them.
+        changes++;
         seed = 1n; clock = 0; time = 0; number = 0;
         saved.clear(); played.clear(); logs.length = 0;
         scripted = null; before = [0, 0, 0, 0];
