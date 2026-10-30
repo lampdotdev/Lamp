@@ -205,11 +205,19 @@ enum Template {
 
     static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
         let reason = Capabilities.load(project).localNetworkReason
-        let contents = template
-            .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: reason))
-            .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: reason))
-            .replacingOccurrences(of: "{{NAME}}", with: project.name)
+        // The app's name and its own words (the network reason in capabilities.json) come with a shared file, so
+        // they may hold anything the shell would run: `$(…)`, backquotes, a line that ends a heredoc. A script gets
+        // them as variables set in single quotes at its top (`shellWords`), which the shell expands as text only.
+        let words = [("{{USAGE}}", "LAMP_USAGE", iosUsagePlistLines(name: project.name, localNetwork: reason)),
+                     ("{{MAC_USAGE}}", "LAMP_MAC_USAGE", macUsagePlistLines(name: project.name, localNetwork: reason)),
+                     ("{{NAME}}", "LAMP_APP_NAME", project.name)]
+        var filled = template.replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
+        if template.hasPrefix("#!") {
+            filled = shellWords(filled, words)
+        } else {
+            for (placeholder, _, value) in words { filled = filled.replacingOccurrences(of: placeholder, with: value) }
+        }
+        let contents = filled
             .replacingOccurrences(of: "{{EXE}}", with: project.exe)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
@@ -218,6 +226,17 @@ enum Template {
         // Never makes the app's folder itself, which would leave a folder of build files where an app was.
         guard FileManager.default.fileExists(atPath: project.dir.path) else { throw CocoaError(.fileNoSuchFile) }
         try put(contents, at: url, for: project, executable: executable)
+    }
+
+    /// A script with each placeholder that's used in it read from a variable, set in single quotes after its first
+    /// line: the value is never part of the script's code, so no name can run, end a heredoc or break a quote.
+    static func shellWords(_ script: String, _ words: [(placeholder: String, variable: String, value: String)]) -> String {
+        let used = words.filter { script.contains($0.placeholder) }
+        guard !used.isEmpty, let end = script.firstIndex(of: "\n") else { return script }
+        var body = String(script[script.index(after: end)...])
+        for word in used { body = body.replacingOccurrences(of: word.placeholder, with: "${\(word.variable)}") }
+        let lines = used.map { "\($0.variable)='\($0.value.replacingOccurrences(of: "'", with: "'\\''"))'\n" }.joined()
+        return script[...end] + lines + body
     }
 
     /// What an app is told about itself and Lamp, read by LampSupport's `LampInstall` from its Info.plist. Lamp
@@ -1744,8 +1763,9 @@ enum Template {
         }
 
         /// The local network reason, kept to one plain sentence of 150 characters at most, in words and plain punctuation:
-        /// it's shown as it is in the system's question, and goes into Info.plist through build scripts whose heredocs the
-        /// shell expands, so nothing in it may mean anything to a shell or to XML (`$`, backticks, backslashes, quotes, `<>&`).
+        /// it's shown as it is in the system's question, and goes into Info.plist and the commands that fill it in, so
+        /// nothing in it is markup or a shell's special characters (`$`, backticks, backslashes, quotes, `<>&`). Build
+        /// scripts never take it as code either way (`Template.shellWords`).
         var localNetworkReason: String? {
             guard let text = localNetwork?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text.count <= 150,
                   text.range(of: #"^[\p{L}\p{N} .,;:!?'’()–-]+$"#, options: .regularExpression) != nil else { return nil }
