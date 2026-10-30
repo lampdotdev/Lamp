@@ -3,7 +3,7 @@ import AppKit
 import LampSidebarKit
 import AVFoundation
 
-/// Lamp's home: every wish in one list (what Lamp came with and what the person made, remixes under their originals),
+/// Lamp's home: the person's wishes in one list (remixes under their originals), the starters Lamp comes with under them,
 /// the place to make a new one, by typing it, saying it, or finding it with the agent's help, and the person's devices
 /// down the side. Open uses a wish, with its chat beside it; Remix changes it in place; Duplicate…, in its menu, makes
 /// a new copy of it to become something else.
@@ -21,6 +21,14 @@ struct WishDesk: View {
     @State private var showingIdeas = false
     /// What's read of each wish for its row, by id (`DeskEntry`).
     @State private var entries: [String: DeskEntry] = [:]
+    /// Whether the first reading, with which starters' copies were changed, is in: until then neither section knows
+    /// which wishes are its own.
+    @State private var entriesRead = false
+    /// Every starter this Lamp ships, as Starter apps lists one with no untouched copy on the desk.
+    @State private var starters: [DeskList.Fresh] = []
+    /// Whether Starter apps is open, once the person has opened or closed it: until then it's open for someone with
+    /// nothing of their own yet, and closed once they have.
+    @AppStorage("deskStartersOpen") private var startersOpenChosen: Bool?
     @State private var picked: LampProject.ID?
     /// Whether the side panel is showing what the picked wish is, from the toolbar's button.
     @AppStorage("deskPanelShown") private var panelShown = true
@@ -53,7 +61,29 @@ struct WishDesk: View {
     /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
     private var wishes: [LampProject] { store.wishes.filter { !$0.isDeviceSetup } }
 
-    private var rows: [DeskList.Row] { DeskList.rows(wishes, entries: entries, by: column, ascending: ascending) }
+    private var sections: DeskList.Sections {
+        guard entriesRead else { return DeskList.Sections(yours: [], starters: [], kept: []) }
+        return DeskList.sections(wishes, entries: entriesOrGuessed, starters: starters, by: column, ascending: ascending)
+    }
+
+    /// The entries, with a guess for a wish put on the desk since they were read: a starter's copy just made is
+    /// untouched, and stays under Starter apps rather than passing through Yours.
+    private var entriesOrGuessed: [String: DeskEntry] {
+        var all = entries
+        for wish in wishes where all[wish.id] == nil {
+            guard let name = Starters.starter(of: wish)?.name,
+                  let folder = starters.first(where: { $0.starter.name == name })?.entry.starter else { continue }
+            all[wish.id] = DeskEntry(id: wish.id, isStarter: true, arrived: true, shipsOriginal: true, starter: folder)
+        }
+        return all
+    }
+
+    private func startersOpen(_ sections: DeskList.Sections) -> Bool { startersOpenChosen ?? sections.yours.isEmpty }
+
+    /// What the list shows, in order: Yours, then Starter apps while it's open. The arrows move through both.
+    private func items(_ sections: DeskList.Sections) -> [DeskList.Item] {
+        sections.yours.map(DeskList.Item.wish) + (startersOpen(sections) ? sections.starters : [])
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -64,8 +94,8 @@ struct WishDesk: View {
             }
             .padding(.top, Self.top).padding(.horizontal, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            if panelShown, panelFits, let row = rows.first(where: { $0.id == current }) {
-                DeskDetail(row: row, remixes: remixes(of: row))
+            if panelShown, panelFits, let item = items(sections).first(where: { $0.id == current }) {
+                DeskDetail(item: item, kept: sections.kept.contains(item.id), remixes: remixes(of: item)) { open(item, asking: $0) }
                     .frame(width: Self.panelWidth)
                     .overlay(alignment: .leading) { Self.separator }
                     .transition(.move(edge: .trailing))
@@ -74,6 +104,7 @@ struct WishDesk: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { deskWidth = $0 }
         .animation(Self.slide, value: panelFits)
         .background(DeskBackground().ignoresSafeArea())
+        // A starter not on the desk yet is picked too, and the File menu then acts on no wish.
         .onChange(of: current, initial: true) { DeskPick.shared.wish = current }
         .navigationTitle("Lamp")
         .toolbar {
@@ -95,6 +126,7 @@ struct WishDesk: View {
         // Read from the files, once for each change to the wishes and as each turn ends (a change can move a wish to
         // the TV, or give it a new line).
         .task(id: wishes.map(\.id) + store.busy.sorted()) { await readEntries() }
+        .task { starters = await Task.detached { Starters.bundled.map(DeskList.Fresh.read) }.value }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in lookForDevices() }
         .onChange(of: store.deskFocusRequest) { barFocused = true }
         .onDisappear {
@@ -145,19 +177,25 @@ struct WishDesk: View {
     }
 
     private var list: some View {
-        VStack(spacing: 0) {
+        let sections = sections
+        let open = startersOpen(sections)
+        return VStack(spacing: 0) {
             DeskListHeader(column: $column, ascending: $ascending, compact: compact)
             ScrollViewReader { scroller in
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(rows) { row in
-                            DeskListRow(row: row, selected: row.id == current, compact: compact) {
-                                picked = row.id
-                                listFocused = true
-                            }
-                            .id(row.id)
+                        if !sections.yours.isEmpty || !store.newerWishes.isEmpty {
+                            DeskSectionHeading(title: "Yours")
+                            ForEach(sections.yours) { row(.wish($0), sections) }
+                            ForEach(store.newerWishes) { NewerWishRow(wish: $0) }
                         }
-                        ForEach(store.newerWishes) { NewerWishRow(wish: $0) }
+                        if !sections.starters.isEmpty {
+                            DeskSectionHeading(title: "Starter apps", count: sections.starters.count, open: open) {
+                                withAnimation(Self.slide) { startersOpenChosen = !open }
+                            }
+                            .padding(.top, sections.yours.isEmpty ? 0 : 14)
+                            if open { ForEach(sections.starters) { row($0, sections) } }
+                        }
                     }
                     .padding(.top, 6).padding(.bottom, 24)
                 }
@@ -169,19 +207,41 @@ struct WishDesk: View {
                 .onKeyPress(.upArrow) { step(-1, scroller) }
                 .onKeyPress(.downArrow) { step(1, scroller) }
                 .onKeyPress(.return) {
-                    guard let row = rows.first(where: { $0.id == current }) else { return .ignored }
-                    store.open(fromDesk: row.project)
+                    guard let item = items(self.sections).first(where: { $0.id == current }) else { return .ignored }
+                    self.open(item)
                     return .handled
                 }
             }
         }
     }
 
+    private func row(_ item: DeskList.Item, _ sections: DeskList.Sections) -> some View {
+        DeskListRow(item: item, kept: sections.kept.contains(item.id), selected: item.id == current, compact: compact,
+                    select: {
+                        picked = item.id
+                        listFocused = true
+                    },
+                    open: { open(item) })
+        .id(item.id)
+    }
+
+    /// Opens a line of the list as Open opens a wish, asking the change from the panel's box when there is one. A starter
+    /// not on the desk yet is copied first, and the copy is picked in its place.
+    private func open(_ item: DeskList.Item, asking request: String = "") {
+        switch item {
+        case .wish(let row): store.change(row.project, asking: request)
+        case .fresh(let fresh): if let copy = store.open(starter: fresh.starter, asking: request) { picked = copy.id }
+        }
+    }
+
     /// The wish picked: the one clicked or moved to, else the first in the list.
-    private var current: LampProject.ID? { rows.contains { $0.id == picked } ? picked : rows.first?.id }
+    private var current: String? {
+        let ids = items(sections).map(\.id)
+        return ids.contains { $0 == picked } ? picked : ids.first
+    }
 
     private func step(_ by: Int, _ scroller: ScrollViewProxy) -> KeyPress.Result {
-        let ids = rows.map(\.id)
+        let ids = items(sections).map(\.id)
         guard !ids.isEmpty else { return .ignored }
         let at = current.flatMap(ids.firstIndex(of:)) ?? 0
         let next = ids[min(max(at + by, 0), ids.count - 1)]
@@ -191,24 +251,30 @@ struct WishDesk: View {
     }
 
     /// The remixes made here of the row's wish, for its facts.
-    private func remixes(of row: DeskList.Row) -> [LampProject] {
-        guard let identity = row.entry?.identity else { return [] }
-        return wishes.filter { entries[$0.id]?.original == identity && $0.id != row.id }
+    private func remixes(of item: DeskList.Item) -> [LampProject] {
+        guard let identity = item.entry?.identity else { return [] }
+        return wishes.filter { entries[$0.id]?.original == identity && $0.id != item.id }
     }
 
     private func readEntries() async {
         let read = wishes.map { ($0, store.apps(of: $0)) }
         var found = await Task.detached { read.map { DeskEntry.read($0.0, apps: $0.1) } }.value
         guard !Task.isCancelled else { return }
-        entries = Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        // Whether each was changed since it arrived is asked again below: until then it's what was known, so a changed
+        // starter's copy doesn't step back into Starter apps for a moment.
+        for index in found.indices { found[index].changedFromOriginal = entries[found[index].id]?.changedFromOriginal ?? false }
+        if entriesRead { entries = Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last }) }
         // Then whether each that arrived from somewhere has been changed since, which asks git: a wish made here has no
-        // original to go back to.
-        for (index, entry) in found.enumerated() where entry.arrived && !entry.remixedHere {
-            guard let project = wishes.first(where: { $0.id == entry.id }) else { continue }
-            found[index].changedFromOriginal = await store.original(toStartAgain: project) != nil
-            guard !Task.isCancelled else { return }
+        // original to go back to. Asked of all at once, since the first time the list waits on it.
+        let asked = found.filter { $0.arrived && !$0.remixedHere }.compactMap { entry in wishes.first { $0.id == entry.id } }
+        let changed = await withTaskGroup(of: (String, Bool).self) { group in
+            for project in asked { group.addTask { (project.id, await store.original(toStartAgain: project) != nil) } }
+            return await group.reduce(into: [String: Bool]()) { $0[$1.0] = $1.1 }
         }
+        guard !Task.isCancelled else { return }
+        for index in found.indices { if let was = changed[found[index].id] { found[index].changedFromOriginal = was } }
         entries = Dictionary(found.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        entriesRead = true
     }
 
     /// Something to send: words, or files to make a wish of.
@@ -664,13 +730,19 @@ struct FileDrop: NSViewRepresentable {
 struct WishDrag: NSViewRepresentable {
     @EnvironmentObject private var store: Store
     let project: LampProject
+    /// False for an untouched starter's copy under Starter apps, which has no Delete: the Trash doesn't take it either.
+    var deletable = true
 
     func makeNSView(context: Context) -> Source { Source(store: store, project: project) }
-    func updateNSView(_ view: Source, context: Context) { view.project = project }
+    func updateNSView(_ view: Source, context: Context) {
+        view.project = project
+        view.deletable = deletable
+    }
 
     final class Source: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
         private let store: Store
         var project: LampProject
+        var deletable = true
         private var monitor: Any?
         private var pressed: NSEvent?
         /// What one drag hands over, made once whichever way the other app asks for it.
@@ -748,7 +820,8 @@ struct WishDrag: NSViewRepresentable {
         func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
             // Nothing inside Lamp takes it: a chat's drop would only make the wish's file an attachment.
             guard context == .outsideApplication else { return [] }
-            return payload == nil ? .delete : [.copy, .link, .delete]
+            let shared: NSDragOperation = payload == nil ? [] : [.copy, .link]
+            return deletable ? shared.union(.delete) : shared
         }
 
         func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
@@ -779,7 +852,7 @@ struct WishDrag: NSViewRepresentable {
 
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             payload = nil
-            guard operation == .delete, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
+            guard operation == .delete, deletable, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
             Task { await store.delete(wish) }
         }
 
@@ -1263,6 +1336,18 @@ extension Store {
         open(fromDesk: copy)
     }
 
+    /// A starter under the desk's Starter apps with no untouched copy on the desk, opened or remixed there: copied now,
+    /// as a remix link from the site copies one (`put(starter:)`), then opened as Open opens any wish, asking `request`
+    /// of it when there is one. So a starter waits on disk only as Lamp ships it, never as a second wish.
+    @discardableResult func open(starter: Starters.Starter, asking request: String = "") -> LampProject? {
+        guard let copy = put(starter: starter) else {
+            NSAlert(error: Sharing.ImportError("Lamp couldn't open \(starter.name).")).runModal()
+            return nil
+        }
+        change(copy, asking: request)
+        return copy
+    }
+
     /// Send Changes Back… from the desk: the wish's chat, with the card that sends them (`ContributeCards`), as the
     /// chat's Share menu opens it.
     func sendChangesBack(_ project: LampProject) {
@@ -1400,5 +1485,49 @@ extension Store {
             }
             openWish(project)
         }
+    }
+}
+
+/// A section's name in the desk's list: Yours, and Starter apps with how many there are and the control that opens
+/// and closes it, which stays when it's closed.
+struct DeskSectionHeading: View {
+    let title: String
+    var count: Int?
+    /// Open or closed, for a section that can be: nil for one that's always open.
+    var open: Bool?
+    var toggle: () -> Void = {}
+
+    var body: some View {
+        if let open {
+            Button(action: toggle) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .heavy))
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                        .frame(width: 12)
+                    label
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(open ? "Hide the starter apps" : "Show the starter apps")
+            .accessibilityValue(open ? "Open" : "Closed")
+            .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            label
+                .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var label: some View {
+        HStack(spacing: 6) {
+            Text(title).foregroundStyle(Paper.ink)
+            if let count { Text("· \(count)").foregroundStyle(Paper.muted) }
+        }
+        .font(.system(size: 13, weight: .heavy))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }

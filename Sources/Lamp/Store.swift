@@ -1250,7 +1250,9 @@ final class Store: ObservableObject {
     /// (`deskPick`), else the chat in front. The pick stays apart from `selection`, which also says what's been read and
     /// which window asks the store's questions: a wish picked on the desk has had neither happen.
     func commandTarget(deskPick: LampProject.ID?) -> LampProject? {
-        deskPick.flatMap { id in projects.first { $0.id == id } } ?? selected
+        // A starter picked on the desk that isn't on it yet is no wish: nothing to act on.
+        if let deskPick { return projects.first { $0.id == deskPick } }
+        return selected
     }
 
     /// Whether Duplicate… can be chosen for a wish, in the File menu and the wish's own. `remix` asks again when it runs.
@@ -7372,7 +7374,8 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A starter put on the desk after the first launch (a remix of one from the site, once it was deleted): added, shown on the desk, and
+    /// A starter put on the desk after the first launch (opened from the desk's Starter apps, a remix of one from the site, New
+    /// Copy of the Original): added, shown on the desk, and
     /// saved and built out of sight like the first launch's (`prepareStarters`).
     @discardableResult func put(starter: Starters.Starter) -> LampProject? {
         guard let added = add(starter: starter) else { return nil }

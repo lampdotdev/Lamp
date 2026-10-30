@@ -39,4 +39,23 @@ final class DeskListTests: XCTestCase {
         let rows = DeskList.rows([shared, mine], entries: entries, by: .name, ascending: true)
         XCTAssertEqual(rows.map(\.madeBy), ["You", "Shared"])
     }
+
+    /// An untouched starter's copy stands for its starter under Starter apps; once changed it's the person's, and the
+    /// starter is listed afresh, to be copied only when it's opened.
+    func testChangedStarterMovesToYoursAndTheStarterStaysListed() {
+        let shelf = wish("Hot Shelf"), hours = wish("Hours"), mine = wish("Mine")
+        var changed = entry(shelf, starter: true), untouched = entry(hours, starter: true)
+        changed.starter = "hotshelf"; changed.changedFromOriginal = true
+        untouched.starter = "hours"
+        let entries = [shelf.id: changed, hours.id: untouched, mine.id: entry(mine)]
+        let starters = ["hotshelf": "Hot Shelf", "hours": "Hours"].map { folder, name in
+            DeskList.Fresh(starter: Starters.Starter(folder: URL(fileURLWithPath: "/tmp/\(folder)"), tree: URL(fileURLWithPath: "/tmp/\(folder)"),
+                                                     name: name, offer: "", tweaks: []),
+                           entry: DeskEntry(id: DeskList.Fresh.id(of: folder), isStarter: true, starter: folder))
+        }
+        let sections = DeskList.sections([shelf, hours, mine], entries: entries, starters: starters, by: .name, ascending: true)
+        XCTAssertEqual(sections.yours.map(\.id), ["hot shelf", "mine"])
+        XCTAssertEqual(sections.starters.map(\.id), ["starter:hotshelf", "hours"])
+        XCTAssertEqual(sections.kept, ["hours"])
+    }
 }

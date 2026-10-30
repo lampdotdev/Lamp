@@ -9,8 +9,8 @@ import LampSidebarKit
 /// that commit, fetched by `scripts/fetch-starters.sh` before a build and never committed here: the app's code and
 /// files, APP.md, lamp-app.json (what it is), credits.json, and in `.github/` the pictures (`preview.png`, the picture
 /// the desk shows on hover, and `icon/`, the icon drawn once). A starter goes onto the desk as a repository opens
-/// (`copy`: read as the import reads one, installed as the import installs one), once, on the first launch, and from
-/// then on it's the person's like any other wish; a later Lamp with other starters gives those only to new people.
+/// (`copy`: read as the import reads one, installed as the import installs one), once, on the first launch; the desk lists
+/// every starter under Starter apps, copying one with no untouched copy there only when it's opened (`DeskList.Fresh`).
 /// `scripts/check-starters.sh` type-checks them against this checkout's LampSupport.swift.
 /// A release ships each one built as well (`PrebuiltStarters`), so it's ready before Apple's build tools are.
 enum Starters {
