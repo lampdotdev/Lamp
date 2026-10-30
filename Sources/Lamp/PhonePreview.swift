@@ -149,11 +149,17 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
 
           // The page's time, moved on by `advance`: the play's, not the wall's. Lamp's own waits keep the real timers.
           var realTimeout = window.setTimeout.bind(window), RealDate = Date, started = RealDate.now(), clock = 0;
-          var timers = new Map(), nextTimer = 1, firing = 0;
+          var timers = new Map(), nextTimer = 1, firing = false;
+          var drain = new MessageChannel(), drained = null;
+          drain.port1.onmessage = function () { var done = drained; drained = null; done(); };
+          // Whatever a timer's promises set going finishes here, with the clock still at that timer's moment. A message is
+          // a task of its own, so every promise in a chain gets its turn, and it isn't slowed as a nested timeout is.
+          function settle() { return new Promise(function (done) { drained = done; drain.port2.postMessage(0); }); }
           function schedule(fn, delay, args, every) {
             var id = nextTimer++;
             var run = typeof fn === 'function' ? function () { fn.apply(window, args); } : function () { (0, eval)(String(fn)); };
-            delay = Math.max(0, +delay || 0);
+            // As in a browser, a timer set from a timer waits a little: the clock moves on for a page that keeps setting them.
+            delay = Math.max(firing ? 4 : 0, +delay || 0);
             timers.set(id, { run: run, at: clock + delay, every: every ? Math.max(1, delay) : 0 });
             return id;
           }
@@ -161,8 +167,13 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
           window.setInterval = function (fn, delay) { return schedule(fn, delay, Array.prototype.slice.call(arguments, 2), true); };
           window.clearTimeout = window.clearInterval = function (id) { timers.delete(id); };
           window.requestAnimationFrame = function (fn) {
-            var frame = 1000 / 60;
-            return schedule(function () { fn(clock); }, frame - clock % frame, [], false);
+            // The next whole frame after the clock, counted in frames: a gap of a rounding error added to the clock leaves
+            // it where it was, and a page drawing every frame would never let time pass.
+            var frame = 1000 / 60, next = Math.floor(clock / frame) + 1;
+            while (next * frame <= clock) next++;
+            var id = schedule(function () { fn(clock); }, 0, [], false);
+            timers.get(id).at = next * frame;
+            return id;
           };
           window.cancelAnimationFrame = function (id) { timers.delete(id); };
           function PageDate() {
@@ -177,17 +188,22 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
           Object.defineProperty(performance, 'now', { configurable: true, value: function () { return clock; } });
           // Each timer due in the time passed, in order, with the clock at its moment. A page whose timer never stops
           // adding timers can't hold the play up.
-          function advance(ms) {
+          async function advance(ms) {
             var end = clock + Math.max(0, +ms || 0), fired = 0;
+            await settle();
             for (;;) {
               var due = null, dueId = 0;
               timers.forEach(function (t, id) { if (t.at <= end && (!due || t.at < due.at)) { due = t; dueId = id; } });
               if (!due || fired++ > 20000) break;
               clock = Math.max(clock, due.at);
               if (due.every) due.at += due.every; else timers.delete(dueId);
+              firing = true;
               try { due.run(); } catch (e) { logged.push('Error: ' + e.message); }
+              firing = false;
+              await settle();
             }
             clock = end;
+            await settle();
           }
 
           function deliver(m) { if (socket && socket.readyState === 1 && socket.onmessage) socket.onmessage({ data: JSON.stringify(m) }); }
@@ -369,7 +385,7 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
           }
           function pause(ms) { return new Promise(function (done) { realTimeout(done, ms); }); }
           // `passing`: the page's clock runs meanwhile, for a page trying its link again on its own timer.
-          async function joined(ms, passing) { for (var i = 0; i * 20 < ms && !opened; i++) { await pause(20); if (passing) advance(50); } }
+          async function joined(ms, passing) { for (var i = 0; i * 20 < ms && !opened; i++) { await pause(20); if (passing) await advance(50); } }
           var first = true;
 
           window.__lampPhone = {
@@ -378,7 +394,7 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
               hosted = !!nowHosted;
               if (hosted !== was && !away) deliver({ t: 'state', host: hosted });
               if (first) { first = false; await joined(400, false); }
-              advance(elapsed);
+              await advance(elapsed);
               (JSON.parse(inbox || '[]')).forEach(function (m) { if (m.t === 'player') player = m.number; deliver(m); });
               switch (step.do) {
                 case 'down': down(step); break;
@@ -395,9 +411,9 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
                   break;
               }
               // What the step set going right away, on the page's clock and off it.
-              advance(0);
+              await advance(0);
               await pause(40);
-              advance(0);
+              await advance(0);
               return JSON.stringify({ messages: outbox.splice(0) });
             },
             report: function () {

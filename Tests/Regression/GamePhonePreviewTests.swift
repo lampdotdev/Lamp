@@ -258,6 +258,63 @@ final class GamePhonePreviewTests: XCTestCase {
         XCTAssertEqual((long.first?["data"] as? [String: Any])?["long"] as? Int, 500, "the page's clock said the time the script held for")
     }
 
+    private func clockPage(_ script: String) async throws -> (PhonePreview, () -> Void) {
+        let dir = try page()
+        try """
+            <!doctype html><div id="go" style="position:absolute;left:0;top:0;width:200px;height:200px"></div>
+            <script src="lamp-controller.js"></script>
+            <script>
+              var pad = LampController.connect({}), go = document.getElementById('go');
+              \(script)
+            </script>
+            """.write(to: dir.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        let phone = PhonePreview()
+        let opened = await phone.open(dir)
+        XCTAssertTrue(opened)
+        _ = await phone.step(["do": "sync"], inbox: "[]", hosted: true)
+        return (phone, { phone.close() })
+    }
+
+    /// A page that draws every frame gets 60 of them in a second, each later than the last, and its other timers still fire.
+    func testAPageDrawingEveryFrameLetsTimePass() async throws {
+        let (phone, done) = try await clockPage("""
+            var frames = 0, rising = true, last = -1;
+            function draw(at) { frames++; if (at <= last) rising = false; last = at; requestAnimationFrame(draw); }
+            requestAnimationFrame(draw);
+            setTimeout(function () { pad.send({ frames: frames, rising: rising, at: performance.now() }); }, 1000);
+            """)
+        defer { done() }
+        let said = messages(await phone.step(["do": "sync"], inbox: "[]", hosted: true, elapsed: 1000))
+        let data = try XCTUnwrap(said.first?["data"] as? [String: Any], "the timer never fired: \(said)")
+        XCTAssertEqual(try XCTUnwrap(data["frames"] as? Int), 60, accuracy: 1)
+        XCTAssertEqual(data["rising"] as? Bool, true, "a frame repeated the last one's moment")
+        XCTAssertEqual(try XCTUnwrap(data["at"] as? Double), 1000, accuracy: 0.001)
+    }
+
+    /// A long press and a countdown written with `await`: each wakes at its timer's moment, before the release that follows.
+    func testAwaitedTimersWakeAtTheirMoment() async throws {
+        let (phone, done) = try await clockPage("""
+            function wait(ms) { return new Promise(function (go) { setTimeout(go, ms); }); }
+            var held = false;
+            go.addEventListener('pointerdown', async function () {
+              held = true;
+              var at = performance.now();
+              await wait(500);
+              if (held) pad.send({ charged: performance.now() - at });
+              var ticks = [];
+              for (var i = 0; i < 3; i++) { await wait(100); ticks.push(performance.now() - at); }
+              pad.send({ ticks: ticks });
+            });
+            go.addEventListener('pointerup', function () { held = false; });
+            """)
+        defer { done() }
+        _ = await phone.step(["do": "down", "target": "#go"], inbox: "[]", hosted: true)
+        let said = messages(await phone.step(["do": "up"], inbox: "[]", hosted: true, elapsed: 1000))
+        let data = said.compactMap { $0["data"] as? [String: Any] }
+        XCTAssertEqual(data.first?["charged"] as? Double, 500, "the press was let go before the wait ended: \(said)")
+        XCTAssertEqual(data.last?["ticks"] as? [Double], [600, 700, 800], "each wait should start where the last one ended")
+    }
+
     /// The page gets its player number and the game's word on a join before the first press, as a person's page has them
     /// by the time they press. The play's own code, with Lamp answering as the preview does.
     func testAPlaysFirstStepOnThePageComesAfterItsJoin() throws {
