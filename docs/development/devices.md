@@ -483,7 +483,8 @@ would see from one they wouldn't (a refactor, half a piece of work), so a save i
 the chat's word for the step ("Put into New York: The car is rainbow now"), and a look's step is said in the words of
 the agent's steps that made it ("Put into New York: Adding a sports car"). A look at a game plays it in the hidden copy
 (`playGame`), which can take minutes, so the sources it plays (`Turn.lookedSources`) go into the open game as it plays
-rather than when the agent's checking is done, and a fix it looks at later goes in the same way (the look's result says
+(or, for a play over before the loop took them, before the look returns: `stepLooked`) rather than when the agent's
+checking is done, and a fix it looks at later goes in the same way (the look's result says
 when its sources are in the open game, so the agent never asks for a Reload the person doesn't need); a save that leaves the
 page's files as the last step put them in (`pageSignature`) puts nothing in. What the page does with it is what it does
 with any change (below): a swap goes in at once, busy or not; code run again in place waits for a pause while `busy()`;

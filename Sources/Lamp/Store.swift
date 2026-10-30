@@ -10130,6 +10130,22 @@ final class Store: ObservableObject {
         saveChat(self.wish(of: project))
     }
 
+    /// The look's own step, when its play ended before `autoApply` took it: a preview plays its frames without waiting for
+    /// the clock, so a look can be over within the loop's first readings, and the agent's next save would leave the state
+    /// it looked at behind. Taken here, before the look returns, while the sources are still the ones it played.
+    private func stepLooked(_ project: LampProject, owner: Turn, since lookedAt: Date) async {
+        guard turns[wish(of: project).id] === owner || turns[project.id] === owner, !owner.stopped, owner.agent != nil,
+              owner.applying == nil, !owner.building, let current = current(project), stepsPage(current),
+              let looked = owner.lookedSources[current.id], Runtime.fingerprint(current) == looked, Runtime.sourcesChanged(current),
+              setAsideChanges[current.id]?.told != false || owner.carriedSetAside == setAsideChanges[current.id]?.crash else { return }
+        owner.applyingSources = looked
+        owner.applying = Task { [weak self] in
+            defer { owner.applying = nil }
+            await self?.stepPage(current, in: owner, saved: lookedAt)
+        }
+        await owner.applying?.value
+    }
+
     /// The end of a step played in the hidden copy.
     nonisolated static let inHiddenCopy = " · in a hidden copy"
 
@@ -10140,6 +10156,7 @@ final class Store: ObservableObject {
         markHiddenCopy(project, in: owner)
         // What the agent looks at is what it means to show: the game open on this Mac takes it as it plays (`autoApply`).
         owner.lookedSources[project.id] = Runtime.fingerprint(current(project) ?? project)
+        let lookedAt = Date()
         if let doing = logs[wish]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty { note(doing, for: project) }
         let played: GameKit.Played
         var hiddenProcess: Process?
@@ -10184,6 +10201,7 @@ final class Store: ObservableObject {
         // The same sources went into the game open on this Mac as it played (`autoApply`): told, so the agent never asks
         // for a Reload the person doesn't need. A change held for Reload is said by the chat's Reload line, not here.
         await owner.applying?.value
+        await stepLooked(project, owner: owner, since: lookedAt)
         var mac = current(project) ?? project
         mac.chosen = .mac
         if !owner.shownSources.isEmpty, owner.shownSources == Runtime.fingerprint(mac) {
