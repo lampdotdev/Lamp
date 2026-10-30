@@ -479,7 +479,9 @@ A change to a game while it's played. While the agent works, each change it save
 once it compiles and the saving has paused, not waiting for the agent to look or for the turn to end
 (`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app: the saved files are read every two
 seconds, and a game's are tried once they've held still for six seconds, no more often than every fifteen, since each
-step can hold the picture for a moment). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+step can hold the picture for a moment), and while the agent's look plays the game in the hidden copy, which can take
+minutes (only the look's build, which writes the same folders, is waited for; `PageLive.put` puts one change into a
+copy at a time). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the

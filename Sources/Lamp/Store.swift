@@ -8462,9 +8462,12 @@ final class Store: ObservableObject {
                     await reloadInTurn(project, turn)
                     continue
                 }
+                // A game's page also takes a step while the agent's look plays the game in the hidden copy, which can
+                // run for minutes: only the look's build, which writes the same folders, is waited for.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
-                      !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
+                      !turn.building, !turn.keptOpen, turn.applying == nil,
                       let current = current(project), LiveReload.eligible(current) || stepsPage(current),
+                      !turn.look.inProgress || stepsPage(current),
                       isRunning(current), !Runtime.waitsForReload(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false

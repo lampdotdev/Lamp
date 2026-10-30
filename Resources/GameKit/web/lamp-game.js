@@ -1049,7 +1049,9 @@ function resolve(specifier, from) {
     const prefix = Object.keys(importMap).filter(k => k.endsWith('/') && specifier.startsWith(k)).sort((a, b) => b.length - a.length)[0];
     return prefix ? new URL(importMap[prefix] + specifier.slice(prefix.length), location.href).href : null;
 }
-const importsIn = (text, from) => [...text.matchAll(SPECIFIER)].map(m => pathOf(resolve(m[3], from) || '')).filter(p => p != null && !lampOwn(p));
+// A specifier nothing resolves (a bare name the import map doesn't have) names no file of the game's.
+const importsIn = (text, from) => [...text.matchAll(SPECIFIER)].map(m => resolve(m[3], from)).filter(Boolean).map(pathOf)
+    .filter(p => p != null && !lampOwn(p));
 // The names a module's imports give it, each with the module it comes from: `a`, `b` and `ns` in
 // `import a, { x as b } from './m.js'` and `import * as ns from './n.js'`.
 const BINDINGS = /\bimport\s+([\w$*{}\s,]+?)\s+from\s*(['"])([^'"\n]+)\2/g;
@@ -1057,7 +1059,7 @@ const bindings = new Map();
 function bindingsIn(text, from) {
     const names = new Map();
     for (const m of text.matchAll(BINDINGS)) {
-        const path = pathOf(resolve(m[3], from) || '');
+        const target = resolve(m[3], from), path = target && pathOf(target);
         if (path == null || lampOwn(path)) continue;
         const clause = m[1].replace(/\*\s*as\s+/, '').replace(/[{}]/g, ',');
         for (const part of clause.split(',')) { const name = part.trim().split(/\s+as\s+/).pop(); if (name) names.set(name, path); }
