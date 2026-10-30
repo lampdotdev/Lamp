@@ -1855,7 +1855,7 @@ final class Store: ObservableObject {
             if let request { writeIn(request, for: project) }
         }
         if let reused { return opened(reused) }
-        fetching(starter, alerting: true) { [self] starter in
+        fetching(starter, asking: "copy:" + (request ?? ""), alerting: true) { [self] starter in
             guard let project = put(starter: starter) else {
                 NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of \(starter.name).")).runModal()
                 return
@@ -7382,38 +7382,61 @@ final class Store: ObservableObject {
     /// Mac yet (`StarterDownloads`), then `then` with it. Without a connection, the starter's row on the desk says so
     /// and Open tries again; `alerting` (a remix link, New Copy of the Original: something asked for away from the
     /// row) says it in an alert too, with Try Again.
-    func fetching(_ starter: Starters.Starter, alerting: Bool = false, then: @escaping @MainActor (Starters.Starter) -> Void) {
+    /// `asking` names what the caller will do with it (Open, a request, a copy): a second ask while it's coming (a
+    /// change sent from the panel after Open, another link) waits for the same download and is answered in turn, and
+    /// one that's already waiting isn't added again, so Try Again on the row doesn't open it twice. What's waiting stays
+    /// through a failure, for the next try; Cancel in the alert lets it go.
+    func fetching(_ starter: Starters.Starter, asking: String = "", alerting: Bool = false,
+                  then: @escaping @MainActor (Starters.Starter) -> Void) {
         let folder = starter.folder.lastPathComponent
         let prebuiltHere = StarterDownloads.prebuilt(of: starter) == nil || StarterDownloads.prebuiltArchive(of: starter) != nil
         if Starters.hasTree(starter), prebuiltHere { return then(starter) }
-        // A second ask while it's coming (a change sent from the panel after Open, another link) waits for the same
-        // download, and is answered in turn.
-        fetchWaiters[folder, default: []].append(then)
-        guard fetchingStarters.insert(folder).inserted else { return }
+        var waiting = fetchWaiters[folder] ?? []
+        // Opening it with a change asked covers opening it plainly: both would make a copy, and one is meant.
+        if asking == "open:", waiting.contains(where: { $0.asking.hasPrefix("open:") }) {
+            if alerting { fetchAlerts.insert(folder) }
+            return fetchAgain(starter)
+        }
+        waiting.removeAll { $0.asking == asking || (asking.hasPrefix("open:") && $0.asking == "open:") }
+        waiting.append((asking, then))
+        fetchWaiters[folder] = waiting
+        if alerting { fetchAlerts.insert(folder) }
+        fetchAgain(starter)
+    }
+
+    /// The starter's download, with whatever waits on it, unless it's under way already.
+    private func fetchAgain(_ starter: Starters.Starter) {
+        let folder = starter.folder.lastPathComponent
+        guard fetchWaiters[folder]?.isEmpty == false, fetchingStarters.insert(folder).inserted else { return }
         starterFetchFailed[folder] = nil
         let needsPrebuilt = !setup.hasBuildTools
         Task {
             do {
                 try await StarterDownloads.fetch(starter, needsPrebuilt: needsPrebuilt)
                 fetchingStarters.remove(folder)
-                for waiting in fetchWaiters.removeValue(forKey: folder) ?? [] { waiting(starter) }
+                fetchAlerts.remove(folder)
+                for waiting in fetchWaiters.removeValue(forKey: folder) ?? [] { waiting.then(starter) }
             } catch {
                 fetchingStarters.remove(folder)
-                let waiting = fetchWaiters.removeValue(forKey: folder) ?? []
                 starterFetchFailed[folder] = error.localizedDescription
-                guard alerting else { return }
+                guard fetchAlerts.remove(folder) != nil else { return }
                 let alert = NSAlert()
                 alert.messageText = "Lamp couldn't get \(starter.name)"
                 alert.informativeText = error.localizedDescription
                 alert.addButton(withTitle: "Try Again")
                 alert.addButton(withTitle: "Cancel")
                 if alert.runModal() == .alertFirstButtonReturn {
-                    for then in waiting { fetching(starter, alerting: true, then: then) }
+                    fetchAlerts.insert(folder)
+                    fetchAgain(starter)
+                } else {
+                    fetchWaiters[folder] = nil
                 }
             }
         }
     }
-    private var fetchWaiters: [String: [@MainActor (Starters.Starter) -> Void]] = [:]
+    private var fetchWaiters: [String: [(asking: String, then: @MainActor (Starters.Starter) -> Void)]] = [:]
+    /// Starters a caller wants told of a failure in an alert (a link, a menu command), not only on the row.
+    private var fetchAlerts: Set<String> = []
 
     /// One starter put on the desk, its files fetched (`fetching`): its files in a new app, saved as its first version
     /// and built by `prepareStarters`. The caller reloads the desk. Nil when it couldn't be written, and then nothing
@@ -7701,7 +7724,10 @@ final class Store: ObservableObject {
     func canPrepare(_ project: LampProject? = nil) -> Bool {
         if setup.hasBuildTools { return true }
         if let project { return PrebuiltStarters.has(project) || PrebuiltStarters.unavailable(project) || !needsAppleTools(project) }
-        return projects.contains { needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)) }
+        return projects.contains {
+            needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)
+                || (PrebuiltStarters.unavailable($0) && openWhenReady.contains($0.id)))
+        }
     }
 
     /// Whether a starter's turn comes: one whose prebuilt copy was refused, on a Mac with no tools to build it, only once
