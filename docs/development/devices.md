@@ -569,7 +569,12 @@ the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) 
 Swift built into the player and every compiled game as one file (`GameKit.controllerKit`, which build.sh writes). As
 `Lamp.controllers` starts, it serves the page (`PhonePageServer`) and runs a `Relay` in the game's process, each on a
 port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
-the game quitting close both. The session is the page's, so it outlives a run of the game's code: lamp.js's service
+the game quitting close both. A shared game's page is held to its sites by rules fixed as its document loads, so its
+relay comes first: a port on 127.0.0.1 alone is taken before the document is served and named in its rules for
+connecting only (`ControllerRuntime.pageSites`), phones join at a port of their own that opens with the session, and
+the held port stays the game's through every stop until it quits, so nothing else can take a port a live page may
+reach. One lost anyway is asked for back, and if it's gone the pages open again under the new one
+(`onPagePortMoved`, `LampPageGuard.retirePages`). The session is the page's, so it outlives a run of the game's code: lamp.js's service
 takes its timers from the browser as the page loads, before `watch` wraps them, so `takeAwayLeft` never reaches its
 beat, its renewal or its link. A run's own callbacks are the run's (`watchPhones`, as `watch` follows its listeners; a
 kept part's stay with the part): the old run's end as it stops (`holdPhones`), a `stop()` from its `dispose` is

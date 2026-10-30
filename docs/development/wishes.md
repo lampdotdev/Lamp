@@ -227,7 +227,9 @@ Content-Security-Policy naming only those sites; the page never leaves its own a
 (redirects included); a link opens in the browser only on the person's click, once they've seen where it goes; what
 no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
 "May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
-or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
+or every site for good, on that device. A game's own controllers relay is the one way out the app adds: the rules name
+it at `ws://127.0.0.1:<port>` for connecting only, for that launch, never kept with the sites or taken from the page
+(`ControllerRuntime.pageSites`, "Lamp's player" in the devices guide). Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
 (a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A phone's controller page reads it
 too (`PhonePageReach`, under "TV apps"): its servers allow only the policy's sites, an app with Swift of the sender's
 included, since Lamp and an LG TV serve it outside the app's process; a game that serves its own page on the Mac,
