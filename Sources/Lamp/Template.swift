@@ -208,8 +208,10 @@ enum Template {
         // The app's name and its own words (the network reason in capabilities.json) come with a shared file, so
         // they may hold anything the shell would run: `$(…)`, backquotes, a line that ends a heredoc. A script gets
         // them as variables set in single quotes at its top (`shellWords`), which the shell expands as text only.
-        let words = [("{{USAGE}}", "LAMP_USAGE", iosUsagePlistLines(name: project.name, localNetwork: reason)),
-                     ("{{MAC_USAGE}}", "LAMP_MAC_USAGE", macUsagePlistLines(name: project.name, localNetwork: reason)),
+        // A shared page's sites go beside its permission reasons, in every Info.plist the app is built with.
+        let network = SharedNetwork.plistLines(for: project)
+        let words = [("{{USAGE}}", "LAMP_USAGE", iosUsagePlistLines(name: project.name, localNetwork: reason) + network),
+                     ("{{MAC_USAGE}}", "LAMP_MAC_USAGE", macUsagePlistLines(name: project.name, localNetwork: reason) + network),
                      ("{{NAME}}", "LAMP_APP_NAME", project.name)]
         var filled = template.replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
         if template.hasPrefix("#!") {
@@ -2081,8 +2083,9 @@ enum Template {
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
             .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason
-                ?? (GamePhones.takesOnIOS(project) ? GamePhones.iosNetworkReason : nil)))
-                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
+                ?? (GamePhones.takesOnIOS(project) ? GamePhones.iosNetworkReason : nil)) + SharedNetwork.plistLines(for: project))
+                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason)
+                    + SharedNetwork.plistLines(for: project))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: background)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)

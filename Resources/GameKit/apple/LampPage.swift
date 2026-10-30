@@ -6,11 +6,13 @@
 // address is the app's for good, since what the page saves (localStorage, IndexedDB) is kept under it. What it asks of Lamp (LampAI in Web/lamp.js) goes through this
 // app with the app's own token, never the page's; what it asks of this device (`LampNative.call` in lamp.js: the
 // person's mail, calendar, reminders, photos…) is answered by Swift in Sources/Native.swift, the app's own code, with
-// Lamp's building blocks in LampSupport.swift. Only the app's own page, in its main frame, is answered.
+// Lamp's building blocks in LampSupport.swift. Only the app's own page, in its main frame, is answered. A page shared
+// with this person reaches only its own files and the sites its review named (`LampPageGuard`).
 import AVFoundation
 import Combine
 import CryptoKit
 import Foundation
+import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 #if os(iOS)
@@ -630,15 +632,18 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
         guard let data = file(at: url) else {
-            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!)
+            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: LampPageGuard.headers(scheme: scheme))!)
             task.didFinish()
             return
         }
         let ext = url.pathExtension.lowercased()
         let type = ["js": "text/javascript", "mjs": "text/javascript", "html": "text/html", "css": "text/css", "json": "application/json",
                     "wasm": "application/wasm"][ext] ?? UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
-        task.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
-                                        headerFields: ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": "no-store"])!)
+        var headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": "no-store"]
+        // Every document and worker of a shared page carries its rules, a frame's and a worker's included: they're served
+        // from here, so none is without them.
+        headers.merge(LampPageGuard.headers(scheme: scheme)) { $1 }
+        task.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!)
         task.didReceive(data)
         task.didFinish()
     }
@@ -662,6 +667,262 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     }
 }
 
+// MARK: - What a shared page may reach
+
+/// A page shared with this person, held to its own files and the exact sites its review named (`NetworkPolicy`, which
+/// Lamp writes into this app's Info.plist from its own record, so neither the page, a rebuild nor a change while it's
+/// open can widen it; an app the person made has none, and none of this applies). Its documents and workers are served
+/// with a Content-Security-Policy that names only those (`LampPageFiles`); it never leaves its own address, in its
+/// window or a frame, and a link opens in the browser only when the person clicks it and agrees to where it goes, a
+/// redirect included since each step is decided here; what no policy covers (WebRTC, a link's preconnect) is off
+/// (`NetworkPolicy.holdBack`). A page whose review said
+/// it may connect elsewhere shows what was blocked, and the person can allow that site or, for good, every site.
+/// Swift of the sender's in this app (Native.swift or any other) runs in this process with none of this, and can turn it
+/// off for the page too (the person's choices are this app's defaults): such an app isn't held, and its review says so.
+enum LampPageGuard {
+    static let policy = NetworkPolicy(plist: Bundle.main.object(forInfoDictionaryKey: NetworkPolicy.plistKey))
+    private static let allowedKey = "LampNetworkAllowed", everyKey = "LampNetworkUnrestricted"
+
+    /// Sites the person allowed on this device, kept where the page can't write.
+    static var allowed: [String] { UserDefaults.standard.stringArray(forKey: allowedKey) ?? [] }
+
+    /// The policy the page is held to now, or nil when it's held to nothing: the person's own app, or one they let
+    /// reach every site.
+    static var current: NetworkPolicy? {
+        guard var policy, !UserDefaults.standard.bool(forKey: everyKey) else { return nil }
+        policy.origins += allowed
+        return policy.restricts ? policy : nil
+    }
+
+    static func own(_ scheme: String) -> String { "\(scheme)://app" }
+
+    /// The headers every file of the page is served with.
+    static func headers(scheme: String) -> [String: String] {
+        guard let csp = current?.contentSecurityPolicy(own: own(scheme)) else { return [:] }
+        // A name looked up ahead is a request too: a page could spell what it has in one.
+        return ["Content-Security-Policy": csp, "X-DNS-Prefetch-Control": "off"]
+    }
+
+    /// What the page is held to as it's set up: WebRTC off, and what it's refused heard of in every frame, from a world
+    /// of Lamp's own the page can't reach (it hears only refusals WebKit made, never ones the page made up).
+    @MainActor static func attach(to configuration: WKWebViewConfiguration, scheme: String) {
+        guard policy != nil else { return }
+        let world = WKContentWorld.world(name: "LampGuard")
+        configuration.userContentController.add(LampPageRefused(scheme: scheme), contentWorld: world, name: "lampRefused")
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+            document.addEventListener('securitypolicyviolation', function (e) {
+              if (!e.isTrusted) return;
+              try { window.webkit.messageHandlers.lampRefused.postMessage({ url: String(e.blockedURI || ''), what: String(e.effectiveDirective || '') }); } catch (_) {}
+            }, true);
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: world))
+        guard current != nil else { return }
+        NetworkPolicy.holdBack(configuration.preferences)
+    }
+
+    private static let watchers = NSMapTable<WKWebView, LampPageWatcher>.weakToStrongObjects()
+
+    /// Where the page may go, decided for every navigation of its window and frames.
+    @MainActor static func watch(_ view: WKWebView, scheme: String) {
+        guard policy != nil else { return }
+        let watcher = LampPageWatcher(scheme: scheme)
+        watchers.setObject(watcher, forKey: view)
+        view.navigationDelegate = watcher
+        view.uiDelegate = watcher
+    }
+
+    /// Lets the page reach `site` from now on, on this device, and opens the page again with it.
+    @MainActor static func allow(_ site: String, in view: WKWebView) {
+        UserDefaults.standard.set(Array(Set(allowed + [site])).sorted(), forKey: allowedKey)
+        view.reload()
+    }
+
+    /// Lets the page reach every site, for good.
+    @MainActor static func allowEverySite(in view: WKWebView) {
+        UserDefaults.standard.set(true, forKey: everyKey)
+        view.reload()
+    }
+
+    /// Asks the person, over the page, and calls `then` with their answer.
+    @MainActor static func ask(_ title: String, _ message: String, button: String, over view: WKWebView, then: @escaping @MainActor (Bool) -> Void) {
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
+        guard let window = view.window else { return then(alert.runModal() == .alertFirstButtonReturn) }
+        alert.beginSheetModal(for: window) { answer in then(answer == .alertFirstButtonReturn) }
+        #else
+        var top = view.window?.rootViewController
+        while let shown = top?.presentedViewController { top = shown }
+        guard let top else { return then(false) }
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in then(false) })
+        alert.addAction(UIAlertAction(title: button, style: .default) { _ in then(true) })
+        top.present(alert, animated: true)
+        #endif
+    }
+}
+
+/// The page's window and frames: only the page's own address, and a link the person clicks opened in the browser once
+/// they've seen where it goes.
+@MainActor final class LampPageWatcher: NSObject, WKNavigationDelegate, WKUIDelegate {
+    private let scheme: String
+    private var asking = false
+    init(scheme: String) { self.scheme = scheme }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        guard let url = action.request.url, let policy = LampPageGuard.current,
+              !policy.allowsFrame(url, own: LampPageGuard.own(scheme)) else { return decisionHandler(.allow) }
+        decisionHandler(.cancel)
+        FileHandle.standardError.write(Data("Lamp kept this shared app from opening \(url.absoluteString.prefix(300))\n".utf8))
+        if action.targetFrame?.isMainFrame != false { offer(url, for: action, over: webView) }
+    }
+
+    /// A link that opens a window of its own (target="_blank"): never a window here.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = action.request.url { offer(url, for: action, over: webView) }
+        return nil
+    }
+
+    /// A website the person clicked a link to, opened in the browser once they've said yes to where it goes. Anything
+    /// the page does by itself (setting its address, opening a window, a redirect) goes nowhere.
+    private func offer(_ url: URL, for action: WKNavigationAction, over view: WKWebView) {
+        guard action.navigationType == .linkActivated, Self.byPerson(action), !asking,
+              let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme) else { return }
+        asking = true
+        LampPageGuard.ask("Open \(url.host ?? "this website")?", url.absoluteString, button: "Open", over: view) { [weak self] open in
+            self?.asking = false
+            guard open else { return }
+            #if os(macOS)
+            NSWorkspace.shared.open(url)
+            #else
+            UIApplication.shared.open(url)
+            #endif
+        }
+    }
+
+    /// Whether the person's own click or tap started it. WebKit says so only by a name it doesn't publish: where it isn't
+    /// there, a link's being clicked is all there is to go on.
+    private static func byPerson(_ action: WKNavigationAction) -> Bool {
+        guard action.responds(to: NSSelectorFromString("_isUserInitiated")) else { return true }
+        return (action.value(forKey: "_isUserInitiated") as? Bool) ?? false
+    }
+}
+
+/// What the page was refused, from Lamp's own world in it: into the app's log, and, for a page whose review said it may
+/// connect elsewhere, shown over it with a way to allow the site.
+@MainActor final class LampPageRefused: NSObject, WKScriptMessageHandler {
+    private let scheme: String
+    /// Sites shown or waiting their turn on this page, the one shown now, and those waiting: one bar at a time, and
+    /// each site's in turn.
+    private var shown: Set<String> = []
+    private var showing: String?
+    private var waiting: [String] = []
+    init(scheme: String) { self.scheme = scheme }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let said = message.body as? [String: Any], let address = said["url"] as? String,
+              let view = message.webView, let policy = LampPageGuard.current else { return }
+        let site = NetworkPolicy.origin(address)
+        FileHandle.standardError.write(Data("Lamp blocked this shared app's request to \(site ?? String(address.prefix(200))) (\(said["what"] as? String ?? ""))\n".utf8))
+        guard policy.mayConnect, let site, !shown.contains(site) else { return }
+        shown.insert(site)
+        waiting.append(site)
+        showNext(over: view)
+    }
+
+    private func showNext(over view: WKWebView) {
+        guard showing == nil, !waiting.isEmpty else { return }
+        let site = waiting.removeFirst()
+        showing = site
+        LampPageBlocked.show(site, over: view) { [weak self, weak view] in
+            guard let self else { return }
+            self.showing = nil
+            self.shown.remove(site)
+            if let view { self.showNext(over: view) }
+        }
+    }
+}
+
+/// The bar over a page that says what was blocked: allow that site, every site, or let it be.
+struct LampPageBlocked: View {
+    let site: String
+    let allow: () -> Void
+    let allowAll: () -> Void
+    let close: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "network.slash")
+            Text("Blocked \(site.components(separatedBy: "://").last ?? site)").lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            Button("Allow", action: allow)
+            Button("Allow All…", action: allowAll)
+            Button(action: close) { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("Close")
+        }
+        .font(.callout)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .padding(10)
+    }
+
+    private static let bars = NSMapTable<WKWebView, LampPageBlockedHost>.weakToStrongObjects()
+
+    /// Shows the bar for `site` at the top of the page; `gone` once it's closed.
+    @MainActor static func show(_ site: String, over view: WKWebView, gone: @escaping @MainActor () -> Void) {
+        bars.object(forKey: view)?.view.removeFromSuperview()
+        let host = LampPageBlockedHost()
+        func remove() { host.view.removeFromSuperview(); bars.removeObject(forKey: view); gone() }
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "This app"
+        let bar = LampPageBlocked(site: site, allow: {
+            // The page chose what was blocked, and when: the person sees the whole site before it's let in.
+            LampPageGuard.ask("Let \(name) reach this site?", site, button: "Allow", over: view) { yes in
+                guard yes else { return }
+                remove()
+                LampPageGuard.allow(site, in: view)
+            }
+        }, allowAll: {
+            LampPageGuard.ask("Let \(name) reach any site?", "It can then send what it has anywhere. This stays until you remove the app.",
+                              button: "Allow All", over: view) { yes in
+                guard yes else { return }
+                remove()
+                LampPageGuard.allowEverySite(in: view)
+            }
+        }, close: { remove() })
+        host.view = Self.hosting(bar)
+        bars.setObject(host, forKey: view)
+        let shown = host.view
+        shown.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(shown)
+        NSLayoutConstraint.activate([
+            shown.topAnchor.constraint(equalTo: view.topAnchor),
+            shown.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            shown.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor),
+        ])
+    }
+
+    #if os(macOS)
+    @MainActor private static func hosting(_ bar: LampPageBlocked) -> NSView { NSHostingView(rootView: bar) }
+    #else
+    @MainActor private static func hosting(_ bar: LampPageBlocked) -> UIView {
+        let shown = UIHostingController(rootView: bar).view!
+        shown.backgroundColor = .clear
+        return shown
+    }
+    #endif
+}
+
+final class LampPageBlockedHost: NSObject {
+    #if os(macOS)
+    var view = NSView()
+    #else
+    var view = UIView()
+    #endif
+}
+
 /// The web view the page is shown in: its sound and pictures without a tap first, nothing to scroll or bounce.
 @MainActor enum LampPageView {
     /// A page that logs its own errors (a game's runtime does) leaves `catchErrors` off, or each would be logged twice.
@@ -671,6 +932,8 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         configuration.setURLSchemeHandler(files, forURLScheme: files.scheme)
         // LampAI and the page's calls of this device, and its console into the app's log.
         LampPage.attach(to: configuration, scheme: files.scheme, catchErrors: catchErrors)
+        // A shared page: held to its own files and its sites.
+        LampPageGuard.attach(to: configuration, scheme: files.scheme)
         let changes = live ? LampPageLive(files: files) : nil
         if let changes { configuration.userContentController.add(changes, contentWorld: .page, name: "lampLive") }
         configuration.mediaTypesRequiringUserActionForPlayback = []
@@ -688,6 +951,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         view.scrollView.contentInsetAdjustmentBehavior = .never
         #endif
         changes?.start(view)
+        LampPageGuard.watch(view, scheme: files.scheme)
         #if os(macOS)
         LampPageReader.watch(view)
         #endif

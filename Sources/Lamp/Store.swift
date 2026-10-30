@@ -2191,6 +2191,7 @@ final class Store: ObservableObject {
             try Template.fill(part)
             if let kept {
                 try Sharing.install(kept.package, into: part)
+                SharedNetwork.arrive(kept.package, in: part, arriving: SharedNetwork.isShared(wish, parts: parts(of: wish)))
                 Sharing.forgetKept(in: wish.dir, for: kind, slot: reserved)
             }
         } catch {
@@ -3033,6 +3034,8 @@ final class Store: ObservableObject {
                 try fm.copyItem(at: suggestions, to: Starters.suggestionsFile(of: copy))
             }
             try Template.saveMeta(copy)
+            // A remix of a wish from someone else is held as the wish is, before its first build.
+            SharedNetwork.carry(from: project, parts: parts(of: project), to: copy)
             if let original = Sharing.identity(of: project) {
                 try Credits.add(Credits(remixOf: [Credits.Remix(name: project.name, wish: original)]), to: copy)
             }
@@ -3603,8 +3606,15 @@ final class Store: ObservableObject {
             // What the wish arrived with (`Credits.load`) is in .lamp too, and the file's credits replace it.
             let creditsRecord = project.dir.appendingPathComponent(Credits.arrivedPath)
             let creditsBefore = try? Data(contentsOf: creditsRecord)
+            // And what its apps may reach (`SharedNetwork`), kept in Lamp's own folder.
+            let networkBefore = SharedNetwork.snapshot([project] + parts(of: project))
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
+                // The apps the update made are still listed here, and their policies go with them.
+                SharedNetwork.restore(networkBefore, apps: await parts(of: project)
+                    + package.parts.map { LampProject(id: Parts.id(wish: project.id, folder: $0.folder), name: project.name, exe: project.exe,
+                                                      dir: project.dir.appendingPathComponent($0.folder),
+                                                      instance: Parts.instance(wish: project, folder: $0.folder), partOf: project.id) })
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
                 if let creditsBefore { try? creditsBefore.write(to: creditsRecord, options: .atomic) } else { try? fm.removeItem(at: creditsRecord) }
                 try? fm.removeItem(at: waiting)
@@ -3628,6 +3638,7 @@ final class Store: ObservableObject {
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
+                SharedNetwork.arrive(package, in: project, arriving: false)
                 let notIn = await installParts(of: package, into: project)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be put in place.") }
                 // The copy's credits name the wish it was copied from; the wish keeps its own, moved on to the update.
@@ -3700,6 +3711,12 @@ final class Store: ObservableObject {
         let merged: Upstream.Merged
         do {
             merged = try await Upstream.merge(package, into: project, from: source, commit: origin?.commit, arrival: arrival)
+            // What the reviewed file says each app reaches: the wish's own, and each of its apps merged in its folder.
+            SharedNetwork.arrive(package, in: project, arriving: false)
+            for part in package.parts {
+                guard let app = parts(of: project).first(where: { $0.dir.lastPathComponent.lowercased() == part.folder.lowercased() }) else { continue }
+                SharedNetwork.arrive(part.package, in: app, arriving: false)
+            }
             if let credits = package.credits { try Credits.add(credits, to: project) }
         } catch {
             _ = await Versions.git("git read-tree --reset -u HEAD && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
@@ -3749,6 +3766,8 @@ final class Store: ObservableObject {
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
             try Sharing.install(package, into: project)
+            // Someone else's: held to what its sheet named, from now on (`SharedNetwork`).
+            SharedNetwork.arrive(package, in: project, arriving: true)
             // The copy is the same app as the sender's: the next file shared from theirs can update it. A
             // second copy made beside one that's already here (Keep Both), or beside one of another kind, is an
             // app of its own.
@@ -3800,6 +3819,8 @@ final class Store: ObservableObject {
     /// app of the same family already here is never taken for one of them, since its files were merged in place.
     func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
         var notIn: [String] = []
+        // A part of a wish from someone else is held as the wish is (`SharedNetwork`), and one of the person's own isn't.
+        let shared = SharedNetwork.isShared(wish, parts: parts(of: wish))
         func failed(_ kind: Platform) {
             let name = Parts.name(of: kind)
             notIn.append(name.prefix(1).uppercased() + name.dropFirst())
@@ -3843,7 +3864,10 @@ final class Store: ObservableObject {
                 }
                 target = made
             }
-            do { try Sharing.install(part.package, into: target, replacing: had != nil) } catch {
+            do {
+                try Sharing.install(part.package, into: target, replacing: had != nil)
+                SharedNetwork.arrive(part.package, in: target, arriving: shared)
+            } catch {
                 log(wish, .error, "Lamp couldn't put \(Parts.name(of: kind))'s files in place: \(error.localizedDescription)")
                 failed(kind)
             }
@@ -5499,6 +5523,7 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
+        for app in [project] + parts { SharedNetwork.forget(app) }
         if project.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(project) }
         // What Lamp kept of what its apps share goes before the key that reads it.
         WishKeep.forget(project)

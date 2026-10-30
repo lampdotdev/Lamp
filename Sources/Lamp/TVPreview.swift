@@ -3,6 +3,7 @@ import CryptoKit
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 import WebKit
+import LampRelayKit
 
 /// The TV on this Mac's screen: a TV app opened at the TVs' own size (1920×1080, shown at half that), from the copy of
 /// its files in Lamp's folder (`TVs.stage`). A screen that fills whatever it's shown on is opened at any shape the
@@ -148,6 +149,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         controller.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = controller
         configuration.setURLSchemeHandler(files, forURLScheme: Self.scheme)
+        // A shared page is held back as it is in its app (`NetworkPolicy.holdBack`).
+        if SharedNetwork.policy(for: project) != nil { NetworkPolicy.holdBack(configuration.preferences) }
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 960, height: 540), configuration: configuration)
         webView.pageZoom = 0.5
         webView.autoresizingMask = [.width, .height]
@@ -197,6 +200,9 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         try? log?.close()
         log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         files.folder = staged
+        // A shared page is held in its preview to what it's held to as an app (`SharedNetwork`).
+        files.policy = SharedNetwork.policy(for: project)
+        files.own = "\(Self.scheme)://app"
         lastPictured = nil
         // WebKit keeps the scripts and styles a page loaded and serves them again for the same address, so an
         // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
@@ -283,6 +289,14 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         loaded = nil
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finishLoading() }
+
+    /// A shared page never leaves its own address, in its window or a frame (`NetworkPolicy.allowsFrame`).
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        guard let url = action.request.url, let policy = files.policy, !policy.allowsFrame(url, own: files.own) else { return decisionHandler(.allow) }
+        log?.write(Data("Lamp kept this shared app from opening \(url.absoluteString.prefix(300))\n".utf8))
+        decisionHandler(.cancel)
+    }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         write("error: the page didn't load: \(error.localizedDescription)")
         finishLoading()
@@ -666,6 +680,10 @@ enum PageScreen {
 @MainActor
 final class StagedFiles: NSObject, WKURLSchemeHandler {
     var folder: URL?
+    /// What a shared page may reach (`SharedNetwork`), and the address it's served at: every file then carries the rules
+    /// the app around it serves it with (`LampPageGuard`).
+    var policy: NetworkPolicy?
+    var own = "lamp-tv://app"
 
     private static let types = ["html": "text/html", "htm": "text/html", "js": "text/javascript", "mjs": "text/javascript",
                                 "css": "text/css", "json": "application/json", "wasm": "application/wasm", "svg": "image/svg+xml"]
@@ -673,7 +691,7 @@ final class StagedFiles: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
         guard let data = file(at: url) else {
-            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Cache-Control": "no-store"])!)
+            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Cache-Control": "no-store"].merging(rules) { $1 })!)
             task.didFinish()
             return
         }
@@ -687,12 +705,19 @@ final class StagedFiles: NSObject, WKURLSchemeHandler {
             headers["Content-Range"] = "bytes \(part.lowerBound)-\(part.upperBound - 1)/\(data.count)"
         }
         headers["Content-Length"] = String(body.count)
+        headers.merge(rules) { $1 }
         task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
         task.didReceive(body)
         task.didFinish()
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+
+    /// The rules every response of a shared page carries, a missing file's too.
+    private var rules: [String: String] {
+        guard let csp = policy?.contentSecurityPolicy(own: own) else { return [:] }
+        return ["Content-Security-Policy": csp, "X-DNS-Prefetch-Control": "off"]
+    }
 
     /// The file a page address names, when it's a plain file inside the staged copy (which never holds links).
     private func file(at url: URL) -> Data? {

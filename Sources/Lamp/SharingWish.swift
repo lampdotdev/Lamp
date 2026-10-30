@@ -75,12 +75,18 @@ enum TVFiles {
         return Sharing.Capability(label: label, icon: "network", level: .ordinary, patterns: [])
     }
 
-    static func detected(in sources: [URL], data: [URL] = []) -> [Sharing.Capability] {
+    /// Where the page's requests go, read from its code and its models: what the sheet says (`detected`), and what the
+    /// app is held to once it's here (`SharedNetwork.reading`).
+    static func reach(in sources: [URL], data: [URL] = []) -> WebReach.Result {
         let code = sources.compactMap { url in (try? String(contentsOf: url, encoding: .utf8)).map { (url.lastPathComponent, $0) } }
-        let everything = code.map(\.1).joined(separator: "\n")
         let models = data.filter { ["gltf", "glb"].contains($0.pathExtension.lowercased()) }
             .compactMap { url in (try? Data(contentsOf: url)).map { (url.lastPathComponent, $0) } }
-        let reach = WebReach.analyze(code: code, data: models)
+        return WebReach.analyze(code: code, data: models)
+    }
+
+    static func detected(in sources: [URL], data: [URL] = []) -> [Sharing.Capability] {
+        let everything = sources.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
+        let reach = reach(in: sources, data: data)
         var found = checks.filter { item in item.patterns.contains { everything.contains($0) } }
         if reach.remoteCode, !found.contains(remoteCode) { found.append(remoteCode) }
         if let connects = connects(reach) { found.insert(connects, at: min(1, found.count)) }
