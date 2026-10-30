@@ -68,7 +68,7 @@ element in its own card.
 - Input belongs to the screen on top: a press in a menu never also moves the player behind it.
 - With phones as controllers, the shared screen shows what's public (who's in, whose turn, the score); each phone shows
   its player's current action, and that a choice was received. A join code belongs to the joining screen (the
-  phone-pages skill), never on the title.
+  phone-pages skill), never on the title. Game controls on a phone are held sideways (the same skill).
 - Never carry essential information by sound alone.
 
 ## Feedback and layout
@@ -99,5 +99,6 @@ Play the journey, don't only look at it:
 - joining, a failed join and reconnecting, where the game takes phones.
 
 Look at each screen, and at motion with `look_at_app`'s `motion`: one picture proves appearance, not navigation or
-sound. Lamp's preview has no phones, so joining is proved only where phones are really used. When you finish, name any
+sound. Lamp's preview can open a phone page and play it (the phone-pages skill), but a real join is proved only where
+phones are really used. When you finish, name any
 device or path you didn't run.
