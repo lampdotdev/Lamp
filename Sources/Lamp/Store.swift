@@ -785,6 +785,9 @@ final class Store: ObservableObject {
         var lastStepAt: Date?
         /// The game's page as the last step put it in (`pageSignature`): a save that leaves it the same puts nothing in.
         var shownPage = ""
+        /// The sources the agent's last look played in the hidden copy (`lookedAtGame`), by app: what it looks at is a
+        /// state it means to show, so the game open on this Mac takes it too, without waiting for a progress line.
+        var lookedSources: [String: String] = [:]
         /// Stops the agent's look playing the game in the hidden copy (`playGame`), set while it plays: a message from the
         /// person stops it (`stoppedForMessage`), so they never wait behind Lamp's own checking. It stops that play alone,
         /// for the game being played (a wish's part, under the wish's turn), never a build the turn runs beside it.
@@ -8471,8 +8474,9 @@ final class Store: ObservableObject {
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
         if !ownStep { await owner?.applying?.value }
         await owner?.warming?.value
-        // Not said when the game open on this Mac already shows these sources: a step put them in.
-        if owner?.shownSources.isEmpty != false || owner?.shownSources != Runtime.fingerprint(project) { log(project, .status, "Building…") }
+        // Not said when the game open on this Mac already shows these sources (a step put them in), nor for a step's own
+        // build, which runs beside the agent's work and is said once it's in ("Put into …"): the person waits on neither.
+        if !ownStep, owner?.shownSources.isEmpty != false || owner?.shownSources != Runtime.fingerprint(project) { log(project, .status, "Building…") }
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
         // its install comes after the package is made, so the icon is brought up to date first, not there.
         if project.onDevice, !DeviceSupport.icons(for: project).isEmpty { await prepareIcon(project) }
@@ -8735,7 +8739,7 @@ final class Store: ObservableObject {
                     continue
                 }
                 // A game's page also takes a step while the agent's look plays the game in the hidden copy, which can
-                // run for minutes. Not before: a look puts its change into the open game itself, first.
+                // run for minutes. Not while the look stages that copy, which reads the same folders.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.building, !turn.keptOpen, turn.applying == nil,
                       let current = stepped(project), LiveReload.eligible(current) || stepsPage(current) || stepsPhones(current),
@@ -8749,12 +8753,13 @@ final class Store: ObservableObject {
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
                 if now != seen { seen = now; seenAt = Date(); continue }
-                // A game's page takes a change once the saving has paused a while, and no more often than every 15 s:
-                // each can hold the picture for a moment, and a run of small ones, seconds apart, reads as stutter.
-                // A game's page takes a change once the agent has said in a progress line what's in it (`progressSinceStep`),
-                // so each change the person sees is one they're told of, and the saving has paused a moment.
+                // A game's page takes a change once the saving has paused a moment and the agent has said the state is
+                // whole: in a progress line of what's in it (`progressSinceStep`), or by looking at these very sources in
+                // the hidden copy (`lookedSources`), which can take minutes the person would otherwise wait out. A save in
+                // between, half a piece of work, waits for one or the other.
                 let held = Runtime.waitsForReload(current)
-                if stepsPage(current), !held, Date().timeIntervalSince(seenAt) < 3 || progressSinceStep(current, turn) == nil { continue }
+                if stepsPage(current), !held, Date().timeIntervalSince(seenAt) < 3
+                    || (progressSinceStep(current, turn) == nil && turn.lookedSources[current.id] != now) { continue }
                 // Phones take theirs after the same pause: no change of the game is going on screen to narrate.
                 if stepsPhones(current) || held, Date().timeIntervalSince(seenAt) < 3 { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
@@ -8828,17 +8833,22 @@ final class Store: ObservableObject {
     /// one went in ("Put into New York: Switching the car to rainbow paint"), never its files; the plain line when it
     /// named none.
     private func stepWords(_ project: LampProject, _ turn: Turn) -> String {
-        let since = turn.lastStepAt ?? turn.began
+        let words = doingSinceStep(project, turn)
         turn.lastStepAt = Date()
-        let lines = logs[wish(of: project).id] ?? []
+        return words.map { "Put into \(project.name): " + $0 } ?? "Put the change into \(project.name)"
+    }
+
+    /// What the agent said its steps were for since a change last went in, the last three at most: only steps that can
+    /// change a file (a write, an edit, a command), never its looks, reads or skills; nil when it named none.
+    private func doingSinceStep(_ project: LampProject, _ turn: Turn) -> String? {
+        let since = turn.lastStepAt ?? turn.began
         var words: [String] = []
-        for line in lines where line.kind == .tool && (line.at ?? .distantPast) >= since {
+        for line in logs[wish(of: project).id] ?? [] where line.kind == .tool && (line.at ?? .distantPast) >= since {
             guard let said = line.said?.trimmed, !said.isEmpty, !line.text.hasPrefix("look_at_app"), !line.text.hasPrefix("use_app"),
-                  !words.contains(said) else { continue }
+                  [.write, .edit, .run, .delete].contains(ToolCall(line.text).action), !words.contains(said) else { continue }
             words.append(said)
         }
-        guard !words.isEmpty else { return "Put the change into \(project.name)" }
-        return "Put into \(project.name): " + words.suffix(3).joined(separator: "; ")
+        return words.isEmpty ? nil : words.suffix(3).joined(separator: "; ")
     }
 
     /// The agent's latest progress line since a change last went in as it saved, or nil.
@@ -8895,7 +8905,8 @@ final class Store: ObservableObject {
         let page = pageSignature(project)
         guard page != turn.shownPage else { return }
         // The line this step goes in for, and where it starts: a line the agent posts while it goes in is the next step's.
-        let words = progressSinceStep(project, turn), boundary = Date()
+        // A step its look let in, with no line, is said in the words of the steps the agent took to make it.
+        let words = progressSinceStep(project, turn) ?? doingSinceStep(project, turn), boundary = Date()
         // Read before it's checked: what's published is that version or nothing (`TVs.stagePhone`).
         let phone = (try? ControllerSnapshot.read(project.dir.appendingPathComponent(TVTemplate.phoneFolder)))?.version
         // Still being written, or broken: tried again once it changes.
@@ -8907,6 +8918,10 @@ final class Store: ObservableObject {
         current.chosen = .mac
         guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {
             AppTransition.end(current)
+            // Not into this copy (one an earlier Lamp built, a change of its Swift): the build counted these sources as
+            // built, so the turn's end would install nothing and say nothing. It builds them again and installs them,
+            // held for Reload while the person plays.
+            Runtime.forgetBuilt(current)
             return
         }
         // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
@@ -10100,10 +10115,48 @@ final class Store: ObservableObject {
         return nil
     }
 
-    private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
-        // Lamp's own checking, out of sight: nothing in the chat says it's happening. The change is in the open game by now,
-        // so the activity line says what the agent said it's checking, never the updating that came before.
+    /// Marks the agent's look or use being played as one in the hidden copy: the step's words are the agent's own ("Seeing
+    /// the new car in the city"), and the person's game shows something else until the change goes in. Lamp says where,
+    /// whatever the agent wrote.
+    private func markHiddenCopy(_ project: LampProject, in turn: Turn) {
         let wish = self.wish(of: project).id
+        guard var lines = logs[wish], let index = lines.lastIndex(where: {
+            $0.kind == .tool && ($0.at ?? .distantPast) >= turn.began && ($0.text.hasPrefix("look_at_app") || $0.text.hasPrefix("use_app"))
+        }) else { return }
+        let said = lines[index].said?.trimmed.nilIfEmpty ?? TurnProgress.activity(for: ToolCall(lines[index].text))
+        guard !said.hasSuffix(Self.inHiddenCopy) else { return }
+        lines[index].said = said + Self.inHiddenCopy
+        logs[wish] = lines
+        saveChat(self.wish(of: project))
+    }
+
+    /// The look's own step, when its play ended before `autoApply` took it: a preview plays its frames without waiting for
+    /// the clock, so a look can be over within the loop's first readings, and the agent's next save would leave the state
+    /// it looked at behind. Taken here, before the look returns, while the sources are still the ones it played.
+    private func stepLooked(_ project: LampProject, owner: Turn, since lookedAt: Date) async {
+        guard turns[wish(of: project).id] === owner || turns[project.id] === owner, !owner.stopped, owner.agent != nil,
+              owner.applying == nil, !owner.building, let current = current(project), stepsPage(current),
+              let looked = owner.lookedSources[current.id], Runtime.fingerprint(current) == looked, Runtime.sourcesChanged(current),
+              setAsideChanges[current.id]?.told != false || owner.carriedSetAside == setAsideChanges[current.id]?.crash else { return }
+        owner.applyingSources = looked
+        owner.applying = Task { [weak self] in
+            defer { owner.applying = nil }
+            await self?.stepPage(current, in: owner, saved: lookedAt)
+        }
+        await owner.applying?.value
+    }
+
+    /// The end of a step played in the hidden copy.
+    nonisolated static let inHiddenCopy = " · in a hidden copy"
+
+    private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
+        // Lamp's own checking, out of sight: the activity line says what the agent said it's checking, never the building
+        // before it, with where it's played (`markHiddenCopy`). The change goes into the open game as it plays (`autoApply`).
+        let wish = self.wish(of: project).id
+        markHiddenCopy(project, in: owner)
+        // What the agent looks at is what it means to show: the game open on this Mac takes it as it plays (`autoApply`).
+        owner.lookedSources[project.id] = Runtime.fingerprint(current(project) ?? project)
+        let lookedAt = Date()
         if let doing = logs[wish]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty { note(doing, for: project) }
         let played: GameKit.Played
         var hiddenProcess: Process?
@@ -10145,6 +10198,15 @@ final class Store: ObservableObject {
             try? AppFolder.write(printed, to: Runtime.logURL(project), in: project.dir)
         }
         var text = said
+        // The same sources went into the game open on this Mac as it played (`autoApply`): told, so the agent never asks
+        // for a Reload the person doesn't need. A change held for Reload is said by the chat's Reload line, not here.
+        await owner.applying?.value
+        await stepLooked(project, owner: owner, since: lookedAt)
+        var mac = current(project) ?? project
+        mac.chosen = .mac
+        if !owner.shownSources.isEmpty, owner.shownSources == Runtime.fingerprint(mac) {
+            text += "\n\nThis change is also in the game open on the person's Mac now, where they are in it: no Reload needed."
+        }
         if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
         if GameKit.previewHeldBack(project) { text += "\n\nThis game declares the local network, so its preview reaches no network at all: nothing there touches the person's devices." }
         if let phone = played.phone { text += "\n\n" + phone.text(screen: Privacy.sharesPictures, log: Privacy.sharesLog) }

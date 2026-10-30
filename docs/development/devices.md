@@ -476,13 +476,22 @@ capabilities.json) reopens it, held for Reload while the person has it open. On 
 from Lamp's player (below) unless it has Swift of its own.
 
 A change to a game while it's played. While the agent works, each change it saves goes into the game open on this Mac
-once it compiles, the saving has paused a few seconds and the agent has said in a progress line what's now in it
-(`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app; the `progress` tool's description says
-so, for every engine). Only the agent can tell an edit the person would see from one they wouldn't (a refactor, half a
-piece of work), so its line is both the trigger and the chat's word for the step ("Put into New York: The car is
-rainbow now"); a save that leaves the page's files as the last step put them in (`pageSignature`) puts nothing in. It
-also goes in while the agent's look plays the game in the hidden copy, which can take minutes, once the look has put
-its own change in (`PageLive.put` puts one change into a copy at a time). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+once it compiles, the saving has paused a few seconds and the agent has said the state is whole: in a progress line of
+what's now in it, or by looking at it (`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app; the
+`progress` and `look_at_app` tools' descriptions say so, for every engine). Only the agent can tell an edit the person
+would see from one they wouldn't (a refactor, half a piece of work), so a save in between waits; a progress line is
+the chat's word for the step ("Put into New York: The car is rainbow now"), and a look's step is said in the words of
+the agent's steps that made it ("Put into New York: Adding a sports car"). A look at a game plays it in the hidden copy
+(`playGame`), which can take minutes, so the sources it plays (`Turn.lookedSources`) go into the open game as it plays
+(or, for a play over before the loop took them, before the look returns: `stepLooked`) rather than when the agent's
+checking is done, and a fix it looks at later goes in the same way (the look's result says
+when its sources are in the open game, so the agent never asks for a Reload the person doesn't need); a save that leaves the
+page's files as the last step put them in (`pageSignature`) puts nothing in. What the page does with it is what it does
+with any change (below): a swap goes in at once, busy or not; code run again in place waits for a pause while `busy()`;
+and a change that opens the page again is held for Reload, never opened under the player (`PageLive.put` puts one change
+into a copy at a time). The step of a look or use played in the hidden copy ends in " · in a hidden copy"
+(`Store.markHiddenCopy`), Lamp's words whatever the agent's `doing` said, so "Seeing the new car in the city" never
+reads as the person's own game while it still shows the old one. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the
