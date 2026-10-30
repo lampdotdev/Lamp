@@ -40,7 +40,12 @@ struct SetupCheck {
         // Whether Claude Code or Codex is there depends on the look for the person's own copy, which takes a few
         // seconds at launch: judged before it's done, a Mac with one showed the setup screen until it finished.
         if Builder.engine != .pi, !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
-        var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(), builderProblem: Builder.problem(),
+        // Claude Code or Codex without its sign-in can't build yet, and a request let through to it would be lost.
+        await EngineSignIn.refresh(olderThan: 5)
+        let engine = Builder.engine
+        let signedOut = await MainActor.run { engine != .pi && EngineSignIn.known[engine] == false }
+        var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(),
+                               builderProblem: Builder.problem() ?? (signedOut ? "Sign in to \(engine.title) to build." : nil),
                                hasAgent: Agent.executable != nil)
         check.installerOpen = installerIsOpen()
         return check.keeping(previous)

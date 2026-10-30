@@ -1144,7 +1144,8 @@ final class Store: ObservableObject {
         // During the welcome, Apple's installer waits for the step that explains it, and while what builds is still to
         // be chosen it waits too, so there's one thing to do at a time.
         // Only for a request that waits for them: a Mac that makes only games and screens never needs them.
-        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && setup.hasBuilder && waitsForAppleTools { requestBuildTools() }
+        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && setup.hasBuilder
+            && (waitsForAppleTools || waitingImport.count > 0) { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
         prepareStarters()   // the prebuilt ones need no build tools, nor do games and screens
         if setup.ready && !wasReady { await becameReady() }
@@ -2089,6 +2090,15 @@ final class Store: ObservableObject {
     func askForSetup() {
         showDesk()
         askingForSetup = true
+    }
+
+    /// What a shared app waits for before its review can open: what builds, on the desk, then Apple's tools.
+    private func askForWhatsMissing() {
+        if !setup.hasBuilder || !setup.hasAgent {
+            askForSetup()
+        } else if !setup.hasBuildTools, !setup.installRequested {
+            requestBuildTools()
+        }
     }
 
     /// The desk's window in front.
@@ -3450,6 +3460,8 @@ final class Store: ObservableObject {
                     alert.informativeText = "Then open the shared app again."
                 }
                 alert.runModal()
+                // Nothing else would ask: no request is waiting in a chat for what this needs.
+                if Onboarding.isDone || welcomeFinished { askForWhatsMissing() }
                 return
             }
             review(file, updating: target)

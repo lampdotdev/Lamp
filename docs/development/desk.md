@@ -99,7 +99,8 @@ A new person's desk isn't empty: Lamp comes with fifteen wishes (`Starters`, fro
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello, and ends on the desk with nothing set up: a starter runs from the copy
 Lamp ships built, and the first request to any wish asks for what builds (`Store.askForSetup`, `SetupView` over the
-desk), then Apple's tools where it needs them, the request waiting in its chat. A starter from the site opens at
+desk), signed in where the choice needs it, then Apple's tools where it needs them, the request waiting in its chat. A
+shared file or repository opened before then asks the same way and waits for its review. A starter from the site opens at
 once, and only a wish from the site, which has to be made, goes on to the welcome's setup. They're copied once, on the first launch, each saved as its first version ("From Lamp"),
 and from then on they're the person's: a later Lamp with other starters gives those only to new people. As soon
 as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
