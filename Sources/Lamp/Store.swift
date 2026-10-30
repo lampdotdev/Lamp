@@ -8838,14 +8838,14 @@ final class Store: ObservableObject {
         return words.map { "Put into \(project.name): " + $0 } ?? "Put the change into \(project.name)"
     }
 
-    /// What the agent said its steps were for since a change last went in, the last three at most, never its looks or
-    /// reads (what it read changed nothing); nil when it named none.
+    /// What the agent said its steps were for since a change last went in, the last three at most: only steps that can
+    /// change a file (a write, an edit, a command), never its looks, reads or skills; nil when it named none.
     private func doingSinceStep(_ project: LampProject, _ turn: Turn) -> String? {
         let since = turn.lastStepAt ?? turn.began
         var words: [String] = []
         for line in logs[wish(of: project).id] ?? [] where line.kind == .tool && (line.at ?? .distantPast) >= since {
             guard let said = line.said?.trimmed, !said.isEmpty, !line.text.hasPrefix("look_at_app"), !line.text.hasPrefix("use_app"),
-                  ![.read, .search, .list].contains(ToolCall(line.text).action), !words.contains(said) else { continue }
+                  [.write, .edit, .run, .delete].contains(ToolCall(line.text).action), !words.contains(said) else { continue }
             words.append(said)
         }
         return words.isEmpty ? nil : words.suffix(3).joined(separator: "; ")
