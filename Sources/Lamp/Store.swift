@@ -12393,8 +12393,17 @@ final class Store: ObservableObject {
         guard let capability = Capability(rawValue: asked == "act" ? "text" : asked) else {
             return (400, ["error": "There's no capability called \(asked)."])
         }
-        let said = offerSetup(project, SetupOffer(capability: capability), because: Self.offerReason(capability, for: project), asked: true)
+        let reason = Self.askedReason(capability, AppAI.resolve(capability, for: project), app: project.name)
+            ?? Self.offerReason(capability, for: project)
+        let said = offerSetup(project, SetupOffer(capability: capability), because: reason, asked: true)
         return (200, ["shown": said.hasPrefix("Lamp showed"), "said": said])
+    }
+
+    /// Why the card is there when the person asked for it themselves: what the resolution says is wrong, when
+    /// something answers in a way that isn't what was chosen (a removed model on this Mac). Nil for the usual reasons.
+    static func askedReason(_ capability: Capability, _ resolution: Resolution, app: String) -> String? {
+        guard resolution.tier == .works, let note = resolution.note else { return nil }
+        return "\(app) can't use the AI chosen for it. \(note)"
     }
 
     /// What an app on the person's own phone keeps so its AI works away from the Mac:

@@ -131,6 +131,23 @@ final class AppActRoutesTests: XCTestCase {
         XCTAssertEqual(none.message, AppAI.noTextRoute)
     }
 
+    /// An app whose chosen model on this Mac was removed, with Claude Code answering in its place: the setup card the
+    /// person opens says why and offers both ways back (the model again, or what answers now, for this app), instead of
+    /// the usual reason and no rows.
+    @MainActor func testARemovedLocalModelsSetupCardOffersAWayBack() {
+        let claude = AppAI.TextRoute(id: "engine:claude:sonnet", label: "Sonnet via Claude Code", group: "Claude Code", name: "Sonnet",
+                                     kind: .engine(.claude, model: "sonnet"), available: true)
+        let removed = AppAct.wanted("local:qwen3.5-4b", among: [claude])!
+        let resolution = AppAI.standIn(for: removed, answering: claude, app: "app-1")
+        XCTAssertEqual(resolution.tier, .works)
+        XCTAssertTrue(resolution.note?.contains("Install it again, or choose another AI for this app") == true, resolution.note ?? "")
+        XCTAssertTrue(resolution.upgrades.contains(.textModelAgain("qwen3.5-4b")), "no way to download the model again")
+        XCTAssertTrue(resolution.upgrades.contains(.useText(route: "engine:claude:sonnet", label: "Sonnet via Claude Code", app: "app-1")),
+                      "no way to keep what answers now as this app's choice")
+        let reason = Store.askedReason(.text, resolution, app: "Notes")
+        XCTAssertTrue(reason?.contains("Install it again") == true, "the card shows the usual reason, not why: \(reason ?? "nil")")
+    }
+
     /// An MLX model whose chat template mlx-lm has no tool-call parser for hands a call back as plain text, so it's
     /// asked for the JSON plan instead, whatever the version. The templates in Tests/Fixtures/mlx-templates are the
     /// `chat_template` of each mlx-community repository's tokenizer_config.json, as published on 2026-10-29.
