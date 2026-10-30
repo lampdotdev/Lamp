@@ -318,10 +318,10 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// icon, which is answered (the person draws icons, or something draws them by Settings' choices) and
     /// folded away while the app's own pictures aren't. An offer that isn't about the icon then takes that
     /// card's place (the line at the index given).
-    enum Standing: Equatable { case new, offered, replaces(Int) }
+    enum Standing: Equatable { case new, offered(Int), replaces(Int) }
     static func standing(of offer: SetupOffer, in lines: [LogLine], iconAnswered: Bool) -> Standing {
         guard let index = lines.firstIndex(where: { $0.setupOffer == offer }) else { return .new }
-        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered
+        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered(index)
     }
 
     /// Whether a chat with these lines should get a line offering to draw the design `key`: not when it has
@@ -11095,6 +11095,7 @@ final class Store: ObservableObject {
         guard resolution.tier != .best else {
             return "\(offer.capability.title) is already set up: \(resolution.answer ?? ""). Nothing to offer."
         }
+        if asked { offer.undecline(in: project) }
         guard asked || !offer.declined(in: fromAgent ? project : nil) else {
             return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
         }
@@ -11102,6 +11103,10 @@ final class Store: ObservableObject {
         // choice to draw by hand, not the app's own models), so it can be all set while this isn't.
         let iconAnswered = AppAI.resolve(.pictures, for: project, in: .icon).tier == .best
         switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconAnswered: iconAnswered) {
+        case .offered(let index) where asked:
+            // Asked for by the person: the card comes back to the end of the chat, where they're looking.
+            logs[project.id]?.remove(at: index)
+            log(project, .offer, reason, offer: offer)
         case .offered: return "Lamp already offered this in the chat. Don't offer it again."
         case .replaces(let index):
             // The card there was about the icon and is folded away, answered. This is about pictures the

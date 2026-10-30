@@ -128,7 +128,8 @@ extension AppAI {
         // What was asked for: the app's own choice, else Settings'. A choice that can't answer right now (its
         // key or model went) is why the route is a stand-in.
         let wanted = (choice ?? UserDefaults.standard.string(forKey: "appModel")).map(canonicalRoute)
-        if let wanted, wanted != route.id, let missing = allTextRoutes.first(where: { $0.id == wanted }) {
+        // A model on this Mac that was chosen and then removed is in no list of routes; it's still what was chosen.
+        if let wanted, wanted != route.id, let missing = AppAct.wanted(wanted, among: allTextRoutes) {
             var upgrades: [Upgrade] = []
             var why = "."
             switch missing.kind {
@@ -138,6 +139,8 @@ extension AppAI {
             case .engine(let engine, _) where engine != .pi && EngineInstall.path(for: engine) != nil:
                 upgrades.append(.signIn(engine))
                 why = " until you sign in to \(engine.title) again."
+            case .localModel:
+                why = ". Install it again in Settings, or choose another AI for this app."
             default: break
             }
             return Resolution(capability: .text, tier: .works, answer: route.label, provider: provider(of: route),
@@ -337,6 +340,14 @@ struct SetupOffer: Codable, Equatable, Hashable {
     func declined(in project: LampProject?) -> Bool {
         let declined = Set(UserDefaults.standard.stringArray(forKey: Self.declinedKey) ?? [])
         return project.map { declined.contains("\($0.id) \(key)") } ?? declined.contains(key)
+    }
+
+    /// The person asked for this setup in this app themselves: their earlier "Not Now" here no longer holds. What
+    /// they said for every app stays, so Lamp still doesn't raise it by itself elsewhere.
+    func undecline(in project: LampProject) {
+        var declined = Set(UserDefaults.standard.stringArray(forKey: Self.declinedKey) ?? [])
+        guard declined.remove("\(project.id) \(key)") != nil else { return }
+        UserDefaults.standard.set(Array(declined).sorted(), forKey: Self.declinedKey)
     }
 
     func decline(in project: LampProject) {

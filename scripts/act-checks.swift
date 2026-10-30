@@ -248,6 +248,24 @@ struct Checks {
             expect(asked == 3 && result.question == nil && result.stopped == .limit, "the fourth question back is refused, not asked")
         }
 
+        // A change that was under way when the turn was cancelled, and then failed, may have partly gone through:
+        // the summary never says nothing changed.
+        do {
+            let lamp = Lamp(), app = Groceries()
+            var held: CheckedContinuation<Void, Never>?
+            let send = LampActTool.write("send", "Sends.", args: ["n": .whole("How many")], as: Count.self,
+                                         check: { _, _ in nil },
+                                         run: { _, _ in await withCheckedContinuation { held = $0 }; throw LampAI.Failure(message: "Only 2 of 5 went.") })
+            lamp.answers = [["calls": [call("c1", "send", ["n": 5])]], ["reply": "Done."]]
+            let turn = LampActSession(tools: app.tools + [send], send: lamp.send).ask("volume up five")
+            await settle()
+            turn.cancel()
+            held?.resume()
+            let result = await turn.result
+            expect(result.stopped == .cancelled && !result.summary.contains("before changing anything"),
+                   "a change that failed partway is never summed up as nothing changed")
+        }
+
         print(failures == 0 ? "All act checks passed." : "\(failures) act check(s) failed.")
         exit(failures == 0 ? 0 : 1)
     }

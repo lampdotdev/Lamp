@@ -14141,6 +14141,8 @@ enum Template {
     struct LampActMiss {
         let tool: String
         let reason: String
+        /// It had started when it failed, so some of it may have gone through: it isn't "nothing changed".
+        var partly = false
     }
 
     /// What a turn is doing, for showing it as it goes. Called on the main thread.
@@ -14186,10 +14188,12 @@ enum Template {
         /// stopped. The AI's reply is added only for a question or when nothing changed.
         var summary: String {
             var lines = done.map(\.receipt.summary)
-            lines += failed.map { "Didn't \($0.tool): \($0.reason)" }
+            lines += failed.map { $0.partly ? "May have partly done \($0.tool): \($0.reason)" : "Didn't \($0.tool): \($0.reason)" }
             lines += skipped.map { "Skipped \($0.tool): \($0.reason)" }
             switch stopped {
-            case .cancelled?: lines.append(done.isEmpty ? "Stopped before changing anything." : "Stopped. Nothing after this was done.")
+            case .cancelled?:
+                let started = !done.isEmpty || failed.contains(where: \.partly)
+                lines.append(started ? "Stopped. Nothing after this was done." : "Stopped before changing anything.")
             case .time?: lines.append("Ran out of time.")
             case .steps?: lines.append("Couldn't finish in the steps one request may take.")
             case .limit?: lines.append(error ?? "That's more than one request can do.")
@@ -14449,8 +14453,8 @@ enum Template {
             var stopped: String?
             for call in calls where tool(call)?.reads == false {
                 let id = call["id"] as! String, tool = tool(call)!, given = args(call)
-                func miss(_ reason: String, skipped: Bool = false) {
-                    let entry = LampActMiss(tool: tool.name, reason: reason)
+                func miss(_ reason: String, skipped: Bool = false, partly: Bool = false) {
+                    let entry = LampActMiss(tool: tool.name, reason: reason, partly: partly)
                     if skipped { out.skipped.append(entry) } else { out.failed.append(entry); onStep(.failed(entry)) }
                     results[id] = ["id": id, "ok": false, skipped ? "skipped" : "error": reason]
                     if !skipped { stopped = stopped ?? "An earlier change in this step didn't go through." }
@@ -14492,7 +14496,7 @@ enum Template {
                     onStep(.changed(done))
                 } catch {
                     ran[key] = ["failedWhileRunning": Self.words(error)]
-                    miss(Self.words(error))
+                    miss(Self.words(error), partly: true)
                 }
             }
             return results
