@@ -1419,7 +1419,9 @@ extension Agent.Rules {
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
     Each look or use plays the whole game again from the start with the same moves, so after a change to the code \
     the same moves show what changed. Play it as the person would before you finish: a game that only looks right \
-    isn't done. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \
+    isn't done. Read how the game takes the controller first (APP.md, its controls code): a vehicle's gas is often a \
+    trigger, held as `key` rt alongside the stick that steers, and a game that barely moves under your moves is one \
+    you're driving with the wrong control, not one that can't be tried. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \
     `look_at_app` with `on_device` builds the game for where Try On points, opens it there and shows its own picture \
     of the screen and its log: the game's window on this Mac, the iPhone or iPad simulator, or the person's Xbox (its \
     frame times are in its log). Do that once the game plays right in the preview, to see it start where the person \
