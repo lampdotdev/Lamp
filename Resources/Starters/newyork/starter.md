@@ -3,7 +3,7 @@ name: New York
 kind: game
 offer: Make New York yours
 repository: https://github.com/lampdotdev/newyork
-commit: 0ba605fea9842d9ababd98b53ad07ec8294ea64e
+commit: f8dbc46c378ecc7a2c02230776fc389e87c57d02
 tweaks:
   - snowflake: Make it a snowy winter night
   - party.popper: Make it a lot more fun
