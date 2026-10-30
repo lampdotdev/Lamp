@@ -5,6 +5,10 @@ import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const [binary, root] = process.argv.slice(2);
 const host = spawn(binary, [root], { stdio: ['pipe', 'pipe', 'inherit'] });
@@ -36,7 +40,7 @@ function get(port, path, hostHeader = `127.0.0.1:${port}`) {
     http.get({ host: '127.0.0.1', port, path, headers: { Host: hostHeader } }, (res) => {
       let body = '';
       res.on('data', (d) => (body += d));
-      res.on('end', () => resolve({ status: res.statusCode, body, type: res.headers['content-type'] }));
+      res.on('end', () => resolve({ status: res.statusCode, body, type: res.headers['content-type'], policy: res.headers['content-security-policy'] }));
     }).on('error', reject);
   });
 }
@@ -83,8 +87,32 @@ try {
   for (const path of ['/../secret.txt', '/%2e%2e/secret.txt', '/.hidden', '/a%2fb', '/CON', '/index.html:stream', '/missing.js'])
     assert.equal((await get(pagePort, path)).status, 404, path);
   r = await get(pagePort, '/lamp-relay.json');
-  assert.deepEqual(JSON.parse(r.body), { app: 'game.test', port: relayPort });
+  assert.deepEqual(JSON.parse(r.body), { app: 'game.test', port: relayPort, policy: true });
   step('the page is served as its own files, to the console\'s names only');
+
+  // The page's rules, word for word those of the LG service and of Lamp (PhonePagePolicyTests holds Swift to relay.js):
+  // its relay where it is, by the name the phone used, and only the sites the reach file names.
+  const lg = createRequire(import.meta.url)(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../Resources/LGPhones/relay.js'));
+  const reach = lg.readReachJSON(fs.readFileSync(path.join(root, 'lamp-reach.json'), 'utf8'));
+  for (const name of [`127.0.0.1:${pagePort}`, 'localhost']) {
+    r = await get(pagePort, '/', name);
+    assert.equal(r.policy, lg.policy(name, relayPort, reach), name);
+  }
+  assert.match((await get(pagePort, '/')).policy, new RegExp(`connect-src 'self' ws://127\\.0\\.0\\.1:${relayPort} api\\.example\\.com;`));
+  // An app the person made: no policy at all, as before phone pages had one.
+  const shared = fs.readFileSync(path.join(root, 'lamp-reach.json'));
+  fs.unlinkSync(path.join(root, 'lamp-reach.json'));
+  r = await get(pagePort, '/');
+  assert.equal(r.status, 200);
+  assert.equal(r.policy, undefined, 'an own app\'s phone page has no policy');
+  assert.deepEqual(JSON.parse((await get(pagePort, '/lamp-relay.json')).body), { app: 'game.test', port: relayPort });
+  fs.writeFileSync(path.join(root, 'lamp-reach.json'), shared);
+  // A reach file that's there but can't be read holds the page to no sites: never to none at all.
+  fs.chmodSync(path.join(root, 'lamp-reach.json'), 0o000);
+  r = await get(pagePort, '/');
+  fs.chmodSync(path.join(root, 'lamp-reach.json'), 0o644);
+  assert.equal(r.policy, lg.policy(`127.0.0.1:${pagePort}`, relayPort, { only: [] }), 'an unreadable reach file holds the page to no sites');
+  step('the page\'s rules name only its relay and the sites its reach file names, as the LG service writes them; an own app\'s page has none, and an unreadable reach file holds a page to no sites');
 
   // A socket from another site's page is refused before it's a WebSocket.
   const refused = await new Promise((resolve) => {

@@ -8,8 +8,8 @@ import LampRelayKit
 /// previews read it here. An app with none is the person's own, and isn't held to anything.
 ///
 /// Every host of a shared page reads it here: the Mac, iPhone and iPad app (LampPage.swift, from the Info.plist) and
-/// Lamp's previews (`StagedFiles`) do; a host elsewhere (a TV, an Xbox, Android, a phone's controller page) holds a
-/// shared page only once it reads it too.
+/// Lamp's previews (`StagedFiles`) do, and a phone's controller page is held to its sites (`PhonePageReach`); a host
+/// elsewhere (a TV, an Xbox, Android) holds a shared page only once it reads it too.
 enum SharedNetwork {
     /// Where the policies are kept: Lamp's own folder, closed to the agent's commands (`Sandbox`), one file an app.
     /// Tests keep theirs in a folder of their own.

@@ -228,9 +228,12 @@ Content-Security-Policy naming only those sites; the page never leaves its own a
 no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
 "May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
 or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
-(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A host elsewhere (a TV, an Xbox,
-Android, a phone's controller page) holds a shared page only once it reads `SharedNetwork.policy(for:)` and enforces the
-same `NetworkPolicy`. Swift of the sender's beside the page (Sources/Native.swift or any other Swift there) runs in the app's
+(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A phone's controller page reads it
+too (`PhonePageReach`, under "TV apps"): its servers allow only the policy's sites, an app with Swift of the sender's
+included, since Lamp and an LG TV serve it outside the app's process; a game that serves its own page on the Mac,
+iPhone or iPad (`PhonePageServer`) does so in that process, where its Swift could change that too. A host elsewhere (a
+TV, an Xbox, Android) holds a shared page only once it reads `SharedNetwork.policy(for:)` and enforces the same
+`NetworkPolicy`. Swift of the sender's beside the page (Sources/Native.swift or any other Swift there) runs in the app's
 process, where no page rule reaches, and can turn the page's guard off too (the person's choices are kept in the app's
 defaults): such an app isn't held to its sites at all, its page included. Its Swift isn't switched off, since the page's
 calls of the device depend on it; the sheet says "Has Swift that can reach any site" instead (`Sharing.ownSwift`). The rest of the sender's code is read in full: in requests of at most

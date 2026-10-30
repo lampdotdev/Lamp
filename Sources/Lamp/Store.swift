@@ -11834,6 +11834,18 @@ final class Store: ObservableObject {
         let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
         let parts = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst(2).map { $0.removingPercentEncoding ?? "" }
         guard let id = parts.first, !id.isEmpty, let project = projects.first(where: { $0.id == id }), Self.servesPhonePage(project) else { return missing }
+        let reach = PhonePageReach.reach(project)
+        var page = await phoneFile(Array(parts.dropFirst()), path: path, of: project, held: reach != .unrestricted)
+        // An unrestricted page (an app the person made) is served as it always was, with no rules and no wait for the relay.
+        if reach != .unrestricted { page.policy = PhonePagePolicy.header(host: host, relayPort: await ControllerRelay.ready(), reach: reach) }
+        return page
+    }
+
+    /// One of a TV app's phone page's files, by its steps after the app's id. `held`: the page has rules, which
+    /// lamp-relay.json says (`policy`) for lamp-controller.js.
+    private func phoneFile(_ steps: [String], path: String, of project: LampProject, held: Bool) async -> Gateway.Page {
+        let missing = Gateway.Page(status: 404, body: Data("Nothing here. Open the app on the TV first.".utf8))
+        let parts = [project.id] + steps
         // The page's own links are relative, so its address has to end in a slash.
         if parts.count == 1 { return Gateway.Page(status: 301, location: path + "/") }
         var names = Array(parts.dropFirst())
@@ -11845,8 +11857,10 @@ final class Store: ObservableObject {
         // Where lamp-controller.js opens its socket: the controllers' relay, on this Mac by the name the page was reached
         // at, asked before each try, since the relay may have started again elsewhere.
         if names == ["lamp-relay.json"] {
-            guard let port = await ControllerRelay.ready(),
-                  let body = try? JSONSerialization.data(withJSONObject: ["port": Int(port), "app": project.id]) else {
+            let port = await ControllerRelay.ready()
+            var said: [String: Any] = ["port": Int(port ?? 0), "app": project.id]
+            if held { said["policy"] = true }
+            guard port != nil, let body = try? JSONSerialization.data(withJSONObject: said) else {
                 return Gateway.Page(status: 503, body: Data("Lamp couldn't start the link for controllers.".utf8))
             }
             return Gateway.Page(status: 200, type: Self.pageType("json"), body: body)

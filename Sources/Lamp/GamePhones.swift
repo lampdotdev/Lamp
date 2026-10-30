@@ -47,8 +47,7 @@ enum GamePhones {
     /// The published page with Lamp's lamp-controller.js, checked.
     private static func snapshot(of project: LampProject) throws -> ControllerSnapshot {
         let published = try ControllerSnapshot.read(TVs.phoneFolder(for: project))
-        let page = ControllerSnapshot(files: published.files.filter { $0.path != "lamp-controller.js" }
-            + [ControllerSnapshot.File(path: "lamp-controller.js", data: Data(TVTemplate.phoneControllerJS.utf8))])
+        let page = PhonePageReach.snapshot(published, of: project, controller: Data(TVTemplate.phoneControllerJS.utf8))
         try page.check()
         return page
     }

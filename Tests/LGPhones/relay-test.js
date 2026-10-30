@@ -25,6 +25,7 @@ var scratch = [root, outside];
 fs.writeFileSync(path.join(root, 'index.html'), '<p>pad</p>');
 fs.writeFileSync(path.join(root, 'lamp-controller.js'), '// pad');
 fs.writeFileSync(path.join(root, '.hidden'), 'no');
+fs.writeFileSync(path.join(root, 'lamp-reach.json'), JSON.stringify({ only: ['api.example.com', 'x.test; script-src *'] }));
 fs.writeFileSync(path.join(outside, 'outside.txt'), 'outside');
 fs.symlinkSync(path.join(outside, 'outside.txt'), path.join(root, 'link.txt'));
 
@@ -33,7 +34,7 @@ function get(port, p, host) {
     http.get({ port: port, path: p, headers: { Host: host || '127.0.0.1:' + port } }, function (res) {
       var body = '';
       res.on('data', function (d) { body += d; });
-      res.on('end', function () { resolve({ status: res.statusCode, body: body }); });
+      res.on('end', function () { resolve({ status: res.statusCode, body: body, policy: res.headers['content-security-policy'] }); });
     }).on('error', reject);
   });
 }
@@ -83,11 +84,24 @@ function run() {
                         get(pagePort, '/.hidden'), get(pagePort, '/link.txt'), get(pagePort, '/%2e%2e/' + path.basename(outside) + '/outside.txt')]);
   }).then(function (pages) {
     assert.strictEqual(pages[0].body, '<p>pad</p>');
-    assert.deepStrictEqual(JSON.parse(pages[1].body), { port: relayPort, app: 'dev.lamp.app.pong' });
+    assert.deepStrictEqual(JSON.parse(pages[1].body), { port: relayPort, app: 'dev.lamp.app.pong', policy: true }, 'a held page says so');
     assert.strictEqual(pages[2].status, 403, 'a name that isn\'t the TV\'s reads nothing');
     assert.strictEqual(pages[3].status, 404, 'hidden files are never served');
     assert.strictEqual(pages[4].status, 404, 'a link is never followed');
     assert.strictEqual(pages[5].status, 404, 'nothing above the page');
+    // The page's rules name its relay where it is, by the name the phone used, and only the sites Lamp's reach file
+    // names: an entry that isn't a site is dropped, never written into the header.
+    assert.ok(pages[1].policy.indexOf("connect-src 'self' ws://192.168.1.40:" + relayPort + ' api.example.com;') >= 0, pages[1].policy);
+    assert.ok(pages[0].policy.indexOf("default-src 'none';") === 0 && pages[0].policy.indexOf('x.test') < 0, pages[0].policy);
+    // An app the person made: Lamp writes no reach file, and its page goes out with no policy, as before phone pages had one.
+    fs.unlinkSync(path.join(root, 'lamp-reach.json'));
+    return Promise.all([get(pagePort, '/'), get(pagePort, '/lamp-relay.json')]);
+  }).then(function (got) {
+    var own = got[0];
+    assert.strictEqual(own.status, 200);
+    assert.strictEqual(own.policy, undefined, 'an own app\'s phone page has no policy');
+    assert.deepStrictEqual(JSON.parse(got[1].body), { port: relayPort, app: 'dev.lamp.app.pong' }, 'and its lamp-relay.json is as it always was');
+    fs.writeFileSync(path.join(root, 'lamp-reach.json'), JSON.stringify({ only: ['api.example.com', 'x.test; script-src *'] }));
 
     // The game's page: no origin it could prove, so its credential lets it in.
     host = client(answer.links[0].socket, 'file://');

@@ -51,8 +51,7 @@ enum LGPhones {
               let id = serviceID(for: project) else { return nil }
         guard let source else { throw TVs.Failure(message: "Lamp's phone service for LG TVs is missing from Lamp.") }
         let published = try ControllerSnapshot.read(TVs.phoneFolder(for: project))
-        let page = ControllerSnapshot(files: published.files.filter { $0.path != "lamp-controller.js" }
-            + [ControllerSnapshot.File(path: "lamp-controller.js", data: Data(TVTemplate.phoneControllerJS.utf8))])
+        let page = PhonePageReach.snapshot(published, of: project, controller: Data(TVTemplate.phoneControllerJS.utf8))
         do { try page.check() } catch { throw TVs.Failure(message: "\(error)") }
         return Service(id: id, files: try files(id: id, owner: TVTemplate.webOSID(for: project), page: page, source: source))
     }

@@ -109,6 +109,8 @@ public final class PhonePageServer: @unchecked Sendable {
         public var body = Data()
         public var location: String?
         public var head = false
+        /// What the phone's browser holds the page to (`PhonePagePolicy`), sent with every answer.
+        public var policy: String?
     }
 
     /// The answer to a request's head (its request line and headers).
@@ -132,14 +134,25 @@ public final class PhonePageServer: @unchecked Sendable {
     /// name lead here (DNS rebinding) reads nothing.
     public func answer(path full: String, host: String?) -> Page {
         guard Self.names(host, among: hosts()) else { return Page(status: 403, body: Data("Not for this host.".utf8)) }
+        let reach = PhonePagePolicy.reach(fileAt: root.appendingPathComponent(PhonePagePolicy.reachFile))
+        var page = file(path: full, held: reach != .unrestricted)
+        page.policy = PhonePagePolicy.header(host: host, relayPort: relayPort(), reach: reach)
+        return page
+    }
+
+    /// `held`: the page has rules, which lamp-relay.json says (`policy`), so lamp-controller.js only ever takes a refused
+    /// socket for a moved relay on a page Lamp gave rules to.
+    private func file(path full: String, held: Bool) -> Page {
         let missing = Page(status: 404, body: Data("Nothing here. Open the game first.".utf8))
         let path = full.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
         guard path.hasPrefix("/") else { return missing }
         var names = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false).map { $0.removingPercentEncoding ?? "\0" }
         if names.last == "" { names[names.count - 1] = "index.html" }
         if names == ["lamp-relay.json"] {
-            guard let port = relayPort(),
-                  let body = try? JSONSerialization.data(withJSONObject: ["port": Int(port), "app": app]) else {
+            let port = relayPort()
+            var said: [String: Any] = ["port": Int(port ?? 0), "app": app]
+            if held { said["policy"] = true }
+            guard port != nil, let body = try? JSONSerialization.data(withJSONObject: said) else {
                 return Page(status: 503, body: Data("The link for controllers isn't open.".utf8))
             }
             return Page(status: 200, type: Self.type(for: "json"), body: body)
@@ -175,7 +188,8 @@ public final class PhonePageServer: @unchecked Sendable {
     private static func respond(_ connection: NWConnection, _ page: Page) {
         let reason = HTTPURLResponse.localizedString(forStatusCode: page.status).capitalized
         let location = page.location.map { "Location: \($0)\r\n" } ?? ""
-        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)"
+        let policy = page.policy.map { "Content-Security-Policy: \($0)\r\n" } ?? ""
+        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)\(policy)"
             + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n").utf8)
         if !page.head { response.append(page.body) }
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })

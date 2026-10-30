@@ -35,6 +35,38 @@ final class PhoneControllerPageTests: XCTestCase {
         return hello?.isNull == false ? hello?.toString() : nil
     }
 
+    /// How many times the page reloads when the browser refuses its socket (a SecurityError, as WebKit throws for a
+    /// policy's refusal and for a blocked port alike), with lamp-relay.json saying the page has rules (`held`) or not.
+    private func reloads(held: Bool) throws -> Int {
+        let context = try XCTUnwrap(JSContext())
+        context.exceptionHandler = { _, _ in }
+        context.evaluateScript("""
+            var window = this, reloads = 0, store = {};
+            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860', hostname: '192.168.1.20',
+                             reload: function () { reloads++; } };
+            var history = { replaceState: function () { location.hash = ''; } };
+            var sessionStorage = {
+              getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; },
+              setItem: function (k, v) { store[k] = String(v); },
+              removeItem: function (k) { delete store[k]; }
+            };
+            function WebSocket(url) { var e = new Error('refused'); e.name = 'SecurityError'; throw e; }
+            var relay = { port: 47900, app: 'padgame' }; \(held ? "relay.policy = true;" : "")
+            function fetch() { return Promise.resolve({ ok: true, json: function () { return relay; } }); }
+            function setInterval() { return 0; } function clearInterval() {} function setTimeout() { return 0; }
+            """)
+        context.evaluateScript(TVTemplate.phoneControllerJS)
+        context.evaluateScript("LampController.connect({});")
+        return Int(context.evaluateScript("reloads")?.toInt32() ?? -1)
+    }
+
+    /// Only a page Lamp gave rules to (a shared app's) takes a refused socket for a relay that moved and loads again; an
+    /// app's own page never reloads for one, as before these rules.
+    func testOnlyAHeldPageReloadsForARefusedSocket() throws {
+        XCTAssertEqual(try reloads(held: true), 1)
+        XCTAssertEqual(try reloads(held: false), 0)
+    }
+
     func testALinkJustOpenedWinsOverACredentialKeptFromBefore() throws {
         XCTAssertEqual(try firstHello(hash: "#fresh-join", kept: "stale-resume"), "fresh-join")
     }
