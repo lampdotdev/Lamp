@@ -117,8 +117,8 @@ A capability given to one engine must be given to all of them that can take it, 
   aside (`Conversation.setAside`: its id moves to `.lamp/set-aside`, the conversation stays where the engine keeps it,
   nothing is deleted), says so in the chat ("Started a fresh conversation for <wish>: the last one had grown too large
   to send") and sends the request once more in a fresh one, told the wish's APP.md (`Conversation.freshNote`) and the
-  chat so far (`CatchUp`). If that fails too, the turn says so in plain words. Start Again from the Original sets every
-  engine's conversation aside the same way ("Start Again" in the desk guide).
+  chat so far (`CatchUp`). If that fails too, the turn says so in plain words. Start Over sets every
+  engine's conversation aside the same way ("Start Over" in the desk guide).
 - **Messages sent while the agent works**: they wait in line for the next turn as one group, and the person chooses
   whether it goes now. The group sits close together under one caption at its latest message, with Send Now (Send
   All Now for several) beside it (`ChatLook.QueuedRow`, `QueuedPlace`, in both chats; `Store.canSendNow`), which hands

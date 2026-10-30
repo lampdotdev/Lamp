@@ -137,11 +137,12 @@ Play the journey, don't only look at it:
 - joining, a failed join and reconnecting, where the game takes phones.
 
 Look at each screen, and at motion with `look_at_app`'s `motion`: one picture proves appearance, not navigation or
-sound. Lamp's preview has no phones, so joining is proved only where phones are really used. When you finish, name any
+sound. Lamp's preview can open a phone page and play it (the phone-pages skill), but a real join is proved only where
+phones are really used. When you finish, name any
 device or path you didn't run.
 
 ## One critique pass
 
-Once the journey plays, look at each screen against your brief once, phone included where you can see it. Name the one
-thing on it that reads as a template, and fix that, along with anything you saw break. Then stop. This pass doesn't paint
+Once the journey plays, look at each screen against your brief once, the phone page included (`use_app` with `phone`, the
+phone-pages skill). Name the one thing on it that reads as a template, and fix that, along with anything you saw break. Then stop. This pass doesn't paint
 new pictures, and a wish that asked for something small stays small.

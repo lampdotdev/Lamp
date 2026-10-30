@@ -154,8 +154,8 @@ keep what the person was looking at in `@SceneStorage`, so it comes back as they
 runtime folder (`LampMagic.leavePlace`), and the new copy opens its first window in the same place (`putBack`). Lamp
 puts no picture of the window in its place meanwhile: a copy that opens no window (a menu bar app) left one standing
 until it timed out.
-While Lamp builds a change for a Mac app that's open, smoke in many colors curls up from the bottom of the app's
-windows, with a faint glow round their edges, and as the change goes in a level band of white whooshes up across them (`AppTransition`, drawn by
+While Lamp builds a change for a Mac app that's open, smoke in Lamp's stripe colors curls up from the bottom of the app's
+windows, with a faint glow round their edges, and as the change goes in the stripes roll up across them on the slant, covering the window at the middle of the roll (`AppTransition`, drawn by
 `LampTransition` in LampSupport.swift). It starts in `Store.build`,
 lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
 kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app

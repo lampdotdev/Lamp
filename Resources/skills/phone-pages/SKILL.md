@@ -24,6 +24,34 @@ pad.send({ ready: true });                       // JSON to the TV app, 16 KB at
 
 Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped. The number comes from the TV app once it's there (`onPlayer`), so show the state until then. `onState` runs during `connect()` itself, before it returns, so set up everything it touches first: a first draw that throws there stops the page's script and leaves the phone on its loading text.
 
+`pad.button`, `pad.axis` and `pad.send` return false when nothing was sent: show that state, never a press that went nowhere.
+
+### A game's controller is held sideways
+
+A page of game controls is made for landscape: two thumbs, movement on the left, the main action on the right, and the player, the link and Back quiet in the middle or along the top. Compose those zones for the game and its verbs; a portrait layout stretched sideways isn't this. A page that isn't game controls (photos, files, a scoreboard, a hand of cards) stays whichever way suits it.
+
+- Lay it out with `viewport-fit=cover` in the viewport tag, `env(safe-area-inset-*)` around the edges and `100dvh` for the height, so a notch and the browser's bars don't sit on a control.
+- Nothing forces a phone sideways. `screen.orientation.lock` works in few browsers and usually only full screen: try it after a tap if you like, handle its failure, and make the page right without it. Never rotate the page with CSS.
+- Joining and typing a name may stay upright, and the keyboard changes the viewport's shape: decide what `@media (orientation: …)` shows from the game's phase too, so a keyboard never hides the name field behind "turn your phone".
+- Held upright during play, keep the player and the link on screen, show a themed "Turn your phone sideways", take no play gestures, and offer "Use upright" with a compact layout for someone who can't rotate. Keep Back reachable, and never pause the party for one phone turning.
+- If the phone turns during a press, send every held button's release and zero every active axis, drop the page's own pointer capture and gesture state, and ask for a fresh press. The page keeps track of what's held; never close the link to clear it. Turning back restores the phase as it was, with no new join and no reset.
+
+```js
+var held = {};
+function press(name, down) { if (down) held[name] = true; else delete held[name]; pad.button(name, down); }
+function letGo() {
+  Object.keys(held).forEach(function (name) { press(name, false); });
+  pad.axis('stick', 0, 0);                         // every axis this page moves
+}
+matchMedia('(orientation: landscape)').addEventListener('change', letGo);
+```
+
+### Seeing the page
+
+In a game on Lamp's web runtime, you can see and press this page yourself: `use_app` with `phone` true on an action opens the real `Phone/index.html` at 844x390, sideways, joined to the game as a player in the same play, with a picture of it beside the game's, what it sent the game, its words and controls, and what it logged. Tap with `click` by `target` (a selector or the words on it) or x and y; `press`, `release` and `drag` work a held button or a stick; `type` fills a field; `rotate` turns it (`up`, then `left` or `right` for each way round), and works with a finger left down; `link` with `item` `lost`, `away` or `back` drops and restores it. Before you finish, play the whole journey with it: joining, the menu, play, results, the link lost and back, and rotation with a control held.
+
+It's the real page and the real `Lamp.controllers`, but not a real phone: one phone at most, in Mac WebKit, touches made by Lamp, on a link that stands in for the relay (no QR scan, no files, no network, so what it loads must be in `Phone/`). The page's timers and clocks go by the play, so a long press lasts what the script says; a CSS animation runs by real time. A notch, the browser's bars, the keyboard, tilt and `orientation.lock` aren't there to see, and speed isn't either. Say so when you report it, and ask the person to try it on their phone.
+
 On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game. It starts with a host:
 
 - `Lamp.controllers.start({ host: 'game' })`: the game serves the page and runs the link itself, with no Lamp: on the Mac, an iPhone or iPad while it's in front, an LG TV whose package carries the game's service (webOS 5 on), and the Xbox. Lamp's TV preview has no game host.
@@ -49,26 +77,6 @@ Lamp.controllers.start();
 ```
 
 In a game, the join card is a screen of its own, not part of the title (the game-ui skill has the flow): show it at once when the player goes to join, or from setup or pause to add players, and a game played only with phones may open on it. While it's up it says when the game is getting ready for phones (until the first link), when phones can't join and when it's trying again. Keep the session running behind it: hiding the card never calls `stop()`, drops a player or starts again. While it's hidden, keep the newest `onLink` address and the newest error rather than a picture of an old code, and draw the card from those when it opens, finding its elements again, since a change to the code may have made them anew. Register the handlers before `start()` in every case, and keep the links short-lived. A page that isn't a game (a second screen, a file sent to the TV) may show its code from the start. Draw into the same canvas each time `onLink` calls again. A code that couldn't be drawn and phones that can't join (`start()` rejects, `onError`) each say so in the card; neither hides it as if the game had no phones. In a game drawn on a canvas (three.js, Phaser), put the join card in HTML over it, or draw `LampQR.matrix(url)` (its `size` and `dark(x, y)`) into the scene yourself, with a light border four modules wide.
-
-### Held sideways
-
-A page of game controls is laid out for a phone on its side: two thumbs, with movement on the left, the main action on the right, and identity, connection and Back quiet in the middle or along the top. Compose it for that shape rather than stretching an upright pad. A page that isn't game controls (a second screen, a file sent to the TV) keeps whatever suits it, and so does a page already made: don't add a rotation gate to it unasked.
-
-Use `viewport-fit=cover`, `env(safe-area-inset-*)` on every side, since the notch moves, and `100dvh`, not `100vh`, so the browser's bars don't hide a control. A phone can't be forced sideways: `screen.orientation.lock('landscape')` works only in some browsers and usually only in full screen, so try it after a tap if you like and expect it to fail. Never rotate the page with CSS to fake it.
-
-Held upright during play, show a state in the game's own look: "Turn your phone sideways", with the player's name and the connection, and no controls live. Offer "Use upright", a compact layout, for a phone with rotation locked or a player who needs it. Keep Back reachable. Joining and typing a name may stay usable upright, and an open keyboard changes the viewport's shape, so decide this by the game's phase as well as by `(orientation: landscape)`.
-
-A turn never ends the link: the page keeps its player and restores the current phase, and one phone turning doesn't pause the party. A finger may be down as it turns, so the page tracks what's held and lets it go, and a control needs a fresh press afterward:
-
-```js
-var held = {};
-function press(name, down) { if (down) held[name] = true; else delete held[name]; pad.button(name, down); }
-function letGo() {
-  Object.keys(held).forEach(function (name) { press(name, false); });
-  pad.axis('stick', 0, 0);                         // every axis this page moves
-}
-matchMedia('(orientation: landscape)').addEventListener('change', letGo);
-```
 
 ## Files
 

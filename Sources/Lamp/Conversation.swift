@@ -31,7 +31,10 @@ enum Conversation {
         "Started a fresh conversation for \(name): the last one had grown too large to send"
     }
 
-    static let startedAgain = "Started again from the original"
+    /// The chat's one line after Start Over: back to the version the wish arrived as, or for a starter's copy, on to the
+    /// starter as this Lamp ships it (`Store.startOverBegun`).
+    static let startedAgain = "Started over from the original"
+    static let startedOverFromLatest = "Started over from the latest original"
 
     // MARK: The engine's own record
 
@@ -256,7 +259,7 @@ enum Conversation {
     struct Record: Codable {
         var reason: String
         var at: Date
-        /// The version a Start Again from the Original made, which Undo of it brings this back for.
+        /// The version a Start Over made, which Undo of it brings this back for.
         var version: String?
         var chat: [LogLine]?
     }
@@ -291,7 +294,7 @@ enum Conversation {
         AppFile.read(folder.appendingPathComponent("record.json"), in: project).flatMap { try? JSONDecoder().decode(Record.self, from: $0) }
     }
 
-    /// The conversations a Start Again from the Original set aside when it made `version`.
+    /// The conversations a Start Over set aside when it made `version`.
     static func startedAgain(at version: String, in project: LampProject) -> URL? {
         let folders = (try? FileManager.default.contentsOfDirectory(at: folder(in: project), includingPropertiesForKeys: nil)) ?? []
         return folders.sorted { $0.lastPathComponent > $1.lastPathComponent }.first { record(in: $0, of: project)?.version == version }

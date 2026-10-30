@@ -476,12 +476,13 @@ capabilities.json) reopens it, held for Reload while the person has it open. On 
 from Lamp's player (below) unless it has Swift of its own.
 
 A change to a game while it's played. While the agent works, each change it saves goes into the game open on this Mac
-once it compiles and the saving has paused, not waiting for the agent to look or for the turn to end
-(`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app: the saved files are read every two
-seconds, and a game's are tried once they've held still for six seconds, no more often than every fifteen, since each
-step can hold the picture for a moment), and while the agent's look plays the game in the hidden copy, which can take
-minutes (only the look's build, which writes the same folders, is waited for; `PageLive.put` puts one change into a
-copy at a time). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+once it compiles, the saving has paused a few seconds and the agent has said in a progress line what's now in it
+(`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app; the `progress` tool's description says
+so, for every engine). Only the agent can tell an edit the person would see from one they wouldn't (a refactor, half a
+piece of work), so its line is both the trigger and the chat's word for the step ("Put into New York: The car is
+rainbow now"); a save that leaves the page's files as the last step put them in (`pageSignature`) puts nothing in. It
+also goes in while the agent's look plays the game in the hidden copy, which can take minutes, once the look has put
+its own change in (`PageLive.put` puts one change into a copy at a time). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the
@@ -576,6 +577,17 @@ background mode keeps it alive. `ControllerAddresses` gives a phone only an addr
 network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
 the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
 window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
+
+**The phone page in the game's preview.** The agent sees and presses a web game's real phone page with `phone` on
+`use_app`'s actions (`PhonePreview`, the `phone-pages` skill): `GameKit.stageWeb` copies `Phone/` beside the page, never
+over the published one, with Lamp's real lamp-controller.js, and the page opens at 844x390 in a second hidden web view
+at the play's first `phone` line, held to its own files. Its socket is a stand-in with no network behind it: what either
+side says waits for the next `phone` or `shot` line (`phoneStep` in lamp-game.js), which hands it across between two
+frames, the page's timers and clocks moved on by the frames played since the last one, and to `Lamp.controllers` the phone
+is a player that came another way (`_attach`), so a play with a phone is one
+script like any other, played from the start, and never in a warm preview. In the preview `Lamp.controllers` asks no host
+for a session and draws its join card from a made-up address. This shows the page, its layout and what it sends; the join,
+the relay, files, rotation lock, notches, the keyboard and tilt are still only a real phone's to show.
 
 **Which host.** The game chooses who hosts its phones as it starts them: `Lamp.controllers.start({ host: 'game' })`
 (the game itself: the Mac's and iPhone's `ControllerRuntime` above, and the LG service and the Xbox's host below) or `start({ host: 'lamp' })`

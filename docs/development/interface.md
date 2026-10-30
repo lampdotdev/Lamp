@@ -70,7 +70,8 @@ anything that's the same for every app and already in Settings.
 - **Credits first.** A wish built on someone else's work starts with Credits: what it's based on and its license,
   what else it uses, and the wishes it was remixed from (`AppInfoView.creditsSection`), with one button to the page of
   the work it's based on. A wish with none has no such section. Its buttons act on where the wish came from: Check for
-  Updates…, and Start Again from the Original for a wish changed since it arrived (its "Your copy" row says so).
+  Updates… (Update from the Original for a starter's copy, which follows the starter this Lamp ships rather than its
+  repository), and Start Over for a wish changed since it arrived (its "Your copy" row says so).
 - **Read-only.** A thing that can be changed is changed in Settings: each section ends in one small button
   that opens the tab where it's chosen ("Configure Providers…", "Building Settings…"). The only exception is
   undoing what an app was left with by an earlier Lamp ("Use Settings' Choices", shown only when there is

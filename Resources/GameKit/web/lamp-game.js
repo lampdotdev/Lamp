@@ -1984,6 +1984,48 @@ if (preview && preview.warm) {
     };
 }
 
+// The game's phone page in the preview (`PhonePreview`): a `phone` line of the script is a step on the page, and the
+// messages both ways wait for such a step, so they arrive between the same two frames in every play. The page's clock
+// goes by the game's frames, handed over at each step, since a play runs far faster than the time it stands for. To the
+// game the phone is a player that came another way than the relay (`Lamp.controllers._attach`).
+let phone = null;
+async function phoneStep(step) {
+    if (!phone) {
+        phone = { hooks: null, here: false, joined: false, out: [], frames: 0,
+                  start(hooks) { this.hooks = hooks; },
+                  stop() { this.hooks = null; this.joined = false; } };
+        phone.route = { key: 'phone', place: 0, text: m => (phone.out.push(m), true),
+                        say: data => (phone.out.push({ t: 'message', data }), true), binary: () => false, buffered: () => 0 };
+        const controllers = window.Lamp && window.Lamp.controllers;
+        if (controllers && controllers._attach) controllers._attach(phone);
+    }
+    // A page not joined yet gets its player number and what the game says on a join first: a person's press comes after
+    // those, and a page may hold its controls until it has them.
+    if (!phone.joined) await phoneExchange({ do: 'sync' });
+    await phoneExchange(step);
+}
+
+async function phoneExchange(step) {
+    const post = message => window.webkit.messageHandlers.lampPreview.postMessage(message);
+    // Round again while either side has more to say: a game answers a join, and the page its player number, at once.
+    for (let round = 0, next = step; round < 4; round++, next = { do: 'sync' }) {
+        const elapsed = phone.frames * 1000 / 60;
+        phone.frames = 0;
+        const answer = await post({ phone: next, inbox: JSON.stringify(phone.out.splice(0)), hosted: !!phone.hooks, elapsed });
+        if (answer == null) { log('Lamp: the phone page did not open in the preview.'); return; }
+        const messages = JSON.parse(answer).messages || [];
+        for (const m of messages) {
+            if (m.t === 'hello') phone.here = true;
+            if (m.t === 'bye') { phone.here = false; if (phone.joined) phone.hooks.leave('phone'); phone.joined = false; }
+            // A game that starts its controllers after the page opened has it join then.
+            if (phone.here && phone.hooks && !phone.joined) { phone.hooks.join('phone', phone.route); phone.joined = true; }
+            if (phone.joined && m.t !== 'hello') phone.hooks.input('phone', m);
+        }
+        if (phone.here && phone.hooks && !phone.joined) { phone.hooks.join('phone', phone.route); phone.joined = true; }
+        if (!messages.length && !phone.out.length) return;
+    }
+}
+
 async function runPreview() {
     // Lamp answers each picture once it has taken it, of the whole page as drawn (the canvas and anything over it).
     const post = message => window.webkit.messageHandlers.lampPreview.postMessage(message);
@@ -1991,7 +2033,12 @@ async function runPreview() {
     const limit = 60 * 600;
     for (const line of preview.script) {
         const words = line.trim().split(/\s+/);
+        if (words[0] === 'phone') {
+            await phoneStep(JSON.parse(line.trim().slice(6)));
+            continue;
+        }
         if (words[0] === 'shot') {
+            if (phone) await phoneStep({ do: 'sync' });
             await post({ shot: words[1] });
             continue;
         }
@@ -2008,6 +2055,7 @@ async function runPreview() {
             mostTriangles = Math.max(mostTriangles, info.triangles);
             triangles += info.triangles;
             frames++;
+            if (phone) phone.frames++;
         }
     }
     const said = [...played.entries()].map(([name, count]) => count > 1 ? `${name} ${count} times` : name);
