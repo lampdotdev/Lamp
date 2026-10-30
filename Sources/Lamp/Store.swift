@@ -8277,16 +8277,18 @@ final class Store: ObservableObject {
 
     /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
     /// the app installs the whole build anyway.
-    private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
+    /// `ownStep`: the build a game's step makes while it's the change being put in (`stepPage`), which doesn't wait for
+    /// itself; every other build waits for that change.
+    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false) async -> String? {
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
-        let problem = await buildNow(project, inPlace: inPlace)
+        let problem = await buildNow(project, inPlace: inPlace, ownStep: ownStep)
         if glowing, problem != nil { AppTransition.end(project) }
         return problem
     }
 
-    private func buildNow(_ project: LampProject, inPlace: Bool) async -> String? {
+    private func buildNow(_ project: LampProject, inPlace: Bool, ownStep: Bool = false) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         // Only the wish, its apps all in folders of their own: nothing to build here.
         guard project.holdsApp else { return nil }
@@ -8296,7 +8298,7 @@ final class Store: ObservableObject {
         owner?.building = true
         defer { owner?.building = false }
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
-        await owner?.applying?.value
+        if !ownStep { await owner?.applying?.value }
         await owner?.warming?.value
         log(project, .status, "Building…")
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
@@ -8552,7 +8554,7 @@ final class Store: ObservableObject {
     /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
     private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
         Task { [weak self] in
-            var seen = "", tried = "", seenAt = Date()
+            var seen = "", tried = "", seenAt = Date(), lastPageStep = Date.distantPast
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 // Reload pressed while the agent works goes in here, between its steps, inside this turn.
@@ -8560,9 +8562,12 @@ final class Store: ObservableObject {
                     await reloadInTurn(project, turn)
                     continue
                 }
+                // A game's page also takes a step while the agent's look plays the game in the hidden copy, which can
+                // run for minutes: only the look's build, which writes the same folders, is waited for.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
-                      !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
-                      let current = current(project), LiveReload.eligible(current),
+                      !turn.building, !turn.keptOpen, turn.applying == nil,
+                      let current = current(project), LiveReload.eligible(current) || stepsPage(current),
+                      !turn.look.inProgress || stepsPage(current),
                       isRunning(current), !Runtime.waitsForReload(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false
@@ -8570,10 +8575,23 @@ final class Store: ObservableObject {
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
                 if now != seen { seen = now; seenAt = Date(); continue }
+                // A game's page takes a change once the saving has paused a while, and no more often than every 15 s:
+                // each can hold the picture for a moment, and a run of small ones, seconds apart, reads as stutter.
+                if stepsPage(current), Date().timeIntervalSince(seenAt) < 6 || Date().timeIntervalSince(lastPageStep) < 15 { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
                 let saved = seenAt
                 turn.applyingSources = now
+                if stepsPage(current) {
+                    lastPageStep = Date()
+                    turn.applying = Task { [weak self] in
+                        guard let self else { return }
+                        defer { turn.applying = nil }
+                        await stepPage(current, in: turn, saved: saved)
+                    }
+                    await turn.applying?.value
+                    continue
+                }
                 turn.applying = Task { [weak self] in
                     guard let self else { return }
                     defer { turn.applying = nil }
@@ -8615,6 +8633,35 @@ final class Store: ObservableObject {
                 await turn.applying?.value
             }
         }
+    }
+
+    /// A game whose page is open on this Mac takes each change the agent saves the same way, once it compiles: the page
+    /// is built (a TypeScript game bundled, which fails on what doesn't) and put into the open game (`pageInPlace`), which
+    /// swaps it in or runs the game's code again from where the player is, the smoke over the window until it's on
+    /// screen. Not waiting for the agent to look: a step whose modules don't parse is left alone until the next save,
+    /// and one that compiles but fails as it runs opens the page again from the snapshot, as a change at the turn's end
+    /// would. What can't go into the open page at all waits for the turn's end, as before.
+    private func stepsPage(_ project: LampProject) -> Bool {
+        PageLive.takes(project) && PageLive.shared.isOpen(project, at: .mac)
+    }
+
+    private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
+        // Still being written, or broken: tried again once it changes.
+        guard await GameKit.codeProblem(project) == nil else { return }
+        // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
+        var mac = project
+        mac.chosen = .mac
+        guard await build(mac, ownStep: true) == nil, turns[project.id] === turn, !turn.stopped, var current = current(project) else { return }
+        current.chosen = .mac
+        guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {
+            AppTransition.end(current)
+            return
+        }
+        // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
+        guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
+        turn.autoApplied += 1
+        log(current, .status, "Put the change into \(current.name)")
+        log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
     }
 
     /// Reload pressed while a request's agent works on the app (`reloadWaiting`): the change held for it goes in as soon
@@ -8743,8 +8790,16 @@ final class Store: ObservableObject {
         case .unchanged, .went:
             // A swap is on screen at once; a page that runs its code again, or opens again, says when it's showing the
             // change (`shown`, `pageShown`), and the smoke stays over the window until then.
+            // Only the game runtime says `shown`: a screen, a web app or a game running its own loop opens again with its
+            // own page, and the smoke goes as before (`install`).
+            let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
             if outcome == .went("swapped") { AppTransition.land(project) }
-            else if outcome == .went("rerun") || outcome == .went("reloading") { awaitShown(project) }
+            else if saysShown, outcome == .went("rerun") || outcome == .went("reloading") {
+                awaitShown(project)
+                // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
+                await untilShown(project)
+                try? await Task.sleep(for: .milliseconds(400))
+            }
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.pageReopened = outcome == .went("reloading")
@@ -9028,20 +9083,36 @@ final class Store: ObservableObject {
     /// Games whose page is putting a change in by running its code again or opening again, with the smoke held over
     /// their window until the page says the change is on screen; a page that never says lets it go after a while.
     private var waitingToShow: [String: Task<Void, Never>] = [:]
+    /// Whoever waits for the change to be on screen (`untilShown`), let go by `shown` or by the wait running out.
+    private var shownWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    /// A `shown` that came before Lamp began waiting for it (a run in place quicker than the page's first answer).
+    private var shownEarly: [String: Date] = [:]
     private func awaitShown(_ project: LampProject) {
         waitingToShow[project.id]?.cancel()
         let id = project.id
+        if let early = shownEarly.removeValue(forKey: id), Date().timeIntervalSince(early) < 5 { return AppTransition.land(project) }
         waitingToShow[id] = Task { @MainActor in
             try? await Task.sleep(for: .seconds(20))
-            guard !Task.isCancelled, waitingToShow.removeValue(forKey: id) != nil, let current = projects.first(where: { $0.id == id }) else { return }
-            AppTransition.end(current)
+            guard !Task.isCancelled, waitingToShow.removeValue(forKey: id) != nil else { return }
+            letShownWaitersGo(id)
+            if let current = projects.first(where: { $0.id == id }) { AppTransition.end(current) }
         }
+    }
+
+    private func untilShown(_ project: LampProject) async {
+        guard waitingToShow[project.id] != nil else { return }
+        await withCheckedContinuation { shownWaiters[project.id, default: []].append($0) }
+    }
+
+    private func letShownWaitersGo(_ id: String) {
+        for waiter in shownWaiters.removeValue(forKey: id) ?? [] { waiter.resume() }
     }
 
     /// The page shows the change it was putting in: the light crosses the window, and the smoke goes.
     func pageShown(_ project: LampProject) {
-        guard let waiting = waitingToShow.removeValue(forKey: project.id) else { return }
+        guard let waiting = waitingToShow.removeValue(forKey: project.id) else { shownEarly[project.id] = Date(); return }
         waiting.cancel()
+        letShownWaitersGo(project.id)
         AppTransition.land(project)
     }
 
@@ -9748,6 +9819,12 @@ final class Store: ObservableObject {
     private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
         // The preview is drawn out of sight, often while the person plays the game itself: these say it's a copy.
         note("Building a hidden copy…", for: project)
+        // Its copy of the page is made from the same folders a step of the agent's saves builds from (a TypeScript game's
+        // Web/app/ among them): one going in is waited for, and none starts until the copy is made (`autoApply` waits
+        // while the turn builds); the preview then plays from its own copy, alongside any step.
+        await owner.applying?.value
+        owner.building = true
+        defer { owner.building = false }
         do {
             // A three.js game has nothing to compile: its page is copied where the preview reads it.
             if GameKit.engine(project) == .web { _ = try await GameKit.stageWeb(project) }
@@ -9774,8 +9851,15 @@ final class Store: ObservableObject {
             return (200, ["text": error.localizedDescription])
         }
         guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
-        // What the game logged is its log, for the person's Agent Details as much as the agent.
-        try? AppFolder.write(played.printed.joined(separator: "\n") + "\n", to: Runtime.logURL(project), in: project.dir)
+        // What the game logged is its log, for the person's Agent Details as much as the agent. While the game is open on
+        // this Mac its own copy is writing that log: the hidden copy's play is added after it, never written over it.
+        let printed = played.printed.joined(separator: "\n") + "\n"
+        if isRunning(project), let log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir) {
+            log.write(Data(("[the hidden copy's play]\n" + printed).utf8))
+            try? log.close()
+        } else {
+            try? AppFolder.write(printed, to: Runtime.logURL(project), in: project.dir)
+        }
         var text = said
         if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
         // It names the game's sound files and comes from what the preview printed: the agent's only when the log is.

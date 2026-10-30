@@ -178,7 +178,10 @@ enum Skills {
         let sources = project.dir.appendingPathComponent("Sources")
         let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
         return files.contains { file in
+            // Lamp's own Swift says nothing of what the app does: a page's app carries the code for phones as players
+            // (LampControllerKit.swift), which names LampNetwork in every game.
             file.pathExtension == "swift" && !["LampSupport.swift", Template.sceneSupportFile].contains(file.lastPathComponent)
+                && !GameKit.ownSwift.contains(file.lastPathComponent)
                 && ((try? String(contentsOf: file, encoding: .utf8))?.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil)
         }
     }

@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import JavaScriptCore
 
 /// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js, or with Phaser for a 2D game
 /// (`web/lamp-phaser.js` over the runtime), and played through Lamp's game runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
@@ -313,7 +314,7 @@ enum GameKit {
     }
 
     /// Lamp's own Swift in a page's app: the player has all of it. `Native.swift` too while it's still Lamp's.
-    private static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
+    static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
                                                      ScreenKit.screenPage.swift, ScreenKit.webAppPage.swift].map { String($0.dropFirst("Sources/".count)) })
 
     /// Swift of the app's own beside Lamp's, in Sources/ (what its Package.swift compiles): a `Native.swift` that answers
@@ -430,6 +431,100 @@ enum GameKit {
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
+
+    /// Why the game's own modules in Web/ wouldn't load as written (the first one that doesn't parse, and where), or
+    /// nil: what a change the agent is still writing goes into the open game by (`Store.stepPage`). Parsed as modules by
+    /// the Bun inside Lamp's pi (its transpiler, which reads them as a browser does and runs nothing), in the game's
+    /// sandbox; Lamp's own files and the libraries beside the page are left out. A game bundled from TypeScript is checked
+    /// by its bundling instead.
+    static func codeProblem(_ project: LampProject) async -> String? {
+        guard !compilesSource(project), let bun = Agent.executable else { return nil }
+        let web = project.dir.appendingPathComponent(webFolder)
+        let base = web.standardizedFileURL.path + "/"
+        let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
+            .map { String($0.standardizedFileURL.path.dropFirst(base.count)) }
+            .filter { path in
+                ["js", "mjs"].contains((path as NSString).pathExtension.lowercased()) && !path.hasPrefix("three/") && !path.hasPrefix("phaser/")
+                    && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
+            }.sorted()
+        guard !files.isEmpty else { return nil }
+        if let strict = strictProblem(in: files, of: web, project: project) { return strict }
+        // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
+        // it runs in a scratch folder, reading the page's files by their paths.
+        let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-check-\(project.id)-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        do {
+            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+            try parseCheck.write(to: scratch.appendingPathComponent("check.js"), atomically: true, encoding: .utf8)
+        } catch { return nil }
+        var said: [String] = []
+        let command = "cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) check.js \"$LAMP_WEB\" "
+            + files.map(Sandbox.quoted).joined(separator: " ")
+        let status = await Sandbox.run(command, for: project, cwd: project.dir, env: ["LAMP_SCRATCH": scratch.path, "LAMP_WEB": web.path],
+                                       opening: [scratch.path], reading: [bun.deletingLastPathComponent().path]) { said.append($0) }
+        // A check that couldn't run says nothing of the code.
+        guard status == 1 else { return nil }
+        return said.first { !$0.isEmpty } ?? "a module doesn't parse"
+    }
+
+    /// What a module may not do because a module is strict, which Bun's parser lets through (`010`, `delete x`, `with`, a
+    /// repeated parameter, `'\012'`): JavaScriptCore checks each file as a strict script, its module statements written
+    /// as script (a rough rewrite, since JavaScriptCore doesn't parse modules), and only its strict-mode errors count;
+    /// Bun is the judge of the rest.
+    private static func strictProblem(in files: [String], of web: URL, project: LampProject) -> String? {
+        guard let context = JSContext() else { return nil }
+        for path in files {
+            guard let data = AppFile.read(web.appendingPathComponent(path), in: project) else { continue }
+            var exception: JSValueRef?
+            let text = JSStringCreateWithCFString(scriptForm(of: String(decoding: data, as: UTF8.self)) as CFString)
+            defer { JSStringRelease(text) }
+            if JSCheckScriptSyntax(context.jsGlobalContextRef, text, nil, 0, &exception) { continue }
+            let error = JSValue(jsValueRef: exception, in: context)
+            guard let message = error?.toString(), message.contains("strict mode") else { continue }
+            let line = (error?.objectForKeyedSubscript("line")?.toInt32() ?? 1) - 1
+            return "\(path):\(max(1, line)): \(message)"
+        }
+        return nil
+    }
+
+    private static let moduleToScript: [(NSRegularExpression, String)] = {
+        let gap = #"(?:\s|/\*[\s\S]*?\*/|//[^\n]*\n)*"#, lead = #"(?<![.\w$])"#
+        return [
+            (lead + #"import"# + gap + #"[^;'"]*?\bfrom\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + #"import\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + "export" + gap + #"\*\s*(?:as\s+[\w$]+\s*)?from\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + "export" + gap + #"\{[^}]*\}"# + gap + #"(?:from\s*(['"])[^'"\n]+\1)?\s*;?"#, ""),
+            (lead + "export" + gap + #"default\b"#, "void "),
+            (lead + #"export\b(?=\s*(?:async\b|function\b|class\b|const\b|let\b|var\b|/))"#, ""),
+            (#"\bimport\.meta\b"#, "({ url: '' })"),
+        ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
+    }()
+
+    /// A module as a script, its lines where they were (one line down).
+    static func scriptForm(of module: String) -> String {
+        var text = module as NSString
+        for (pattern, template) in moduleToScript {
+            for match in pattern.matches(in: text as String, range: NSRange(location: 0, length: text.length)).reversed() {
+                let breaks = String(repeating: "\n", count: text.substring(with: match.range).filter { $0 == "\n" }.count)
+                text = text.replacingCharacters(in: match.range, with: template + breaks) as NSString
+            }
+        }
+        return "'use strict'; (async () => {\n" + (text as String) + "\n});"
+    }
+
+    /// The parse check Bun runs: each file read as a module, the first that doesn't parse said with its line.
+    private static let parseCheck = """
+        const [web, ...files] = process.argv.slice(2);
+        const parse = new Bun.Transpiler({ loader: 'js' });
+        for (const file of files) {
+          try { parse.transformSync(await Bun.file(web + '/' + file).text()); }
+          catch (e) {
+            const m = (e.errors && e.errors[0]) || e;
+            console.log(`${file}${m.position ? ':' + m.position.line : ''}: ${m.message || e}`);
+            process.exit(1);
+          }
+        }
+        """
 
     static func compilesSource(_ project: LampProject) -> Bool {
         FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("\(sourceFolder)/main.ts").path)

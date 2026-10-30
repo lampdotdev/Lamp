@@ -475,7 +475,17 @@ a change of its page goes into the open game instead (`PageLive`, below), and an
 capabilities.json) reopens it, held for Reload while the person has it open. On the Mac it's made
 from Lamp's player (below) unless it has Swift of its own.
 
-A change to a game while it's played. The app around the page on the Mac and in the simulator (`LampPageLive` in
+A change to a game while it's played. While the agent works, each change it saves goes into the game open on this Mac
+once it compiles and the saving has paused, not waiting for the agent to look or for the turn to end
+(`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app: the saved files are read every two
+seconds, and a game's are tried once they've held still for six seconds, no more often than every fifteen, since each
+step can hold the picture for a moment), and while the agent's look plays the game in the hidden copy, which can take
+minutes (only the look's build, which writes the same folders, is waited for; `PageLive.put` puts one change into a
+copy at a time). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+(`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
+checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
+that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the
+snapshot, as it would at the turn's end. The app around the page on the Mac and in the simulator (`LampPageLive` in
 `LampPage.swift`) asks Lamp what has changed (`/app/page/live`, held up to 25 s, asked again at once; never on a phone,
 whose copy takes a change through the wish's room, as every copy on another device does: "A page's change in every open
 copy" in the kinds-of-app guide). When a build's page differs from what that copy was installed with
@@ -517,9 +527,10 @@ and a change to its trees builds only the street details, traffic and road paint
 the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
 Lamp's light crosses the window (`Store.pageShown`): the smoke built over the window stays through the run, rather than
 going as the page first answers. A swap gets the light at once; a page that opens again says `shown` at its first frame;
-one that never says lets the smoke go after 20 s. The page opens again, from the
-snapshot, where running again can't be done (the import map or a script that isn't a module changed, a circle of
-imports, Lamp's own files) or the new code fails before init is done or in its first second (`swapGuard`). The game's
+one that never says lets the smoke go after 20 s. Where running again can't be done (the import map or a script
+that isn't a module changed, a circle of imports, Lamp's own files) the change waits for the person's Reload
+(`reopenOrHold`, "held"), never opening the page under them; Reload opens it again from the snapshot. New code that
+fails before init is done or in its first second opens the page again at once (`swapGuard`). The game's
 `accept((next, { changed }) => …)` may build again what a changed method built once, or return false to run the code
 again. A file nothing put in opens the page again with the game's `snapshot()` kept in sessionStorage ("reloading",
 with the page's reason as `why`: `PageLive.reason`). The new copy takes
