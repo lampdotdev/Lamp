@@ -118,27 +118,59 @@ final class LocalModels: ObservableObject {
 
     /// The server's fetch, reporting into `progress[id]` over its first `share`, for a model downloaded with it. One
     /// fetch at a time, which every caller (a pick, a model's download, a request) waits on, each seeing its progress:
-    /// two at once would put the same folder in place over each other.
+    /// two at once would put the same folder in place over each other. A caller that's cancelled (Cancel) stops
+    /// waiting at once, and the fetch itself stops once nobody waits on it.
     private func installServer(as id: String, share: Double = 1) async throws {
-        serverWatchers[id] = share
-        defer { serverWatchers[id] = nil }
-        let install = serverInstall ?? Task { [weak self] in
-            try await LlamaInstall.install { fraction in
-                Task { @MainActor in
-                    guard let self else { return }
-                    for (id, share) in self.serverWatchers { self.progress[id] = fraction * share }
-                }
+        let key = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+                serverWaiters[key] = (id, share, done)
+                if serverInstall == nil { startServerInstall() }
             }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.stopWaitingForServer(key) }
         }
-        serverInstall = install
-        // Done with either way, so a try after a failure fetches afresh.
-        defer { if serverInstall == install { serverInstall = nil } }
-        try await install.value
         serverInstalled = LlamaInstall.isInstalled
     }
-    private var serverInstall: Task<Void, Error>?
-    /// Who waits on the server's fetch, with the share of their progress it fills.
-    private var serverWatchers: [String: Double] = [:]
+
+    private func startServerInstall() {
+        let token = UUID()
+        serverInstall = (token, Task { [weak self] in
+            var failure: Error?
+            do {
+                try await LlamaInstall.install { fraction in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        for waiter in self.serverWaiters.values { self.progress[waiter.id] = fraction * waiter.share }
+                    }
+                }
+            } catch { failure = error }
+            await self?.serverInstallEnded(token, failure: failure)
+        })
+    }
+
+    private func serverInstallEnded(_ token: UUID, failure: Error?) {
+        guard serverInstall?.token == token else { return }
+        serverInstall = nil
+        serverInstalled = LlamaInstall.isInstalled
+        let waiting = serverWaiters.values
+        serverWaiters = [:]
+        for waiter in waiting {
+            if let failure { waiter.done.resume(throwing: failure) } else { waiter.done.resume() }
+        }
+    }
+
+    private func stopWaitingForServer(_ key: UUID) {
+        guard let waiter = serverWaiters.removeValue(forKey: key) else { return }
+        waiter.done.resume(throwing: CancellationError())
+        guard serverWaiters.isEmpty, let install = serverInstall else { return }
+        install.task.cancel()
+        serverInstall = nil
+    }
+
+    private var serverInstall: (token: UUID, task: Task<Void, Never>)?
+    /// Who waits on the server's fetch: where its progress shows, the share of that progress it fills, and how to go on.
+    private var serverWaiters: [UUID: (id: String, share: Double, done: CheckedContinuation<Void, Error>)] = [:]
 
     // MARK: Finding models
 
