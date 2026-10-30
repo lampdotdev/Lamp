@@ -575,7 +575,11 @@ beat, its renewal or its link. A run's own callbacks are the run's (`watchPhones
 kept part's stay with the part): the old run's end as it stops (`holdPhones`), a `stop()` from its `dispose` is
 ignored, the new run's hear nothing of players until it's about to draw (`bringPhones`, in `ranAgain`), which calls
 its `onLeave` and `onJoin` with the difference and the present roster, and held buttons stay in `isHeld` while old
-presses and messages are dropped. The game's snapshot keeps which player has which slot. While the agent works, a change of the phone page goes out as it's saved through `Store.autoApply`: with a game's page
+presses and messages are dropped. The game's snapshot keeps which player has which slot. What a frame reads of phones'
+buttons is `f.phones` (`readPhones`, sampled in `step` beside the pads): the runtime hears `onButton` under what `watchPhones`
+wraps, so it belongs to no run, and keeps each phone's held buttons and what they did since the last frame, so a press and
+release between two frames is both. Those edges go with a phone that leaves and with a run that ends (`holdPhones`), and what
+arrives while the code runs again changes what's held without becoming a press. While the agent works, a change of the phone page goes out as it's saved through `Store.autoApply`: with a game's page
 for a game open on this Mac (`stepPage`), and after the same pause for phones on a page Lamp serves with no Mac copy open
 (`stepPhones`). Its scripts, inline ones included, are parsed first (`GameKit.codeProblem`), and what's published is held to
 what was checked (`TVs.stagePhone`'s `expecting`). A change of the phone page goes into the open game with its page (`PageLive.put`): the copy

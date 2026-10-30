@@ -75,4 +75,5 @@ by its own rules (the wish-links skill).
 
 Once you've chosen, open the phone-pages skill: the page in the app's own Phone/, `LampController` on the phone and
 `Lamp.controllers` on the screen, files, tilt, second screens, how a game's controls are held (sideways), and how to
-see and press the page yourself.
+see and press the page yourself. A game on Lamp's runtime reads phones' buttons each frame from `f.phones` (the game
+skill), which keeps a quick press that `onButton` alone can lose between frames.

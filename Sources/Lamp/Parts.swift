@@ -554,7 +554,7 @@ extension Agent.Rules {
         closed. \
         `pad.press("next")` taps a button, `pad.button("fire", down: true)` and `down: false` hold and let go, \
         `pad.axis("stick", x: 0.5, y: 0)` moves a stick (-1 to 1), and `pad.send(["volume": 4])` sends JSON of \
-        16 KB at most; the TV app hears them in `Lamp.controllers`' onButton, onAxis and onMessage. Anything bigger \
+        16 KB at most; the TV app hears them in `Lamp.controllers`' onButton, onAxis and onMessage, and a game on Lamp's runtime reads buttons each frame from `f.phones`. Anything bigger \
         (a photo, a game, a song) goes with `pad.sendFile(data, name: "game.nes")`, up to 64 MB, which the TV app \
         gets in onFile; the transfer it returns is observable (`sent`, `progress`, `state`) and has `cancel()`, so \
         show its progress. `pad.onMessage { data in … }` and `pad.onFile { file in … }` hear what the TV app sends \

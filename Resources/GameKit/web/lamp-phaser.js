@@ -35,7 +35,7 @@ export function pad(index = 0) {
     return (current && current.pads[index]) || still;
 }
 
-// This frame as the runtime gives it ({ dt, time, number, pads }), for what wants seconds rather than Phaser's ms.
+// This frame as the runtime gives it ({ dt, time, number, pads, phones }), for what wants seconds rather than Phaser's ms.
 export function frame() { return current; }
 
 // The Phaser.Game, once phaser() has started it.

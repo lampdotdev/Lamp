@@ -640,12 +640,41 @@ function readPads() {
     }
 }
 
+// Phones' buttons, as a frame reads them. Lamp.controllers hears a button between frames, so what a game does at the top
+// of a frame can't lose it: what each button did is kept here until the next frame takes it, a press and release between
+// two frames still counting as both. `onButton` goes on as it was, for what can't wait for a frame. Held buttons follow
+// the phone at all times. Presses and releases not yet taken go with a phone that leaves, and with the run of the game's
+// code that was playing: what arrives while the code runs again changes what's held and is never replayed as a press.
+const phoneButtons = new Map();
+function phoneButton(player, name, down) {
+    let buttons = phoneButtons.get(player);
+    if (!buttons) phoneButtons.set(player, buttons = newPhoneButtons());
+    if (!!buttons.down[name] === down) return;
+    if (down) buttons.down[name] = true; else delete buttons.down[name];
+    if (!phonesWaiting) (down ? buttons.pressed : buttons.released)[name] = true;
+}
+// A button's name comes from the phone, so nothing here inherits one.
+const newPhoneButtons = () => ({ down: Object.create(null), pressed: Object.create(null), released: Object.create(null) });
+function forgetPhoneEdges() {
+    for (const buttons of phoneButtons.values()) { buttons.pressed = Object.create(null); buttons.released = Object.create(null); }
+}
+function readPhones() {
+    if (!window.Lamp || !window.Lamp.controllers) return [];
+    const list = window.Lamp.controllers.players().map(player => {
+        const buttons = phoneButtons.get(player) || newPhoneButtons();
+        return { player, down: Object.assign(Object.create(null), buttons.down), pressed: buttons.pressed, released: buttons.released };
+    });
+    forgetPhoneEdges();
+    return list;
+}
+
 // What the frame function returns is handed back: in the preview a promise from it (lamp-phaser.js's, while a scene
 // loads) is waited for before the next frame.
 function step(dt) {
     readPads();
+    const phonesNow = readPhones();
     time += dt;
-    const said = frameFunction({ dt, time, number, width: WIDTH, height: HEIGHT, pads });
+    const said = frameFunction({ dt, time, number, width: WIDTH, height: HEIGHT, pads, phones: phonesNow });
     number++;
     return said;
 }
@@ -714,7 +743,9 @@ function fit() {
 
 // The game: `renderer` a three.js WebGLRenderer the runtime sizes and places, `init` run once (and waited for, so it may
 // load files), `frame(f)` each frame with f.dt, f.time, f.number and f.pads (pads[0] the first controller: lx, ly, rx,
-// ry -1 to 1 with up positive, lt and rt 0 to 1, buttons as BUTTON bits in down, pressed and released). `touch` names
+// ry -1 to 1 with up positive, lt and rt 0 to 1, buttons as BUTTON bits in down, pressed and released) and f.phones (one
+// { player, down, pressed, released } for each phone joined through Lamp.controllers, buttons by the names the phone
+// page gives them: `p.pressed.a` is true for the one frame after a press, even one let go again since). `touch` names
 // the buttons the touch controls show (BUTTON.A | BUTTON.B | BUTTON.MENU unless given; BUTTON.RSTICK adds a right stick),
 // or `false` for a page that draws touch controls of its own. `keyboard: false` is for a page that reads the keys itself:
 // the keyboard then isn't the first pad as well, so a key isn't heard twice. The preview's script is the first pad either way.
@@ -1847,6 +1878,7 @@ function watchPhones() {
 const phonesHere = () => phones ? phones.players() : [];
 
 function holdPhones(players) {
+    forgetPhoneEdges();
     if (!phones) return;
     phonesWaiting = { players, calls: [], leaving: true };
     for (const call of [...phoneCalls]) call.end();
@@ -2062,6 +2094,12 @@ async function runPreview() {
     post({ done: true, logs,
            stats: `${frames} frames (${(frames / 60).toFixed(1)} s of play); at most ${mostCalls} draws and ${mostTriangles} triangles in a frame, ${Math.round(frames ? triangles / frames : 0)} triangles a frame on average.`,
            sound: said.length ? 'played ' + said.join(', ') : 'nothing played' });
+}
+
+// Heard for as long as the page lasts, under what `watchPhones` wraps, so it belongs to no run of the game's code.
+if (window.Lamp && window.Lamp.controllers) {
+    window.Lamp.controllers.onButton(phoneButton);
+    window.Lamp.controllers.onLeave(player => phoneButtons.delete(player));
 }
 
 // Watched from here, after the runtime's own listeners: only where Lamp puts changes into the open game, or plays
