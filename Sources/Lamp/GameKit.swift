@@ -314,7 +314,7 @@ enum GameKit {
     }
 
     /// Lamp's own Swift in a page's app: the player has all of it. `Native.swift` too while it's still Lamp's.
-    private static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
+    static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift", "Sources/LampControllerKit.swift",
                                                      ScreenKit.screenPage.swift, ScreenKit.webAppPage.swift].map { String($0.dropFirst("Sources/".count)) })
 
     /// Swift of the app's own beside Lamp's, in Sources/ (what its Package.swift compiles): a `Native.swift` that answers
