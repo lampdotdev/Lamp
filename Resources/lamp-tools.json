@@ -762,7 +762,7 @@
   {
     "name": "progress",
     "label": "Progress",
-    "description": "Tells the person in one short line how the work is going, while they wait: what's now in the app and what's next, e.g. “The layout's in. Now the timer itself.” Shown in the chat at once as a message that stays, so it never repeats another line or your last message. Call it as each pass of a longer piece of work begins and before a step that takes a while (painting pictures, a big build). Never for each file, and never for the end: that's your last message.",
+    "description": "Tells the person in one short line how the work is going, while they wait: what's now in the app and what's next, e.g. “The layout's in. Now the timer itself.” Shown in the chat at once as a message that stays, so it never repeats another line or your last message. Call it as each pass of a longer piece of work begins and before a step that takes a while (painting pictures, a big build). In a game open on the person's Mac, a line is also what puts what you've saved into their game, with the line as what changed: post one when there's something they'd see. Never for each file, and never for the end: that's your last message.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
