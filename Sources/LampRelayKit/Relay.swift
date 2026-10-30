@@ -358,7 +358,8 @@ public final class Relay: @unchecked Sendable {
         let keeper = WishKeeper(folder: folder, key: room.key, queue: queue)
         keeper.appCount = room.apps.count
         keeper.send = { [weak room] copy, message in
-            guard let member = room?.members[copy], member.wire >= WishKeeper.wire else { return }
+            // A copy that has stopped reading misses what's said meanwhile, as from another copy: the next sums make it up.
+            guard let member = room?.members[copy], member.wire >= WishKeeper.wire, member.peer.pendingText <= Self.hostBehind else { return }
             var out = message
             out["from"] = WishChannel.relayName
             member.send(Self.json(out))
