@@ -30,6 +30,18 @@ export const TRIGGER = { LT: 'lt', RT: 'rt' };
 
 const preview = window.lampPreview || null;   // set by Lamp's preview before the page runs
 const logs = [];
+// The browser's own functions, kept before the runtime starts watching what the game's code leaves running (see
+// "Running the game's code again"): the runtime's own listeners, timers and sound go through these, so they stay when
+// the game's are taken away.
+const browser = {
+    listen: EventTarget.prototype.addEventListener, unlisten: EventTarget.prototype.removeEventListener,
+    setTimeout: window.setTimeout, clearTimeout: window.clearTimeout, setInterval: window.setInterval, clearInterval: window.clearInterval,
+    frame: window.requestAnimationFrame, cancelFrame: window.cancelAnimationFrame,
+    AudioContext: window.AudioContext || window.webkitAudioContext, Worker: window.Worker,
+};
+const listen = (target, ...rest) => browser.listen.call(target, ...rest);
+const after = (ms, fn) => browser.setTimeout.call(window, fn, ms);
+const nextFrame = fn => browser.frame.call(window, fn);
 
 // MARK: Random numbers, the same each preview play (xorshift64*, as the C++ kit has it)
 
@@ -134,7 +146,7 @@ const played = new Map();
 const voices = new Set();
 function context() {
     if (preview) return null;
-    if (!audio) { try { audio = new AudioContext({ sampleRate: 48000 }); } catch (e) { return null; } }
+    if (!audio) { try { audio = new browser.AudioContext({ sampleRate: 48000 }); } catch (e) { return null; } }
     if (audio.state === 'suspended') audio.resume();
     return audio;
 }
@@ -226,7 +238,7 @@ export const sound = {
     music(s, volume = 0.4) {
         const ctx = context();
         if (s) played.set('music: ' + s.name, 1);
-        if (musicVoice && ctx) { const old = musicVoice; old.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.3); setTimeout(() => sound.stop(old), 1500); }
+        if (musicVoice && ctx) { const old = musicVoice; old.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.3); after(1500, () => sound.stop(old)); }
         musicVoice = null;
         music.gain = volume;
         if (!s || !ctx) return;
@@ -339,7 +351,7 @@ function buildTouch() {
             zone.append(rest);
         }
         let id = null, sx = 0, sy = 0;
-        zone.addEventListener('pointerdown', e => { id = e.pointerId; sx = e.clientX; sy = e.clientY; zone.setPointerCapture(id); move(e); });
+        listen(zone, 'pointerdown', e => { id = e.pointerId; sx = e.clientX; sy = e.clientY; zone.setPointerCapture(id); move(e); });
         const move = e => {
             if (e.pointerId !== id) return;
             let dx = e.clientX - sx, dy = e.clientY - sy;
@@ -352,14 +364,14 @@ function buildTouch() {
             ring.style.display = knob.style.display = 'block';
             rest.style.display = 'none';
         };
-        zone.addEventListener('pointermove', move);
+        listen(zone, 'pointermove', move);
         const end = e => {
             if (e.pointerId !== id) return;
             id = null; touch[axes[0]] = touch[axes[1]] = 0;
             ring.style.display = knob.style.display = 'none';
             rest.style.display = '';
         };
-        zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end);
+        listen(zone, 'pointerup', end); listen(zone, 'pointercancel', end);
         return zone;
     };
     touchLayer.append(stick('left', ['lx', 'ly']));
@@ -372,7 +384,7 @@ function buildTouch() {
         b.style.cssText = `position:absolute;${css};width:${size}px;height:${size}px;line-height:${size}px;text-align:center;border-radius:50%;background:rgba(255,255,255,.22);font-size:${small ? 15 : 22}px`;
         const on = e => { e.stopPropagation(); touch.down |= bit; tapped |= bit; b.style.background = 'rgba(255,255,255,.5)'; b.setPointerCapture(e.pointerId); };
         const off = () => { touch.down &= ~bit; b.style.background = 'rgba(255,255,255,.22)'; };
-        b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off);
+        listen(b, 'pointerdown', on); listen(b, 'pointerup', off); listen(b, 'pointercancel', off);
         touchLayer.append(b);
     };
     // Kept clear of a phone's rounded corners and its camera (the safe area).
@@ -706,15 +718,22 @@ function fit() {
 // `fill: true` is for a page laid out at the window's size, as a web page is (a strategy game whose HUD is the page's own
 // HTML, made for phones as well as TVs): the page puts the canvas where it wants it and sizes it itself, drawing it
 // smaller when frames run slow, and the runtime only measures and logs the frame rate.
-// `snapshot`, `restore`, `busy` and `assetChanged` keep the player's place through a change Lamp makes while the game is
-// played (see "Changes while it's played" below).
+// `snapshot`, `restore`, `busy`, `assetChanged` and `dispose` keep the player's place through a change Lamp makes while
+// the game is played (see "Changes while it's played" below).
 export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false, fill = false,
-                             snapshot, restore, busy, assetChanged }) {
+                             snapshot, restore, busy, assetChanged, dispose }) {
+    // The game's code run again in place for a change calls this again: the page, the frame loop's clock and whatever
+    // the game kept stay, and the new init starts from where the player was.
+    const again = runningAgain;
+    if (again) again.called = true;
+    const old = renderer;
     renderer = given;
     fills = fill;
     adapting = !sharp && !fill;
     frameFunction = frame;
-    hooks = { snapshot, restore, busy, assetChanged };
+    hooks = { snapshot, restore, busy, assetChanged, dispose };
+    // A renderer the new code didn't keep goes with the old code (its canvas went with the old page).
+    if (again && old && old !== given && !isKept(old)) { try { old.dispose && old.dispose(); } catch (e) {} }
     if (buttons === false) drawsTouch = false;
     else if (buttons != null) touchButtons = buttons;
     readsKeyboard = keyboard !== false;
@@ -732,13 +751,15 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     if (!fill) {
         document.body.append(renderer.domElement);
         fit();
-        window.addEventListener('resize', fit);
+        if (!fitting) { fitting = true; listen(window, 'resize', fit); }
     }
     // Where the player was, if the page is opened again for a change: known before init, so the game starts there.
-    if (!preview) await claim();
+    if (again) { pending = { state: again.state, gen: again.change.gen }; reopened = true; taken = false; }
+    else if (!preview) { await claim(); keepPage(); }
     // In the preview a start-up that fails ends the play with what it said, rather than leaving Lamp waiting for frames.
     if (init) {
         try { await init({ width: WIDTH, height: HEIGHT }); } catch (e) {
+            if (again) return ranAgainFailed(again, e);
             if (taken) return startFresh(e);
             log(`Error: ${e && e.message || e}`);
             if (preview) { window.webkit.messageHandlers.lampPreview.postMessage({ done: true, failed: String(e && e.message || e), logs }); return; }
@@ -747,8 +768,12 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     }
     if (preview) return runPreview();
     await putBack();
+    if (again) ranAgain(again);
+    // One loop at a time: the game's code run again starts a new one, and the old one stops at its next frame.
+    const mine = ++loops;
     let last = 0;
     const loop = now => {
+        if (mine !== loops) return;
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
         last = now;
         measure(now);
@@ -761,9 +786,9 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         // The first frame drawn from a snapshot has gone without an error: from here an error is the game's own.
         guarding = false;
         live();
-        requestAnimationFrame(loop);
+        nextFrame(loop);
     };
-    requestAnimationFrame(loop);
+    nextFrame(loop);
 }
 
 // MARK: Changes while it's played
@@ -880,20 +905,28 @@ async function apply(change) {
     }
     if (!why) {
         log(`Lamp: put in ${said.join('; ')} while the game ran (${Math.round(performance.now() - began)} ms).`);
-        if (code.length) swapGuard = { until: time + 1, change, state: before };
+        if (code.length) { swapGuard = { until: time + 1, change, state: before }; markStale(code); }
         tellHost(change.gen, 'swapped');
         return;
     }
     change = { ...change, why };
-    // Half swapped is no place to wait in: the page opens again now, from where the player was before.
+    // Half swapped is no place to wait in: the code runs again now, from where the player was before.
     if (isBusy() && !change.now && !touched) {
         waiting = change;
-        log(`Lamp: a change that needs the page opened again (${why}) waits for a pause in the game.`);
+        log(`Lamp: a change that needs the game's code run again (${why}) waits for a pause in the game.`);
         tellHost(change.gen, 'held', why);
         if (change.pill) showPill();
         return;
     }
-    reopen(change, touched ? before : undefined);
+    return startAgain(change, touched ? before : undefined);
+}
+
+// A change that can't be swapped in: the game's code runs again in place, keeping the page, the renderer and what the
+// game kept, or, where that can't be done, the page opens again. Either way from `state`, where the player was.
+function startAgain(change, state = takeSnapshot()) {
+    const why = canRunAgain(change);
+    if (why) return reopen({ ...change, why: `${change.why}; ${why}` }, state);
+    return runAgain(change, state);
 }
 
 // Opens the page again with the new code, with the player's place kept for the new code to restore: where it is now, or
@@ -909,11 +942,11 @@ function reopen(change, state = takeSnapshot()) {
 }
 
 // Each frame: a waiting change goes in once the game isn't busy; the latest snapshot is kept for the next install.
-let kept = 0;
+let keptAt = 0;
 function live() {
     if (swapGuard && time > swapGuard.until) swapGuard = null;
-    if (waiting && !isBusy()) { const change = waiting; waiting = null; reopen(change); }
-    if (hooks.snapshot && time - kept >= 5) { kept = time; keepLast(); }
+    if (waiting && !isBusy()) { const change = waiting; waiting = null; queue = queue.then(() => startAgain(change)).catch(e => log(`Lamp: ${e && e.message || e}`)); }
+    if (hooks.snapshot && time - keptAt >= 5) { keptAt = time; keepLast(); }
 }
 
 // MARK: Swapping code in
@@ -944,10 +977,11 @@ const valueText = v => { try { return typeof v === 'function' ? 'function ' + so
 const bare = text => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').replace(/\s+/g, '');
 
 // A module's handle on its changes while the game is played (see "Changes while it's played" above): `accept()` takes
-// them, `dispose(fn)` takes away what this version made as it goes, `data` is what the last version's disposers kept.
+// them, `dispose(fn)` takes away what this version made as it goes, `data` is what the last version's disposers kept,
+// and `keep(key, build)` a part of the game kept when its code runs again (see "Running the game's code again").
 export function hot(meta) {
     const path = pathOf(meta && meta.url);
-    const quiet = { data: {}, accept() {}, dispose() {} };
+    const quiet = { data: {}, accept() {}, dispose() {}, keep(key, build) { return build(); } };
     if (preview || path == null || !host()) return quiet;
     let entry = modules.get(path);
     if (!entry) modules.set(path, entry = { path, accepts: false, onAccept: null, disposers: [], data: {}, versions: [], text: null });
@@ -964,6 +998,7 @@ export function hot(meta) {
         data: entry.data,
         accept(callback) { entry.accepts = true; entry.onAccept = typeof callback === 'function' ? callback : null; },
         dispose(callback) { if (typeof callback === 'function') entry.disposers.push(callback); },
+        keep(key, build, dispose) { return keep(path, key, build, dispose); },
     };
 }
 
@@ -997,6 +1032,20 @@ function resolve(specifier, from) {
     return prefix ? new URL(importMap[prefix] + specifier.slice(prefix.length), location.href).href : null;
 }
 const importsIn = (text, from) => [...text.matchAll(SPECIFIER)].map(m => pathOf(resolve(m[3], from) || '')).filter(p => p != null && !lampOwn(p));
+// The names a module's imports give it, each with the module it comes from: `a`, `b` and `ns` in
+// `import a, { x as b } from './m.js'` and `import * as ns from './n.js'`.
+const BINDINGS = /\bimport\s+([\w$*{}\s,]+?)\s+from\s*(['"])([^'"\n]+)\2/g;
+const bindings = new Map();
+function bindingsIn(text, from) {
+    const names = new Map();
+    for (const m of text.matchAll(BINDINGS)) {
+        const path = pathOf(resolve(m[3], from) || '');
+        if (path == null || lampOwn(path)) continue;
+        const clause = m[1].replace(/\*\s*as\s+/, '').replace(/[{}]/g, ',');
+        for (const part of clause.split(',')) { const name = part.trim().split(/\s+as\s+/).pop(); if (name) names.set(name, path); }
+    }
+    return names;
+}
 
 async function readText(path) {
     const answer = await fetch(`${addressOf(path)}?lamp=${changes}`, { cache: 'no-store' });
@@ -1004,15 +1053,21 @@ async function readText(path) {
     return answer.text();
 }
 
-async function readModules(changed) {
+// `page` is the document whose module scripts start the game: the running page, or the page's HTML as it is now when
+// the game's code runs again. The page's own scripts (inline) are kept by name in `inline`.
+let rootPaths = [];
+const inline = new Map();
+async function readModules(changed, page = document) {
     for (const path of changed) imports.delete(path);
     const roots = [];
-    for (const s of document.querySelectorAll('script[type="module"]')) {
-        const path = s.src ? pathOf(s.src) : `the page's own script ${roots.length + 1}`;
+    for (const s of page.querySelectorAll('script[type="module"]')) {
+        const src = s.getAttribute('src');
+        const path = src ? pathOf(new URL(src, location.href).href) : `the page's own script ${roots.length + 1}`;
         if (path == null) continue;
-        if (!s.src) imports.set(path, importsIn(s.textContent, location.href));
+        if (!src) { imports.set(path, importsIn(s.textContent, location.href)); bindings.set(path, bindingsIn(s.textContent, location.href)); inline.set(path, s.textContent); }
         roots.push(path);
     }
+    rootPaths = roots;
     const unread = () => [...new Set([...roots, ...[...imports.values()].flat()])].filter(p => !imports.has(p));
     let next = unread();
     while (next.length) {
@@ -1020,6 +1075,7 @@ async function readModules(changed) {
             const text = await readText(path).catch(() => '');
             if (changed.includes(path)) texts.set(path, text);
             imports.set(path, importsIn(text, addressOf(path)));
+            bindings.set(path, bindingsIn(text, addressOf(path)));
         }));
         next = unread();
     }
@@ -1265,6 +1321,322 @@ function putClass(C, N) {
     return changed;
 }
 
+// MARK: Running the game's code again
+//
+// A change that can't be swapped in (the HTML, the module that starts the game, a class whose fields changed, an
+// exported function) runs the game's code again in place, as a page opened again would but without opening it: the old
+// code's frame loop stops, its `dispose` and the modules' disposers run, and what it left running is taken away (see
+// below); the page's HTML is put back as the new version has it (Lamp's own elements stay), every module of the game
+// runs again in order (loaded from its source with its imports pointed at the new versions, as a swap loads one), and
+// the module that starts the game calls game() again, whose init starts from the snapshot taken before (read with
+// pendingRestore(), or given to restore()). What stays is what a reload loses: the WebGL or WebGPU context and the
+// shaders compiled for it, the files the runtime loaded, the sound, the controllers, and every part the game kept.
+//
+// A part is kept with `hot(import.meta).keep(key, build)`: the first time it calls build() and returns what that made
+// (or its promise), and when the code runs again it returns the same thing without building it, unless the module that
+// kept it, or one it imports, changed since, or the build function's own code changed. The module that starts the game
+// changes often, so a change of its own code outside the build function keeps what it kept. A part that's built again,
+// or not asked for any more, goes: `dispose(value)` when given, else a three.js object is taken out of its scene and its
+// geometry and materials let go, and anything with dispose() or destroy() has it called.
+//
+//   const renderer = await hot(import.meta).keep('renderer', async () => { const r = new THREE.WebGPURenderer(); await r.init(); return r; });
+//   export function buildTrees(scene) { const trees = live.keep('trees', () => makeTrees()); scene.add(trees); return trees; }
+//
+// What the game's code leaves running is watched from the start: listeners it adds (to the window, the document or
+// anything else), timers, sound contexts it makes itself and workers. Each is taken away when the code runs again,
+// unless a part kept it (made while a keep's build ran). A module's own state starts again with it, as on a reload.
+// Running again isn't tried, and the page opens again as before, where the import map or a script that isn't a module
+// changed, Lamp's own files changed, modules import each other in a circle, or the page has no module scripts; and new
+// code that fails as it runs again, before init is done or in its first second, opens the page again from the same
+// snapshot.
+
+let runningAgain = null, loops = 0, fitting = false, pageText = null, watching = false;
+// What the game kept, by the module and key it was kept with.
+const kept = new Map();
+// Above 0 while a part's build function runs: what it starts belongs to the part, and stays.
+let keeping = 0;
+
+function keep(path, key, build, dispose) {
+    const id = `${path} ${key}`, text = source(build), had = kept.get(id), again = runningAgain;
+    if (had && !had.stale && had.text === text) {
+        had.used = true;
+        if (again) again.kept.push(key);
+        return had.value;
+    }
+    if (had) letGo(had);
+    const entry = { path, key, text, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false, value: undefined, made: undefined };
+    keeping++;
+    let value;
+    try { value = build(); } catch (e) { keeping--; throw e; }
+    if (value && typeof value.then === 'function') {
+        value = Promise.resolve(value).finally(() => { keeping--; });
+        value.then(v => { entry.made = v; }, () => { if (kept.get(id) === entry) kept.delete(id); });
+    } else { keeping--; entry.made = value; }
+    entry.value = value;
+    kept.set(id, entry);
+    if (again && had) again.built.push(key);
+    return value;
+}
+
+const isKept = v => [...kept.values()].some(k => k.made === v);
+
+function letGo(k) {
+    Promise.resolve(k.value).then(v => {
+        try {
+            if (k.dispose) return k.dispose(v);
+            if (v && v.isObject3D) {
+                v.removeFromParent();
+                v.traverse(o => { if (o.geometry) o.geometry.dispose(); for (const m of [o.material].flat()) if (m && m.dispose) m.dispose(); });
+            } else if (v && typeof v.dispose === 'function') v.dispose();
+            else if (v && typeof v.destroy === 'function') v.destroy(true);
+        } catch (e) { log(`Lamp: letting go of ${k.key} kept in ${k.path} failed (${e && e.message || e}).`); }
+    }, () => {});
+}
+
+// What a module imports, all the way down.
+function below(path) {
+    const all = new Set(), next = [path];
+    while (next.length) for (const dep of imports.get(next.pop()) || []) if (!all.has(dep)) { all.add(dep); next.push(dep); }
+    return all;
+}
+
+// What was kept by a changed module, or by one it imports, is built again when the code next runs. The module that
+// starts the game imports everything and changes often, so what it kept goes by what the build function names: the
+// modules whose imports it uses, and theirs.
+function markStale(paths) {
+    for (const k of kept.values()) {
+        if (k.stale) continue;
+        let deps;
+        if (rootPaths.includes(k.path)) {
+            deps = new Set();
+            for (const [name, from] of bindings.get(k.path) || []) {
+                if (!new RegExp(`(^|[^\\w$.])${name.replace(/\$/g, '\\$')}\\b`).test(k.text)) continue;
+                deps.add(from);
+                for (const dep of below(from)) deps.add(dep);
+            }
+        } else { deps = below(k.path); deps.add(k.path); }
+        if (paths.some(p => deps.has(p))) k.stale = true;
+    }
+}
+
+const pagePath = () => pathOf(location.href.split(/[?#]/)[0]) || 'index.html';
+// The page's HTML as this copy started, to tell what of it a change changed.
+function keepPage() {
+    if (!watching) return;
+    readText(pagePath()).then(t => { if (pageText == null) pageText = t; }, () => {});
+}
+const parse = text => new DOMParser().parseFromString(text, 'text/html');
+// What of a page can't change under modules that have run: the import map and the scripts that aren't modules.
+const fixed = page => JSON.stringify([...page.querySelectorAll('script')].filter(s => s.type !== 'module')
+    .map(s => [s.type, s.getAttribute('src'), s.getAttribute('src') ? '' : s.textContent.trim()]));
+
+// Why the code can't run again in place for a change, or null when it can.
+function canRunAgain(change) {
+    if (!watching) return 'the game\'s code runs again in place only where Lamp puts changes into the open game';
+    if (!frameFunction) return 'the game hadn\'t started';
+    const own = (change.changed || []).map(clean).find(p => lampOwn(p));
+    if (own) return `Lamp's own ${own} changed`;
+    return null;
+}
+
+async function runAgain(change, state) {
+    const began = performance.now(), why = change.why;
+    const cannot = reason => reopen({ ...change, why: `${why}; ${reason}` }, state);
+    const paths = (change.changed || []).map(clean);
+    let text, page;
+    try { text = await readText(pagePath()); page = parse(text); } catch (e) { return cannot('its page couldn\'t be read'); }
+    if (fixed(page) !== fixed(pageText != null ? parse(pageText) : document)) return cannot('its import map or a script that isn\'t a module changed');
+    // Every module of the game, in order, what each imports before it.
+    const order = [];
+    try {
+        const roots = await readModules(paths.filter(p => /\.m?js$/i.test(p)), page);
+        if (!roots.length) return cannot('the page has no module scripts');
+        const seen = new Map();
+        const visit = path => {
+            if (seen.get(path) === 2) return;
+            if (seen.get(path) === 1) throw new Error(`${path} is in a circle of modules that import each other`);
+            seen.set(path, 1);
+            for (const dep of imports.get(path) || []) visit(dep);
+            seen.set(path, 2);
+            order.push(path);
+        };
+        for (const root of roots) visit(root);
+    } catch (e) { return cannot(e.message); }
+    markStale(paths);
+
+    tellHost(change.gen, 'rerun', why);
+    log(`Lamp: running the game's code again in place for a change (${why}), keeping where the player was.`);
+    const again = runningAgain = { change, state, began, called: false, kept: [], built: [], done: null };
+    const done = new Promise(resolve => { again.done = resolve; });
+    // The old code stops: its frame loop, what it asked to have taken away, and what it left running.
+    loops++;
+    started = false;
+    swapGuard = null;
+    hidePill();
+    const leaving = hooks;
+    hooks = {};
+    try { if (leaving.dispose) await leaving.dispose(); } catch (e) { log(`Error: dispose: ${e && e.message || e}`); }
+    for (const [path, m] of modules) {
+        for (const dispose of m.disposers) { try { await dispose(m.data); } catch (e) { log(`Error: dispose in ${path}: ${e && e.message || e}`); } }
+        m.disposers = [];
+    }
+    takeAwayLeft();
+    listeners.clear();
+    for (const voice of voices) sound.stop(voice);
+    voices.clear();
+    if (musicVoice) { sound.stop(musicVoice); musicVoice = null; }
+    for (const k of kept.values()) k.used = false;
+    await putPage(page, paths);
+    pageText = text;
+    // The new code, each module once, in order, importing the others' new versions.
+    const addresses = new Map();
+    for (const path of order) {
+        const own = inline.has(path), address = own ? location.href : `${addressOf(path)}?lamp=${++versionCount}`;
+        loading.add(path);
+        try {
+            const code = own ? inline.get(path) : (texts.get(path) ?? await readText(path));
+            texts.set(path, code);
+            const base = own ? location.href : addressOf(path);
+            const written = code.replace(SPECIFIER, (all, lead, quote, specifier) => {
+                const target = resolve(specifier, base);
+                if (!target) return all;
+                const p = pathOf(target);
+                return lead + quote + (p != null && addresses.has(p) ? addresses.get(p) : target) + quote;
+            }).replace(/\bimport\.meta\b/g, `({ url: ${JSON.stringify(address)}, resolve: s => new URL(s, ${JSON.stringify(address)}).href })`);
+            const from = URL.createObjectURL(new Blob([written], { type: 'text/javascript' }));
+            addresses.set(path, from);
+            if (rootPaths.includes(path)) {
+                // The module that starts the game: what it awaits may be the whole start, so it isn't waited for here.
+                import(from).catch(e => ranAgainFailed(again, e));
+                continue;
+            }
+            const ns = await import(from);
+            const m = modules.get(path);
+            if (m) { m.versions.push(versionOf(ns)); m.text = code; }
+            latest.set(path, from);
+        } catch (e) {
+            return ranAgainFailed(again, `${path} didn't load (${e && e.message || e})`);
+        } finally { loading.delete(path); }
+    }
+    for (const path of paths) texts.delete(path);
+    for (const path of rootPaths) latest.set(path, addresses.get(path));
+    after(60000, () => { if (!again.called) ranAgainFailed(again, 'the game didn\'t call game() again within a minute'); });
+    return done;
+}
+
+// The page as the new HTML has it: what isn't a script in its head (a stylesheet it already links stays, unless it
+// changed), and its body, with Lamp's own elements (the touch controls, the Reload button) kept.
+async function putPage(page, paths) {
+    const head = document.head, links = [...head.querySelectorAll('link[rel~="stylesheet"]')], loads = [], stays = new Set();
+    for (const node of [...head.children]) if (node.tagName !== 'SCRIPT' && !links.includes(node)) node.remove();
+    for (const node of [...page.head.children]) {
+        if (node.tagName === 'SCRIPT') continue;
+        if (node.matches('link[rel~="stylesheet"]')) {
+            const path = pathOf(new URL(node.getAttribute('href'), location.href).href);
+            const have = links.find(l => pathOf(l.href) === path && !stays.has(l));
+            if (have && !paths.includes(path)) { stays.add(have); continue; }
+            const fresh = document.adoptNode(node);
+            if (path != null) fresh.href = `${addressOf(path)}?lamp=${++versionCount}`;
+            loads.push(new Promise(done => { fresh.onload = fresh.onerror = done; after(5000, done); }));
+            if (have) have.after(fresh); else head.append(fresh);
+            continue;
+        }
+        head.append(document.adoptNode(node));
+    }
+    await Promise.all(loads);
+    for (const link of links) if (!stays.has(link)) link.remove();
+    const body = document.body;
+    for (const a of [...body.attributes]) body.removeAttribute(a.name);
+    for (const a of [...page.body.attributes]) body.setAttribute(a.name, a.value);
+    // Scripts from the new page don't run as they go in: the modules run from runAgain.
+    body.replaceChildren(...[...page.body.childNodes].map(n => document.adoptNode(n)), ...[touchLayer, pill].filter(Boolean));
+}
+
+function ranAgain(again) {
+    runningAgain = null;
+    for (const [id, k] of kept) if (!k.used) { letGo(k); kept.delete(id); }
+    const said = [again.kept.length ? `kept ${again.kept.join(', ')}` : '', again.built.length ? `built again ${again.built.join(', ')}` : ''].filter(Boolean);
+    log(`Lamp: the game's code ran again in place${said.length ? ` (${said.join('; ')})` : ''} in ${Math.round(performance.now() - again.began)} ms.`);
+    swapGuard = { until: time + 1, change: again.change, state: again.state };
+    again.done();
+}
+
+// New code that fails before it's running opens the page again, from the same place.
+function ranAgainFailed(again, e) {
+    if (runningAgain !== again) return new Promise(() => {});
+    runningAgain = null;
+    log(`Error: ${e && e.message || e}`);
+    reopen({ ...again.change, why: `the game's code run again failed (${e && e.message || e})` }, again.state);
+    return new Promise(() => {});
+}
+if (!preview) {
+    listen(window, 'error', e => { if (runningAgain && !runningAgain.called) ranAgainFailed(runningAgain, e.error || e.message); });
+    listen(window, 'unhandledrejection', e => { if (runningAgain && !runningAgain.called) ranAgainFailed(runningAgain, e.reason); });
+}
+
+// What the game's code leaves running: each listener by its target (held weakly, so an element thrown away goes with
+// its listeners), timers, sound contexts and workers.
+const listening = new Set(), listenersOf = new WeakMap(), timeouts = new Set(), intervals = new Set(), owned = new Set();
+const captureOf = options => typeof options === 'boolean' ? options : !!(options && options.capture);
+function watch() {
+    watching = true;
+    EventTarget.prototype.addEventListener = function (type, fn, options) {
+        browser.listen.call(this, type, fn, options);
+        if (fn == null || keeping) return;
+        let list = listenersOf.get(this);
+        if (!list) {
+            listenersOf.set(this, list = []);
+            listening.add(new WeakRef(this));
+            if (listening.size > 4000) for (const ref of listening) if (!ref.deref()) listening.delete(ref);
+        }
+        list.push({ type, fn, capture: captureOf(options) });
+    };
+    EventTarget.prototype.removeEventListener = function (type, fn, options) {
+        browser.unlisten.call(this, type, fn, options);
+        const list = listenersOf.get(this), capture = captureOf(options);
+        if (list) { const i = list.findIndex(l => l.type === type && l.fn === fn && l.capture === capture); if (i >= 0) list.splice(i, 1); }
+    };
+    window.setTimeout = function (fn, ms, ...rest) {
+        if (keeping || typeof fn !== 'function') return browser.setTimeout.call(window, fn, ms, ...rest);
+        const id = browser.setTimeout.call(window, (...a) => { timeouts.delete(id); fn(...a); }, ms, ...rest);
+        timeouts.add(id);
+        return id;
+    };
+    window.clearTimeout = id => { timeouts.delete(id); browser.clearTimeout.call(window, id); };
+    window.setInterval = function (fn, ms, ...rest) {
+        const id = browser.setInterval.call(window, fn, ms, ...rest);
+        if (!keeping) intervals.add(id);
+        return id;
+    };
+    window.clearInterval = id => { intervals.delete(id); browser.clearInterval.call(window, id); };
+    const owning = (Made, end) => {
+        const Watched = function (...args) {
+            const made = new Made(...args);
+            if (!keeping) owned.add(() => end(made));
+            return made;
+        };
+        Watched.prototype = Made.prototype;
+        return Watched;
+    };
+    if (browser.AudioContext) window.AudioContext = window.webkitAudioContext = owning(browser.AudioContext, c => c.state !== 'closed' && c.close());
+    if (browser.Worker) window.Worker = owning(browser.Worker, w => w.terminate());
+}
+
+function takeAwayLeft() {
+    for (const ref of listening) {
+        const target = ref.deref();
+        if (!target) continue;
+        for (const { type, fn, capture } of listenersOf.get(target) || []) browser.unlisten.call(target, type, fn, capture);
+        listenersOf.delete(target);
+    }
+    listening.clear();
+    for (const id of timeouts) browser.clearTimeout.call(window, id);
+    for (const id of intervals) browser.clearInterval.call(window, id);
+    timeouts.clear(); intervals.clear();
+    for (const end of owned) { try { end(); } catch (e) {} }
+    owned.clear();
+}
+
 // Swapped code that fails in its first second: the page opens again from where the player was before the swap.
 function swapFailed(e) {
     const guard = swapGuard;
@@ -1304,7 +1676,7 @@ async function claim() {
     if (said && said.state != null) {
         // An error while the game starts from the state (in a Phaser scene's create, say, or the first frame) is the
         // state not taking.
-        window.addEventListener('error', e => { if (guarding) startFresh(e.error || e.message); });
+        listen(window, 'error', e => { if (guarding) startFresh(e.error || e.message); });
     }
 }
 
@@ -1352,8 +1724,8 @@ function showPill() {
     pill.style.cssText = 'position:fixed;z-index:20;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));'
         + 'padding:8px 16px;border:0;border-radius:18px;background:rgba(20,20,24,.72);color:#fff;font:600 15px -apple-system,system-ui,sans-serif;'
         + '-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)';
-    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = waiting; waiting = null; reopen(change); } };
-    pill.addEventListener('pointerdown', press);
+    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = waiting; waiting = null; queue = queue.then(() => startAgain(change)); } };
+    listen(pill, 'pointerdown', press);
     document.body.append(pill);
 }
 function hidePill() { if (pill) pill.style.display = 'none'; }
@@ -1391,3 +1763,6 @@ async function runPreview() {
            stats: `${frames} frames (${(frames / 60).toFixed(1)} s of play); at most ${mostCalls} draws and ${mostTriangles} triangles in a frame, ${Math.round(frames ? triangles / frames : 0)} triangles a frame on average.`,
            sound: said.length ? 'played ' + said.join(', ') : 'nothing played' });
 }
+
+// Watched from here, after the runtime's own listeners: only where Lamp puts changes into the open game.
+if (!preview && host()) watch();
