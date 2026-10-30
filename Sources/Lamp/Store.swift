@@ -779,6 +779,9 @@ final class Store: ObservableObject {
         /// The sources a step of the agent's saves put into the game open on this Mac (`stepPage`): a build of the same
         /// sources has nothing to show the person, so it says nothing in the chat.
         var shownSources = ""
+        /// When a change last went in by itself as the agent saved (`autoApply`): what went in next is what the agent
+        /// did since (`stepWords`).
+        var lastStepAt: Date?
         /// Stops the agent's look playing the game in the hidden copy (`playGame`), set while it plays: a message from the
         /// person stops it (`stoppedForMessage`), so they never wait behind Lamp's own checking. It stops that play alone,
         /// for the game being played (a wish's part, under the wish's turn), never a build the turn runs beside it.
@@ -8568,7 +8571,7 @@ final class Store: ObservableObject {
     /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
     private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
         Task { [weak self] in
-            var seen = "", tried = "", seenAt = Date(), lastPageStep = Date.distantPast
+            var seen = "", tried = "", seenAt = Date()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 // Reload pressed while the agent works goes in here, between its steps, inside this turn.
@@ -8591,13 +8594,14 @@ final class Store: ObservableObject {
                 if now != seen { seen = now; seenAt = Date(); continue }
                 // A game's page takes a change once the saving has paused a while, and no more often than every 15 s:
                 // each can hold the picture for a moment, and a run of small ones, seconds apart, reads as stutter.
-                if stepsPage(current), Date().timeIntervalSince(seenAt) < 6 || Date().timeIntervalSince(lastPageStep) < 15 { continue }
+                // A game's page takes a change once the agent has said in a progress line what's in it (`progressSinceStep`),
+                // so each change the person sees is one they're told of, and the saving has paused a moment.
+                if stepsPage(current), Date().timeIntervalSince(seenAt) < 3 || progressSinceStep(current, turn) == nil { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
                 let saved = seenAt
                 turn.applyingSources = now
                 if stepsPage(current) {
-                    lastPageStep = Date()
                     turn.applying = Task { [weak self] in
                         guard let self else { return }
                         defer { turn.applying = nil }
@@ -8634,7 +8638,7 @@ final class Store: ObservableObject {
                         turn.autoApplied += 1
                         // A step, not the turn's end: "is updated" is said once the request is done, and here the
                         // agent is still at work on it.
-                        log(current, .status, "Put the change into \(current.name)")
+                        log(current, .status, stepWords(current, turn))
                         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
                             + (warmWait > 1 ? ", \(Int(warmWait.rounded())) s of them waiting for the warm-up." : "."))
                     } else {
@@ -8659,6 +8663,34 @@ final class Store: ObservableObject {
         PageLive.takes(project) && PageLive.shared.isOpen(project, at: .mac)
     }
 
+    /// What a change that went in as the agent saved was, in the agent's own words for the steps it took since the last
+    /// one went in ("Put into New York: Switching the car to rainbow paint"), never its files; the plain line when it
+    /// named none.
+    private func stepWords(_ project: LampProject, _ turn: Turn) -> String {
+        // A game's step goes in for a progress line: that line is what it was.
+        if let said = progressSinceStep(project, turn) {
+            turn.lastStepAt = Date()
+            return "Put into \(project.name): " + said
+        }
+        let since = turn.lastStepAt ?? turn.began
+        turn.lastStepAt = Date()
+        let lines = logs[wish(of: project).id] ?? []
+        var words: [String] = []
+        for line in lines where line.kind == .tool && (line.at ?? .distantPast) >= since {
+            guard let said = line.said?.trimmed, !said.isEmpty, !line.text.hasPrefix("look_at_app"), !line.text.hasPrefix("use_app"),
+                  !words.contains(said) else { continue }
+            words.append(said)
+        }
+        guard !words.isEmpty else { return "Put the change into \(project.name)" }
+        return "Put into \(project.name): " + words.suffix(3).joined(separator: "; ")
+    }
+
+    /// The agent's latest progress line since a change last went in as it saved, or nil.
+    private func progressSinceStep(_ project: LampProject, _ turn: Turn) -> String? {
+        let since = turn.lastStepAt ?? turn.began
+        return logs[wish(of: project).id]?.last { $0.kind == .progress && ($0.at ?? .distantPast) >= since }?.text
+    }
+
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
         // Still being written, or broken: tried again once it changes.
         guard await GameKit.codeProblem(project) == nil else { return }
@@ -8675,7 +8707,7 @@ final class Store: ObservableObject {
         guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
         turn.shownSources = Runtime.fingerprint(current)
         turn.autoApplied += 1
-        log(current, .status, "Put the change into \(current.name)")
+        log(current, .status, stepWords(current, turn))
         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
     }
 
