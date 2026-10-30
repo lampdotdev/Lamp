@@ -24,8 +24,9 @@ struct DeskEntry: Equatable, Sendable {
     var picture: URL?
     /// When the picture was last written: an app saves a new one under the same name each time it opens.
     var pictureDate: Date?
-    /// The changes its starter suggests, as the change box's ideas.
-    var ideas: [String] = []
+    /// The changes its starter suggests, as the change box's ideas: those needing a device are shown only to someone
+    /// with it (`Starters.offered`), which is decided where they're shown, since devices come and go.
+    var tweaks: [Starters.Tweak] = []
     /// It came from a repository on GitHub and can offer its changes there (`Contribute.canContribute`).
     var sendsBack = false
     /// It arrived from somewhere (a starter, GitHub, a shared file) and has been changed in place since: Start Again from
@@ -55,7 +56,7 @@ struct DeskEntry: Equatable, Sendable {
                          identity: Sharing.identity(of: project, create: false), original: credits.remixOf.last?.wish,
                          picture: picture,
                          pictureDate: picture.flatMap { (try? fm.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date },
-                         ideas: Starters.starter(of: project)?.tweaks.map(\.title) ?? [],
+                         tweaks: Starters.starter(of: project)?.tweaks ?? [],
                          sendsBack: Contribute.canContribute(project))
     }
 }
@@ -392,8 +393,9 @@ struct DeskDetail: View {
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
                 .onSubmit(send)
-            if !(row.entry?.ideas ?? []).isEmpty {
-                IdeaChips(ideas: row.entry?.ideas ?? []) { idea in
+            let ideas = Starters.offered(row.entry?.tweaks ?? [], devices: store.devices).map(\.title)
+            if !ideas.isEmpty {
+                IdeaChips(ideas: ideas) { idea in
                     change = idea
                     focused = true
                 }

@@ -44,7 +44,7 @@ slides away and back, shown only where the window leaves the list room beside it
 (`Runtime.previewURL`, else the one its starter shipped), line, who made it and its license, where it runs and its
 remixes, Open with ⋯, and **Remix it**: a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
 in its chat, which opens beside it as Open opens it; with nothing written it only opens. A starter's own three changes
-are there to put in the box. The wish changes in place, a version of its own that Undo and Versions take back. A starter
+(and those for the person's devices, below) are there to put in the box. The wish changes in place, a version of its own that Undo and Versions take back. A starter
 or a wish opened from GitHub or a file is already the person's own copy, so the original is never touched.
 
 A wish that arrived from somewhere and has been changed since (`Store.original(toStartAgain:)`: its files differ from
@@ -105,7 +105,7 @@ their chats; nothing on the desk shows it; one clicked before its build is done 
 ready (`openWhenReady`). A
 starter opens with its chat beside it the first time (`MagicPanel.startWithChat`, the hand-off a new app gets after
 its first build); one that opens no window has its chat opened in Lamp the first time it's used. The chat opens on
-Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line and its three changes, each sent as
+Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line and its three changes (with any for the person's devices), each sent as
 the first request when clicked, with the message box answering it too. Nothing waits on it (`Talk.waiting`), so the
 desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
@@ -121,7 +121,12 @@ app, both at `Runtime.previewURL`), and starter.md, Lamp's own: the wish's name 
 with its tile's symbol (`- drop: Add a water counter`). The three show how far a starter can go, not small tweaks to
 it: one changes how it looks (Hot Shelf as a realistic kitchen cabinet), one what it does (ingredients on every tag),
 and one what it's about (Hot Shelf as a beer tracker), in that order. Each is something the app doesn't do already,
-that the agent can make in one request with no key or account, its look drawn in code rather than pictures. They
+that the agent can make in one request with no key or account, its look drawn in code rather than pictures. A starter
+may offer more changes than the three, each for a device the person may have: a `needs:` line under it names the
+device as the table of devices does (`needs: iphone`, "The table of devices" in the kinds-of-app guide), and the card
+and the desk's change box offer it only to someone whose devices, as Your Devices lists them set up with Lamp, include
+one (`Starters.offered`, decided as each is shown, so a phone paired later brings it). The three stay for everyone, so
+nobody is offered less for having fewer devices. They
 are Mac apps (or a game or a screen, when starter.md says `kind: game` or `kind: screen`, made as any wish of that kind
 is) that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
@@ -237,9 +242,10 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
 3. Write `Resources/Starters/<folder>/starter.md`: `name`, `offer` ("Make <name> yours") and three tweaks of at most
    six words, each with an SF Symbol: a new look, a new thing it does, and a new subject (as above), each big enough to
    show the person the app can become their own rather than be adjusted. They're changes the app doesn't already make,
-   that the agent can make in one request with no key or account, drawn in code rather than pictures. The offer and
-   tweaks are also the "Ideas to try" in its repository's README. Leave out `repository:` and `commit:`: step 4 writes
-   them.
+   that the agent can make in one request with no key or account, drawn in code rather than pictures. A change for a
+   device some people have (alerts on an iPhone) comes after them, with the device on a `needs:` line under it (above).
+   The offer and tweaks, those that need a device too, are also the "Ideas to try" in its repository's README. Leave out
+   `repository:` and `commit:`: step 4 writes them.
 4. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --new <folder> <the wish's folder>`, signed in
    with `gh` to an account that can make repositories in lampdotdev. It makes the public repository (and a game's
    page) from the wish as Put on GitHub would (GitHub's API can't mark a new file executable, so in a new

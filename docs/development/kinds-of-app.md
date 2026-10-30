@@ -91,7 +91,9 @@ A row claims a make only once a kind builds it there (`AppKinds.target`, checked
 before its host or recipe exists is refused by the test, not discovered by the person. The table reaches the agent as
 text generated from the rows, `{{PLACES}}` in `make_app_for`'s description (`Places.forAgent`), and the person's own
 devices Lamp knows of are named with their rows in the device line (`Places.known`, in `DeviceNote.brief`), so a new
-row needs no prompt edit. `make_app_for` refuses an app on a device that can't run its make, quoting the row (`Places.refusal`, in
+row needs no prompt edit. A starter's change that needs a device names it by the table's word too (`needs:` in
+starter.md, read through `DeviceWord`), and is offered to someone whose own device is that row (`Places.row(for:)`,
+`Starters.offered`), so a starter can offer a change for any device the table has, an integration's included. `make_app_for` refuses an app on a device that can't run its make, quoting the row (`Places.refusal`, in
 `AppKinds.target`). Every stored kind reads back as devices that, asked for again, plan the same kind (`AppKinds.member`);
 a game and a screen, both web at home on the Mac, are still told apart by their folder's mark. `AppKinds` is the one place
 today's kinds meet these terms (the "Wishes" guide); the table itself holds facts only. A row whose words name different

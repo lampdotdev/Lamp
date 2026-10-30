@@ -329,6 +329,12 @@ enum Gallery {
             option("Remind me to plan at 8", "bell"),
         ])],
         offer: true)),
+        // The same for someone with an iPhone, when a change needs one (`needs: iphone`, `Starters.offered`).
+        ask("A starter's first changes, with a device's", Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Make Buzzer Beater yours", options: [
+            option("Add a scoreboard desktop widget", "square.grid.2x2.fill"), option("Remind me before big games", "bell.badge.fill"),
+            option("Make it about reality TV", "tv.fill"), option("Get alerts on my iPhone", "iphone.gen3"),
+        ])],
+        offer: true)),
         // Lamp's card before the agent changes one of the person's devices (`device_permission`): only theirs to answer.
         ask("A device of the person's", DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")),
         // The same for a device Lamp only found on the network, which may not be theirs.
