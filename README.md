@@ -8,36 +8,17 @@ menu bar, a widget, a game, a screen for the kitchen tablet or the TV, or an app
 a **wish**: it opens straight away, with its chat beside it, and every change you ask for goes into it while you use
 it.
 
-Lamp comes with apps to start from, on its desk under **Starter apps**: games, screens for the kitchen tablet or the
-TV, and Mac apps for everyday things. New York is Mr.doob's Slop New York, Home HQ is Wes Bos's family dashboard,
-The Little House grew out of remvze's Moodist, and the rest are Lamp's own.
+Lamp comes with apps to start from, on its desk under **Starter apps**:
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/newyork"><img src="https://raw.githubusercontent.com/lampdotdev/newyork/main/.github/preview.png" width="260" alt="New York"></a><br><b>New York</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/homehq"><img src="https://raw.githubusercontent.com/lampdotdev/homehq/main/.github/preview.png" width="260" alt="Home HQ"></a><br><b>Home HQ</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/thelittlehouse"><img src="https://raw.githubusercontent.com/lampdotdev/thelittlehouse/main/.github/preview.png" width="260" alt="The Little House"></a><br><b>The Little House</b></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/buzzerbeater"><img src="https://raw.githubusercontent.com/lampdotdev/buzzerbeater/main/.github/preview.png" width="260" alt="Buzzer Beater"></a><br><b>Buzzer Beater</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/universalremote"><img src="https://raw.githubusercontent.com/lampdotdev/universalremote/main/.github/preview.png" width="260" alt="Universal Remote"></a><br><b>Universal Remote</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/fireside"><img src="https://raw.githubusercontent.com/lampdotdev/fireside/main/.github/preview.png" width="260" alt="Fireside"></a><br><b>Fireside</b></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/localcrossings"><img src="https://raw.githubusercontent.com/lampdotdev/localcrossings/main/.github/preview.png" width="260" alt="Local Crossings"></a><br><b>Local Crossings</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/today"><img src="https://raw.githubusercontent.com/lampdotdev/today/main/.github/preview.png" width="260" alt="Today"></a><br><b>Today</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/diskmap"><img src="https://raw.githubusercontent.com/lampdotdev/diskmap/main/.github/preview.png" width="260" alt="Disk Map"></a><br><b>Disk Map</b></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/hours"><img src="https://raw.githubusercontent.com/lampdotdev/hours/main/.github/preview.png" width="260" alt="Hours"></a><br><b>Hours</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/weddingwords"><img src="https://raw.githubusercontent.com/lampdotdev/weddingwords/main/.github/preview.png" width="260" alt="Wedding Words"></a><br><b>Wedding Words</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/transcriber"><img src="https://raw.githubusercontent.com/lampdotdev/transcriber/main/.github/preview.png" width="260" alt="Transcriber"></a><br><b>Transcriber</b></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/lampdotdev/tidyup"><img src="https://raw.githubusercontent.com/lampdotdev/tidyup/main/.github/preview.png" width="260" alt="Tidy Up"></a><br><b>Tidy Up</b></td>
-    <td align="center"><a href="https://github.com/lampdotdev/sitetoapp"><img src="https://raw.githubusercontent.com/lampdotdev/sitetoapp/main/.github/preview.png" width="260" alt="Site-to-App"></a><br><b>Site-to-App</b></td>
+    <td align="center" valign="top" width="33%"><a href="https://github.com/lampdotdev/newyork"><img src="https://raw.githubusercontent.com/lampdotdev/newyork/main/.github/preview.png" alt="New York"></a><br><b>New York</b><br><sub>explore Manhattan on foot, by car, by bike or by helicopter (from Mr.doob's Slop New York)</sub></td>
+    <td align="center" valign="top" width="33%"><a href="https://github.com/lampdotdev/homehq"><img src="https://raw.githubusercontent.com/lampdotdev/homehq/main/.github/preview.png" alt="Home HQ"></a><br><b>Home HQ</b><br><sub>the family's day, calendar, chores, shopping and photos, on the Mac, a tablet or the TV (from Wes Bos's family dashboard)</sub></td>
+    <td align="center" valign="top" width="33%"><a href="https://github.com/lampdotdev/thelittlehouse"><img src="https://raw.githubusercontent.com/lampdotdev/thelittlehouse/main/.github/preview.png" alt="The Little House"></a><br><b>The Little House</b><br><sub>a cozy room on a rainy night, with a fire and a ticking clock to listen to (from remvze's Moodist)</sub></td>
   </tr>
 </table>
+
+And Lamp's own [Buzzer Beater](https://github.com/lampdotdev/buzzerbeater), [Universal Remote](https://github.com/lampdotdev/universalremote), [Fireside](https://github.com/lampdotdev/fireside), [Local Crossings](https://github.com/lampdotdev/localcrossings), [Today](https://github.com/lampdotdev/today), [Disk Map](https://github.com/lampdotdev/diskmap), [Hours](https://github.com/lampdotdev/hours), [Wedding Words](https://github.com/lampdotdev/weddingwords), [Transcriber](https://github.com/lampdotdev/transcriber), [Tidy Up](https://github.com/lampdotdev/tidyup) and [Site-to-App](https://github.com/lampdotdev/sitetoapp).
 
 Change one and it's yours; the original stays under Starter apps. Every starter is a repository on GitHub
 (github.com/lampdotdev), and anything made with Lamp can be shared as a file, a link or a GitHub repository for
