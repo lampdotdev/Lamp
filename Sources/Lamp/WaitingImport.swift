@@ -38,6 +38,21 @@ struct WaitingImport {
     /// The wish a repository was fetched to update, kept beside it (`target(beside:)`).
     static let targetFile = "update-target.txt"
 
+    /// What Lamp fetched for a kept repository with no git (`RepoArchive`), which it writes itself in the kept copy's own
+    /// folder, above the tree and where nothing in the repository reaches. The name can't be a repository's.
+    static let fetchedFile = ".fetched.json"
+
+    /// What `keep` saved of a repository's fetch, for the copy kept: nil for anything but a folder kept here, and for a
+    /// record that doesn't name a repository and a commit plainly.
+    static func fetched(beside file: URL) -> RepoArchive.Fetched? {
+        let home = file.deletingLastPathComponent()
+        guard home.deletingLastPathComponent().lastPathComponent == "Waiting",
+              let data = try? Data(contentsOf: home.appendingPathComponent(fetchedFile)),
+              let saved = try? JSONDecoder().decode(RepoArchive.Fetched.self, from: data),
+              RepoImport.source(from: saved.url)?.url == saved.url, Credits.validCommit(saved.commit) == saved.commit else { return nil }
+        return RepoArchive.Fetched(tree: file, url: saved.url, commit: saved.commit)
+    }
+
     /// The wish a kept repository was fetched to update (`Store.copy(of:among:updating:)`), kept beside it so that
     /// after the wait, or a relaunch, the review offers that wish and not another copy of the same repository.
     /// Only in a folder kept for setup, never beside a file opened from anywhere else.
@@ -51,7 +66,7 @@ struct WaitingImport {
     /// any already kept: each gets its review, none pushes another out. The same file opened again is kept
     /// once. False when no copy could be made (a full disk, say): nothing is remembered then, so Lamp never
     /// promises a file it may not have. A request kept beside a fetched file is copied with it.
-    func keep(_ file: URL, updating target: String? = nil) -> Bool {
+    func keep(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil) -> Bool {
         let fm = FileManager.default
         let kept = paths
         // The same file again counts as the same only when it's for the same wish: two copies (Keep Both) updated from
@@ -78,6 +93,7 @@ struct WaitingImport {
                 try fm.copyItem(at: request, to: home.appendingPathComponent(Self.requestFile))
             }
             if let target { try target.write(to: home.appendingPathComponent(Self.targetFile), atomically: true, encoding: .utf8) }
+            if let fetched { try JSONEncoder().encode(fetched).write(to: home.appendingPathComponent(Self.fetchedFile), options: .atomic) }
         } catch {
             try? fm.removeItem(at: home)
             return false

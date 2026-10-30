@@ -3325,18 +3325,22 @@ final class Store: ObservableObject {
         Task {
             let folder = RepoImport.cloneFolder()
             do {
-                let tree = try await RepoImport.clone(source, into: folder)
+                // With no git on this Mac, GitHub's archive of the commit, for anything but an update: that's a merge, which
+                // takes git in any case.
+                let fetched = !Versions.hasGit && target == nil ? try await RepoArchive.fetch(source, into: folder) : nil
+                let tree: URL
+                if let fetched { tree = fetched.tree } else { tree = try await RepoImport.clone(source, into: folder) }
                 // Someone's own project, not a wish: the agent can make it into one, which then gets its updates as
                 // any wish does (`AppUpdates`). A wish's own update that finds no wish there is an error as before.
                 if target == nil, !RepoImport.holdsWish(tree) {
                     // The commit fetched, so the app is made from exactly the version the person opened.
-                    let commit = RepoImport.repository(of: tree)?.commit
+                    let commit = fetched?.commit ?? RepoImport.repository(of: tree)?.commit
                     try? FileManager.default.removeItem(at: folder)
                     offerToAdapt(source, commit: commit)
                     return
                 }
                 if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
-                importApp(from: tree, updating: target)
+                importApp(from: tree, updating: target, fetched: fetched)
             } catch {
                 try? FileManager.default.removeItem(at: folder)
                 NSAlert(error: error).runModal()
@@ -3502,14 +3506,14 @@ final class Store: ObservableObject {
     /// AI's check being a part of it only when AI is set up (`Sharing.review`), and building it always takes a click on
     /// that review (`ImportReview.opening`). During the welcome the file is kept and the welcome gives way to it
     /// (`OnboardingView.arrive`); its review opens as the welcome ends.
-    func importApp(from file: URL, updating target: String? = nil) {
+    func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil) {
         NSApp.activate()
         Task {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
             await setupLook.wait()
             guard reviewsCanOpen else {
-                if waitingImport.keep(file, updating: target) {
+                if waitingImport.keep(file, updating: target, fetched: fetched) {
                     arrivedImport += 1
                 } else {
                     let alert = NSAlert()
@@ -3519,7 +3523,7 @@ final class Store: ObservableObject {
                 }
                 return
             }
-            review(file, updating: target)
+            review(file, updating: target, fetched: fetched)
         }
     }
 
@@ -3529,7 +3533,7 @@ final class Store: ObservableObject {
     }
 
     /// Unpacks a shared app and shows its review.
-    private func review(_ file: URL, updating target: String? = nil) {
+    private func review(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
         // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
@@ -3540,7 +3544,7 @@ final class Store: ObservableObject {
             // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
             let package: Sharing.Package
             do {
-                package = try await Task.detached { try Sharing.open(file) }.value
+                package = try await Task.detached { try Sharing.open(file, fetched: fetched) }.value
             } catch {
                 guard importRequest == request else { return }
                 importRequest = nil
@@ -3574,7 +3578,7 @@ final class Store: ObservableObject {
     @discardableResult func openWaitingImport() -> Bool {
         guard pendingImport == nil, importRequest == nil else { return true }
         let file = waitingImport.take(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
-        if let file { review(file, updating: WaitingImport.target(beside: file)) }
+        if let file { review(file, updating: WaitingImport.target(beside: file), fetched: WaitingImport.fetched(beside: file)) }
         return file != nil
     }
 
