@@ -854,6 +854,9 @@ extension TVTemplate {
             var mine = run;
             askTimer = setTimeout(function () {
               if (!started || mine !== run) return;
+              // Lamp's hidden preview of a game has no host for phones and asks for none: its one phone, when it has
+              // one, comes by `_attach`, and the join card is drawn from an address of a real one's length.
+              if (window.lampPreview) { link = 'http://192.168.0.2:47860/#' + new Array(151).join('0'); emit('link', [link]); return; }
               if (host === 'game' && lgService) return askService();
               if (host === 'game' && pipe) return askPipe(mine);
               // The host asked for goes with the question, so whoever answers says when it isn't that host rather than
@@ -967,7 +970,7 @@ extension TVTemplate {
               // The session the chosen host runs, and only it, ends.
               if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; }
               else if (started && host === 'game' && pipe) pipeCall('stop', null);
-              else if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', host ? { stop: true, host: host } : { stop: true }, 20000).then(function () {}, function () {});
+              else if (started && !window.lampPreview && window.LampAI && LampAI._post) LampAI._post('/app/controller', host ? { stop: true, host: host } : { stop: true }, 20000).then(function () {}, function () {});
               started = false;
               host = null;
               run++;
