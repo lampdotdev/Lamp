@@ -145,7 +145,7 @@ watch, a kart game and an invaders game were removed (see "Removed since the fir
 
 ## Libraries shipped as files
 
-### `Resources/WebLibraries/` (327 files). **Fine**
+### `Resources/WebLibraries/` (327 files). **Fine**, except the addon libraries below
 
 | Folder | Files | What | License file | Notice |
 | --- | ---: | --- | --- | --- |
