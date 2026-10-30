@@ -109,6 +109,8 @@ public final class PhonePageServer: @unchecked Sendable {
         public var body = Data()
         public var location: String?
         public var head = false
+        /// What the phone's browser holds the page to (`PhonePagePolicy`), sent with every answer.
+        public var policy: String?
     }
 
     /// The answer to a request's head (its request line and headers).
@@ -132,6 +134,13 @@ public final class PhonePageServer: @unchecked Sendable {
     /// name lead here (DNS rebinding) reads nothing.
     public func answer(path full: String, host: String?) -> Page {
         guard Self.names(host, among: hosts()) else { return Page(status: 403, body: Data("Not for this host.".utf8)) }
+        var page = file(path: full)
+        let reach = PhonePagePolicy.reach(json: try? Data(contentsOf: root.appendingPathComponent(PhonePagePolicy.reachFile)))
+        page.policy = PhonePagePolicy.header(host: host, relayPort: relayPort(), reach: reach)
+        return page
+    }
+
+    private func file(path full: String) -> Page {
         let missing = Page(status: 404, body: Data("Nothing here. Open the game first.".utf8))
         let path = full.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
         guard path.hasPrefix("/") else { return missing }
@@ -175,7 +184,8 @@ public final class PhonePageServer: @unchecked Sendable {
     private static func respond(_ connection: NWConnection, _ page: Page) {
         let reason = HTTPURLResponse.localizedString(forStatusCode: page.status).capitalized
         let location = page.location.map { "Location: \($0)\r\n" } ?? ""
-        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)"
+        let policy = page.policy.map { "Content-Security-Policy: \($0)\r\n" } ?? ""
+        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)\(policy)"
             + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n").utf8)
         if !page.head { response.append(page.body) }
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })

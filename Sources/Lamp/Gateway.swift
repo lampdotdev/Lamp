@@ -28,6 +28,8 @@ final class Gateway: @unchecked Sendable {
         var type = "text/plain; charset=utf-8"
         var body = Data()
         var location: String?
+        /// What a phone's browser holds a phone page to (`PhonePagePolicy`).
+        var policy: String?
     }
 
     private var listener: NWListener?
@@ -201,7 +203,8 @@ final class Gateway: @unchecked Sendable {
     private func respond(_ connection: NWConnection, page: Page, head: Bool) {
         let reason = HTTPURLResponse.localizedString(forStatusCode: page.status).capitalized
         let location = page.location.map { "Location: \($0)\r\n" } ?? ""
-        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)"
+        let policy = page.policy.map { "Content-Security-Policy: \($0)\r\n" } ?? ""
+        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)\(policy)"
             + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n").utf8)
         if !head { response.append(page.body) }
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })

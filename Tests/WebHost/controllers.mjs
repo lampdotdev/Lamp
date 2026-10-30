@@ -5,6 +5,10 @@ import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const [binary, root] = process.argv.slice(2);
 const host = spawn(binary, [root], { stdio: ['pipe', 'pipe', 'inherit'] });
@@ -36,7 +40,7 @@ function get(port, path, hostHeader = `127.0.0.1:${port}`) {
     http.get({ host: '127.0.0.1', port, path, headers: { Host: hostHeader } }, (res) => {
       let body = '';
       res.on('data', (d) => (body += d));
-      res.on('end', () => resolve({ status: res.statusCode, body, type: res.headers['content-type'] }));
+      res.on('end', () => resolve({ status: res.statusCode, body, type: res.headers['content-type'], policy: res.headers['content-security-policy'] }));
     }).on('error', reject);
   });
 }
@@ -85,6 +89,17 @@ try {
   r = await get(pagePort, '/lamp-relay.json');
   assert.deepEqual(JSON.parse(r.body), { app: 'game.test', port: relayPort });
   step('the page is served as its own files, to the console\'s names only');
+
+  // The page's rules, word for word those of the LG service and of Lamp (PhonePagePolicyTests holds Swift to relay.js):
+  // its relay where it is, by the name the phone used, and only the sites the reach file names.
+  const lg = createRequire(import.meta.url)(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../Resources/LGPhones/relay.js'));
+  const reach = lg.readReachJSON(fs.readFileSync(path.join(root, 'lamp-reach.json'), 'utf8'));
+  for (const name of [`127.0.0.1:${pagePort}`, 'localhost']) {
+    r = await get(pagePort, '/', name);
+    assert.equal(r.policy, lg.policy(name, relayPort, reach), name);
+  }
+  assert.match((await get(pagePort, '/')).policy, new RegExp(`connect-src 'self' ws://127\\.0\\.0\\.1:${relayPort} api\\.example\\.com;`));
+  step('the page\'s rules name only its relay and the sites its reach file names, as the LG service writes them');
 
   // A socket from another site's page is refused before it's a WebSocket.
   const refused = await new Promise((resolve) => {

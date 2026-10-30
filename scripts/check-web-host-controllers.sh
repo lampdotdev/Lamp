@@ -10,6 +10,7 @@ trap 'rm -rf "$work"' EXIT
 clang++ -std=c++20 -Wall -Wextra -Werror -O1 -o "$work/posix_host" Tests/WebHost/posix_host.cpp
 mkdir -p "$work/Phone"
 print '<!doctype html><title>test phone page</title>' > "$work/Phone/index.html"
+print '{"only":["api.example.com","x.test; script-src *"]}' > "$work/Phone/lamp-reach.json"
 print 'outside the page' > "$work/secret.txt"
 print 'hidden' > "$work/Phone/.hidden"
 node Tests/WebHost/controllers.mjs "$work/posix_host" "$work/Phone"

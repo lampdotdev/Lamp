@@ -469,7 +469,66 @@ struct Answer {
     std::string type = "text/plain; charset=utf-8";
     std::string body;
     bool head = false;
+    // What the phone's browser holds the page to (PhonePagePolicy), sent with every answer.
+    std::string policy = "";
 };
+
+// PhonePagePolicy's rules for the page, in the same words: nothing but the page's own files, the game's relay on the
+// console by the name the phone used, at the port it listens on now, and the sites the app may reach, from
+// lamp-reach.json, which Lamp writes beside the page (none when it's missing).
+inline const std::string reach_file = "lamp-reach.json";
+
+inline bool plain_host(std::string const& host) {
+    if (host.empty() || host.size() > 253 || host.front() == '.' || host.back() == '.' || host.find("..") != std::string::npos) return false;
+    return std::all_of(host.begin(), host.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.'; });
+}
+
+inline std::optional<std::string> policy_source(std::string text) {
+    std::string site = lower(trim(text));
+    auto split = site.find("://");
+    if (split == std::string::npos) return plain_host(site.rfind("*.", 0) == 0 ? site.substr(2) : site) ? std::optional(site) : std::nullopt;
+    std::string scheme = site.substr(0, split);
+    if (scheme != "http" && scheme != "https" && scheme != "ws" && scheme != "wss") return std::nullopt;
+    std::string rest = site.substr(split + 3);
+    if (!rest.empty() && rest.back() == '/') rest.pop_back();
+    std::string host = rest;
+    if (auto colon = rest.find(':'); colon != std::string::npos) {
+        std::string port = rest.substr(colon + 1);
+        if (port.empty() || port.size() > 5 || !std::all_of(port.begin(), port.end(), [](char c) { return c >= '0' && c <= '9'; })) return std::nullopt;
+        host = rest.substr(0, colon);
+    }
+    return plain_host(host) ? std::optional(scheme + "://" + rest) : std::nullopt;
+}
+
+// The reach file's sites: nullopt for any secure site (an app the person made), else only those named.
+inline std::optional<std::vector<std::string>> reach(std::optional<std::string> const& file) {
+    std::vector<std::string> only;
+    auto json = file ? Json::parse(*file) : std::nullopt;
+    if (!json) return only;
+    if (json->is_true("secureSites")) return std::nullopt;
+    if (auto list = json->get("only"); list && list->type == Json::Type::array)
+        for (auto const& item : list->a) if (item.type == Json::Type::string) only.push_back(item.s);
+    return only;
+}
+
+inline std::string policy(std::optional<std::string> const& host, std::optional<uint16_t> relay_port,
+                          std::optional<std::vector<std::string>> const& named) {
+    std::vector<std::string> sites;
+    if (!named) sites = { "https:", "wss:" };
+    else for (auto const& site : *named) if (auto source = policy_source(site)) sites.push_back(*source);
+    std::string connect = "'self'";
+    if (host) {
+        std::string name = lower(trim(*host));
+        if (!name.empty() && name[0] != '[') {
+            name = name.substr(0, name.find(':'));
+            if (plain_host(name) && relay_port) connect += " ws://" + name + ":" + std::to_string(*relay_port);
+        }
+    }
+    auto list = [&](std::string base) { for (auto const& site : sites) base += " " + site; return base; };
+    return "default-src 'none'; script-src " + list("'self' 'unsafe-inline'") + "; style-src " + list("'self' 'unsafe-inline'")
+        + "; img-src " + list("'self' data: blob:") + "; media-src " + list("'self' data: blob:") + "; font-src " + list("'self' data:")
+        + "; connect-src " + list(connect) + "; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'";
+}
 
 inline std::string type_for(std::string ext) {
     ext = lower(ext);
@@ -598,8 +657,10 @@ inline Answer answer(std::string_view head, std::set<std::string> const& hosts, 
     auto end = first.find(' ', space + 1);
     std::string target = first.substr(space + 1, end == std::string::npos ? std::string::npos : end - space - 1);
     if (method != "GET" && method != "HEAD") return { 405, "text/plain; charset=utf-8", "Not allowed" };
-    auto page = answer_path(target, header(lines, "host"), hosts, relay_port, app, read);
+    auto host = header(lines, "host");
+    auto page = answer_path(target, host, hosts, relay_port, app, read);
     page.head = method == "HEAD";
+    if (names(host, hosts)) page.policy = policy(host, relay_port, reach(read({ reach_file })));
     return page;
 }
 
@@ -608,6 +669,7 @@ inline std::string response(Answer const& page) {
         : page.status == 404 ? "Not Found" : page.status == 405 ? "Method Not Allowed" : "Service Unavailable";
     std::string out = "HTTP/1.1 " + std::to_string(page.status) + " " + reason + "\r\nContent-Type: " + page.type
         + "\r\nContent-Length: " + std::to_string(page.body.size())
+        + (page.policy.empty() ? "" : "\r\nContent-Security-Policy: " + page.policy)
         + "\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n";
     if (!page.head) out += page.body;
     return out;

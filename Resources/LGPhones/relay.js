@@ -138,6 +138,70 @@ function answer(root, full, host, hosts, relay) {
   }
 }
 
+// PhonePagePolicy's rules for the page, in the same words: nothing but the page's own files, the game's relay on the TV
+// by the name the phone used, at the port it listens on now, and the sites the app may reach, from lamp-reach.json,
+// which Lamp writes beside the page (none when it's missing).
+var REACH_FILE = 'lamp-reach.json';
+
+function plainHost(host) {
+  return host.length > 0 && host.length <= 253 && host.charAt(0) !== '.' && host.charAt(host.length - 1) !== '.'
+    && host.indexOf('..') < 0 && /^[a-z0-9.-]+$/.test(host);
+}
+
+function policySource(text) {
+  var site = String(text).trim().toLowerCase();
+  var split = site.indexOf('://');
+  if (split < 0) return plainHost(site.indexOf('*.') === 0 ? site.slice(2) : site) ? site : null;
+  var scheme = site.slice(0, split);
+  if (['http', 'https', 'ws', 'wss'].indexOf(scheme) < 0) return null;
+  var rest = site.slice(split + 3);
+  if (rest.charAt(rest.length - 1) === '/') rest = rest.slice(0, -1);
+  var host = rest, colon = rest.indexOf(':');
+  if (colon >= 0) {
+    if (!/^[0-9]{1,5}$/.test(rest.slice(colon + 1))) return null;
+    host = rest.slice(0, colon);
+  }
+  return plainHost(host) ? scheme + '://' + rest : null;
+}
+
+function readReachJSON(text) {
+  try {
+    var object = JSON.parse(text);
+    if (object && object.secureSites === true) return { secureSites: true };
+    return { only: Array.isArray(object && object.only) ? object.only.filter(function (s) { return typeof s === 'string'; }) : [] };
+  } catch (e) {
+    return { only: [] };
+  }
+}
+
+function readReach(root) {
+  try { return readReachJSON(fs.readFileSync(path.join(root, REACH_FILE), 'utf8')); } catch (e) { return { only: [] }; }
+}
+
+function policy(host, relayPort, reach) {
+  var sites = reach.secureSites ? ['https:', 'wss:'] : reach.only.map(policySource).filter(Boolean);
+  var connect = ["'self'"];
+  var name = String(host || '').trim().toLowerCase();
+  if (name && name.charAt(0) !== '[') {
+    if (name.indexOf(':') >= 0) name = name.slice(0, name.indexOf(':'));
+    if (plainHost(name) && relayPort) connect.push('ws://' + name + ':' + relayPort);
+  }
+  var list = function (base) { return base.concat(sites).join(' '); };
+  return [
+    "default-src 'none'",
+    'script-src ' + list(["'self'", "'unsafe-inline'"]),
+    'style-src ' + list(["'self'", "'unsafe-inline'"]),
+    'img-src ' + list(["'self'", 'data:', 'blob:']),
+    'media-src ' + list(["'self'", 'data:', 'blob:']),
+    'font-src ' + list(["'self'", 'data:']),
+    'connect-src ' + list(connect),
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'"
+  ].join('; ');
+}
+
 // MARK: One socket (RelayPeer)
 
 function Peer(socket, from) {
@@ -686,7 +750,8 @@ Session.prototype.makePageServer = function () {
     var page = answer(self.root, req.url, req.headers.host, game ? game.hosts : [], game ? { port: self.relayPort, app: self.app } : null);
     res.writeHead(page.status, {
       'Content-Type': page.type, 'Content-Length': page.file ? page.size : page.body.length, 'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Connection': 'close'
+      'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Connection': 'close',
+      'Content-Security-Policy': policy(req.headers.host, game ? self.relayPort : null, readReach(self.root))
     });
     if (req.method === 'HEAD') return res.end();
     if (!page.file) return res.end(page.body);
@@ -733,4 +798,4 @@ Session.prototype.close = function () {
   this.pagePort = null;
 };
 
-module.exports = { Session: Session, issue: issue, check: check, localAddresses: localAddresses, addressOf: addressOf, WIRE: WIRE };
+module.exports = { Session: Session, issue: issue, check: check, localAddresses: localAddresses, addressOf: addressOf, policy: policy, readReachJSON: readReachJSON, WIRE: WIRE };

@@ -25,6 +25,7 @@ var scratch = [root, outside];
 fs.writeFileSync(path.join(root, 'index.html'), '<p>pad</p>');
 fs.writeFileSync(path.join(root, 'lamp-controller.js'), '// pad');
 fs.writeFileSync(path.join(root, '.hidden'), 'no');
+fs.writeFileSync(path.join(root, 'lamp-reach.json'), JSON.stringify({ only: ['api.example.com', 'x.test; script-src *'] }));
 fs.writeFileSync(path.join(outside, 'outside.txt'), 'outside');
 fs.symlinkSync(path.join(outside, 'outside.txt'), path.join(root, 'link.txt'));
 
@@ -33,7 +34,7 @@ function get(port, p, host) {
     http.get({ port: port, path: p, headers: { Host: host || '127.0.0.1:' + port } }, function (res) {
       var body = '';
       res.on('data', function (d) { body += d; });
-      res.on('end', function () { resolve({ status: res.statusCode, body: body }); });
+      res.on('end', function () { resolve({ status: res.statusCode, body: body, policy: res.headers['content-security-policy'] }); });
     }).on('error', reject);
   });
 }
@@ -88,6 +89,10 @@ function run() {
     assert.strictEqual(pages[3].status, 404, 'hidden files are never served');
     assert.strictEqual(pages[4].status, 404, 'a link is never followed');
     assert.strictEqual(pages[5].status, 404, 'nothing above the page');
+    // The page's rules name its relay where it is, by the name the phone used, and only the sites Lamp's reach file
+    // names: an entry that isn't a site is dropped, never written into the header.
+    assert.ok(pages[1].policy.indexOf("connect-src 'self' ws://192.168.1.40:" + relayPort + ' api.example.com;') >= 0, pages[1].policy);
+    assert.ok(pages[0].policy.indexOf("default-src 'none';") === 0 && pages[0].policy.indexOf('x.test') < 0, pages[0].policy);
 
     // The game's page: no origin it could prove, so its credential lets it in.
     host = client(answer.links[0].socket, 'file://');

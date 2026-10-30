@@ -116,6 +116,19 @@ which lamp.js asks for again as the page opens and every half minute (`/app/phon
 when the site moves; `Lamp.onPhonePage` hears each change, so a QR code follows the page. The address is plain http at the Mac's local address, so a phone's browser won't give the page motion sensors or the camera, which
 need https.
 
+Every server of a phone page sends the same rules with it (`PhonePagePolicy`, a Content-Security-Policy): Lamp's
+(`Store.phonePage`), a game's own (`PhonePageServer`), an LG TV's (`relay.js`) and the Xbox host's
+(`lamp_controllers.h`), each writing the same words, which `PhonePagePolicyTests` and `check-web-host-controllers.sh`
+hold them to. Nothing is allowed unless it's named: the page's own files; its game's relay, by the name the phone used
+and at the port it listens on as the page is served, and no other address on the network; and the sites the app may
+reach, which `PhonePageReach` reads from the policy for apps shared with the person (only the sites their safety review
+named) and which are any https site for an app made here. Lamp writes those sites beside the page it puts in a game's
+bundle, an LG TV's service or an Xbox package (`lamp-reach.json`, in place of any file of the app's by that name); a
+server that finds none allows no sites. A relay that moved after the page loaded is outside its rules, so
+lamp-controller.js loads the page again, once for each port, keeping the phone's credential, when its socket is refused.
+A rule a browser can't enforce is not one: a page can still leave by navigating (`location`), and a page reached by an
+IPv6 address has no relay in its rules, since a policy can't name one.
+
 Phones as controllers never go through Lamp's own process: Lamp introduces the two sides and hands out short-lived
 credentials, and they talk through a relay of Lamp's own (`PhoneControllers`), over the home network the
 phone page is already served on, so nothing is hosted and nothing leaves the home. The relay (`LampRelayKit`'s `Relay`)

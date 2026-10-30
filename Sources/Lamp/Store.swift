@@ -11834,6 +11834,15 @@ final class Store: ObservableObject {
         let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
         let parts = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst(2).map { $0.removingPercentEncoding ?? "" }
         guard let id = parts.first, !id.isEmpty, let project = projects.first(where: { $0.id == id }), Self.servesPhonePage(project) else { return missing }
+        var page = await phoneFile(Array(parts.dropFirst()), path: path, of: project)
+        page.policy = PhonePagePolicy.header(host: host, relayPort: await ControllerRelay.ready(), reach: PhonePageReach.reach(project))
+        return page
+    }
+
+    /// One of a TV app's phone page's files, by its steps after the app's id.
+    private func phoneFile(_ steps: [String], path: String, of project: LampProject) async -> Gateway.Page {
+        let missing = Gateway.Page(status: 404, body: Data("Nothing here. Open the app on the TV first.".utf8))
+        let parts = [project.id] + steps
         // The page's own links are relative, so its address has to end in a slash.
         if parts.count == 1 { return Gateway.Page(status: 301, location: path + "/") }
         var names = Array(parts.dropFirst())

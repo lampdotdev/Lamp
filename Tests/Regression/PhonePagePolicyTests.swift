@@ -1,0 +1,75 @@
+import Foundation
+import LampRelayKit
+import XCTest
+
+/// A phone page's rules (`PhonePagePolicy`) as its servers send them: only the page's own files, its game's relay where
+/// it listens now, by the name the phone used, and the sites the reach file names, with anything that isn't a site
+/// dropped rather than written into the header.
+final class PhonePagePolicyTests: XCTestCase {
+    private var folder: URL!
+
+    override func setUp() {
+        folder = FileManager.default.temporaryDirectory.appendingPathComponent("phone-policy-\(UUID().uuidString)")
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    private static let hostile = ["api.example.com", "https://cdn.example.org:8443/", "x.test; script-src *", "'unsafe-eval'",
+                                  "javascript:alert(1)", "http://[::1]:80", "*.example.net", "evil.test\r\nSet-Cookie: a=b"]
+
+    func testAGamesOwnPageServerSendsAPolicyNamingOnlyItsRelayAndItsSites() async throws {
+        let page = ControllerSnapshot(files: [.init(path: "index.html", data: Data("<title>Pad</title>".utf8)),
+                                              .init(path: PhonePagePolicy.reachFile, data: PhonePagePolicy.json(.only(Self.hostile)))])
+        try page.write(to: folder)
+        let runtime = ControllerRuntime(app: "padgame", page: folder)
+        runtime.hosts = { ["127.0.0.1", "localhost"] }
+        runtime.linkHost = { "127.0.0.1" }
+        defer { runtime.stop() }
+        let (status, answer) = runtime.startNow()
+        XCTAssertEqual(status, 200)
+        let socket = try XCTUnwrap((answer["links"] as? [[String: Any]])?.first?["socket"] as? String)
+        let relayPort = try XCTUnwrap(URL(string: socket)?.port)
+        let pagePort = try XCTUnwrap(runtime.pagePort)
+
+        let (_, response) = try await URLSession.shared.data(from: URL(string: "http://localhost:\(pagePort)/")!)
+        let policy = try XCTUnwrap((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Security-Policy"))
+        let sites = "api.example.com https://cdn.example.org:8443 *.example.net"
+        XCTAssertEqual(policy, "default-src 'none'; script-src 'self' 'unsafe-inline' \(sites); style-src 'self' 'unsafe-inline' \(sites); "
+            + "img-src 'self' data: blob: \(sites); media-src 'self' data: blob: \(sites); font-src 'self' data: \(sites); "
+            + "connect-src 'self' ws://localhost:\(relayPort) \(sites); worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'")
+    }
+
+    func testAPageWithNoReachFileReachesNoSites() {
+        let policy = PhonePagePolicy.header(host: "192.168.1.20:52000", relayPort: 52001, reach: PhonePagePolicy.reach(json: nil))
+        XCTAssertTrue(policy.contains("connect-src 'self' ws://192.168.1.20:52001;"), policy)
+        XCTAssertFalse(policy.contains("https:"), policy)
+    }
+
+    /// relay.js (an LG TV's service) writes the same policy as Swift for the same page, hostile sites included, and the
+    /// Xbox host is held to relay.js's by Tests/WebHost/controllers.mjs.
+    func testLGServiceWritesTheSamePolicy() throws {
+        let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        guard let node else { throw XCTSkip("Node isn't installed") }
+        let relay = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/LGPhones/relay.js")
+        let cases: [(String?, UInt16?, PhonePagePolicy.Reach)] = [
+            ("192.168.1.20:52000", 52001, .only(Self.hostile)), ("Mac.local", 60000, .secureSites), ("[fe80::1]:5000", 5001, .only([])),
+            (nil, 5001, .only(["a.test"])), ("localhost:9", nil, .secureSites),
+        ]
+        for (host, port, reach) in cases {
+            let script = "var r = require(process.argv[1]); process.stdout.write(r.policy(JSON.parse(process.argv[2]), JSON.parse(process.argv[3]), r.readReachJSON(process.argv[4])))"
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: node)
+            let hostJSON = host.map { "\"\($0)\"" } ?? "null"
+            process.arguments = ["-e", script, relay.path, hostJSON, port.map(String.init) ?? "null", String(decoding: PhonePagePolicy.json(reach), as: UTF8.self)]
+            let out = Pipe()
+            process.standardOutput = out
+            try process.run()
+            process.waitUntilExit()
+            let js = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            XCTAssertEqual(js, PhonePagePolicy.header(host: host, relayPort: port, reach: reach), "\(host ?? "nil")")
+        }
+    }
+}

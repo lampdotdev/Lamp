@@ -3634,6 +3634,22 @@ extension TVTemplate {
             var join = (location.hash || '').replace(/^#/, '');
             if (join) history.replaceState(null, '', location.pathname + location.search);
             function state(s) { if (handlers.onState) handlers.onState(s); }
+            // Once for each port the relay was refused at, keeping the credential so the page comes back as the same
+            // player; a second refusal there is the page's rules, not a move, and it goes on trying as for any lost link.
+            var trying = null;
+            function refused(port, credential) {
+              var key = 'lamp-controller-reloaded:' + base;
+              if (sessionStorage.getItem(key) === String(port)) { later(); return; }
+              sessionStorage.setItem(key, String(port));
+              if (credential) sessionStorage.setItem(keyName, credential);
+              closedForGood = true;
+              location.reload();
+            }
+            if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('securitypolicyviolation', function (event) {
+              if (!trying || !socket || String(event.blockedURI || '').replace(/\/?$/, '/') !== trying) return;
+              var s = socket; socket = null; s.onclose = null; s.close();
+              refused(new URL(trying).port, join || sessionStorage.getItem(keyName));
+            });
             function later() {
               if (closedForGood) return;
               state('connecting');
@@ -3652,7 +3668,12 @@ extension TVTemplate {
               state('connecting');
               where().then(function (relay) {
                 if (closedForGood) return;
-                var s = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.hostname + ':' + relay.port + '/');
+                var address = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.hostname + ':' + relay.port + '/';
+                var s;
+                // The page's rules name the relay where it was as the page was served: one that has moved since is
+                // refused, so the page is loaded again under rules that name where it is now.
+                trying = address;
+                try { s = new WebSocket(address); } catch (e) { refused(relay.port, credential); return; }
                 s.binaryType = 'arraybuffer';
                 socket = s;
                 s.onopen = function () {
