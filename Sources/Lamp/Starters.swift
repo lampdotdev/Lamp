@@ -80,6 +80,10 @@ enum Starters {
     /// Where a starter's drawn icon is in its tree (`iconFolder` under the pictures), and its preview.
     static func iconFolder(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(iconFolder) }
     static func preview(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent("preview.png") }
+    /// Its reel, when one's been recorded (scripts/showcase-starters.sh): reel.mp4, loop.webp and poster.png. Only its
+    /// repository has it; Lamp's bundle leaves it out (build.sh).
+    static func showcase(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(showcaseFolder) }
+    static let showcaseFolder = "showcase"
 
     /// The icon a starter ships with, drawn from its icon.json (`StarterIconsTests`).
     static func icon(of starter: Starter) -> NSImage? {

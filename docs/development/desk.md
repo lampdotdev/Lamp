@@ -141,8 +141,8 @@ file's). A starter of a kind Lamp doesn't share yet has none. A starter based on
 Home HQ) still credits that work in its credits.json; its repository is Lamp's version.
 
 What a starter's repository shows is the starter's own: the GitHub description is lamp-app.json's line; the README
-(`GitHubRepo.readme` with a `Showcase`) opens with the icon and preview from `.github/`, the description, the buttons (Play in your browser for a game, Open
-in Lamp, "Generated apps"), and "Ideas to try" titled with starter.md's `offer` and listing its tweaks, each a link
+(`GitHubRepo.readme` with a `Showcase`) opens with the icon from `.github/`, the description, the buttons (Play in your browser for a game, Open
+in Lamp, "Generated apps"), its reel's loop where it has one and its preview otherwise, and "Ideas to try" titled with starter.md's `offer` and listing its tweaks, each a link
 that opens Lamp on a copy with that request. A game whose page is the whole game also gets a page
 anyone plays in a browser (`StarterRepos.stagePage`: Publish's page with the credit bar and the tweaks in its Remix
 panel, which names the starter so a remix starts from a fresh copy of it, "Remixing a published page" in the
@@ -191,6 +191,23 @@ without Lamp's chat). Shrink it to at most 800 px on the long side (`sips -Z 800
 in the starter's repository, then move the pin (below). Look at it before committing: example content only, nothing
 from the Mac it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured
 with its panel open.
+
+**A starter's reel.** A starter may have a reel: a video of about forty seconds of it being used, with its voices
+and captions, which its README shows as a silent loop (GitHub plays no video a README holds) linked to the video
+with sound (`GitHubRepo.Showcase.reel`). What happens in it is `Resources/Starters/<folder>/showcase/showcase.json`,
+the storyboard: the window's size, the steps played on it (use_app's actions by target, waits, and where the camera
+goes), and the script the app follows instead of the person's world (its AI's answers, the person's spoken lines,
+a place, captions), with any file it brings beside it (a photo for a camera, `data/<name>.json` for the app's
+store to start with). `scripts/showcase-starters.sh [<folder>]` records it: it stages the starter with this checkout's
+files as `publish-starters.sh` does, builds it under its own bundle id, opens it with `LAMP_SHOWCASE` ("Showcase
+mode" in the generated-apps guide), records its window while it plays the steps in front, and edits the take
+(`scripts/showcase/edit.py`: a title card, the camera, a cursor, the voices where they were heard, double speed
+while the AI answers, an end card with the starter's changes) into the tree's `.github/showcase/` (reel.mp4,
+loop.webp, poster.png), which `publish-starters.sh` puts up with the other pictures. The app comes to the front
+for the minute a take lasts, since a window behind others is drawn with gray controls. Code of a starter's own that
+reads the person's world (its microphone, camera, files) asks `LampShowcase` while it's on, in its repository like
+any change to it. Watch the reel before publishing it: example content only, as for the preview. Lamp's bundle
+leaves the storyboards and reels out (build.sh).
 
 **Changing a starter.** Its repository is the starter; Lamp pins a commit of it. A change is best made in Lamp Dev,
 where it's played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>), ask

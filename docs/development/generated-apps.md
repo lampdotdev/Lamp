@@ -52,6 +52,17 @@ stepper takes a number or a step, and what has no action of its own, or isn't li
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
+**Showcase mode.** An app opened with `LAMP_SHOWCASE` set to a folder holding a showcase.json is being recorded for
+a reel (`LampShowcase`; "A starter's reel" in the desk guide): it keeps its data in that folder, starting empty
+(LampStore imports any `data/<name>.json` there), LampAI's calls are answered from the script (every route, through
+`LampAI.post`), LampLocation is where the script says, notifications are logged and not sent, and no `LampSchedule`
+runs. Once its window is up, and the recorder has its first frame (it leaves a `recording` file in the folder; with
+none in two minutes it plays nothing and logs why), it plays the script's steps on it with `LampDriver`'s own actions
+(`LampDriver.playShowcase`), so it needs no Accessibility permission, and logs everything to events.tsv with the
+time and the frame of what it acted on, which the reel's edit lines up with the recording. The app's own code for its
+microphone, camera or speech asks the script while it's on (`LampShowcase.hear`, `speak`, `file`, `line`); nothing of
+the person's is read, so the reel shows none of it.
+
 `use_app` happens in plain sight, and the person can take the app back at any moment (`Handover`). While the
 actions run, the window in use glows, Lamp's cursor (a fingertip over the simulator) goes to each spot before
 anything happens there with a word on what it's doing ("Lamp · clicking Add"), and a pill above the window says
