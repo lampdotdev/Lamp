@@ -43,8 +43,6 @@ enum Upgrade: Hashable, Identifiable {
     /// Drawing each app's icon by hand in Image Playground (`Icons.byHand`): for icon artwork only, and
     /// only on a Mac that has it.
     case drawIcons
-    /// Downloading again a text model on this Mac that was chosen and then removed: the catalog's id.
-    case textModelAgain(String)
     /// Choosing what answers instead, for one app (`app`, its id) or, with none, for every app in Settings: the
     /// route's id and how it's named.
     case useText(route: String, label: String, app: String?)
@@ -56,7 +54,6 @@ enum Upgrade: Hashable, Identifiable {
         case .decisionModel: "decisionModel"
         case .signIn(let engine): "signIn:\(engine.rawValue)"
         case .drawIcons: "drawIcons"
-        case .textModelAgain(let model): "textModelAgain:\(model)"
         case .useText(let route, _, let app): "useText:\(route):\(app ?? "")"
         }
     }
@@ -134,10 +131,13 @@ extension AppAI {
         let wanted = (choice ?? UserDefaults.standard.string(forKey: "appModel")).map(canonicalRoute)
         let missing = wanted.flatMap { id in id == route.id ? nil : AppAct.wanted(id, among: allTextRoutes) }
         guard route.available else {
-            // Nothing answers. A removed model on this Mac that was chosen comes back with a download.
-            let again = missing.flatMap { localModelAgain($0) }.map { [$0] } ?? []
+            // Nothing answers. A removed model on this Mac that was chosen is said to be why.
+            let gone = missing.flatMap { route -> String? in
+                guard case .localModel = route.kind else { return nil }
+                return "\(route.name) isn't on this Mac any more. Install it again in Settings, or set up another AI below."
+            }
             return Resolution(capability: .text, tier: .none, answer: nil, provider: nil,
-                              note: "Nothing on this Mac can answer apps yet.", upgrades: again + textUpgrades)
+                              note: gone ?? "Nothing on this Mac can answer apps yet.", upgrades: textUpgrades)
         }
         if let missing { return standIn(for: missing, answering: route, app: choice == nil ? nil : app) }
         // A sign-in that answers because nothing was chosen works, but a key is quicker for small calls and
@@ -151,8 +151,10 @@ extension AppAI {
     }
 
     /// A choice that can't answer, with `route` answering in its place: why, and what would bring the choice back.
-    /// For a model on this Mac that was removed, that's downloading it again, or choosing what answers now for good:
-    /// for the app when the choice was the app's own (`app`), else in Settings.
+    /// For a model on this Mac that was removed, that's installing it again in Settings, or choosing what answers now
+    /// for good: for the app when the choice was the app's own (`app`), else in Settings. The card offers no download
+    /// of its own: what one installs is named by the files in the cache (a repository holding several quants names
+    /// each with its quant), so it can't promise to bring back the very choice that went missing.
     @MainActor static func standIn(for missing: TextRoute, answering route: TextRoute, app: String?) -> Resolution {
         var upgrades: [Upgrade] = []
         var why = "."
@@ -164,21 +166,12 @@ extension AppAI {
             upgrades.append(.signIn(engine))
             why = " until you sign in to \(engine.title) again."
         case .localModel:
-            if let again = localModelAgain(missing) { upgrades.append(again) }
             upgrades.append(.useText(route: route.id, label: route.label, app: app))
-            why = " because it isn't on this Mac any more. Install it again, or choose another AI for \(app == nil ? "your apps" : "this app")."
+            why = " because it isn't on this Mac any more. Install it again in Settings, or choose another AI for \(app == nil ? "your apps" : "this app")."
         default: break
         }
         return Resolution(capability: .text, tier: .works, answer: route.label, provider: provider(of: route),
                           note: "\(missing.name) can't answer right now\(why)", upgrades: upgrades)
-    }
-
-    /// Downloading again a removed model on this Mac, when it's one Lamp offers and the download brings that very choice
-    /// back: Lamp's download scans as the catalog's id, so another quant of the same model (`qwen3.5-4b-q8_0`) or a
-    /// model whose name only starts the same isn't offered it; choosing what answers now is their way back.
-    static func localModelAgain(_ route: TextRoute) -> Upgrade? {
-        guard case .localModel(_, let model) = route.kind else { return nil }
-        return LocalModels.catalog.first { $0.id == model }.map { .textModelAgain($0.id) }
     }
 
     /// What would let apps' text answer when nothing can: a key, then signing in to Claude Code or Codex where

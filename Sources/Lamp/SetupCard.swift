@@ -187,7 +187,6 @@ struct UpgradeView: View {
         case .key(let provider): return Provider.keyProvider(provider) != nil
         case .signIn: return true
         case .drawIcons: return Icons.playgroundAvailable
-        case .textModelAgain(let id): return LocalModels.catalog.contains { $0.id == id }
         case .useText: return true
         }
     }
@@ -204,8 +203,6 @@ struct UpgradeView: View {
             SignInUpgrade(engine: engine, compact: compact, onChange: onChange)
         case .drawIcons:
             DrawIconsUpgrade(compact: compact)
-        case .textModelAgain(let id):
-            if let spec = LocalModels.catalog.first(where: { $0.id == id }) { TextModelAgainUpgrade(spec: spec, compact: compact, onChange: onChange) }
         case .useText(let route, let label, let app):
             UseTextUpgrade(route: route, label: label, app: app, compact: compact, onChange: onChange)
         }
@@ -375,26 +372,6 @@ private struct DecisionModelUpgrade: View {
                 } else {
                     Button("Download") { local.download(spec) }
                 }
-            }
-        }
-    }
-}
-
-/// A model on this Mac that was chosen for apps' AI and then removed, downloaded again.
-private struct TextModelAgainUpgrade: View {
-    let spec: LocalModelSpec
-    let compact: Bool
-    let onChange: () -> Void
-    @ObservedObject private var local = LocalModels.shared
-
-    var body: some View {
-        OptionRow(symbol: "arrow.down.circle", title: "Download \(spec.name) again",
-                  detail: String(format: "It answers right here, free and private. A %.1f GB download.", spec.sizeGB),
-                  compact: compact) {
-            if let progress = local.progress[spec.id] {
-                ProgressView(value: progress).frame(width: 80).onDisappear(perform: onChange)
-            } else {
-                Button("Download") { local.download(spec) }
             }
         }
     }

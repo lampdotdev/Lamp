@@ -132,33 +132,20 @@ final class AppActRoutesTests: XCTestCase {
     }
 
     /// An app whose chosen model on this Mac was removed, with Claude Code answering in its place: the setup card the
-    /// person opens says why and offers both ways back (the model again, or what answers now, for this app), instead of
-    /// the usual reason and no rows.
+    /// person opens says why, points to Settings to install it again, and offers what answers now as this app's choice,
+    /// instead of the usual reason and no rows.
     @MainActor func testARemovedLocalModelsSetupCardOffersAWayBack() {
         let claude = AppAI.TextRoute(id: "engine:claude:sonnet", label: "Sonnet via Claude Code", group: "Claude Code", name: "Sonnet",
                                      kind: .engine(.claude, model: "sonnet"), available: true)
         let removed = AppAct.wanted("local:qwen3.5-4b", among: [claude])!
         let resolution = AppAI.standIn(for: removed, answering: claude, app: "app-1")
         XCTAssertEqual(resolution.tier, .works)
-        XCTAssertTrue(resolution.note?.contains("Install it again, or choose another AI for this app") == true, resolution.note ?? "")
-        XCTAssertTrue(resolution.upgrades.contains(.textModelAgain("qwen3.5-4b")), "no way to download the model again")
-        XCTAssertTrue(resolution.upgrades.contains(.useText(route: "engine:claude:sonnet", label: "Sonnet via Claude Code", app: "app-1")),
-                      "no way to keep what answers now as this app's choice")
+        XCTAssertTrue(resolution.note?.contains("Install it again in Settings, or choose another AI for this app") == true, resolution.note ?? "")
+        // No download on the card: what one installs is named by the files in the cache, so it can't promise to bring
+        // this very choice back; "Use … instead" always does.
+        XCTAssertEqual(resolution.upgrades, [.useText(route: "engine:claude:sonnet", label: "Sonnet via Claude Code", app: "app-1")])
         let reason = Store.askedReason(.text, resolution, app: "Notes")
         XCTAssertTrue(reason?.contains("Install it again") == true, "the card shows the usual reason, not why: \(reason ?? "nil")")
-    }
-
-    /// Download Again is offered only for a choice the download brings back: the catalog's model scans as its own id, so
-    /// another quant of it (`-q8_0`, kept from a repository with several) would stay missing after a download of the
-    /// catalog's, and the card would go on offering it.
-    @MainActor func testDownloadAgainOnlyForTheModelItRestores() {
-        func local(_ model: String) -> AppAI.TextRoute {
-            AppAI.TextRoute(id: "local:\(model)", label: model, group: "Native Mac AI", name: model,
-                            kind: .localModel(provider: "local", model: model), available: false)
-        }
-        XCTAssertEqual(AppAI.localModelAgain(local("qwen3.5-4b")), .textModelAgain("qwen3.5-4b"))
-        XCTAssertNil(AppAI.localModelAgain(local("qwen3.5-4b-q8_0")), "a download of the catalog's quant doesn't restore q8_0")
-        XCTAssertNil(AppAI.localModelAgain(local("qwen3.5-9b-instruct")), "nor another model that only starts like one")
     }
 
     /// An MLX model whose chat template mlx-lm has no tool-call parser for hands a call back as plain text, so it's
