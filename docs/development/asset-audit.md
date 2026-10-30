@@ -45,7 +45,7 @@ Files counted are pictures, icons, fonts, sounds, models, data, libraries and bi
    New York's data sources) name a license but no file.
 5. **`Resources/THIRD_PARTY_NOTICES.md` is incomplete.** It omits the qrcode library, WebView2, the Geist font,
    `stb_vorbis`, `dr_wav`, `dr_mp3`, the IEEE registry data, the libraries inside three.js's addons, and says nothing
-   about logos being trademarks. A separate PR fixes these.
+   about logos being trademarks. [PR #943](https://github.com/lampdotdev/Lamp/pull/943) fixes these.
 
 ## The 15 starter repos
 
@@ -190,7 +190,7 @@ are pinned by SHA-256. Only CC0 and CC-BY are listed, and CC-BY credit is record
 
 | Path | Files | Origin as far as the repo shows | Verdict |
 | --- | ---: | --- | --- |
-| `WebHost/App.exe`, `Microsoft.Web.WebView2.Core.dll` | 2 | The Xbox web host, built from `lamp_web_host.cpp` and `lamp_controllers.h` by `scripts/build-web-host.sh` (WebView2, the Windows SDK contracts and C++/WinRT pinned by version, checksum or commit). The DLL is Microsoft's redistributable library; the exe links it and C++/WinRT (MIT). | **Notice** |
+| `WebHost/App.exe`, `Microsoft.Web.WebView2.Core.dll` | 2 | The Xbox web host, built from `lamp_web_host.cpp` and `lamp_controllers.h` by `scripts/build-web-host.sh` (WebView2, the Windows SDK contracts and C++/WinRT pinned by version, checksum or commit). The DLL is Microsoft's redistributable library; the exe is built against it with Microsoft's SDK headers. | **Notice** |
 | `WebHost/WebView2-LICENSE.txt`, `lamp_web_host.cpp`, `lamp_controllers.h` | 3 | Microsoft's BSD-3-Clause text for WebView2; Lamp's own source. | **Fine** |
 | `vendors.xz` | 1 | The IEEE's public MA-L/MA-M/MA-S registry, trimmed by `scripts/update-vendors.sh` (53,647 lines). No statement of its terms or a credit in the repo. | **Notice** |
 | `TVCertificates/vd_tizen_dev_author_ca.der`, `vd_tizen_dev_public2.der` | 2 | Samsung's public Tizen developer CA certificates (valid to 2040 and 2029). The commit that added them ("TV apps for Samsung and LG TVs", #542) does not say where they came from. Public certificates, not keys. | **Unknown** (low risk) |
@@ -261,8 +261,7 @@ earlier credits.
    the terms and links in the starter repo; decide whether the data fits an MIT repo or is labeled as an exception.
 5. **Unknown origin (4 files).** `Resources/DMG/sky.png` and the DMG background built from it, and the two Samsung CA
    certificates. Record the tool or replace the sky; record where the certificates were taken from.
-6. **Complete `THIRD_PARTY_NOTICES.md` and add the trademark sentence.** Done in a separate PR where no decision is
-   needed.
+6. **Complete `THIRD_PARTY_NOTICES.md` and add the trademark sentence.** Done in PR #943; no decision needed.
 7. **The starters' own licenses.** Every starter repo says MIT, Roo Code, Inc. over its whole tree. Decide whether
    each repo's README and `LICENSE` should say that bundled third-party work keeps its own license (the New York,
    Home HQ and The Little House repos already carry theirs beside the files).
