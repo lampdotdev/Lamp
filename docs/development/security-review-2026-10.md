@@ -33,9 +33,9 @@ Lamp draws four lines, and each endpoint is read against them:
 ## On this Mac
 
 Each Lamp has four ports of its own (`Edition`): the release's are 47811 (the gateway), 47812 and 47813 (models on this
-Mac) and 47814 (the sidebar); Lamp Dev's are 47821 to 47824; a worktree instance's are hashed into 48000 and up. A TV
-app's phone page takes one of sixteen more (47840 to 47855 for the release), and the relay between a wish's apps takes a
-port the system picks.
+Mac) and 47814 (the sidebar); Lamp Dev's are 47821 to 47824, Lamp Nightly's 47831 to 47834; a worktree instance's are
+hashed into 48000 and up. A TV app's phone page takes one of sixteen more (47840 to 47855 for the release, 47892 to
+47907 for the nightly), and the relay between a wish's apps takes a port the system picks.
 
 ### The gateway: 127.0.0.1:47811 (`Gateway.swift`, `Store.handleAI`)
 
@@ -46,16 +46,21 @@ token. Which token decides which routes answer:
 
 | Routes | Who holds the token | What else is checked |
 | --- | --- | --- |
-| `/ai`, `/ai/image`, `/ai/decide`, `/ai/status`, `/ai/keys`, `/ai/computer`, `/app/share`, `/app/secrets`, `/app/controller`, `/app/phone-page`, `/app/wish*` | The app: `.lamp/token`, two UUIDs made on first use, in the app's folder (`Template.token`) | `/app/secrets` and `/app/share` also require the calling process to be the installed app, valid by its code signature's designated requirement (`PeerProcess.isApp`), since the agent can read the token |
+| `/ai`, `/ai/image`, `/ai/decide`, `/ai/act`, `/ai/hear`, `/ai/status`, `/ai/setup`, `/ai/keys`, `/ai/computer`, `/app/share`, `/app/secrets`, `/app/credits`, `/app/controller`, `/app/phone-page`, `/app/wish*`, `/app/page/*` | The app: `.lamp/token`, two UUIDs made on first use, in the app's folder (`Template.token`) | `/app/secrets` and `/app/share` also require the calling process to be the installed app, valid by its code signature's designated requirement (`PeerProcess.isApp`), since the agent can read the token |
 | `/agent/*`, `/mcp` | The agent, for one turn: two UUIDs made when the turn starts, handed to the engine in its environment, forgotten when the turn ends (`Store.agentTokens`) | Setup finished and the turn still running; loopback only |
 | `/pi/key` | pi, once: a ticket good for ten minutes and one redemption (`KeyTicket`) | Loopback only |
 | `/agent/computer`, `/mcp` with a task's token | The coding agent driving one computer-use task, for that task's life (`Store.computerTasks`) | Only the task's own tools |
 | `/app/claim`, `/app/wish/claim` | Nobody: a device Lamp has just put an app on, asking for its token or its wish's key | Network only, from the address Lamp put the app on, within a window (below) |
-| `/browser/*` | Lamp Dev only, behind Settings → Experimental: Chrome's helper signs each message with a secret file (0600) and a nonce; apps use their token | Refused with any `Origin` header |
+
+Of the app routes, `/ai/act` runs one step of an app's own agent loop: the page holds the tools and runs them, and
+Lamp's side only returns which calls to make next, checked against the tools' shapes, with Claude Code and Codex run
+sealed (no tools, no approvals) for it. `/ai/hear` transcribes audio the page sends through OpenRouter with the key on
+this Mac, which never reaches the device. `/app/page/*` puts a change into an open page: a file is handed out only by
+a hash the change itself named, read through `AppFile` (never through a link), so there is no path to traverse.
 
 **Another process on this Mac.** With an app's token (readable by any program running as the person, and by the
 agent's commands for the app they're building) it can: use the person's AI through the app's routes, which spends
-their key or sign-in; ask `/ai/keys`, which answers only for iPhone apps and only sealed with a secret kept in Lamp's
+their key or sign-in; put a setup card in the app's chat (`/ai/setup`); ask `/ai/keys`, which answers only for iPhone apps and only sealed with a secret kept in Lamp's
 own folder, so the key doesn't come out; and start computer-use tasks (`/ai/computer`), each step of which the person
 approves on Lamp's card in the app's name unless they chose Allow All, and only when they turned the feature on in
 Settings → Apps. It cannot read the app's secrets or make its shared file, which need the app's own process. With the
@@ -114,7 +119,10 @@ it's served, and the agent is told so. Low; nothing to fix.
 Phones joining a TV app's game hold a credential Lamp or the relay signed (`ControllerToken`: HMAC under a key that
 lives only in memory, for one app, one session generation, with a lifetime). A wish's apps join their wish's room by
 proving they hold the wish's key (below). Without either, a socket gets a challenge and nothing more, and the relay
-rate-limits what each peer sends. Low.
+rate-limits what each peer sends. A game on an LG TV runs a relay of its own on the TV (`Resources/LGPhones/relay.js`),
+with the same protocol, credentials and limits and a key made per session in that process's memory; a wish's rooms
+stay on the Mac. Phones are only ever given an address on the device's Wi-Fi or wired network (`ControllerAddresses`).
+Low.
 
 ### The sidebar's socket: 127.0.0.1:47814 (`Sidebar.swift`, `SidebarServer.Listener`)
 
@@ -133,6 +141,15 @@ closed before a byte of the chat goes out.
   program already runs as the person. Fix: have the extension check Lamp's code signature on the other end the same
   way, when the chat moves to a Unix socket in Lamp's folder.
 - **A page in a browser** can't speak the protocol and isn't an extension Lamp signed: nothing.
+
+### Shared apps and what they may reach
+
+An app that arrived as a shared file is held to the sites its safety sheet named (`SharedNetwork`, kept in Lamp's
+folder, written into the app's `Info.plist` at every build and enforced by the app around the page whether Lamp is
+open or not). On a TV the only tool is the page's own Content Security Policy, put first in every page of the package,
+which can't stop a page leaving for another address or WebRTC's own connections; the code counts only a TV whose
+browser closes those as guarding the app (`TVNetworkGuard`). Low: the limit is named, and an app the person made is
+held to nothing by design.
 
 ### Computer use and the page reader
 
@@ -163,7 +180,9 @@ handshake, with a counting nonce, so a recording can't be read, replayed, reorde
 noticing. The code names two limits honestly: every app of a wish holds the same key, so a device that has one of the
 wish's apps can join as any of them; and there's no forward secrecy, so someone who records the traffic and later gets
 the key reads it. The key leaves Lamp's folder only sealed, so "later gets the key" means getting into the Mac or a
-device's app data. Low, apart from the TV claim window rated above.
+device's app data. What a wish's apps share through Lamp (its shared collections and files, `WishKeep`) is kept in Lamp's own folder, in
+a folder named by the key's tag and sealed with a key made from the wish's key, so the data on disk says nothing
+without the key. Low, apart from the TV claim window rated above.
 
 ## The website and the update service (Vercel)
 
@@ -184,8 +203,8 @@ findings below are what an anonymous caller can do inside them. `vercel.json` ad
 | `wish-file` | `PUT` a part (raw bytes), `POST` to join them, `DELETE`, each with the link's secret | 3 MB a part, 6 parts, 16 MB a file; 40 parts an hour per address, 3,000 a day; joining counts as a share | Store up to 16 GB of files a day within the share quota, and 9 GB of parts |
 | `wish-page` | `GET /w/<id>` | Cached a minute at the CDN; `noindex`; the words reach the page as JSON in a script that isn't run | Guess ids: 58 bits, so no |
 | `wish-card` | `GET /w/<id>/card.png` | Cached an hour in browsers and a day at the CDN, by the full address | Draw the card again and again with a different `?v=`, each a 15-second function |
-| `appcast` | `GET` | Cached five minutes at the CDN; reads ten releases from GitHub | Little: the cache absorbs it |
-| `download` | `GET ?tag=` | Two GitHub calls per request against the token's hourly budget; **now cached a minute at the CDN** | Spend the GitHub token's hourly budget, so updates and downloads fail for everyone until it refills |
+| `appcast` | `GET`, Lamp's feed or the nightly's | Cached five minutes at the CDN; reads ten releases from GitHub | Little: the cache absorbs it |
+| `download` | `GET ?tag=`, or the nightly's DMG by its file name | Two GitHub calls per request against the token's hourly budget; only names a DMG may have; **now cached a minute at the CDN** | Spend the GitHub token's hourly budget, so updates and downloads fail for everyone until it refills |
 | `engines` | `GET` | Static JSON | Nothing |
 
 Findings:
