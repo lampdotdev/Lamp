@@ -113,6 +113,9 @@ A capability given to one engine must be given to all of them that can take it, 
   nothing), in its own folder by the wish's instance, never in the app's folder, which the agent can write.
   `use_app` on an app that reaches devices (`DevicePermissions.reachesDevices`: LampRoku or LampNetwork in its code, or a
   local network reason or Bonjour types in capabilities.json) is refused unless its `device` names one the person allowed.
+  A game on Lamp's web runtime is the one exception (`DevicePermissions.useStaysInPreview`): phones joining it declare the
+  local network too, and `use_app` plays it only in the hidden preview, which is held off every network for such a game
+  (`GameKit.previewPolicy`). A compiled game's preview, a process nothing holds, and a page with its own loop aren't.
   Each engine's command check carries the same rule (`DevicePermissions.commandRule`): pi's `CommandRisk` counts such a
   command as reaching beyond the app, so it gets Lamp's card; Claude Code's auto mode gets it as a `soft_deny` rule after
   its own (`$defaults`, `Engines.swift`); Codex's reviewer is told to refuse it (`CodexReview`), but sees only what needs
