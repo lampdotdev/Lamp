@@ -41,6 +41,12 @@ final class PhonesThroughRerunTests: XCTestCase {
           window.setTimeout(function () { s.onopen && s.onopen({}); }, 0);
         };
         window.fromRelay = function (m) { window.sockets[0].onmessage({ data: JSON.stringify(m) }); };
+        // Stands in for what happens while a run about to start reads its page, after the snapshot is taken.
+        var fetched = window.fetch;
+        window.fetch = function (url, options) {
+          if (String(url).indexOf('index.html') >= 0 && window.whileReading) { var then = window.whileReading; window.whileReading = null; then(); }
+          return fetched.call(window, url, options);
+        };
         window.requestAnimationFrame = function (fn) { return window.setTimeout(function () { fn(performance.now()); }, 16); };
         window.LampAI = { _post: function () { window.asks = (window.asks || 0) + 1; return Promise.resolve({ renew: 1, links: [{ kind: 'relay', socket: 'ws://relay.invalid/', app: 'duel', credential: 'host' }] }); } };
         </script>
@@ -161,6 +167,27 @@ final class PhonesThroughRerunTests: XCTestCase {
         try await js("fromRelay({ t: 'welcome', players: [2, 5] });")
         let back = try await heard().filter { $0.contains(": join") }
         XCTAssertEqual(back, ["run 1: join 2 in seat 2", "run 1: join 5 in seat 1"])
+    }
+
+    func testAFileThatStartsWhileTheNewRunStartsIsTurnedDown() async throws {
+        try await open()
+        let refused = "window.sockets[0].sent.filter(function (m) { return JSON.parse(m).t === 'file-refuse'; }).length"
+        try await js("window.whileStarting = function () { fromRelay({ t: 'file', player: 5, id: 1, name: 'late.txt', type: 'text/plain', size: 4 }); };")
+        try await runAgain()
+        let during = try await number(refused)
+        XCTAssertEqual(during, 1, "the phone is told, rather than sending all of it for nobody")
+        try await js("fromRelay({ t: 'file', player: 5, id: 2, name: 'fine.txt', type: 'text/plain', size: 4 });")
+        let after = try await number(refused)
+        XCTAssertEqual(after, 1, "a file from the running game's time isn't turned down")
+    }
+
+    func testAPlayerWhoLeavesAfterTheSnapshotIsToldToTheNewRun() async throws {
+        try await open()
+        try await js("window.whileReading = function () { fromRelay({ t: 'left', player: 2 }); };")
+        try await runAgain()
+        let second = try await heard().filter { $0.hasPrefix("run 2:") }
+        XCTAssertEqual(second, ["run 2: link http://join/", "run 2: leave 2", "run 2: join 5 in seat 1"],
+                       "the snapshot still has their seat, so the new run has to hear they've gone")
     }
 
     func testWhatHappensWhileTheNewRunStartsIsToldAsItIsThen() async throws {

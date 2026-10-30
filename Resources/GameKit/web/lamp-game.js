@@ -903,7 +903,7 @@ async function apply(change) {
     // Not started yet: nothing to keep.
     if (!started) { tellHost(change.gen, 'reloading'); location.reload(); return; }
     // Where the player is before anything is swapped, for the page to open from should the swap not take.
-    const before = takeSnapshot(), began = performance.now();
+    const before = takeSnapshot(), roster = phonesHere(), began = performance.now();
     const said = [];
     let why = paths.length ? null : 'nothing to put in', touched = false;
     for (const path of paths.filter(p => !CODE.test(p))) {
@@ -934,15 +934,16 @@ async function apply(change) {
         if (change.pill) showPill();
         return;
     }
-    return startAgain(change, touched ? before : undefined);
+    return startAgain(change, touched ? before : undefined, touched ? roster : undefined);
 }
 
 // A change that can't be swapped in: the game's code runs again in place, keeping the page, the renderer and what the
-// game kept, or, where that can't be done, the page opens again. Either way from `state`, where the player was.
-function startAgain(change, state = takeSnapshot()) {
+// game kept, or, where that can't be done, the page opens again. Either way from `state`, where the player was, and
+// `roster`, the phones joined as it was taken: the new run hears of any who left since, whose place `state` still has.
+function startAgain(change, state = takeSnapshot(), roster = phonesHere()) {
     const why = canRunAgain(change);
     if (why) return reopen({ ...change, why: `${change.why}; ${why}` }, state);
-    return runAgain(change, state);
+    return runAgain(change, state, roster);
 }
 
 // Opens the page again with the new code, with the player's place kept for the new code to restore: where it is now, or
@@ -1505,7 +1506,7 @@ function canRunAgain(change) {
     return null;
 }
 
-async function runAgain(change, state) {
+async function runAgain(change, state, roster) {
     const began = performance.now(), why = change.why;
     const cannot = reason => reopen({ ...change, why: `${why}; ${reason}` }, state);
     const paths = (change.changed || []).map(clean);
@@ -1545,7 +1546,7 @@ async function runAgain(change, state) {
     started = false;
     swapGuard = null;
     hidePill();
-    holdPhones();
+    holdPhones(roster);
     const leaving = hooks;
     hooks = {};
     try { if (leaving.dispose) await leaving.dispose(); } catch (e) { log(`Error: dispose: ${e && e.message || e}`); }
@@ -1806,7 +1807,7 @@ function watchPhones() {
     phones = window.Lamp && window.Lamp.controllers;
     if (!phones) return;
     // A file that starts while no game's code can take it is turned down, so the phone says so rather than waiting.
-    phones.onFile(file => { if (phonesWaiting) file.cancel(); });
+    phones.onFile((player, file) => { if (phonesWaiting) file.cancel(); });
     for (const name of PHONE_EVENTS) {
         const add = phones[name];
         phones[name] = fn => {
@@ -1828,9 +1829,11 @@ function watchPhones() {
     };
 }
 
-function holdPhones() {
+const phonesHere = () => phones ? phones.players() : [];
+
+function holdPhones(players) {
     if (!phones) return;
-    phonesWaiting = { players: phones.players(), calls: [], leaving: true };
+    phonesWaiting = { players, calls: [], leaving: true };
     for (const call of [...phoneCalls]) call.end();
 }
 
