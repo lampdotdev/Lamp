@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import JavaScriptCore
 
 /// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js, or with Phaser for a 2D game
 /// (`web/lamp-phaser.js` over the runtime), and played through Lamp's game runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
@@ -447,6 +448,7 @@ enum GameKit {
                     && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
             }.sorted()
         guard !files.isEmpty else { return nil }
+        if let strict = strictProblem(in: files, of: web, project: project) { return strict }
         // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
         // it runs in a scratch folder, reading the page's files by their paths.
         let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-check-\(project.id)-\(UUID().uuidString.prefix(8))")
@@ -463,6 +465,51 @@ enum GameKit {
         // A check that couldn't run says nothing of the code.
         guard status == 1 else { return nil }
         return said.first { !$0.isEmpty } ?? "a module doesn't parse"
+    }
+
+    /// What a module may not do because a module is strict, which Bun's parser lets through (`010`, `delete x`, `with`, a
+    /// repeated parameter, `'\012'`): JavaScriptCore checks each file as a strict script, its module statements written
+    /// as script (a rough rewrite, since JavaScriptCore doesn't parse modules), and only its strict-mode errors count;
+    /// Bun is the judge of the rest.
+    private static func strictProblem(in files: [String], of web: URL, project: LampProject) -> String? {
+        guard let context = JSContext() else { return nil }
+        for path in files {
+            guard let data = AppFile.read(web.appendingPathComponent(path), in: project) else { continue }
+            var exception: JSValueRef?
+            let text = JSStringCreateWithCFString(scriptForm(of: String(decoding: data, as: UTF8.self)) as CFString)
+            defer { JSStringRelease(text) }
+            if JSCheckScriptSyntax(context.jsGlobalContextRef, text, nil, 0, &exception) { continue }
+            let error = JSValue(jsValueRef: exception, in: context)
+            guard let message = error?.toString(), message.contains("strict mode") else { continue }
+            let line = (error?.objectForKeyedSubscript("line")?.toInt32() ?? 1) - 1
+            return "\(path):\(max(1, line)): \(message)"
+        }
+        return nil
+    }
+
+    private static let moduleToScript: [(NSRegularExpression, String)] = {
+        let gap = #"(?:\s|/\*[\s\S]*?\*/|//[^\n]*\n)*"#, lead = #"(?<![.\w$])"#
+        return [
+            (lead + #"import"# + gap + #"[^;'"]*?\bfrom\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + #"import\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + "export" + gap + #"\*\s*(?:as\s+[\w$]+\s*)?from\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + "export" + gap + #"\{[^}]*\}"# + gap + #"(?:from\s*(['"])[^'"\n]+\1)?\s*;?"#, ""),
+            (lead + "export" + gap + #"default\b"#, "void "),
+            (lead + #"export\b(?=\s*(?:async\b|function\b|class\b|const\b|let\b|var\b|/))"#, ""),
+            (#"\bimport\.meta\b"#, "({ url: '' })"),
+        ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
+    }()
+
+    /// A module as a script, its lines where they were (one line down).
+    static func scriptForm(of module: String) -> String {
+        var text = module as NSString
+        for (pattern, template) in moduleToScript {
+            for match in pattern.matches(in: text as String, range: NSRange(location: 0, length: text.length)).reversed() {
+                let breaks = String(repeating: "\n", count: text.substring(with: match.range).filter { $0 == "\n" }.count)
+                text = text.replacingCharacters(in: match.range, with: template + breaks) as NSString
+            }
+        }
+        return "'use strict'; (async () => {\n" + (text as String) + "\n});"
     }
 
     /// The parse check Bun runs: each file read as a module, the first that doesn't parse said with its line.
