@@ -227,7 +227,7 @@ Content-Security-Policy naming only those sites; the page never leaves its own a
 (redirects included); a link opens in the browser only on the person's click, once they've seen where it goes; what
 no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
 "May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
-or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`). A copy of the wish
+or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
 (a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A host elsewhere (a TV, an Xbox,
 Android, a phone's controller page) holds a shared page only once it reads `SharedNetwork.policy(for:)` and enforces the
 same `NetworkPolicy`. Swift of the sender's beside the page (Sources/Native.swift or any other Swift there) runs in the app's
