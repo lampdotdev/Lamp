@@ -10181,6 +10181,14 @@ final class Store: ObservableObject {
             try? AppFolder.write(printed, to: Runtime.logURL(project), in: project.dir)
         }
         var text = said
+        // The same sources went into the game open on this Mac as it played (`autoApply`): told, so the agent never asks
+        // for a Reload the person doesn't need. A change held for Reload is said by the chat's Reload line, not here.
+        await owner.applying?.value
+        var mac = current(project) ?? project
+        mac.chosen = .mac
+        if !owner.shownSources.isEmpty, owner.shownSources == Runtime.fingerprint(mac) {
+            text += "\n\nThis change is also in the game open on the person's Mac now, where they are in it: no Reload needed."
+        }
         if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
         if GameKit.previewHeldBack(project) { text += "\n\nThis game declares the local network, so its preview reaches no network at all: nothing there touches the person's devices." }
         if let phone = played.phone { text += "\n\n" + phone.text(screen: Privacy.sharesPictures, log: Privacy.sharesLog) }
