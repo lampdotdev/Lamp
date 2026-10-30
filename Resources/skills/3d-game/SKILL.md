@@ -22,6 +22,9 @@ frameworks. A game whose play is flat is better made in 2D with Phaser (the 2d-g
 TV's browser has no WebGL 2. The game skill holds what every game needs
 (the frame loop, controls, sound, saves); read it too.
 
+A menu that's a place (the game-ui skill) is a list of stops with a camera position for each, eased between in `frame`,
+with the stop and the camera in `snapshot()`.
+
 ## The renderer
 
 ### A game on Lamp's runtime
