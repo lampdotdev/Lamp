@@ -1,0 +1,40 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "cleanMachine": true,
+  "steps": [
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "target": "Tidy Now"
+    },
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "target": "Activity"
+    },
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "target": "Undo Last Tidy"
+    },
+    {
+      "wait": 2
+    },
+    {
+      "action": "click",
+      "target": "Preview"
+    },
+    {
+      "wait": 2
+    }
+  ]
+}

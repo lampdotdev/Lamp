@@ -1,0 +1,42 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "steps": [
+    {
+      "wait": 2
+    },
+    {
+      "action": "click",
+      "target": "Done"
+    },
+    {
+      "wait": 2.5
+    },
+    {
+      "action": "click",
+      "x": 550,
+      "y": 238
+    },
+    {
+      "wait": 1.2
+    },
+    {
+      "action": "click",
+      "x": 673,
+      "y": 373
+    },
+    {
+      "wait": 1.2
+    },
+    {
+      "action": "click",
+      "x": 685,
+      "y": 685
+    },
+    {
+      "wait": 2.5
+    }
+  ]
+}

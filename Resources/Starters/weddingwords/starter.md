@@ -2,7 +2,7 @@
 name: Wedding Words
 offer: Make Wedding Words yours
 repository: https://github.com/lampdotdev/weddingwords
-commit: 1cce66c53e9564d705e0bbe361c26209aed4c6bc
+commit: 7514401c7264a73d3dc51a94cc8f038c94d307fb
 tweaks:
   - sun.max: Give it a Neapolitan postcard look
   - stopwatch: Time my toast run-throughs

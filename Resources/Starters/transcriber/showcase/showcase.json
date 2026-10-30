@@ -1,0 +1,36 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "steps": [
+    {
+      "wait": 2.5
+    },
+    {
+      "action": "click",
+      "x": 112,
+      "y": 189
+    },
+    {
+      "wait": 3.5
+    },
+    {
+      "action": "scroll",
+      "x": 900,
+      "y": 450,
+      "amount": 420
+    },
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "x": 112,
+      "y": 134
+    },
+    {
+      "wait": 3
+    }
+  ]
+}

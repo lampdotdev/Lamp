@@ -1,7 +1,7 @@
 {
   "window": {
-    "width": 960,
-    "height": 720
+    "width": 1200,
+    "height": 675
   },
   "reel": {
     "speaker": "Marco’s mother",
@@ -9,32 +9,14 @@
   },
   "steps": [
     {
-      "action": "click",
-      "target": "The wedding"
-    },
-    {
-      "wait": 0.6
-    },
-    {
-      "focus": [
-        0.2,
-        0.06,
-        0.8,
-        0.48
-      ]
-    },
-    {
-      "wait": 3.4
-    },
-    {
-      "focus": "window"
+      "wait": 0.5
     },
     {
       "action": "click",
       "target": "At the table"
     },
     {
-      "wait": 1.6
+      "wait": 1.2
     },
     {
       "action": "click",
@@ -52,7 +34,7 @@
       ]
     },
     {
-      "wait": 0.5
+      "wait": 0.4
     },
     {
       "action": "click",
@@ -63,7 +45,7 @@
       "target": "Send my reply"
     },
     {
-      "wait": 1.0
+      "wait": 1
     },
     {
       "focus": "window"
@@ -73,35 +55,7 @@
       "timeout": 40
     },
     {
-      "focus": [
-        "Speak Italian",
-        "Send my reply",
-        "New rehearsal"
-      ]
-    },
-    {
-      "wait": 0.5
-    },
-    {
-      "action": "click",
-      "target": "Speak Italian"
-    },
-    {
-      "action": "click",
-      "target": "Send my reply"
-    },
-    {
-      "wait": 1.0
-    },
-    {
-      "focus": "window"
-    },
-    {
-      "wait_for": "Speak Italian",
-      "timeout": 40
-    },
-    {
-      "wait": 2.5
+      "wait": 1.5
     }
   ],
   "ai": [

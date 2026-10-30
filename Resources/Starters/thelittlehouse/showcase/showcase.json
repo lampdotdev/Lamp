@@ -1,0 +1,46 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "steps": [
+    {
+      "wait": 10
+    },
+    {
+      "action": "click",
+      "target": "Come in"
+    },
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "target": "Let the fire go out"
+    },
+    {
+      "wait": 2.5
+    },
+    {
+      "action": "click",
+      "target": "Open the window"
+    },
+    {
+      "wait": 2.5
+    },
+    {
+      "action": "click",
+      "target": "Turn off the lamp"
+    },
+    {
+      "wait": 2.5
+    },
+    {
+      "action": "click",
+      "target": "Mixer"
+    },
+    {
+      "wait": 3
+    }
+  ]
+}
