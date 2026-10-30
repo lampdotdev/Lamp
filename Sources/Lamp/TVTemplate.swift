@@ -650,8 +650,16 @@ extension TVTemplate {
          * A phone that leaves, or whose link drops, has every button it held let go (onButton with down false) before
          * onLeave, and its files end. Movement that arrives late is dropped rather than acted on. A message over
          * messageLimit isn't sent, from the TV or from a phone, and the console here says so.
+         *
+         * A game's code run again in place keeps the session: the phones stay joined with their numbers, and the new
+         * run needs no stop() or start() of its own. Where lamp-game.js does that, what the old run asked to hear ends
+         * with it, and before its first frame the new run's onLeave and onJoin hear who left and who is here (a join
+         * it has seen in its snapshot included). Presses and messages from in between aren't replayed; isHeld says
+         * what's held now.
          */
-        (function () {
+        // The session is the page's: its timers are taken from the browser here, as the page loads, so a game's runtime
+        // that takes away the timers its code left running (lamp-game.js) never takes these.
+        (function (setTimeout, clearTimeout, setInterval, clearInterval) {
           'use strict';
           var LATE = 300;          // ms after which a stick or tilt reading is dropped as stale
           var MESSAGE = 16384;     // bytes of JSON in one message, the most the relay passes on (ControllerWire.message)
@@ -1005,7 +1013,7 @@ extension TVTemplate {
             _attach: function (source) { others.push(source); if (started) source.start(hooks()); }
           };
           if (window.Lamp) window.Lamp.controllers = api;
-        })();
+        })(window.setTimeout, window.clearTimeout, window.setInterval, window.clearInterval);
 
         """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS)
 

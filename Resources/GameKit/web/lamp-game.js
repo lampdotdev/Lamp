@@ -903,7 +903,7 @@ async function apply(change) {
     // Not started yet: nothing to keep.
     if (!started) { tellHost(change.gen, 'reloading'); location.reload(); return; }
     // Where the player is before anything is swapped, for the page to open from should the swap not take.
-    const before = takeSnapshot(), began = performance.now();
+    const before = takeSnapshot(), roster = phonesHere(), began = performance.now();
     const said = [];
     let why = paths.length ? null : 'nothing to put in', touched = false;
     for (const path of paths.filter(p => !CODE.test(p))) {
@@ -934,15 +934,16 @@ async function apply(change) {
         if (change.pill) showPill();
         return;
     }
-    return startAgain(touched ? { ...change, touched } : change, touched ? before : undefined);
+    return startAgain(touched ? { ...change, touched } : change, touched ? before : undefined, touched ? roster : undefined);
 }
 
 // A change that can't be swapped in: the game's code runs again in place, keeping the page, the renderer and what the
-// game kept, or, where that can't be done, the page opens again. Either way from `state`, where the player was.
-function startAgain(change, state = takeSnapshot()) {
+// game kept, or, where that can't be done, the page opens again. Either way from `state`, where the player was, and
+// `roster`, the phones joined as it was taken: the new run hears of any who left since, whose place `state` still has.
+function startAgain(change, state = takeSnapshot(), roster = phonesHere()) {
     const why = canRunAgain(change);
     if (why) return reopenOrHold({ ...change, why: `${change.why}; ${why}` }, state);
-    return runAgain(change, state);
+    return runAgain(change, state, roster);
 }
 
 // A change that needs the page opened again is held for the person's Reload, never opened under them: the app and the
@@ -1363,7 +1364,8 @@ function putClass(C, N) {
 // runs again in order (loaded from its source with its imports pointed at the new versions, as a swap loads one), and
 // the module that starts the game calls game() again, whose init starts from the snapshot taken before (read with
 // pendingRestore(), or given to restore()). What stays is what a reload loses: the WebGL or WebGPU context and the
-// shaders compiled for it, the files the runtime loaded, the sound, the controllers, and every part the game kept.
+// shaders compiled for it, the files the runtime loaded, the sound, the controllers, the phones that joined, and every
+// part the game kept.
 //
 // A part is kept with `hot(import.meta).keep(key, build, { inputs, dispose })`: the first time it calls build() and
 // returns what that made (or its promise), and when the code runs again it returns the same thing without building it,
@@ -1519,7 +1521,7 @@ function canRunAgain(change) {
     return null;
 }
 
-async function runAgain(change, state) {
+async function runAgain(change, state, roster) {
     const began = performance.now(), why = change.why;
     const cannot = reason => reopenOrHold({ ...change, why: `${why}; ${reason}` }, state);
     const paths = (change.changed || []).map(clean);
@@ -1559,6 +1561,7 @@ async function runAgain(change, state) {
     started = false;
     swapGuard = null;
     hidePill();
+    holdPhones(roster);
     const leaving = hooks;
     hooks = {};
     try { if (leaving.dispose) await leaving.dispose(); } catch (e) { log(`Error: dispose: ${e && e.message || e}`); }
@@ -1569,6 +1572,7 @@ async function runAgain(change, state) {
     // A part whose async build started a timer still running loses it now, so it's built again.
     for (const k of kept.values()) if ((k.timers || []).some(t => intervals.has(t) || timeouts.has(t))) k.stale = true;
     takeAwayLeft();
+    if (phonesWaiting) phonesWaiting.leaving = false;
     listeners.clear();
     for (const voice of voices) sound.stop(voice);
     voices.clear();
@@ -1697,6 +1701,7 @@ function lift() {
 }
 
 function ranAgain(again) {
+    bringPhones();
     runningAgain = null;
     lifting = 0;
     shownFor = again.change.gen;
@@ -1784,6 +1789,7 @@ function watch() {
     };
     if (browser.AudioContext) window.AudioContext = window.webkitAudioContext = owning(browser.AudioContext, c => c.state !== 'closed' && c.close());
     if (browser.Worker) window.Worker = owning(browser.Worker, w => w.terminate());
+    watchPhones();
 }
 
 function takeAwayLeft() {
@@ -1799,6 +1805,66 @@ function takeAwayLeft() {
     timeouts.clear(); intervals.clear();
     for (const end of owned) { try { end(); } catch (e) {} }
     owned.clear();
+}
+
+// Phones belong to the page, as its link to them and their numbers do: running the game's code again neither stops nor
+// starts them, and lamp.js's timers go through the browser's own functions, so `takeAwayLeft` doesn't reach them. What
+// the code asked to hear of them belongs to that run of the code. The old run's calls end as it stops, and the new run's
+// wait until it's ready for its first frame: then it's told who left and who is here (`bringPhones`), and input goes on
+// from there. Presses and messages from in between are never replayed; what's held now is in `isHeld()`. A part the
+// game kept keeps hearing what it asked to, all along.
+const PHONE_EVENTS = ['onLink', 'onJoin', 'onLeave', 'onButton', 'onAxis', 'onMessage', 'onFile', 'onError'];
+const PHONE_LASTING = ['onLink', 'onError'];   // about the session, not a player's input: nothing to wait for
+const phoneCalls = new Set();
+let phones = null, phonesWaiting = null;
+
+function watchPhones() {
+    phones = window.Lamp && window.Lamp.controllers;
+    if (!phones) return;
+    // A file that starts while no game's code can take it is turned down, so the phone says so rather than waiting.
+    phones.onFile((player, file) => { if (phonesWaiting) file.cancel(); });
+    for (const name of PHONE_EVENTS) {
+        const add = phones[name];
+        phones[name] = fn => {
+            if (typeof fn !== 'function') return add.call(phones, fn);
+            const call = { name, fn, kept: keeping > 0 };
+            const off = add.call(phones, (...args) => {
+                if (!phonesWaiting || call.kept || PHONE_LASTING.includes(name)) fn(...args);
+            });
+            call.end = () => { call.ended = true; phoneCalls.delete(call); off(); };
+            if (!call.kept) phoneCalls.add(call);
+            if (phonesWaiting) phonesWaiting.calls.push(call);
+            return call.end;
+        };
+    }
+    const stop = phones.stop;
+    phones.stop = (...args) => {
+        if (phonesWaiting && phonesWaiting.leaving) { log('Lamp: the phones stay joined while the game\'s code runs again.'); return; }
+        return stop.apply(phones, args);
+    };
+}
+
+const phonesHere = () => phones ? phones.players() : [];
+
+function holdPhones(players) {
+    if (!phones) return;
+    phonesWaiting = { players, calls: [], leaving: true };
+    for (const call of [...phoneCalls]) call.end();
+}
+
+function bringPhones() {
+    const waited = phonesWaiting;
+    phonesWaiting = null;
+    if (!waited) return;
+    const here = phones.players();
+    const tell = (name, player) => {
+        for (const call of waited.calls) {
+            if (call.name !== name || call.ended) continue;
+            try { call.fn(player); } catch (e) { log(`Error: ${name}: ${e && e.message || e}`); }
+        }
+    };
+    for (const player of waited.players) if (!here.includes(player)) tell('onLeave', player);
+    for (const player of here) tell('onJoin', player);
 }
 
 // Swapped code that fails in its first second: the page opens again from where the player was before the swap.

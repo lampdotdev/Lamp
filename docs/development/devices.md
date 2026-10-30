@@ -559,7 +559,13 @@ the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) 
 Swift built into the player and every compiled game as one file (`GameKit.controllerKit`, which build.sh writes). As
 `Lamp.controllers` starts, it serves the page (`PhonePageServer`) and runs a `Relay` in the game's process, each on a
 port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
-the game quitting close both. A change of the phone page can't go into the open game as it's played, so it goes in
+the game quitting close both. The session is the page's, so it outlives a run of the game's code: lamp.js's service
+takes its timers from the browser as the page loads, before `watch` wraps them, so `takeAwayLeft` never reaches its
+beat, its renewal or its link. A run's own callbacks are the run's (`watchPhones`, as `watch` follows its listeners; a
+kept part's stay with the part): the old run's end as it stops (`holdPhones`), a `stop()` from its `dispose` is
+ignored, the new run's hear nothing of players until it's about to draw (`bringPhones`, in `ranAgain`), which calls
+its `onLeave` and `onJoin` with the difference and the present roster, and held buttons stay in `isHeld` while old
+presses and messages are dropped. The game's snapshot keeps which player has which slot. A change of the phone page can't go into the open game as it's played, so it goes in
 with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
 told to update. On an iPhone or iPad the game does the same while it's in front: the page goes in its bundle as
 `Phone/` at the top (`GamePhones.write`: the simulator's bundle in `finishSimulatorBundle`, and the copy Xcode builds

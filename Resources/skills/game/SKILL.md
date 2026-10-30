@@ -146,6 +146,13 @@ game is written to keep the player's place through one:
   current as state is added, and let the start take an older snapshot: a field it lacks keeps its start value. Without
   a snapshot a change of code that can't be swapped in (below) starts the game again, from its saves. (`restore(state)`, called after init when the
   game didn't read pendingRestore(), is still taken from games written that way; a new game reads the state at start.)
+- A game with phones keeps them through all of this: they stay joined with their numbers, and the code never stops or
+  starts `Lamp.controllers` for a change. So snapshot() holds which player owns which slot (the seat, side, color or
+  team each player number has), and the new code restores those slots before it sits anyone down. As its first frame
+  nears, `onLeave` and `onJoin` are called again for who left and who is here, so `onJoin` for a player who already has
+  a slot leaves the slot alone, and only a new player takes a free one. What a phone has held down is `isHeld`; a
+  press or message from before the new code started isn't sent again, so anything read while held is read with
+  `isHeld`, not remembered from `onButton`.
 - Pictures, models, sounds and data load through the runtime (`texture()`, `model()`, `sound.load()`, `asset()`), never
   by a URL of the game's own: a new copy of one of those goes into the running game with no reload. What the game makes
   of a file itself (a material from shader source, clones of a model, a mixer for its animations, a level from JSON) is
@@ -159,8 +166,9 @@ game is written to keep the player's place through one:
     runs again, and the game starts straight from the snapshot, as a reload would but without one. What the game keeps
     stays: the renderer and its compiled shaders, the files the runtime loaded, and each part kept with
     `hot(import.meta).keep(key, build, { inputs })`, so the change costs only what's built again. The listeners,
-    timers, sound contexts and workers the old code started are taken away by Lamp; `dispose` in game() is for anything
-    else it must let go of.
+    timers, sound contexts and workers the old code started are taken away by Lamp, and so are its `Lamp.controllers`
+    callbacks, which the new code sets again as it starts; `dispose` in game() is for anything else it must let go of,
+    and never stops the phones (a `stop()` there is ignored).
 
   So a game is written in parts, each in a module of its own:
 
