@@ -215,7 +215,24 @@ its requests go (`WebReach`), not from words in its code: "Connects to" names th
 outside this app" stands where a request's address can't be worked out (or a web address in the code reaches nothing it can
 follow), links are "Opens websites when clicked", and a page that only reads its own files says none of these. A copy of a library Lamp ships
 (three.js, Rapier) that is Lamp's byte for byte is left out of the review wherever it sits (`Sharing.knownLibraries`);
-one changed in any way is the sender's code. The rest of the sender's code is read in full: in requests of at most
+one changed in any way is the sender's code.
+
+A page that arrives from someone else (a shared file, its update, or a part of its wish) is then held to what its sheet
+named: its own files and the exact sites (scheme, host and port) of "Connects to" (`SharedNetwork`, the policy itself
+`NetworkPolicy` in LampRelayKit). Lamp records it as the app arrives, in its own folder (`SharedNetwork.folder`, which the
+agent's commands can't write), never for a starter or an app made here, and writes it into every build's Info.plist
+(`LampNetwork`), so it holds with Lamp closed and no rebuild or live change widens it. On the Mac, the iPhone and the
+iPad the app around the page enforces it (`LampPageGuard` in LampPage.swift): every document and worker is served with a
+Content-Security-Policy naming only those sites; the page never leaves its own address in its window or a frame
+(redirects included); a link opens in the browser only on the person's click, once they've seen where it goes; what
+no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
+"May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
+or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`). A copy of the wish
+(a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A host elsewhere (a TV, an Xbox,
+Android, a phone's controller page) holds a shared page only once it reads `SharedNetwork.policy(for:)` and enforces the
+same `NetworkPolicy`. Swift of the sender's beside the page (Sources/Native.swift) runs in the app's process, where no page
+rule reaches: it isn't switched off, since the page's calls of the device depend on it, and the sheet says "Has Swift that
+can reach any site" instead (`Sharing.ownSwift`). The rest of the sender's code is read in full: in requests of at most
 `Sharing.batchLimit` characters, a long file in slices, their answers put together with the highest risk any gave
 (`Sharing.Answer.merged`), every concern kept. A review in more than one request is never an all-clear (`ImportReview.split`:
 "AI checked its code in parts", and a click to open), and only past `Sharing.batchCount` requests, or a request that came
