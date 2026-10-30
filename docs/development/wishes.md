@@ -210,7 +210,10 @@ which of the two it is, and the copy is that kind: a screen stays a screen, at i
 opens on the Mac, wherever the sender had put it. Such a file says 12: a Lamp from before would take the page for a TV
 app's and leave the Swift beside it. The review is told what a page is and what it reaches through Lamp (`pageReview`:
 Lamp's AI through the app around it, the device through Native.swift), for a game too, and reads the page's reach as a
-TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `isPage`). A copy of a library Lamp ships
+TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `isPage`). A page's reach is read from where
+its requests go (`WebReach`), not from words in its code: "Connects to" names the outside sites a request goes to, "May connect
+outside this app" stands where a request's address can't be worked out (or a web address in the code reaches nothing it can
+follow), links are "Opens websites when clicked", and a page that only reads its own files says none of these. A copy of a library Lamp ships
 (three.js, Rapier) that is Lamp's byte for byte is left out of the review wherever it sits (`Sharing.knownLibraries`);
 one changed in any way is the sender's code. The rest of the sender's code is read in full: in requests of at most
 `Sharing.batchLimit` characters, a long file in slices, their answers put together with the highest risk any gave

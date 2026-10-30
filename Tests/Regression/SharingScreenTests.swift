@@ -85,7 +85,7 @@ final class SharingScreenTests: XCTestCase {
             XCTAssertEqual(found.files.first?.name, "Sources/Native.swift")
             XCTAssertTrue(found.files.map(\.name).contains("Web/index.html") && !found.truncated, "\(found.files.map(\.name))")
             XCTAssertGreaterThan(found.batches.count, 1)
-            XCTAssertTrue(found.detected.map(\.label).contains("Connects to the internet"), "\(found.detected.map(\.label))")
+            XCTAssertTrue(found.detected.map(\.label).contains("Connects to geocoding-api.open-meteo.com"), "\(found.detected.map(\.label))")
             let request = Sharing.reviewRequest(name: package.name, description: nil, notes: nil, files: found.files, page: true)
             XCTAssertTrue(request.system.contains("This app is a page"))
             XCTAssertFalse(request.system.contains("This app is a TV app"))
