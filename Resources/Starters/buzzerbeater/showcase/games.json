@@ -1,0 +1,351 @@
+[
+ {
+  "after": 0,
+  "games": [
+   {
+    "id": "h",
+    "league": "nba",
+    "away": {
+     "abbr": "HER",
+     "name": "Herons",
+     "score": 101,
+     "color": "1F6F8B"
+    },
+    "home": {
+     "abbr": "RIV",
+     "name": "Rails",
+     "score": 103,
+     "color": "C4472E"
+    },
+    "state": "live",
+    "statusText": "Q4 4:12",
+    "period": 4,
+    "clockSeconds": 252,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "k",
+    "league": "nhl",
+    "away": {
+     "abbr": "KNG",
+     "name": "Kingfishers",
+     "score": 2,
+     "color": "2E7D4F"
+    },
+    "home": {
+     "abbr": "TID",
+     "name": "Tide",
+     "score": 1,
+     "color": "274C9C"
+    },
+    "state": "live",
+    "statusText": "3rd 9:30",
+    "period": 3,
+    "clockSeconds": 570,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "o",
+    "league": "nba",
+    "away": {
+     "abbr": "ORC",
+     "name": "Orchards",
+     "score": 71,
+     "color": "8A4FA3"
+    },
+    "home": {
+     "abbr": "MES",
+     "name": "Mesas",
+     "score": 92,
+     "color": "C98A1B"
+    },
+    "state": "live",
+    "statusText": "Q3 2:40",
+    "period": 3,
+    "clockSeconds": 160,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "f",
+    "league": "nhl",
+    "away": {
+     "abbr": "FOX",
+     "name": "Foxes",
+     "score": 1,
+     "color": "B5541C"
+    },
+    "home": {
+     "abbr": "LAN",
+     "name": "Lanterns",
+     "score": 4,
+     "color": "3B3F8F"
+    },
+    "state": "live",
+    "statusText": "2nd 11:05",
+    "period": 2,
+    "clockSeconds": 665,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   }
+  ],
+  "plays": {
+   "h": "Okafor drains a corner three"
+  },
+  "chances": {
+   "h": 0.58
+  }
+ },
+ {
+  "after": 6,
+  "games": [
+   {
+    "id": "h",
+    "league": "nba",
+    "away": {
+     "abbr": "HER",
+     "name": "Herons",
+     "score": 104,
+     "color": "1F6F8B"
+    },
+    "home": {
+     "abbr": "RIV",
+     "name": "Rails",
+     "score": 103,
+     "color": "C4472E"
+    },
+    "state": "live",
+    "statusText": "Q4 2:51",
+    "period": 4,
+    "clockSeconds": 171,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "k",
+    "league": "nhl",
+    "away": {
+     "abbr": "KNG",
+     "name": "Kingfishers",
+     "score": 2,
+     "color": "2E7D4F"
+    },
+    "home": {
+     "abbr": "TID",
+     "name": "Tide",
+     "score": 2,
+     "color": "274C9C"
+    },
+    "state": "live",
+    "statusText": "OT 4:58",
+    "period": 4,
+    "clockSeconds": 298,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "o",
+    "league": "nba",
+    "away": {
+     "abbr": "ORC",
+     "name": "Orchards",
+     "score": 71,
+     "color": "8A4FA3"
+    },
+    "home": {
+     "abbr": "MES",
+     "name": "Mesas",
+     "score": 92,
+     "color": "C98A1B"
+    },
+    "state": "live",
+    "statusText": "Q3 2:40",
+    "period": 3,
+    "clockSeconds": 160,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "f",
+    "league": "nhl",
+    "away": {
+     "abbr": "FOX",
+     "name": "Foxes",
+     "score": 1,
+     "color": "B5541C"
+    },
+    "home": {
+     "abbr": "LAN",
+     "name": "Lanterns",
+     "score": 4,
+     "color": "3B3F8F"
+    },
+    "state": "live",
+    "statusText": "2nd 11:05",
+    "period": 2,
+    "clockSeconds": 665,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   }
+  ],
+  "plays": {
+   "h": "Okafor drains a corner three",
+   "k": "Vance ties it with 8 seconds left"
+  },
+  "chances": {
+   "h": 0.52,
+   "k": 0.5
+  }
+ },
+ {
+  "after": 12,
+  "games": [
+   {
+    "id": "h",
+    "league": "nba",
+    "away": {
+     "abbr": "HER",
+     "name": "Herons",
+     "score": 106,
+     "color": "1F6F8B"
+    },
+    "home": {
+     "abbr": "RIV",
+     "name": "Rails",
+     "score": 106,
+     "color": "C4472E"
+    },
+    "state": "live",
+    "statusText": "Q4 0:48",
+    "period": 4,
+    "clockSeconds": 48,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "k",
+    "league": "nhl",
+    "away": {
+     "abbr": "KNG",
+     "name": "Kingfishers",
+     "score": 2,
+     "color": "2E7D4F"
+    },
+    "home": {
+     "abbr": "TID",
+     "name": "Tide",
+     "score": 2,
+     "color": "274C9C"
+    },
+    "state": "live",
+    "statusText": "OT 3:20",
+    "period": 4,
+    "clockSeconds": 200,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "o",
+    "league": "nba",
+    "away": {
+     "abbr": "ORC",
+     "name": "Orchards",
+     "score": 71,
+     "color": "8A4FA3"
+    },
+    "home": {
+     "abbr": "MES",
+     "name": "Mesas",
+     "score": 92,
+     "color": "C98A1B"
+    },
+    "state": "live",
+    "statusText": "Q3 2:40",
+    "period": 3,
+    "clockSeconds": 160,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   },
+   {
+    "id": "f",
+    "league": "nhl",
+    "away": {
+     "abbr": "FOX",
+     "name": "Foxes",
+     "score": 1,
+     "color": "B5541C"
+    },
+    "home": {
+     "abbr": "LAN",
+     "name": "Lanterns",
+     "score": 4,
+     "color": "3B3F8F"
+    },
+    "state": "live",
+    "statusText": "2nd 11:05",
+    "period": 2,
+    "clockSeconds": 665,
+    "start": 0,
+    "networks": [
+     "ESPN"
+    ],
+    "leaders": [],
+    "broadcasts": []
+   }
+  ],
+  "plays": {
+   "h": "Reyes ties it from the line",
+   "k": "Vance ties it with 8 seconds left"
+  },
+  "chances": {
+   "h": 0.5,
+   "k": 0.47
+  }
+ }
+]
