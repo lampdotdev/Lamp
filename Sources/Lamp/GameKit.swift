@@ -435,8 +435,8 @@ enum GameKit {
     /// Why the game's own modules in Web/ wouldn't load as written (the first one with a syntax error, and where), or
     /// nil: what a change the agent is still writing goes into the open game by (`Store.autoApply`). Lamp's own files
     /// and the libraries beside the page are left out; a game bundled from TypeScript is checked by its bundling instead.
-    /// JavaScriptCore checks a script's syntax but not a module's, so each module is checked as a script: its imports
-    /// taken out, its exports unwrapped and its body inside an async function, so `await` at its top reads as it would.
+    /// JavaScriptCore checks a script's syntax but not a module's, so each module is checked as a script: its imports as
+    /// declarations, its exports unwrapped and its body inside an async function, so `await` at its top reads as it would.
     static func codeProblem(_ project: LampProject) -> String? {
         guard !compilesSource(project) else { return nil }
         let web = project.dir.appendingPathComponent(webFolder)
@@ -458,25 +458,45 @@ enum GameKit {
         return nil
     }
 
-    private static let moduleToScript: [(NSRegularExpression, String)] = [
-        (#"(?m)^[ \t]*import\s+[\s\S]*?\bfrom\s*(['"])[^'"\n]+\1\s*;?"#, ""),
-        (#"(?m)^[ \t]*import\s*(['"])[^'"\n]+\1\s*;?"#, ""),
-        (#"(?m)^[ \t]*export\s*\*\s*(as\s+[\w$]+\s*)?from\s*(['"])[^'"\n]+\2\s*;?"#, ""),
-        (#"(?m)^[ \t]*export\s*\{[^}]*\}\s*(from\s*(['"])[^'"\n]+\2)?\s*;?"#, ""),
-        (#"(?m)^([ \t]*)export\s+default\s+"#, "$1void "),
-        (#"(?m)^([ \t]*)export\s+(?=(async\s+)?function|class|const|let|var)"#, "$1"),
-        (#"\bimport\.meta\b"#, "({ url: '' })"),
-    ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
+    /// Each module statement the rewrite turns into script, and what it becomes: an import a declaration of the same
+    /// names (`const { a, b: c } = __lampModule;`), so its own syntax is still checked; an export what it exports, the
+    /// word taken out wherever it stands (not a property named export); `import.meta` an object. What's taken out leaves
+    /// its line breaks, so an error's line is the module's own.
+    private static let moduleToScript: [(NSRegularExpression, String)] = {
+        let gap = #"(?:\s|/\*[\s\S]*?\*/|//[^\n]*\n)*"#, lead = #"(?<![.\w$])"#
+        return [
+            (lead + "import" + gap + #"((?:[\w$]+\s*,\s*)?(?:\*\s*as\s+[\w$]+|\{[^;]*?\}|[\w$]+)?[^;'"]*?)"# + gap + #"\bfrom\s*(['"])[^'"\n]+\2\s*;?"#, "import"),
+            (lead + #"import\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + "export" + gap + #"\*\s*(?:as\s+[\w$]+\s*)?from\s*(['"])[^'"\n]+\1\s*;?"#, ""),
+            (lead + "export" + gap + #"\{[^}]*\}"# + gap + #"(?:from\s*(['"])[^'"\n]+\1)?\s*;?"#, ""),
+            (lead + "export" + gap + #"default\b"#, "void "),
+            (lead + #"export\b(?!\s*:)"#, ""),
+            (#"\bimport\.meta\b"#, "({ url: '' })"),
+        ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
+    }()
+
+    /// An import's names as the pattern of a declaration: `d, { a, b as c }` reads `d = __lampModule, { a, b: c }`.
+    private static func declared(_ clause: String) -> String {
+        var names = clause.trimmingCharacters(in: .whitespacesAndNewlines)
+        if names.isEmpty { return "__lampNothing" }
+        names = names.replacingOccurrences(of: #"\*\s*as\s+([\w$]+)"#, with: "$1", options: .regularExpression)
+        if let open = names.firstIndex(of: "{") {
+            names = String(names[..<open]) + names[open...].replacingOccurrences(of: #"\bas\b"#, with: ":", options: .regularExpression)
+        }
+        if let comma = names.firstIndex(of: ","), names[..<comma].range(of: #"^[\w$]+\s*$"#, options: .regularExpression) != nil {
+            names = String(names[..<comma]) + " = __lampModule," + names[names.index(after: comma)...]
+        }
+        return names
+    }
 
     /// A module as a script with the same syntax, its lines where they were (one line down).
     static func scriptForm(of module: String) -> String {
         var text = module as NSString
         for (pattern, template) in moduleToScript {
-            // What's taken out leaves its line breaks, so an error's line is the module's own.
             for match in pattern.matches(in: text as String, range: NSRange(location: 0, length: text.length)).reversed() {
-                let found = text.substring(with: match.range)
-                let put = template.isEmpty ? String(repeating: "\n", count: found.filter { $0 == "\n" }.count)
-                    : pattern.replacementString(for: match, in: text as String, offset: 0, template: template)
+                let breaks = String(repeating: "\n", count: text.substring(with: match.range).filter { $0 == "\n" }.count)
+                let put = template == "import" ? "const " + declared(text.substring(with: match.range(at: 1))) + " = __lampModule;" + breaks
+                    : template + breaks
                 text = text.replacingCharacters(in: match.range, with: put) as NSString
             }
         }

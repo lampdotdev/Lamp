@@ -776,9 +776,6 @@ final class Store: ObservableObject {
         var applying: Task<Void, Never>?
         var applyingSources = ""
         var autoApplied = 0
-        /// The change being put in is a game's page, built by that step itself (`autoApply`): its build doesn't wait
-        /// for the step it's part of.
-        var steppingPage = false
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
@@ -8180,16 +8177,18 @@ final class Store: ObservableObject {
 
     /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
     /// the app installs the whole build anyway.
-    private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
+    /// `ownStep`: the build a game's step makes while it's the change being put in (`stepPage`), which doesn't wait for
+    /// itself; every other build waits for that change.
+    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false) async -> String? {
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
-        let problem = await buildNow(project, inPlace: inPlace)
+        let problem = await buildNow(project, inPlace: inPlace, ownStep: ownStep)
         if glowing, problem != nil { AppTransition.end(project) }
         return problem
     }
 
-    private func buildNow(_ project: LampProject, inPlace: Bool) async -> String? {
+    private func buildNow(_ project: LampProject, inPlace: Bool, ownStep: Bool = false) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         // Only the wish, its apps all in folders of their own: nothing to build here.
         guard project.holdsApp else { return nil }
@@ -8199,7 +8198,7 @@ final class Store: ObservableObject {
         owner?.building = true
         defer { owner?.building = false }
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
-        if owner?.steppingPage != true { await owner?.applying?.value }
+        if !ownStep { await owner?.applying?.value }
         await owner?.warming?.value
         log(project, .status, "Building…")
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
@@ -8480,8 +8479,7 @@ final class Store: ObservableObject {
                 if stepsPage(current) {
                     turn.applying = Task { [weak self] in
                         guard let self else { return }
-                        defer { turn.applying = nil; turn.steppingPage = false }
-                        turn.steppingPage = true
+                        defer { turn.applying = nil }
                         await stepPage(current, in: turn, saved: saved)
                     }
                     await turn.applying?.value
@@ -8543,7 +8541,11 @@ final class Store: ObservableObject {
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
         // Still being written, or broken: tried again once it changes.
         guard GameKit.codeProblem(project) == nil else { return }
-        guard await build(project) == nil, turns[project.id] === turn, !turn.stopped, let current = current(project) else { return }
+        // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
+        var mac = project
+        mac.chosen = .mac
+        guard await build(mac, ownStep: true) == nil, turns[project.id] === turn, !turn.stopped, var current = current(project) else { return }
+        current.chosen = .mac
         guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {
             AppTransition.end(current)
             return
@@ -8680,8 +8682,11 @@ final class Store: ObservableObject {
         case .unchanged, .went:
             // A swap is on screen at once; a page that runs its code again, or opens again, says when it's showing the
             // change (`shown`, `pageShown`), and the smoke stays over the window until then.
+            // Only the game runtime says `shown`: a screen, a web app or a game running its own loop opens again with its
+            // own page, and the smoke goes as before (`install`).
+            let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
             if outcome == .went("swapped") { AppTransition.land(project) }
-            else if outcome == .went("rerun") || outcome == .went("reloading") {
+            else if saysShown, outcome == .went("rerun") || outcome == .went("reloading") {
                 awaitShown(project)
                 // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
                 await untilShown(project)
