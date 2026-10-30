@@ -325,6 +325,9 @@ extension Agent {
             // server the agent ran to try something) and takes another turn once it ends, so a server kept the turn
             // going with nobody to answer to. A command that runs long stops at its time limit instead.
             env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
+            // Compacts at Lamp's size, not near the model's window: with a million tokens it would wait until the
+            // pictures resent with every request had long passed what one request can carry (`Conversation`).
+            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = String(Conversation.compactAt)
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
@@ -465,10 +468,12 @@ extension Agent {
             // in OpenAI's published reference; a Codex that drops it ignores the setting and offers its own skills.
             // Codex sends no summaries of the model's thinking unless asked; their headings name its steps in the
             // chat (`AgentEvent.naming`), where the shell commands alone said nothing a person could follow.
+            // It compacts at Lamp's size, as the other engines do (`Conversation.compactAt`).
             let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               -c "$LAMP_CODEX_PERMISSIONS" -c default_permissions="lamp" \(review) \\
               -c web_search="live" -c model_reasoning_summary="detailed" -c skills.bundled.enabled=false -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
+              -c model_auto_compact_token_limit=\(Conversation.compactAt) \\
               -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp?files=1" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """

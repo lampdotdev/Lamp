@@ -51,7 +51,12 @@ A wish that arrived from somewhere and has been changed since (`Store.original(t
 the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
 original" in the panel, with Start Again beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
 creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Again from the Original in
-its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. For a starter there's
+its menu (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. It starts
+the conversation again too, since one about a game that's gone would steer the next request: every engine's
+conversation is set aside (`Conversation.setAside`, "How big a conversation grows" in the engines guide), so the next
+request starts fresh, told the original's APP.md, and the chat goes down to one line, "Started again from the
+original" (`Store.startConversationAgain`). Both are kept with the version the restore made, so Undo of it brings back
+the code, the old chat and the old conversations together. For a starter there's
 also Duplicate the Original (`Store.duplicateOriginal`): a fresh copy of the starter as this Lamp ships it, put on the
 desk as a remix link puts one, beside the changed copy. Send Changes Back… is
 in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the

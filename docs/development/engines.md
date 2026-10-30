@@ -43,7 +43,7 @@ A capability given to one engine must be given to all of them that can take it, 
   with the request. `Memory.brief` adds them once per conversation and again only when the notes were
   changed by someone else, going by what `.lamp/notes-shown.json` says that engine's conversation last knew;
   most requests carry nothing. A conversation its engine has compacted is told again (pi's and Claude Code's parsers report
-  `.compacted`; Codex doesn't say, so its conversations are told again every few requests), and the person can switch it off (`Memory.isOn`, on by default, the checkbox at the top of Settings → Memory): off, there are no notes tools, rule or summaries, and Settings neither reads nor lists the notes. On, Settings lists only the notes that hold something (`MemorySettings.listing`), with one "Nothing yet" row when none do; Add Notes starts a set Lamp hasn't, as a menu, or a button naming the one place left. The switch keeps the key it had as an experiment that was off by default (`experimentMemory`), so whoever chose then keeps their choice and only someone who never chose gets the default.
+  `.compacted`; Codex doesn't say, so Lamp sees it in Codex's file after the run, and its conversations are told again every few requests besides), and the person can switch it off (`Memory.isOn`, on by default, the checkbox at the top of Settings → Memory): off, there are no notes tools, rule or summaries, and Settings neither reads nor lists the notes. On, Settings lists only the notes that hold something (`MemorySettings.listing`), with one "Nothing yet" row when none do; Add Notes starts a set Lamp hasn't, as a menu, or a button naming the one place left. The switch keeps the key it had as an experiment that was off by default (`experimentMemory`), so whoever chose then keeps their choice and only someone who never chose gets the default.
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
   When to think of saving is said in the rule (`Agent.memoryRules`): at the end of each request, without waiting to be told to remember, and nothing when nothing lasting came up; an instruction for the one request (“don't test it”) is not a preference and isn't noted. No second call to a model decides it.
   A save that changes what the notes say leaves a receipt in the chat (`NoteReceipt`, a `.noted` line, logged in `Store.notes` for every engine): one line that opens to the lines added and removed, and Undo (`Store.undoNote`), which takes that save back out even when the notes have changed since. What was taken back is told to the agent with its next request (`Memory.tookBack`, beside the summaries), so the conversation that learned it doesn't note it again: each engine keeps its own conversation about an app, so each one is told (`Memory.Undone`). Undoing a later save never brings back a line taken back on an earlier receipt. An Undo that leaves notes neither as they were before the save nor as they are now gives them a summary made from their own lines (`NoteReceipt.summary(of:)`): the summary is all the agent is told, so it must be true of what is left.
@@ -55,7 +55,7 @@ A capability given to one engine must be given to all of them that can take it, 
   repair Lamp asks for later in it, a build's errors or a crash, which sends no request), the newest kept when there
   are more than fit. When it last ran is read from what each engine already leaves (Claude Code's and Codex's conversation
   file, rewritten as each run starts; pi's session file), so no new record is kept; a conversation that is only now
-  beginning, an ended one included (`Store.forgetConversation`), is given the chat from its start.
+  beginning, an ended one included (`Store.forgetConversation`, `Conversation.setAside`), is given the chat from its start.
 - **Skills** (`Skills`, `Resources/skills`): guidance only some requests need lives in a skill, not in the system
   prompt, so the prompt keeps what nearly every request uses. A skill is a folder with a `SKILL.md` in the Agent
   Skills format (a one-line `name` and `description` between `---` lines, then the instructions), copied into
@@ -88,15 +88,36 @@ A capability given to one engine must be given to all of them that can take it, 
   in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy
   (`Previews.forAgent`, under `.lamp/runtime/previews`, through `Store.agentPictures`), never the file itself, and
   as bytes Lamp read (`Store.pictureData`: pi's extension gets them with the answer, never a path to read):
-  the screenshots and the art stay as they are for the person and the app. A screenshot's copy keeps its pixels,
-  since `use_app`'s points are pixels in the picture at the scale it was taken; art is shrunk to 1280 px. Lamp
-  writes the copies unconfined, so their folder and file are checked like `Store.artDestination` checks art. pi's extension (`keepsPicturesFew` in
-  `lamp-tools.ts`) then takes the older pictures out of what the model is sent after each turn, with pi's
+  the screenshots and the art stay as they are for the person and the app. The copies are JPEG at 0.6
+  (`Previews.agentQuality`). A screenshot's copy keeps its pixels, since `use_app`'s points are pixels in the picture
+  at the scale it was taken, so a Mac window is taken at no more than 1024 px on its long side (`LampRuntime.scale(of:)` in
+  LampSupport.swift), which still reads its words; art is shrunk to 1024 px. Lamp
+  writes the copies unconfined, so their folder and file are checked like `Store.artDestination` checks art. Only the
+  newest few pictures stay in what each engine sends: pi's extension (`keepsPicturesFew` in
+  `lamp-tools.ts`) takes the older ones out after each turn, with pi's
   context edits (the session file keeps them), and when a request is refused as too big all the same it drops
-  every picture and sends once more. Claude Code and Codex compact on their own by tokens, which the small
-  copies keep ahead of the byte limit. When a request is still refused (`Agent.isRequestTooLarge`), the turn
-  says so in plain words and the conversation ends (`Store.forgetConversation`): the next request starts a
-  fresh one rather than failing the same way.
+  every picture and sends once more. Claude Code and Codex can't drop a picture, so Lamp does it in their own files
+  before resuming them (`Conversation.keepPicturesFew`): once a conversation holds more than 12, all but the newest 6
+  become a line saying a picture was taken out, in the engine's own spelling, the rest of the file left as it was.
+  In a batch, not each turn, since each change to a conversation's beginning costs its cached copy at the provider.
+- **How big a conversation grows** (`Conversation`): every engine sends its whole conversation with each request, so a
+  wish worked on for days grows past what one request can carry (about 32 MB at Anthropic) long before a model with a
+  million tokens fills its window and compacts. So every engine compacts at `Conversation.compactAt` (200k tokens):
+  Claude Code by `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (it compacts a little under the window it's given), Codex by
+  `model_auto_compact_token_limit`, and pi by Lamp's extension (`compactsEarly`, from `LAMP_COMPACT_TOKENS`), which
+  has pi's own compaction do it. Claude Code's `compact_boundary` and pi's `compaction_end` are `.compacted`, and Codex's
+  is found in its file after the run; nothing of it shows in the chat, and the notes are told again. Each run's size
+  before and after (the context its last request took, the pictures still sent and their bytes, the file, how often it
+  compacted) is a line in `conversations.log` in Lamp's logs folder (`Conversation.note`). Lamp Dev takes
+  `LAMP_COMPACT_TOKENS` from its own environment to try a compaction quickly (Claude Code takes no window under 100k;
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers it further). When a request fails all the same in a way a smaller
+  conversation would get past (`Conversation.isTooBigToSend`: refused for its size, the prompt too long, or the
+  connection cut or the provider failing while a large conversation went out), Lamp sets that engine's conversation
+  aside (`Conversation.setAside`: its id moves to `.lamp/set-aside`, the conversation stays where the engine keeps it,
+  nothing is deleted), says so in the chat ("Started a fresh conversation for <wish>: the last one had grown too large
+  to send") and sends the request once more in a fresh one, told the wish's APP.md (`Conversation.freshNote`) and the
+  chat so far (`CatchUp`). If that fails too, the turn says so in plain words. Start Again from the Original sets every
+  engine's conversation aside the same way ("Start Again" in the desk guide).
 - **Messages sent while the agent works**: they wait in line for the next turn as one group, and the person chooses
   whether it goes now. The group sits close together under one caption at its latest message, with Send Now (Send
   All Now for several) beside it (`ChatLook.QueuedRow`, `QueuedPlace`, in both chats; `Store.canSendNow`), which hands
