@@ -776,6 +776,13 @@ final class Store: ObservableObject {
         var applying: Task<Void, Never>?
         var applyingSources = ""
         var autoApplied = 0
+        /// The sources a step of the agent's saves put into the game open on this Mac (`stepPage`): a build of the same
+        /// sources has nothing to show the person, so it says nothing in the chat.
+        var shownSources = ""
+        /// The agent's look is playing the game in the hidden copy (`playGame`), which a message from the person stops
+        /// (`stoppedForMessage`): they never wait behind Lamp's own checking.
+        var playingHidden = false
+        var stoppedForMessage = false
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
@@ -3954,6 +3961,12 @@ final class Store: ObservableObject {
             saveChat(project)
         }
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
+        // A message never waits behind Lamp's own checking: a play in the hidden copy stops, so the turn goes on to it.
+        if let turn = turns[project.id], turn.playingHidden {
+            turn.stoppedForMessage = true
+            WebGamePreview.stop(for: project.id)
+            if let process = turn.build { Subprocess.terminateTree(process) }
+        }
         // Keeping the wish's other places current gives way to a request: they're tried again once it's done.
         for app in apps(of: wish(of: project)) where turns[app.id]?.updatingPlaces == true { turns[app.id]?.cancel() }
         startQueued(project)
@@ -8300,7 +8313,8 @@ final class Store: ObservableObject {
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
         if !ownStep { await owner?.applying?.value }
         await owner?.warming?.value
-        log(project, .status, "Building…")
+        // Not said when the game open on this Mac already shows these sources: a step put them in.
+        if owner?.shownSources.isEmpty != false || owner?.shownSources != Runtime.fingerprint(project) { log(project, .status, "Building…") }
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
         // its install comes after the package is made, so the icon is brought up to date first, not there.
         if project.onDevice, !DeviceSupport.icons(for: project).isEmpty { await prepareIcon(project) }
@@ -8659,6 +8673,7 @@ final class Store: ObservableObject {
         }
         // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
         guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
+        turn.shownSources = Runtime.fingerprint(current)
         turn.autoApplied += 1
         log(current, .status, "Put the change into \(current.name)")
         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
@@ -9818,7 +9833,6 @@ final class Store: ObservableObject {
     /// The preview's build, or what stops it, in the words the agent is given.
     private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
         // The preview is drawn out of sight, often while the person plays the game itself: these say it's a copy.
-        note("Building a hidden copy…", for: project)
         // Its copy of the page is made from the same folders a step of the agent's saves builds from (a TypeScript game's
         // Web/app/ among them): one going in is waited for, and none starts until the copy is made (`autoApply` waits
         // while the turn builds); the preview then plays from its own copy, alongside any step.
@@ -9840,14 +9854,20 @@ final class Store: ObservableObject {
     }
 
     private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
-        note("Trying the change in a hidden copy", for: project)
+        // Lamp's own checking, out of sight: nothing in the chat says it's happening.
         let played: GameKit.Played
+        owner.playingHidden = true
+        defer { owner.playingHidden = false }
         do {
             played = GameKit.engine(project) == .web ? try await GameKit.playWeb(project, script: script)
                 : try await GameKit.play(project, script: script, started: { [weak self] in self?.turns[project.id]?.build = $0 })
             turns[project.id]?.build = nil
         } catch {
             turns[project.id]?.build = nil
+            if owner.stoppedForMessage {
+                owner.stoppedForMessage = false
+                return (200, ["text": "Lamp stopped trying the game in the hidden copy: the person sent a message. Read it before you go on; look again later if you still need to."])
+            }
             return (200, ["text": error.localizedDescription])
         }
         guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }

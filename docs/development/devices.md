@@ -481,7 +481,10 @@ once it compiles and the saving has paused, not waiting for the agent to look or
 seconds, and a game's are tried once they've held still for six seconds, no more often than every fifteen, since each
 step can hold the picture for a moment), and while the agent's look plays the game in the hidden copy, which can take
 minutes (only the look's build, which writes the same folders, is waited for; `PageLive.put` puts one change into a
-copy at a time). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+copy at a time). Lamp's own checking says nothing in the chat: the hidden copy's build and play show no line, and a
+look's build of sources a step already put into the open game doesn't say "Building…" (`Turn.shownSources`). A message
+the person sends while the hidden copy plays stops the play (`WebGamePreview.stop`), and the agent's look answers that
+the person wrote, so a message never waits behind Lamp's checking. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the

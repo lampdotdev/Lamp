@@ -24,6 +24,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     private var hashes: [String: String] = [:]
     private var lastPlayed = Date()
     private var playing = false
+    private var stopped = false
     /// Each play's number, so a play's timeout never ends the next one.
     private var round = 0
     private let files = StagedFiles()
@@ -36,16 +37,29 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     /// didn't start, or ran for more than two minutes: a whole city takes about half a minute to build out of sight).
     /// A shared game (`policy`) is held to what it's held to as an app (`SharedNetwork`), and is never kept warm: its
     /// policy is set up afresh with each play.
+    /// The preview playing for each game now, which `stop` ends.
+    private static var underWay: [String: WebGamePreview] = [:]
+    /// Ends the play under way for a game (the person sent a message): it answers nil, and isn't kept warm.
+    static func stop(for id: String) {
+        guard let preview = underWay[id] else { return }
+        preview.stopped = true
+        preview.end(nil)
+    }
+
     static func play(_ staged: URL, script: [String], for id: String, policy: NetworkPolicy? = nil) async -> (pictures: [String: Data], result: [String: Any])? {
+        defer { underWay[id] = nil }
         if let kept = warm[id] {
             warm[id] = nil
+            underWay[id] = kept
             if policy == nil, let played = await kept.again(staged, script: script) {
                 keep(kept, for: id, after: played.result)
                 return played
             }
             kept.close()
         }
+        if underWay[id]?.stopped == true { return nil }
         let preview = WebGamePreview()
+        underWay[id] = preview
         preview.files.policy = policy
         preview.files.own = "lamp-game://app"
         guard let result = await preview.run(staged, script: script) else { preview.close(); return nil }
@@ -55,7 +69,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
 
     /// Kept open after a play that ended cleanly, closed once it has waited `keptFor` with no look.
     private static func keep(_ preview: WebGamePreview, for id: String, after result: [String: Any]) {
-        guard result["failed"] == nil, result["again"] as? Bool != false, preview.webView != nil else { return preview.close() }
+        guard result["failed"] == nil, result["again"] as? Bool != false, preview.webView != nil, !preview.stopped else { return preview.close() }
         warm[id]?.close()
         warm[id] = preview
         preview.lastPlayed = Date()
