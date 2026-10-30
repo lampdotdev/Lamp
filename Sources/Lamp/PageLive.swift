@@ -84,6 +84,9 @@ import Foundation
     /// Why the page last said it had to open again, or hold a change for a pause (code that couldn't be swapped in), by
     /// app: for the agent's look, so its next change can be one that swaps.
     private var reasons: [String: String] = [:]
+    /// What came through the page's last run of its code, in its words (lamp-game.js, `cameThrough`), by copy: for the
+    /// agent's look, so anything lost is put right in the same turn.
+    private var reports: [Key: String] = [:]
     /// Asked of the copy on the Mac: what its page has saved, for a preview to start from (`saved(of:)`).
     private var asking: [String: CheckedContinuation<[String: String]?, Never>] = [:]
     /// What each app's copy on the Mac last said it had saved, by app, kept only while Lamp runs.
@@ -251,6 +254,9 @@ import Foundation
     /// Why the page last opened again or held a change, in its words (lamp-game.js); nil after a swap.
     func reason(_ project: LampProject) -> String? { reasons[project.id] }
 
+    /// What the copy at `place` last said came through a run of its code; nil after a swap, or when it hasn't said.
+    func report(_ project: LampProject, at place: Place) -> String? { reports[Key(id: project.id, place: place)] }
+
     /// Whether a copy is holding a change for a pause.
     func holds(_ project: LampProject) -> Bool { held.contains { $0.id == project.id } }
 
@@ -364,7 +370,14 @@ import Foundation
             Store.shared.pageShown(project)
             return (200, [:])
         }
-        if ["held", "reloading", "rerun", "swapped"].contains(state) { reasons[project.id] = (body["why"] as? String).map { String($0.prefix(300)) } }
+        if state == "report" {
+            reports[key] = (body["why"] as? String).map { String($0.prefix(600)) }
+            return (200, [:])
+        }
+        if ["held", "reloading", "rerun", "swapped"].contains(state) {
+            reasons[project.id] = (body["why"] as? String).map { String($0.prefix(600)) }
+            reports[key] = nil
+        }
         if state == "held" { held.insert(key) }
         if let change = lastGiven(project, key), ["held", "swapped", "rerun", "reloading"].contains(state) {
             var marked = change

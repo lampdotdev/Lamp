@@ -10209,7 +10209,17 @@ final class Store: ObservableObject {
         let phone = GameKit.phonePreviewProblem(project) == nil ? " Its phone page is yours to see and press too: `phone` on `use_app`'s actions." : ""
         let said = (motion ? "Lamp played the game in the preview from its start for two seconds, no one touching the controller; a frame every half second follows, oldest first."
             : "Lamp played the game in the preview from its start for two seconds, no one touching the controller; the last frame follows.") + phone
-        return await playGame(project, script: script, owner: turn, said: said, pictures: Set(script.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }))
+        var answer = await playGame(project, script: script, owner: turn, said: said, pictures: Set(script.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }))
+        // The open game takes what was played as the play goes on (`autoApply`): what it did with it is known a moment
+        // after, and the agent is about to say what the person sees.
+        let open = PageLive.shared.isOpen(project, at: .mac)
+        var waited = 0
+        while open, waited < 12, !PageLive.shared.holds(project), turn.applying != nil || Runtime.sourcesChanged(current(project) ?? project) {
+            try? await Task.sleep(for: .milliseconds(500))
+            waited += 1
+        }
+        if let text = answer.1["text"] as? String { answer.1["text"] = text + GameKit.openGameNote(project) }
+        return answer
     }
 
     /// `use_app` for a game: the controller's moves added to the play so far, and the whole of it played
@@ -13768,7 +13778,11 @@ final class Store: ObservableObject {
                         + " and started from its snapshot: the person waited for the world to be built again. Where you can, make the next change one its modules swap in (the game skill, \"Changes while it's played\")."
                 } else if turn.pageRanAgain {
                     note = "The change went into the open game by running its code again in place" + (turn.reloadWhy.map { " (\($0))" } ?? "")
-                        + ": it started from its snapshot, keeping the page, the renderer and the parts it keeps, and built the rest again. The game's log says what was kept and how long it took (the game skill, \"Changes while it's played\")."
+                        + ": it started from what it registered, keeping the page and built the rest again. The game's log says how long it took (the game skill, \"Changes while it's played\")."
+                }
+                // What came through, so what was lost can be registered in this turn.
+                if turn.pageReopened || turn.pageRanAgain, let report = PageLive.shared.report(project, at: project.onIOS ? .simulator : .mac) {
+                    note += " What came through: \(report). Anything reset or not registered is the person's place lost: register it now, so the next change keeps it."
                 }
                 if turn.endedReloadWait {
                     note += " The change that was waiting for Reload went in with it, so nothing waits for Reload now; don't tell the person to press it."

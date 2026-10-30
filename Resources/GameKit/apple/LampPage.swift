@@ -1337,10 +1337,10 @@ final class LampPageBlockedHost: NSObject {
         tell(said["gen"] as? Int ?? gen, state, why: said["why"] as? String)
     }
 
-    /// `why` is the page's reason for opening again or holding a change: code it couldn't swap in.
+    /// `why` is the page's reason for opening again or holding a change (code it couldn't swap in), or what came through.
     private func tell(_ gen: Int, _ state: String, why: String? = nil) {
         var body: [String: Any] = ["gen": gen, "state": state, "epoch": epoch, "place": Self.place]
-        if let why { body["why"] = String(why.prefix(300)) }
+        if let why { body["why"] = String(why.prefix(600)) }
         Task { _ = try? await call("/app/page/state", body, timeout: 10) }
     }
 

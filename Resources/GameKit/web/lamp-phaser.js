@@ -91,7 +91,7 @@ export async function phaser({ scenes, pixelArt = false, physics, background = '
     };
     let g = null;
     return game({
-        renderer, touch, keyboard, sharp: true, snapshot, restore, busy, assetChanged,
+        renderer, touch, keyboard, sharp: true, flat: true, snapshot, restore, busy, assetChanged,
         async dispose() {
             if (dispose) await dispose();
             // Phaser takes a game away at its next step, which a sleeping loop never takes: it goes now.

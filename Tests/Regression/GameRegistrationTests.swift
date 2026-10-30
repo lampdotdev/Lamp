@@ -241,6 +241,110 @@ final class GameRegistrationTests: XCTestCase {
         XCTAssertEqual(kept, "[1,[3,3,3],true]")
     }
 
+    // MARK: What isn't registered
+
+    /// A game that keeps nothing of the player's place, on its way to being told so.
+    private static let unadopted = """
+        import { game } from './lamp-game.js';
+        \(builds)
+        const renderer = makeRenderer();
+        window.run = (window.run || 0) + 1;
+        window.score = window.run === 1 ? 5 : 0;
+        game({ renderer, frame() { window.drawn = window.run; } });
+        """
+
+    private func held() -> [String: Any]? { live.told.last { $0["state"] as? String == "held" } }
+
+    func testAChangeThatWouldStartPlayOverWaitsForReloadAndSaysWhatIsMissing() async throws {
+        try await open(Self.unadopted)
+        files.text["game.js"] = Self.unadopted + "\nwindow.changed = 1;"
+        try await js("window.__lampLive({ changed: ['game.js'], gen: 1, why: 'test' })")
+        try await until("the page said it holds it") { self.held() != nil }
+        let why = held()?["why"] as? String ?? ""
+        XCTAssertTrue(why.contains("its gameplay state (live.state)") && why.contains("its renderer (live.renderer)") && why.contains("its camera (live.camera)"), why)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let run = try await number("window.run")
+        XCTAssertEqual(run, 1, "play wasn't started over")
+
+        // The person's Reload always goes in, and the run says what started again.
+        try await js("window.__lampLive({ changed: ['game.js'], gen: 2, now: true, why: 'test' })")
+        try await until("Reload took it") { try await self.number("window.drawn") == 2 }
+        try await until("the page said what came through") { self.live.told.contains { $0["state"] as? String == "report" } }
+        let said = live.told.last { $0["state"] as? String == "report" }?["why"] as? String ?? ""
+        XCTAssertTrue(said.contains("not registered, so started again") && said.contains("its gameplay state"), said)
+    }
+
+    func testAGameThatReadsItsSnapshotBackGoesOn() async throws {
+        let game = """
+            import { game, pendingRestore } from './lamp-game.js';
+            \(Self.builds)
+            const renderer = makeRenderer();
+            window.run = (window.run || 0) + 1;
+            let level = 1;
+            game({ renderer, snapshot: () => ({ level }), init() { const was = pendingRestore(); if (was) level = was.level; window.level = level; },
+                   frame() { window.drawn = window.run; } });
+            """
+        try await open(game)
+        files.text["game.js"] = game + "\nwindow.changed = 1;"
+        try await js("window.__lampLive({ changed: ['game.js'], gen: 1, why: 'test' })")
+        try await until("the code ran again by itself") { try await self.number("window.drawn") == 2 }
+        XCTAssertNil(held())
+    }
+
+    func testARunSaysWhatItKeptBuiltAndReset() async throws {
+        try await open(Self.game(body: "live.keep('rock', () => ({ a: window.run }));"))
+        try await wander()
+        files.text["game.js"] = Self.game(version: 2, body: "live.keep('rock', () => ({ a: window.run, b: 1 }));")
+        try await js("window.__lampLive({ changed: ['game.js'], gen: 1, why: 'test' })")
+        try await until("the page said what came through") { self.live.told.contains { $0["state"] as? String == "report" } }
+        let said = live.told.last { $0["state"] as? String == "report" }?["why"] as? String ?? ""
+        XCTAssertTrue(said.contains("kept renderer, camera main"), said)
+        XCTAssertTrue(said.contains("built again rock"), said)
+        XCTAssertTrue(said.contains("reset state play"), said)
+        XCTAssertTrue(said.contains("not registered, so started again") == false, said)
+    }
+
+    func testTheRequestSaysWhatTheCodeDoesntRegister() async throws {
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-game-registered-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Web"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var project = LampProject(id: "duck", name: "Duck", exe: "Duck", dir: root, platform: .game, family: .iphone, chosen: .mac, places: [.mac])
+        project.engine = "web"
+        func write(_ code: String) throws { try code.write(to: root.appendingPathComponent("Web/game.js"), atomically: true, encoding: .utf8) }
+        try write("const renderer = new THREE.WebGLRenderer(); game({ renderer });")
+        XCTAssertEqual(GameKit.unregistered(project).count, 3)
+        XCTAssertTrue(GameKit.unregisteredNote(project).contains("its gameplay state"))
+        try write("const renderer = live.renderer(() => make()); const c = live.camera('main', build); const p = live.state('play', {});")
+        XCTAssertEqual(GameKit.unregistered(project), [])
+        XCTAssertEqual(GameKit.unregisteredNote(project), "")
+        try write("import { phaser } from './lamp-phaser.js'; const p = hot(import.meta).state('play', {});")
+        XCTAssertEqual(GameKit.unregistered(project), [], "a 2D game's renderer and cameras are Phaser's")
+
+        // What the page said came through reaches a look in the hidden copy, where the agent mostly looks.
+        _ = PageLive.shared.state(["place": "mac", "state": "report", "why": "kept renderer; reset state play"], for: project)
+        XCTAssertTrue(GameKit.openGameNote(project).contains("reset state play"))
+        // Another copy's run is that copy's: the note is about the game open on the Mac.
+        _ = PageLive.shared.state(["place": "simulator", "state": "report", "why": "kept nothing"], for: project)
+        XCTAssertTrue(GameKit.openGameNote(project).contains("reset state play"))
+        _ = PageLive.shared.state(["place": "simulator", "state": "swapped"], for: project)
+        XCTAssertTrue(GameKit.openGameNote(project).contains("reset state play"))
+        _ = PageLive.shared.state(["place": "mac", "state": "swapped"], for: project)
+        XCTAssertFalse(GameKit.openGameNote(project).contains("reset state play"), "a later change has its own word")
+
+        // Open, with its state registered and a camera of its own: a change goes in by itself, and the agent hears only that
+        // the camera starts again. Without the state, the change waits for Reload.
+        let asking = Task { _ = await PageLive.shared.poll(["place": "mac"], for: project) }
+        defer { asking.cancel() }
+        await Task.yield()
+        try write("const renderer = live.renderer(() => make()); const p = live.state('play', {});")
+        XCTAssertTrue(GameKit.openGameNote(project).contains("its camera"))
+        XCTAssertFalse(GameKit.openGameNote(project).contains("Reload"), GameKit.openGameNote(project))
+        XCTAssertFalse(GameKit.unregisteredNote(project).contains("Reload"), GameKit.unregisteredNote(project))
+        try write("const renderer = live.renderer(() => make()); const c = live.camera('main', build);")
+        XCTAssertTrue(GameKit.openGameNote(project).contains("Reload"))
+        XCTAssertTrue(GameKit.unregisteredNote(project).contains("Reload"))
+    }
+
     // MARK: A module that takes its changes
 
     /// The game's state, declared in a module that takes its changes. `then` is what its new version does as it goes in.
