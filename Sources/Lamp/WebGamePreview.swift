@@ -185,7 +185,8 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         }
         if let step = body["phone"] as? [String: Any] {
             Task { @MainActor in
-                replyHandler(await self.phoneStep(step, inbox: body["inbox"] as? String ?? "[]", hosted: body["hosted"] as? Bool ?? false), nil)
+                replyHandler(await self.phoneStep(step, inbox: body["inbox"] as? String ?? "[]", hosted: body["hosted"] as? Bool ?? false,
+                                                  elapsed: (body["elapsed"] as? NSNumber)?.doubleValue ?? 0), nil)
             }
             return
         }
@@ -200,14 +201,14 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     }
 
     /// One step on the phone page, from the game's play: the first opens it. Nil tells the play there's no phone.
-    private func phoneStep(_ step: [String: Any], inbox: String, hosted: Bool) async -> String? {
+    private func phoneStep(_ step: [String: Any], inbox: String, hosted: Bool, elapsed: Double) async -> String? {
         if phone == nil {
             guard let phoneFolder else { return nil }
             let opening = PhonePreview()
             guard await opening.open(phoneFolder) else { return nil }
             phone = opening
         }
-        return await phone?.step(step, inbox: inbox, hosted: hosted)
+        return await phone?.step(step, inbox: inbox, hosted: hosted, elapsed: elapsed)
     }
 
     private func keep(_ png: Data, as name: String) {

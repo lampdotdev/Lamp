@@ -1,3 +1,4 @@
+import JavaScriptCore
 import LampRelayKit
 import Network
 import WebKit
@@ -228,6 +229,68 @@ final class GamePhonePreviewTests: XCTestCase {
 
         let back = messages(await phone.step(["do": "link", "what": "back"], inbox: "[]", hosted: true))
         XCTAssertEqual(back.first?["t"] as? String, "hello", "the page's own retry found the link again")
+    }
+
+    /// A control that goes off only when held, as a long press does: what `amount` on a click claims to exercise.
+    func testTheScriptsTimePassesOnThePage() async throws {
+        let dir = try page()
+        try """
+            <!doctype html><div id="go" style="position:absolute;left:0;top:0;width:200px;height:200px"></div>
+            <script src="lamp-controller.js"></script>
+            <script>
+              var pad = LampController.connect({}), go = document.getElementById('go'), timer = null;
+              go.addEventListener('pointerdown', function () { var at = Date.now(); timer = setTimeout(function () { pad.send({ long: Date.now() - at }); }, 500); });
+              go.addEventListener('pointerup', function () { clearTimeout(timer); });
+            </script>
+            """.write(to: dir.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        let phone = PhonePreview()
+        let opened = await phone.open(dir)
+        XCTAssertTrue(opened)
+        defer { phone.close() }
+        _ = await phone.step(["do": "sync"], inbox: "[]", hosted: true)
+
+        _ = await phone.step(["do": "down", "target": "#go"], inbox: "[]", hosted: true)
+        let short = messages(await phone.step(["do": "up"], inbox: "[]", hosted: true, elapsed: 100))
+        XCTAssertTrue(short.isEmpty, "a tenth of a second isn't a long press")
+
+        _ = await phone.step(["do": "down", "target": "#go"], inbox: "[]", hosted: true)
+        let long = messages(await phone.step(["do": "up"], inbox: "[]", hosted: true, elapsed: 1000))
+        XCTAssertEqual((long.first?["data"] as? [String: Any])?["long"] as? Int, 500, "the page's clock said the time the script held for")
+    }
+
+    /// The page gets its player number and the game's word on a join before the first press, as a person's page has them
+    /// by the time they press. The play's own code, with Lamp answering as the preview does.
+    func testAPlaysFirstStepOnThePageComesAfterItsJoin() throws {
+        let runtime = try String(contentsOf: Self.runtimeFile(), encoding: .utf8)
+        let from = try XCTUnwrap(runtime.range(of: "let phone = null;")), to = try XCTUnwrap(runtime.range(of: "async function runPreview()"))
+        let context = try XCTUnwrap(JSContext())
+        var failure: String?
+        context.exceptionHandler = { _, value in failure = value?.toString() }
+        context.evaluateScript("""
+            var asked = [], logs = [], player = null, game = { joined: 0 };
+            function log(said) { logs.push(said); }
+            var window = { Lamp: { controllers: { _attach: function (source) { source.start({
+              join: function (key, route) { game.joined++; route.text({ t: 'player', number: 1 }); },
+              leave: function () {}, input: function () {} }); } } },
+              webkit: { messageHandlers: { lampPreview: { postMessage: function (m) {
+                asked.push({ does: m.phone.do, player: player });
+                JSON.parse(m.inbox).forEach(function (said) { if (said.t === 'player') player = said.number; });
+                return Promise.resolve(JSON.stringify({ messages: asked.length === 1 ? [{ t: 'hello' }] : [] }));
+              } } } } };
+            """ + String(runtime[from.lowerBound..<to.lowerBound]) + """
+            phoneStep({ do: 'down', target: 'Hop' });
+            """)
+        for _ in 0..<20 { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        XCTAssertNil(failure)
+        let order = try XCTUnwrap(context.evaluateScript("JSON.stringify(asked)")?.toString())
+        let steps = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(order.utf8)) as? [[String: Any]])
+        let press = try XCTUnwrap(steps.first { $0["does"] as? String == "down" })
+        XCTAssertEqual(press["player"] as? Int, 1, order)
+    }
+
+    private static func runtimeFile() -> URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/GameKit/web/lamp-game.js")
     }
 
     func testThePictureIsOnePixelToACSSPixel() async throws {

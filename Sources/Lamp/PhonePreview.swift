@@ -6,7 +6,9 @@ import WebKit
 /// Lamp's real lamp-controller.js in a web view no one sees, sideways at a phone's size unless a play turns it upright.
 /// Its link to the game is a stand-in for the relay's socket: what the page sends waits here until the game's play
 /// reaches the next step and takes it (`WebGamePreview`, lamp-game.js's `phoneStep`), and the game's `Lamp.controllers`
-/// hears it as it hears any player, so a play with a phone stays one script played from the start. Nothing here is a
+/// hears it as it hears any player, so a play with a phone stays one script played from the start. The page's timers and
+/// clocks go by the game's frames (`step`'s `elapsed`), since a play runs far faster than the time it stands for, so a long
+/// press or a countdown there lasts what the script says; a CSS animation runs by real time. Nothing here is a
 /// network: the page is held to its own files, and no relay, link or credential is involved, so the join itself and
 /// everything a real phone's browser does (rotation lock, notches, the keyboard, tilt) is still only a real phone's to show.
 @MainActor
@@ -68,14 +70,15 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
     }
 
     /// One step of a play: the game's messages go in (`inbox`, JSON), the action happens on the page, and what the page
-    /// sent comes back as JSON. `hosted`: whether the game has started its controllers.
-    func step(_ action: [String: Any], inbox: String, hosted: Bool) async -> String {
+    /// sent comes back as JSON. `hosted`: whether the game has started its controllers. `elapsed`: the milliseconds of play
+    /// since the last step, which pass on the page's clock before anything else happens.
+    func step(_ action: [String: Any], inbox: String, hosted: Bool, elapsed: Double = 0) async -> String {
         guard let webView else { return "{}" }
         if action["do"] as? String == "rotate", let turn = Self.turn(action["direction"] as? String) {
             webView.setFrameSize(turn.size)
-            return await call("return await __lampPhone.step({ do: 'rotate', angle: a }, b, c)", ["a": turn.angle, "b": inbox, "c": hosted]) ?? "{}"
+            return await call("return await __lampPhone.step({ do: 'rotate', angle: a }, b, c, d)", ["a": turn.angle, "b": inbox, "c": hosted, "d": elapsed]) ?? "{}"
         }
-        return await call("return await __lampPhone.step(a, b, c)", ["a": action, "b": inbox, "c": hosted]) ?? "{}"
+        return await call("return await __lampPhone.step(a, b, c, d)", ["a": action, "b": inbox, "c": hosted, "d": elapsed]) ?? "{}"
     }
 
     /// The size the phone is held at and the angle a browser would say.
@@ -144,12 +147,55 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
           var outbox = [], socket = null, opened = false, lost = false, away = false, hosted = false, player = null;
           var sent = [], logged = [], finger = null, angle = 90;
 
+          // The page's time, moved on by `advance`: the play's, not the wall's. Lamp's own waits keep the real timers.
+          var realTimeout = window.setTimeout.bind(window), RealDate = Date, started = RealDate.now(), clock = 0;
+          var timers = new Map(), nextTimer = 1, firing = 0;
+          function schedule(fn, delay, args, every) {
+            var id = nextTimer++;
+            var run = typeof fn === 'function' ? function () { fn.apply(window, args); } : function () { (0, eval)(String(fn)); };
+            delay = Math.max(0, +delay || 0);
+            timers.set(id, { run: run, at: clock + delay, every: every ? Math.max(1, delay) : 0 });
+            return id;
+          }
+          window.setTimeout = function (fn, delay) { return schedule(fn, delay, Array.prototype.slice.call(arguments, 2), false); };
+          window.setInterval = function (fn, delay) { return schedule(fn, delay, Array.prototype.slice.call(arguments, 2), true); };
+          window.clearTimeout = window.clearInterval = function (id) { timers.delete(id); };
+          window.requestAnimationFrame = function (fn) {
+            var frame = 1000 / 60;
+            return schedule(function () { fn(clock); }, frame - clock % frame, [], false);
+          };
+          window.cancelAnimationFrame = function (id) { timers.delete(id); };
+          function PageDate() {
+            if (!new.target) return new RealDate(started + clock).toString();
+            if (!arguments.length) return new RealDate(started + clock);
+            return new (Function.prototype.bind.apply(RealDate, [null].concat(Array.prototype.slice.call(arguments))))();
+          }
+          PageDate.prototype = RealDate.prototype;
+          PageDate.UTC = RealDate.UTC; PageDate.parse = RealDate.parse;
+          PageDate.now = function () { return started + clock; };
+          window.Date = PageDate;
+          Object.defineProperty(performance, 'now', { configurable: true, value: function () { return clock; } });
+          // Each timer due in the time passed, in order, with the clock at its moment. A page whose timer never stops
+          // adding timers can't hold the play up.
+          function advance(ms) {
+            var end = clock + Math.max(0, +ms || 0), fired = 0;
+            for (;;) {
+              var due = null, dueId = 0;
+              timers.forEach(function (t, id) { if (t.at <= end && (!due || t.at < due.at)) { due = t; dueId = id; } });
+              if (!due || fired++ > 20000) break;
+              clock = Math.max(clock, due.at);
+              if (due.every) due.at += due.every; else timers.delete(dueId);
+              try { due.run(); } catch (e) { logged.push('Error: ' + e.message); }
+            }
+            clock = end;
+          }
+
           function deliver(m) { if (socket && socket.readyState === 1 && socket.onmessage) socket.onmessage({ data: JSON.stringify(m) }); }
           function Socket(url) {
             var self = this;
             this.url = url; this.readyState = 0; this.binaryType = 'blob'; this.bufferedAmount = 0;
             socket = this;
-            setTimeout(function () {
+            realTimeout(function () {
               if (socket !== self) return;
               if (lost) { self.readyState = 3; if (self.onclose) self.onclose({ code: 1006 }); return; }
               self.readyState = 1;
@@ -321,22 +367,25 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
               if (away) { away = false; deliver({ t: 'state', host: hosted }); }
             }
           }
-          function pause(ms) { return new Promise(function (done) { setTimeout(done, ms); }); }
-          async function joined(ms) { for (var i = 0; i * 20 < ms && !opened; i++) await pause(20); }
+          function pause(ms) { return new Promise(function (done) { realTimeout(done, ms); }); }
+          // `passing`: the page's clock runs meanwhile, for a page trying its link again on its own timer.
+          async function joined(ms, passing) { for (var i = 0; i * 20 < ms && !opened; i++) { await pause(20); if (passing) advance(50); } }
+          var first = true;
 
           window.__lampPhone = {
-            step: async function (step, inbox, nowHosted) {
+            step: async function (step, inbox, nowHosted, elapsed) {
               var was = hosted;
               hosted = !!nowHosted;
               if (hosted !== was && !away) deliver({ t: 'state', host: hosted });
-              await joined(400);
+              if (first) { first = false; await joined(400, false); }
+              advance(elapsed);
               (JSON.parse(inbox || '[]')).forEach(function (m) { if (m.t === 'player') player = m.number; deliver(m); });
               switch (step.do) {
                 case 'down': down(step); break;
                 case 'move': move(step); break;
                 case 'up': up(); break;
                 case 'type': type(step); break;
-                case 'link': link(step.what); if (step.what === 'back') await joined(3000); break;
+                case 'link': link(step.what); if (step.what === 'back') await joined(3000, true); break;
                 case 'rotate':
                   angle = step.angle;
                   // WebKit tells the page of its new size on its own; a phone's turn also says this.
@@ -345,7 +394,10 @@ final class PhonePreview: NSObject, WKNavigationDelegate {
                   orientation.dispatchEvent(new Event('change'));
                   break;
               }
+              // What the step set going right away, on the page's clock and off it.
+              advance(0);
               await pause(40);
+              advance(0);
               return JSON.stringify({ messages: outbox.splice(0) });
             },
             report: function () {

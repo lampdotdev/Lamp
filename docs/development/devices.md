@@ -582,7 +582,8 @@ window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stag
 over the published one, with Lamp's real lamp-controller.js, and the page opens at 844x390 in a second hidden web view
 at the play's first `phone` line, held to its own files. Its socket is a stand-in with no network behind it: what either
 side says waits for the next `phone` or `shot` line (`phoneStep` in lamp-game.js), which hands it across between two
-frames, and to `Lamp.controllers` the phone is a player that came another way (`_attach`), so a play with a phone is one
+frames, the page's timers and clocks moved on by the frames played since the last one, and to `Lamp.controllers` the phone
+is a player that came another way (`_attach`), so a play with a phone is one
 script like any other, played from the start, and never in a warm preview. In the preview `Lamp.controllers` asks no host
 for a session and draws its join card from a made-up address. This shows the page, its layout and what it sends; the join,
 the relay, files, rotation lock, notches, the keyboard and tilt are still only a real phone's to show.
