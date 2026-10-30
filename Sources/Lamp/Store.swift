@@ -8557,7 +8557,8 @@ final class Store: ObservableObject {
             AppTransition.end(current)
             return
         }
-        guard turns[project.id] === turn, !turn.stopped else { return }
+        // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
+        guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
         turn.autoApplied += 1
         log(current, .status, "Put the change into \(current.name)")
         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
@@ -9744,8 +9745,15 @@ final class Store: ObservableObject {
             return (200, ["text": error.localizedDescription])
         }
         guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
-        // What the game logged is its log, for the person's Agent Details as much as the agent.
-        try? AppFolder.write(played.printed.joined(separator: "\n") + "\n", to: Runtime.logURL(project), in: project.dir)
+        // What the game logged is its log, for the person's Agent Details as much as the agent. While the game is open on
+        // this Mac its own copy is writing that log: the hidden copy's play is added after it, never written over it.
+        let printed = played.printed.joined(separator: "\n") + "\n"
+        if isRunning(project), let log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir) {
+            log.write(Data(("[the hidden copy's play]\n" + printed).utf8))
+            try? log.close()
+        } else {
+            try? AppFolder.write(printed, to: Runtime.logURL(project), in: project.dir)
+        }
         var text = said
         if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
         // It names the game's sound files and comes from what the preview printed: the agent's only when the log is.
