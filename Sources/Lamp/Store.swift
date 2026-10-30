@@ -7088,7 +7088,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// `assets`: ready-made models, sprites, tiles, icons and textures from Lamp's index of free work (`AssetCatalog`).
+    /// `assets`: ready-made models, sprites, tiles, icons, textures, sounds and music from Lamp's index of free work (`AssetCatalog`).
     /// With `find` (and `kind`) it lists what fits, within what the slowest place the app is shown can draw, and with
     /// `show` their pictures in one sheet; with `fetch` it brings the chosen ones into where the app's build takes files
     /// from (Web/assets/ for a game or another page, a native Android app's packaged assets, else Assets/), checked
@@ -7113,7 +7113,7 @@ final class Store: ObservableObject {
             let shown = Array(fitting.prefix(min(max(arguments["limit"] as? Int ?? 12, 1), 30)))
             guard !shown.isEmpty else {
                 let heavy = found.isEmpty ? "" : " (\(found.count) were too heavy for \(budget.place))"
-                return (200, ["text": "Nothing in Lamp's free assets fits that\(heavy). Try other words or a broader kind, or make it in code or with make_art."])
+                return (200, ["text": "Nothing in Lamp's free assets fits that\(heavy). Try other words or a broader kind, or make it in code (or a picture with make_art)."])
             }
             var text = "Free assets that fit, best first, with their size in the file's own units (y up). Bring one in with `fetch` and its id:\n"
                 + shown.map { AssetCatalog.line($0, budget: budget) }.joined(separator: "\n")
@@ -7179,6 +7179,7 @@ final class Store: ObservableObject {
                     line += String(format: " (box x %.2f…%.2f, y %.2f…%.2f, z %.2f…%.2f in its units)", box[0], box[3], box[1], box[4], box[2], box[5])
                 }
                 if !item.animations.isEmpty { line += "; animations: " + item.animations.prefix(12).joined(separator: ", ") }
+                if item.loops { line += "; loops" }
                 if let notes = item.notes { line += "; \(notes)" }
                 if let note = files.compactMap(\.note).first { line += "; \(note)" }
                 if AssetCatalog.needsCredit(item.license) { line += "; \(item.license): credit \"\(item.name) by \(item.author)\" where the app shows its credits" }
@@ -7189,7 +7190,7 @@ final class Store: ObservableObject {
         }
         var text = ""
         if !said.isEmpty {
-            let loading = page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`"
+            let loading = page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`, `await sound.load('assets/…')`"
                 : android ? "inside the app's packaged assets, as `LampAssets` reads them" : "inside Assets/, as `LampAssets.url(\"…\")` takes them"
             text = "Brought in, under \(base) (paths below are \(loading)), and credited in credits.json:\n"
                 + said.joined(separator: "\n")

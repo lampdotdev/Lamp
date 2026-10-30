@@ -1269,10 +1269,11 @@ extension Agent.Rules {
 
     static let gameWebSound = """
     - Sound: a game has it, through `sound` in lamp-game.js, never an <audio> tag or a library. Give each thing the \
-    player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. Make them in \
-    code with `sound.tone({ wave, from, to, attack, hold, release, volume })` (a square or triangle wave sliding up \
-    for a jump or a pickup, down for a fall or a loss, noise for a hit or an explosion, a few milliseconds of attack \
-    so nothing clicks) unless the person gave sound files, which go in Web/ and load with `await sound.load('hit.wav')`. \
+    player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. Use the sound files the person gave \
+    (they go in Web/), or ready-made ones from the `assets` tool (the assets skill), or make them in code with \
+    `sound.tone({ wave, from, to, attack, hold, release, volume })` (a square or triangle wave sliding up for a jump or \
+    a pickup, down for a fall or a loss, noise for a hit or an explosion, a few milliseconds of attack so nothing \
+    clicks). A file loads with `await sound.load('assets/subspace-retro-sfx/sfx_coin_single1.wav')`. \
     Make or load every sound once, as the game sets itself up (the 2d-game or 3d-game skill says where), never during \
     play, then `sound.play(s, { volume, pan, pitch })` as things happen, varying \
     pitch a little (0.9 to 1.1, from random()) for one heard often; `{ loop: true }` for a sound that lasts, changed \
@@ -1284,7 +1285,7 @@ extension Agent.Rules {
     static let gameWebAssets = """
     - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac. A model, picture \
     or sound the game uses is copied into Web/, which goes into the app, and loaded by its path there through lamp-game.js. \
-    Ready-made models, sprite sheets, tilesets and textures come from the `assets` tool, in one style (the assets \
+    Ready-made models, sprite sheets, tilesets, textures, sounds and music come from the `assets` tool, in one style (the assets \
     skill); otherwise shapes and colors made in code: a game of simple shapes, well lit and well colored, looks better \
     than one of mismatched models.
     """
@@ -1325,13 +1326,13 @@ extension Agent.Rules {
     static let gameSound = """
     - Sound: a game has it, through the kit (the sound part of lamp_game.h), never anything of the system's. Give \
     each thing the player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. \
-    Make them in code with `lamp_sound_tone` (a square or triangle wave sliding up for a jump or a pickup, down for a \
-    fall or a loss, noise for a hit or an explosion, a few milliseconds of attack so nothing clicks) unless the \
-    person gave sound files; theirs go in Assets/ (.wav or .ogg for effects, .ogg or .mp3 for music) and load with \
-    `lamp_sound_load`. Load or make every sound once in game_init, then `lamp_play` it as things happen, varying \
+    Use the sound files the person gave (they go in Assets/: .wav or .ogg for effects, .ogg or .mp3 for music), or \
+    ready-made ones from the `assets` tool (the assets skill), which load with `lamp_sound_load`, or make them in code \
+    with `lamp_sound_tone` (a square or triangle wave sliding up for a jump or a pickup, down for a fall or a loss, \
+    noise for a hit or an explosion, a few milliseconds of attack so nothing clicks). Load or make every sound once in game_init, then `lamp_play` it as things happen, varying \
     `pitch` a little (0.9 to 1.1, from `lamp_random_float`) for one heard often; `lamp_play_loop` for a sound that \
     lasts (an engine), changed with `lamp_voice_set` and ended with `lamp_stop`. Music is optional and quiet \
-    (0.3 to 0.4) under effects at 0.5 to 0.8: `lamp_music` for a file the person gave, or a short tune of your own \
+    (0.3 to 0.4) under effects at 0.5 to 0.8: `lamp_music` for a file the person gave or the `assets` tool brought in, or a short tune of your own \
     made into samples (`lamp_sound_samples`, notes of a gentle wave with soft ends) played with `lamp_music_sound`. The pause menu \
     (Menu) turns sound and music on and off with `lamp_volume`, kept with `lamp_save`. The preview plays nothing \
     aloud; each look says what was played and how loud the mix came out: keep its loudest under -3 dB, and play \

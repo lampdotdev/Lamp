@@ -1,6 +1,6 @@
 ---
 name: assets
-description: Ready-made models, sprites, tilesets, UI, icons and textures from Lamp's free index (the `assets` tool) - when to use them rather than making things in code or with make_art, keeping one style, loading them so a change shows in the running game, glTF scale, orientation, copies and animations in three.js, sprite sheets and tilesets in Phaser, pictures for apps, and their credit. Read before choosing how a game's or app's things will look.
+description: Ready-made models, sprites, tilesets, UI, icons, textures, sound effects and music from Lamp's free index (the `assets` tool) - when to use them rather than making things in code or with make_art, keeping one style, loading them so a change shows in the running game, glTF scale, orientation, copies and animations in three.js, sprite sheets and tilesets in Phaser, sounds and music, pictures for apps, and their credit. Read before choosing how a game's or app's things will look or sound.
 ---
 
 # Ready-made assets
@@ -8,9 +8,10 @@ description: Ready-made models, sprites, tilesets, UI, icons and textures from L
 The `assets` tool searches Lamp's index of free work by people who publish it for anyone to use: low-poly 3D packs
 (Kenney's city, houses, furniture and survival kits, Quaternius's cars, nature, animals, people and monsters, KayKit's
 city bits, a few single models such as a taxi or a bus), Kenney's 2D packs (a platformer, a space shooter, a top-down
-racer, pixel-art towns and dungeons, cartoon characters, animals), UI pieces, icons, and ambientCG's tileable
-materials. Each is CC0, or CC-BY, which asks for credit. Lamp fetches what you choose into the app, checks it, makes
-its pictures smaller where the slowest place it's shown needs that, and writes its credit in credits.json. Nothing is
+racer, pixel-art towns and dungeons, cartoon characters, animals), UI pieces, icons, ambientCG's tileable materials,
+Kenney's interface sounds and SubspaceAudio's retro effects and music loops. Each is CC0, or CC-BY, which asks for
+credit. Lamp fetches what you choose into the app, checks it, makes its pictures smaller where the slowest place it's
+shown needs that, and writes its credit in credits.json. Nothing is
 loaded from the network while the app runs.
 
 ## Ready-made or made yourself
@@ -123,6 +124,38 @@ Load in a Boot scene's `preload`, by the path the fetch gave:
 
 A picture Phaser's loader read goes in again through `assetChanged(path)` in phaser() (the 2d-game skill).
 
+## Sounds and music
+
+Kinds `sound` (short effects) and `music` (loops). Each line has its length and says when it loops. `show` has nothing
+to show: a sound's name and notes are all you can judge it by, so try it in the game, and say in your report that you
+haven't heard it, since the preview plays nothing aloud.
+
+Ready-made when the game wants a finished, recorded feel: menu clicks, coins, hits, a tune to play to. Made in code
+(the game skill, "Sound") when an effect must follow the game (an engine's pitch, notes on a scale), or when nothing here
+suits. Most sounds here are retro and chiptune: it suits an arcade or pixel-art game and fights a calm,
+realistic or orchestral one, so don't force it. One game keeps to one sound family as it keeps to one art style.
+
+Choose them as the game is made, and fetch them then: they ship inside it, so the game works offline. Load each once, as
+the game sets itself up, through the runtime, and play it with what the game skill names:
+
+```js
+const SOUNDS = { click: 'assets/subspace-retro-sfx/sfx_menu_select1.wav', coin: 'assets/subspace-retro-sfx/sfx_coin_single1.wav' };
+const click = await sound.load(SOUNDS.click);
+const theme = await sound.load('assets/subspace-music-loops/menu-relaxed.ogg');
+sound.play(click, { volume: 0.7 });
+sound.music(theme, 0.35);
+```
+
+Keep them in one table, as with models, and keep the mute setting and `sound.volume` as the game skill says: a fetched
+sound follows them like any other. A loop is decoded whole, about 20 MB of memory a minute: one or two on a phone or a
+TV, and the shortest that does. Native games read the same files: `lamp_sound_load` and `lamp_music` take
+`"<pack>/<file>"` from Assets/, and a Swift app `LampAssets.url("<pack>/<file>")`.
+
+Kenney's interface sounds and the music are Ogg Vorbis, which a page or `AVAudioPlayer` on Apple's devices decodes only
+from about macOS 15.4 and iOS 18.4: on an older one such a sound stays silent, and the page's log says it couldn't be
+loaded. SubspaceAudio's effects are WAV and play everywhere, so they carry a game's menus and what the player needs to
+hear; use them for those on an older Mac or iPhone.
+
 ## In an app
 
 On Apple's devices, an SF Symbol comes before any icon file. Kenney's icons and UI pieces suit a game's menus, a web
@@ -132,7 +165,7 @@ RealityKit scene is turned into USD as the scene-3d skill says.
 
 ## Credit
 
-Lamp writes each fetched asset into credits.json (its pack, author, license and files), which the app's info, its About
+Lamp writes each fetched asset, sounds and music included, into credits.json (its pack, author, license and files), which the app's info, its About
 window, a shared copy, a published page and its repository's README all show: never take an entry out. CC-BY work asks
 for more: name it where the game or app shows its credits too (a Credits line in the pause menu or the About screen:
 "Taxi by Poly by Google, CC BY 3.0"), which the fetch answer reminds you of. CC0 needs nothing, though a line thanking

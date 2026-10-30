@@ -79,7 +79,7 @@ What Lamp has changed in Phaser, so its usual code works here:
   `addKey`. Phaser's pointer input works with the mouse on the Mac; on a touch screen Lamp's touch controls lie over
   the canvas, so a game played by tapping the screen itself passes `touch: false` and reads `this.input.on('pointerdown')`.
 - **Sound is the runtime's.** Phaser's sound is off: `this.load.audio` and `this.sound` play nothing. Make effects with
-  `sound.tone` in a scene's `create` (or once, at the top of game.js), or load files with `await sound.load('hit.wav')`.
+  `sound.tone` in a scene's `create` (or once, at the top of game.js), or load files with `await sound.load('assets/…')`.
 - **The stage is 1920x1080**, fitted to the window or screen with black around it. Lay everything out in those units.
   The page is never resized to the window: don't listen for resize.
 - **Loading.** Load each scene's files in its `preload`, best all in a first Boot scene, and start play from `create`.
@@ -174,8 +174,8 @@ Nothing is loaded from the network, ever: the art is in Web/ or made in code.
 
 ### Sound and saves
 
-The game skill's: effects from `sound.tone` for each thing the player does or meets (a jump sliding up, a coin's two
-quick notes, noise for a hit), made once; music quiet or none. The best score, levels reached and settings with
+The game skill's: an effect for each thing the player does or meets, from a file or `sound.tone` (a jump sliding up, a
+coin's two quick notes, noise for a hit), made or loaded once; music quiet or none. The best score, levels reached and settings with
 `save(name, value)` and `load(name)`, read with a default for anything new (`load('best') ?? 0`).
 `snapshot()` in phaser() keeps the player's place through a change (the scene, its mode, which menu or DOM card is
 open, the player's position, the score, the time), and `busy()` holds a change that runs the game's code again during a round (the game skill,
@@ -277,7 +277,7 @@ the scene as `@Observable` (Observation), which `@State` holds as above; a scene
   a fixed letter, and keys by the key ("Space", "←").
 - **Pixel art**: `texture.filteringMode = .nearest` on every texture, positions rounded to whole pixels, and the scene
   scaled by a whole number.
-- **Sound and saves**: as the game skill says for Swift (effects made once with AVAudioEngine, `.ambient` on iPhone),
+- **Sound and saves**: as the game skill says for Swift (files with AVAudioPlayer or effects made once with AVAudioEngine, `.ambient` on iPhone),
   and the best score and settings in LampStore.
 - **Game Center** (`GKLocalPlayer.local.authenticateHandler`, leaderboards) works only in an app signed for the
   person's Apple team with Game Center on: keep the game whole without it, scores in LampStore as well.
