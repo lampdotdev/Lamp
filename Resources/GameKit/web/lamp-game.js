@@ -934,7 +934,7 @@ async function apply(change) {
         if (change.pill) showPill();
         return;
     }
-    return startAgain(change, touched ? before : undefined);
+    return startAgain(touched ? { ...change, touched } : change, touched ? before : undefined);
 }
 
 // A change that can't be swapped in: the game's code runs again in place, keeping the page, the renderer and what the
@@ -948,8 +948,10 @@ function startAgain(change, state = takeSnapshot()) {
 // A change that needs the page opened again is held for the person's Reload, never opened under them: the app and the
 // chat show Reload (`held`), and it goes in when they press it (`now`). The code run again in place goes in by itself.
 // Lamp's preview, which nobody watches, opens a new page instead.
+// A swap that already changed the running game (its old version's disposers run, its exports put in) leaves nothing safe
+// to wait in: that opens the page again at once, from where the player was before it.
 function reopenOrHold(change, state) {
-    if (change.now || preview) return reopen(change, state);
+    if (change.now || change.touched || preview) return reopen(change, state);
     waiting = { ...change, hard: true };
     log(`Lamp: a change that needs the game opened again (${change.why}) waits for Reload.`);
     tellHost(change.gen, 'held', change.why);
