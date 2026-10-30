@@ -101,14 +101,15 @@ struct DeskList {
         /// Its id in the list, apart from any wish's: a wish's is its folder's name, which has no colon.
         static func id(of folder: String) -> String { "starter:" + folder }
 
-        /// What the list says of it, read from the starter's tree as `DeskEntry.read` reads a copy.
+        /// What the list says of it, read from what the bundle lists it by (its tree once fetched, `Starters.listed`) as
+        /// `DeskEntry.read` reads a copy.
         nonisolated static func read(_ starter: Starters.Starter) -> Fresh {
             let folder = starter.folder.lastPathComponent
-            let credits = Credits.read(starter.tree.appendingPathComponent(Credits.file))
+            let credits = Credits.read(Starters.listed(.credits, of: starter))
             let adapted = credits?.upstream.first { $0.adapted == true } ?? credits?.upstream.first
             let target = starter.kind.target
             let fm = FileManager.default
-            let preview = Starters.preview(of: starter), icon = Starters.iconFolder(of: starter).appendingPathComponent("icon.png")
+            let preview = Starters.preview(of: starter), icon = Starters.listed(.icon, of: starter)
             return Fresh(starter: starter, entry: DeskEntry(
                 id: id(of: folder), about: Starters.about(starter), author: adapted?.author, isStarter: true,
                 license: adapted?.license, places: target.startsAt ?? target.places,
@@ -328,8 +329,16 @@ struct DeskListRow: View {
 
     private var project: LampProject? { item.project }
     private var nested: Bool { if case .wish(let row) = item { row.nested } else { false } }
-    /// A starter clicked before Lamp had built it, which opens by itself once it's ready: the one wait the desk shows.
-    private var opening: Bool { project.map { store.openWhenReady.contains($0.id) } ?? false }
+    /// A starter clicked before Lamp had built it, or fetched it, which opens by itself once it's ready: the one wait
+    /// the desk shows.
+    private var opening: Bool {
+        if let project { return store.openWhenReady.contains(project.id) }
+        return fresh.map { store.fetchingStarters.contains($0) } ?? false
+    }
+    /// The folder of the starter a row not on the desk yet stands for.
+    private var fresh: String? { if case .fresh(let fresh) = item { fresh.starter.folder.lastPathComponent } else { nil } }
+    /// Why the last try to get that starter failed (no connection, mostly): said in its line, with Try Again.
+    private var fetchFailed: String? { fresh.flatMap { store.starterFetchFailed[$0] } }
 
     var body: some View {
         drawn
@@ -369,6 +378,13 @@ struct DeskListRow: View {
                     }
                     if opening {
                         DeskStatusLine().frame(maxWidth: .infinity, alignment: .leading)
+                    } else if let fetchFailed {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            Text(fetchFailed).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.tail)
+                            Button("Try Again", action: open).buttonStyle(.link)
+                        }
+                        .font(.system(size: 12.5))
                     } else if let about = item.entry?.about {
                         Text(about).font(.system(size: 12.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.tail)
                     }
@@ -423,8 +439,9 @@ struct DeskListRow: View {
 
     /// What's going on with it, for VoiceOver: on screen the status line and the dot say it.
     private var status: String {
-        guard let project else { return "" }
         if opening { return "Opening…" }
+        if let fetchFailed { return fetchFailed }
+        guard let project else { return "" }
         if store.preparing.contains(project.id) { return "" }
         if store.busy.contains(project.id) { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
         if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }

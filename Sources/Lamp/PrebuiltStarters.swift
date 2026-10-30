@@ -1,17 +1,19 @@
 import Foundation
 
 /// The starters Lamp comes with, built when Lamp is released, so one opens at once instead of after its first
-/// build, and before Apple's build tools are even on the Mac. A release runs `Lamp --prebuild-starters` (build.sh,
-/// `PREBUILD_STARTERS=1`), which builds each starter as this Mac would, as a live build (`LiveReload`), and leaves
-/// it beside the starter's files as `Prebuilt.zip`: the app, the live copy of its sources (so a change can go into
-/// it from the first one), and what it was built from. build.sh signs the app and zips it.
+/// build, and before Apple's build tools are even on the Mac. A release runs `Lamp --prebuild-starters <folder>`
+/// (build.sh, `PREBUILD_STARTERS=1`), which builds each starter of the checkout as this Mac would, as a live build
+/// (`LiveReload`), and leaves it in `<folder>/<starter>/Prebuilt`: the app, the live copy of its sources (so a change
+/// can go into it from the first one), and what it was built from. build.sh signs the app and zips it as an asset of
+/// the release on GitHub, pinning its size and hash in the bundle's listing (`Starters.Listed.prebuilt`); it's
+/// fetched with the starter's tree when the starter is first opened (`StarterDownloads`), and its signature is checked
+/// as Lamp's own before it's used (`install`).
 ///
 /// A prebuilt app holds nothing of the Mac it's put on: what an app is told about itself and Lamp is written into
 /// its Info.plist when it's installed (`Template.installValues`). It's used only when it's exactly what a build here
 /// would make: by this Lamp (`BuildStamp`), under the program name it was built with, from the starter's files as
 /// they still are in the app. Anything else is built as before.
 enum PrebuiltStarters {
-    static let archiveName = "Prebuilt.zip"
     static let folderName = "Prebuilt"
     static let commandLineFlag = "--prebuild-starters"
     static let restampFlag = "--restamp-starters"
@@ -25,7 +27,8 @@ enum PrebuiltStarters {
     /// times over and only speeds up the next whole build).
     private static let liveParts = ["Package.swift", "Sources", "built", "live.pl"]
 
-    static func archive(of starter: Starters.Starter) -> URL { starter.folder.appendingPathComponent(archiveName) }
+    /// The starter's prebuilt app on this Mac, once it's been fetched.
+    static func archive(of starter: Starters.Starter) -> URL? { StarterDownloads.prebuiltArchive(of: starter) }
 
     /// The starter as Lamp ships it, found by the name in the app's starter.md (`Starters.starter(of:)` reads it
     /// from the app's own folder).
@@ -34,24 +37,34 @@ enum PrebuiltStarters {
         return Starters.bundled.first { $0.name == name }
     }
 
-    /// Whether this starter came prebuilt with this Lamp.
+    /// Whether this starter's prebuilt app from this Lamp is on this Mac.
     static func has(_ project: LampProject) -> Bool {
-        guard let starter = shipped(project) else { return false }
-        return FileManager.default.fileExists(atPath: archive(of: starter).path)
+        shipped(project).flatMap(archive(of:)) != nil
+    }
+
+    /// Where `--prebuild-starters` and `--restamp-starters` leave the starters they build: the folder after the flag.
+    private static func output(after flag: String) -> URL {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else {
+            FileHandle.standardError.write(Data("Usage: Lamp \(flag) <folder>\n".utf8))
+            exit(2)
+        }
+        return URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
     }
 
     // MARK: - Building, when Lamp is released
 
-    /// `Lamp --prebuild-starters`: builds every starter into its folder in Lamp's bundle, then quits. Run by
-    /// build.sh before Lamp is signed; a starter that doesn't build stops the release.
+    /// `Lamp --prebuild-starters <folder>`: builds every starter (the checkout's, `Starters.folder`) into the folder,
+    /// then quits. Run by build.sh before Lamp is signed; a starter that doesn't build stops the release.
     static func runFromCommandLine() -> Never {
         let fm = FileManager.default
+        let out = output(after: commandLineFlag)
         let root = fm.temporaryDirectory.appendingPathComponent("lamp-prebuild-\(UUID().uuidString)")
         var failed = false
         for starter in Starters.bundled {
             do {
                 try fm.createDirectory(at: root, withIntermediateDirectories: true)
-                try build(starter, in: root)
+                try build(starter, in: root, to: out.appendingPathComponent(starter.folder.lastPathComponent))
                 print("Prebuilt \(starter.name)")
             } catch {
                 FileHandle.standardError.write(Data("Couldn't prebuild \(starter.name): \(error.localizedDescription)\n".utf8))
@@ -86,8 +99,9 @@ enum PrebuiltStarters {
     /// stamps them as its own. They're the same apps: what they're made from is unchanged, but the stamp also covers
     /// the chat sidebar, which every build signs again.
     static func restampFromCommandLine() -> Never {
+        let built = output(after: restampFlag)
         for starter in Starters.bundled {
-            let out = starter.folder.appendingPathComponent(folderName)
+            let out = built.appendingPathComponent(starter.folder.lastPathComponent).appendingPathComponent(folderName)
             let manifestURL = out.appendingPathComponent("manifest.json")
             guard let data = try? Data(contentsOf: manifestURL),
                   var manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { continue }
@@ -104,8 +118,8 @@ enum PrebuiltStarters {
     }
 
     /// One starter made into an app the way the desk makes it (`Store.add(starter:)`), built live, and left in
-    /// `<starter>/Prebuilt`.
-    private static func build(_ starter: Starters.Starter, in root: URL) throws {
+    /// `<folder>/Prebuilt`.
+    private static func build(_ starter: Starters.Starter, in root: URL, to folder: URL) throws {
         let fm = FileManager.default
         let project = try Template.draft(name: starter.name, platform: starter.kind, in: root)
         try Template.fill(project)
@@ -130,7 +144,7 @@ enum PrebuiltStarters {
         }
         BuildStamp.write(for: project)
 
-        let out = starter.folder.appendingPathComponent(folderName)
+        let out = folder.appendingPathComponent(folderName)
         try? fm.removeItem(at: out)
         try fm.createDirectory(at: out.appendingPathComponent("live"), withIntermediateDirectories: true)
         try fm.copyItem(at: project.builtURL, to: out.appendingPathComponent("\(project.exe).app"))
@@ -148,14 +162,14 @@ enum PrebuiltStarters {
     /// what a build here would make. False, with nothing changed, when it isn't: the starter is then built.
     static func install(into project: LampProject) -> Bool {
         let fm = FileManager.default
-        guard let starter = shipped(project), fm.fileExists(atPath: archive(of: starter).path),
+        guard let starter = shipped(project), let archive = archive(of: starter),
               unchanged(starter, in: project) else { return false }
         let work = fm.temporaryDirectory.appendingPathComponent("lamp-starter-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: work) }
         guard (try? fm.createDirectory(at: work, withIntermediateDirectories: true)) != nil else { return false }
         let unzip = Process()
         unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        unzip.arguments = ["-x", "-k", archive(of: starter).path, work.path]
+        unzip.arguments = ["-x", "-k", archive.path, work.path]
         guard (try? unzip.run()) != nil else { return false }
         unzip.waitUntilExit()
         let unpacked = work.appendingPathComponent(folderName)
@@ -165,6 +179,12 @@ enum PrebuiltStarters {
               manifest.exe == project.exe, manifest.support == BuildStamp.current.support else { return false }
         let app = unpacked.appendingPathComponent("\(project.exe).app")
         guard fm.fileExists(atPath: app.appendingPathComponent("Contents/MacOS/\(project.exe)").path) else { return false }
+        // Downloaded: it runs only as what this Lamp's own build signed, checked before anything of it is changed.
+        guard Downloads.signedLikeLamp(app) else {
+            NSLog("Lamp refused the prebuilt \(project.name): it isn't signed as Lamp is")
+            try? fm.removeItem(at: archive)
+            return false
+        }
         // Built under the starter's own folder name: this copy's may be another ("hotshelf-2"), and the bundle id
         // follows it.
         setIdentifier(project.bundleID, in: app)
@@ -191,6 +211,7 @@ enum PrebuiltStarters {
     /// built from. Lamp's own files there (LampSupport.swift and the like) are written afresh and left out.
     private static func unchanged(_ starter: Starters.Starter, in project: LampProject) -> Bool {
         let fm = FileManager.default
+        guard Starters.hasTree(starter) else { return false }
         // Lamp's own files, which every app of the kind gets (a game's or a screen's are its host's, lamp.js and three.js),
         // and the Swift that answers a page's calls while it's still the one Lamp wrote, which a starter doesn't ship.
         var owned: Set<String> = ["Sources/LampSupport.swift", Template.sceneSupportPath,

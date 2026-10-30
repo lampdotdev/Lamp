@@ -193,11 +193,23 @@ rm -rf "$APP/Contents/Resources/Devices" && if [[ -d Resources/Devices ]]; then 
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 # The wishes Lamp comes with (Starters.swift): each one's tree is its repository at the commit starter.md pins, fetched
-# here (never committed), and copied without the fetch's own git history, nor each one's reel and what records it,
-# which only its repository shows (scripts/showcase-starters.sh).
+# here (never committed). Lamp carries only what the desk lists each one by (Starters.Listed: its line, credits, picture
+# and icon, beside its starter.md), and the commit object, which the tree Lamp fetches when the starter is first opened
+# is checked against (StarterDownloads). A starter whose code uses a 3D scene is marked so, for Starters.runsHere.
 scripts/fetch-starters.sh
-rm -rf "$APP/Contents/Resources/Starters" && rsync -a --exclude '.git' --exclude '/*/showcase/' --exclude '/*/tree/.github/showcase/' \
-  Resources/Starters/ "$APP/Contents/Resources/Starters/"
+STARTERS="$APP/Contents/Resources/Starters"
+rm -rf "$STARTERS"
+for tree in Resources/Starters/*/tree(N/); do
+  starter="${tree:h:t}"; listing="$STARTERS/$starter/listing"
+  mkdir -p "$listing"
+  cp "${tree:h}/starter.md" "$STARTERS/$starter/"
+  cp "$tree/lamp-app.json" "$tree/.github/preview.png" "$tree/.github/icon/icon.png" "$listing/"
+  if [ -f "$tree/credits.json" ]; then cp "$tree/credits.json" "$listing/"; fi
+  git -C "$tree" cat-file commit HEAD > "$listing/commit"
+  if grep -rlsE --include='*.swift' --exclude=LampSupport.swift --exclude=LampScene.swift '^[[:space:]]*(@[[:alnum:]_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' "$tree/Sources" >/dev/null; then
+    : > "$listing/scene"
+  fi
+done
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as three.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what a game is written against, and its hosts (GameKit.swift)
@@ -354,19 +366,31 @@ fi
 rm -rf "$PLAYER_SOURCES" "$APP/Contents/Resources/LampPlayer.bundle"
 cp -R "$PLAYER" "$APP/Contents/Resources/LampPlayer.bundle"
 sign "$APP/Contents/Resources/LampPlayer.bundle"
-# Lamp ships the starters already built (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would, with
+# Lamp's release builds the starters (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would, with
 # this checkout's LampSupport, once Lamp's own parts are signed and before Lamp is: the stamp on what Lamp builds
-# (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and zipped beside its
-# starter's files, so the system never takes it for an app of its own.
+# (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and zipped into the assets
+# folder (ASSETS_DIR), named by edition, starter and version, which the release puts on GitHub beside the DMG; its
+# address, size and SHA-256 go into the starter's listing (prebuilt.json), so Lamp fetches it with the starter's tree
+# and refuses anything else. A build from source points at its own file.
 # A release does it, afresh. Building them takes minutes and what they're made from (the code Lamp writes into every
 # app, above all) changes with most work on Lamp, so a development build leaves them out unless asked
-# (PREBUILD_STARTERS=1): a Lamp Dev without them builds the starters on first launch, out of sight, as before they
-# shipped built. Asked, it keeps them in .build/prebuilt-starters under a key of what they're made from: the starters,
-# that code, the edition and the compiler; a build that finds them there only stamps them for itself
-# (--restamp-starters).
+# (PREBUILD_STARTERS=1): a Lamp Dev without them builds a starter once it's first opened, out of sight. Asked, it keeps
+# them in .build/prebuilt-starters under a key of what they're made from: the starters, that code, the edition and the
+# compiler; a build that finds them there only stamps them for itself (--restamp-starters).
 DEFAULT_PREBUILD=0; [ "$FLAVOR" != dev ] && DEFAULT_PREBUILD=1
 if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
-  STARTERS="$APP/Contents/Resources/Starters"
+  BUILT=".build/prebuilt-out"
+  ASSETS="${${ASSETS_DIR:-${BUILD_DIR:-build}/assets}:A}"   # absolute: the zips are made from inside other folders
+  if [ "$FLAVOR" = release ]; then
+    ASSET_STEM="Lamp"; ASSET_BASE="https://updates.lamp.dev/download/v$APP_VERSION"
+  elif [ "$FLAVOR" = nightly ]; then
+    ASSET_STEM="Lamp-Nightly"; ASSET_BASE="https://updates.lamp.dev/download/nightly"
+  else
+    ASSET_STEM="Lamp-Dev"; ASSET_BASE="file://${ASSETS// /%20}"
+  fi
+  rm -rf "$BUILT" && mkdir -p "$BUILT" "$ASSETS"
+  rm -f "$ASSETS/$ASSET_STEM"-Starter-*.zip(N)
+  export LAMP_STARTERS_FOLDER="$PWD/Resources/Starters"   # the checkout's starters, with their trees
   KEY=$( {
     echo "$FLAVOR"; xcrun swiftc --version 2>&1; xcrun --show-sdk-version
     find Resources/Starters Sources/Lamp/Template*.swift Sources/Lamp/Connectors.swift Sources/Lamp/Starters.swift \
@@ -376,27 +400,35 @@ if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
   if [ "$FLAVOR" = dev ] && [ -d "$CACHE" ]; then
     echo "Using the starters built before ($KEY)…"
     for cached in "$CACHE"/*(N/); do
-      rm -rf "$STARTERS/${cached:t}/Prebuilt"
-      cp -R "$cached" "$STARTERS/${cached:t}/Prebuilt"
+      mkdir -p "$BUILT/${cached:t}"
+      cp -R "$cached" "$BUILT/${cached:t}/Prebuilt"
     done
-    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --restamp-starters
+    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --restamp-starters "$BUILT"
   else
     echo "Building the starters Lamp ships…"
-    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --prebuild-starters
+    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --prebuild-starters "$BUILT"
     if [ "$FLAVOR" = dev ]; then
       rm -rf .build/prebuilt-starters
       mkdir -p "$CACHE.partial"
-      for prebuilt in "$STARTERS"/*/Prebuilt(N/); do cp -R "$prebuilt" "$CACHE.partial/${prebuilt:h:t}"; done
+      for prebuilt in "$BUILT"/*/Prebuilt(N/); do cp -R "$prebuilt" "$CACHE.partial/${prebuilt:h:t}"; done
       mv "$CACHE.partial" "$CACHE"
     fi
   fi
-  for prebuilt in "$STARTERS"/*/Prebuilt(N/); do
+  unset LAMP_STARTERS_FOLDER
+  for prebuilt in "$BUILT"/*/Prebuilt(N/); do
+    starter="${prebuilt:h:t}"
+    [ -d "$STARTERS/$starter/listing" ] || continue
     for built in "$prebuilt"/*.app; do
       for extension in "$built"/Contents/PlugIns/*.appex(N); do sign "$extension"; done
       sign "$built"
     done
-    (cd "$prebuilt:h" && rm -f Prebuilt.zip && ditto -c -k --norsrc --keepParent Prebuilt Prebuilt.zip && rm -rf Prebuilt)
+    ASSET="$ASSET_STEM-Starter-$starter-$APP_VERSION.zip"
+    (cd "$prebuilt:h" && ditto -c -k --norsrc --keepParent Prebuilt "$ASSETS/$ASSET")
+    cat > "$STARTERS/$starter/listing/prebuilt.json" <<PREBUILT
+{"url": "$ASSET_BASE/$ASSET", "sha256": "$(shasum -a 256 "$ASSETS/$ASSET" | cut -d' ' -f1)", "size": $(stat -f%z "$ASSETS/$ASSET")}
+PREBUILT
   done
+  rm -rf "$BUILT"
 fi
 sign "${APP_ENTITLEMENTS[@]}" "$APP"
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"

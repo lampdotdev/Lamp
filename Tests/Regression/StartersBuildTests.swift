@@ -1,7 +1,7 @@
 import XCTest
 @testable import Lamp
 
-/// Each wish Lamp comes with, set up as the first launch sets it up (`Store.installStarters`) and built with the
+/// Each wish Lamp comes with, set up as opening it from the desk sets it up (`Store.add(starter:)`) and built with the
 /// build.sh Lamp writes for it, widget and all, the way Lamp runs it (`Store.runBuild`, in the app's sandbox). Minutes of compiling, so only when asked:
 /// `LAMP_BUILD_STARTERS=1 swift test --filter StartersBuildTests` (or `=today` for one). With
 /// `LAMP_STARTERS_OUT=<folder>` the apps are kept there, to open and try.

@@ -336,8 +336,8 @@ github.com address with nothing after its name, and a commit only in full, 40 he
 commit as its ref). A starter opens with its chat, the request written into its box (`writeIn`, `Store.openCopy`): a copy of it on the
 desk that nothing has been asked of and whose box is empty (the one Lamp came with, or one an earlier link opened; its
 first build out of sight isn't asking, and the copy the last link opened is taken with that link's request in its box),
-else a fresh copy, made as the first launch makes one (`put(starter:)`, its chain naming the
-starter at the commit this Lamp ships). A link without a request opens it with an empty box. A repository
+else a fresh copy, fetched and made as opening it from the desk makes one (`fetching`, `put(starter:)`, its chain naming
+the starter at the commit this Lamp ships). A link without a request opens it with an empty box. A repository
 goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
 box. Nothing is sent or built from the link. During the welcome a starter's remix waits a moment (`Onboarding.keptRemix`, saved
 like the welcome's wish) and opens as the welcome gives way to the desk, with nothing set up, in the desk's own copy of the starter, put there moments

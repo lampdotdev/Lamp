@@ -87,9 +87,11 @@ jobs:
           cat dist/notes.md
 
       - name: Publish GitHub release
+        # With what this Lamp fetches when it's needed (dist/assets: each starter's prebuilt app), which its bundle pins
+        # by address, size and hash, so it must be on this release before anyone opens a starter.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json \
+          gh release create "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json dist/assets/* \
             --title "Lamp $VERSION" --notes-file dist/notes.md || \
-          gh release upload "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json --clobber
+          gh release upload "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json dist/assets/* --clobber

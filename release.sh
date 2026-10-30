@@ -33,8 +33,9 @@ echo "Signing as: $SIGN_IDENTITY"
 
 # 1. Build + sign the app (hardened runtime, entitlements, secure timestamp)
 rm -rf "$DIST" && mkdir -p "$DIST"
-# Builds into dist/, not build/, so a release never replaces the Lamp you run day to day.
-FLAVOR="$FLAVOR" BUILD_DIR="$DIST/build" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
+# Builds into dist/, not build/, so a release never replaces the Lamp you run day to day. What Lamp fetches when it's
+# needed rather than carrying it (the starters' prebuilt apps) goes into dist/assets, to go up beside the DMG.
+FLAVOR="$FLAVOR" BUILD_DIR="$DIST/build" ASSETS_DIR="$DIST/assets" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
 # The build folder also holds what build.sh made on the way (a nightly's icon), so it goes whole, not with rmdir.
 mv "$DIST/build/$NAME.app" "$DIST/" && rm -rf "$DIST/build"
 codesign --verify --deep --strict "$DIST/$NAME.app"
@@ -78,4 +79,4 @@ spctl --assess --type execute -v "$DIST/$NAME.app"
 xcrun stapler validate "$DIST/$NAME.app"
 echo
 echo "Release ready: $DMG"
-echo "Publish:  gh release create v$VERSION \"$DMG\" --title \"Lamp $VERSION\" --generate-notes"
+echo "Publish:  gh release create v$VERSION \"$DMG\" \"$DIST\"/assets/* --title \"Lamp $VERSION\" --notes-file notes.md"

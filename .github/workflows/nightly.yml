@@ -116,13 +116,15 @@ jobs:
           # the release whole and the feed never pairs a signature with another file; the newest three stay, since the
           # feed is cached for a quarter of an hour and an update window may stay open longer, and each names the DMG
           # it signed (updates/api/appcast.js), which must still be there to verify.
+          # What this nightly fetches when it's needed (dist/assets: each starter's prebuilt app, named by its version)
+          # goes up with its DMG, and goes when its DMG does.
           git push -f origin "$GITHUB_SHA:refs/tags/nightly"
           if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" --clobber
+            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/assets/* --clobber
             gh release upload nightly dist/sparkle.json --clobber
             gh release edit nightly --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
           else
-            gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json \
+            gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json dist/assets/* \
               --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
           fi
           gh release view nightly --json assets \
@@ -131,6 +133,12 @@ jobs:
             [ -n "$old" ] || continue
             echo "Removing $old"
             gh release delete-asset nightly "$old" --yes || true
+            # And what that nightly fetched: its assets end in its version.
+            version="${old#Lamp-Nightly-}"; version="${version%.dmg}"
+            gh release view nightly --json assets --jq ".assets[].name | select(endswith(\"-$version.zip\"))" |
+            while read -r asset; do
+              [ -n "$asset" ] && gh release delete-asset nightly "$asset" --yes || true
+            done
           done
 
       - name: Remove nightlies published one release each
