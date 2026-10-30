@@ -54,10 +54,10 @@ export function random() {
     seed ^= seed >> 12n; seed ^= (seed << 25n) & mask; seed ^= seed >> 27n;
     return Number(((seed * 0x2545F4914F6CDD1Dn) & mask) >> 40n) / 16777216;
 }
+let clock = 0;
 if (preview) {
     // three.js and the game's own code may reach for these: in the preview they're the game's clock and seed too.
     Math.random = random;
-    let clock = 0;
     performance.now = () => clock;
     Date.now = () => 1700000000000 + clock;
     window.__lampAdvance = ms => { clock += ms; };
@@ -771,7 +771,7 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
             throw e;
         }
     }
-    if (preview) return runPreview();
+    if (preview) { if (again) ranAgain(again); return runPreview(); }
     await putBack();
     if (again) ranAgain(again);
     // One loop at a time: the game's code run again starts a new one, and the old one stops at its next frame.
@@ -940,6 +940,8 @@ function startAgain(change, state = takeSnapshot()) {
 // Opens the page again with the new code, with the player's place kept for the new code to restore: where it is now, or
 // `state` taken before a swap that didn't take.
 function reopen(change, state = takeSnapshot()) {
+    // A warm preview can't open its page again with a new play: Lamp starts it cold instead.
+    if (preview) { window.webkit.messageHandlers.lampPreview.postMessage({ done: true, again: false, logs }); return; }
     hidePill();
     try { store('session').setItem(LIVE, JSON.stringify({ state, input: current, padName, gen: change.gen })); } catch (e) {}
     const why = change.why ? ` (${change.why})` : '';
@@ -990,7 +992,7 @@ const bare = text => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').replace(/\
 export function hot(meta) {
     const path = pathOf(meta && meta.url);
     const quiet = { data: {}, accept() {}, dispose() {}, keep(key, build) { return build(); } };
-    if (preview || path == null || !host()) return quiet;
+    if ((preview && !preview.warm) || path == null || (!preview && !host())) return quiet;
     let entry = modules.get(path);
     if (!entry) modules.set(path, entry = { path, accepts: false, onAccept: null, disposers: [], data: {}, versions: [], text: null });
     // Each version says for itself whether it takes the next, and what to take away when it goes.
@@ -1506,7 +1508,7 @@ async function runAgain(change, state) {
     tellHost(change.gen, 'rerun', why);
     log(`Lamp: running the game's code again in place for a change (${why}), keeping where the player was.`);
     // The frame on screen now, held there until the new code draws its first.
-    const still = await new Promise(done => { shooting = done; after(250, () => { if (shooting === done) { shooting = null; done(null); } }); });
+    const still = preview ? null : await new Promise(done => { shooting = done; after(250, () => { if (shooting === done) { shooting = null; done(null); } }); });
     const again = runningAgain = { change, state, began, called: false, kept: [], built: [], done: null };
     const done = new Promise(resolve => { again.done = resolve; });
     // The old code stops: its frame loop, what it asked to have taken away, and what it left running.
@@ -1603,6 +1605,7 @@ async function putPage(page, paths, still) {
     // The old page stays in view, still, over the new one until the new code has drawn (`lift`): its elements go last,
     // so the new code finds its own by id, and the frame it showed stands where the canvas was.
     const canvas = renderer && renderer.domElement;
+    if (preview) { body.replaceChildren(...[...page.body.childNodes].map(n => document.adoptNode(n))); return; }
     const old = [...body.childNodes].filter(n => n !== touchLayer && n !== pill && n !== canvas && n !== curtain);
     if (curtain) curtain.remove();
     curtain = document.createElement('div');
@@ -1836,6 +1839,24 @@ function showPill() {
 function hidePill() { if (pill) pill.style.display = 'none'; }
 
 // MARK: Lamp's preview: the script played out of sight, a picture where it says
+//
+// A preview Lamp keeps open between looks (`warm`) is handed each new play with the files changed since the last:
+// the game's code runs again in place from a fresh start (see "Running the game's code again"), with the clock, the
+// seed, the saves and the log as a new page has them, keeping what the game keeps, and the script plays. So only the
+// first play of a while builds the whole game; the same script then gives the same pictures each play while the parts
+// it kept stay. Returns false when it can't (the game hasn't started, or is starting), and Lamp opens a new preview.
+if (preview && preview.warm) {
+    window.__lampPreviewAgain = next => {
+        if (!frameFunction || runningAgain) return false;
+        preview.script = next.script || [];
+        seed = 1n; clock = 0; time = 0; number = 0;
+        saved.clear(); played.clear(); logs.length = 0;
+        scripted = null; before = [0, 0, 0, 0];
+        queue = queue.then(() => startAgain({ gen: 0, changed: next.changed || [], why: 'a new play in the preview' }, null))
+            .catch(e => window.webkit.messageHandlers.lampPreview.postMessage({ done: true, again: false, logs: [String(e && e.message || e)] }));
+        return true;
+    };
+}
 
 async function runPreview() {
     // Lamp answers each picture once it has taken it, of the whole page as drawn (the canvas and anything over it).
@@ -1869,5 +1890,6 @@ async function runPreview() {
            sound: said.length ? 'played ' + said.join(', ') : 'nothing played' });
 }
 
-// Watched from here, after the runtime's own listeners: only where Lamp puts changes into the open game.
-if (!preview && host()) watch();
+// Watched from here, after the runtime's own listeners: only where Lamp puts changes into the open game, or plays
+// again in a preview it keeps warm.
+if (preview ? preview.warm : host()) watch();

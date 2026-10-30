@@ -429,7 +429,12 @@ its declared step makes, `Web/lamp.js` written then), installed as a game. The a
 `WebGamePreview`: a copy of the page (`GameKit.stageWeb`, under the sandbox) in a web view nobody sees, given the same
 script as the C++ kit's preview (`window.lampPreview`), which `lamp-game.js` plays itself at exactly 1/60 s a frame with its
 clock and random numbers fixed, pausing at each `shot` while Lamp pictures the whole page, HTML over the canvas
-included; the same script gives the same pixels. Its stats count draws and triangles (three.js's `renderer.info`, or the
+included; the same script gives the same pixels. After a play that ends cleanly the preview is kept open for ten
+minutes, one a game: the next look hands it its script and the files changed since the last (by hash, the build's own
+name aside), and the game's code runs again in place there from a fresh start, with the clock, seed, saves and log
+reset (`__lampPreviewAgain`), so only the first look of a while waits for the whole game to be built and its shaders
+compiled. Lamp's own files changing, a page that can't run its code again, a failed play or one that runs past two
+minutes closes it, and that look starts a new preview. Its stats count draws and triangles (three.js's `renderer.info`, or the
 WebGL calls lamp-phaser.js counts).
 
 A game may be written in TypeScript, its source in `src/` with `src/main.ts` its entry as a Vite project keeps it, so a
