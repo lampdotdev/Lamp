@@ -266,4 +266,74 @@ final class WishSharedStoreTests: XCTestCase {
         XCTAssertEqual(js("held()"), #"[{"id":"c","title":"sweep"},{"id":"d","title":"dust off"}]"#, "a and b were left out, so they're deleted, at the limit too")
         page.end()
     }
+
+    /// Lamp keeps what the copies share: a copy puts a list and a file and closes; Lamp's relay starts again (as it does
+    /// after it's been idle); a second copy opening alone gets both from Lamp and changes the list; a third copy opening
+    /// alone gets that change. On disk it's sealed: no item's words are there to read.
+    func testACopyThatOpensAloneGetsWhatLampKept() async throws {
+        let key = WishChannel.random(32)
+        let keep = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-keep-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: keep) }
+        func relayUp() async throws -> (Relay, UInt16) {
+            let relay = Relay(key: SymmetricKey(size: .bits256))
+            let started: UInt16? = await withCheckedContinuation { done in relay.start { done.resume(returning: $0) } }
+            relay.configureRoom("wish:kept", key: key, apps: ["screen": ("screen", "the screen")], keep: keep)
+            return (relay, try XCTUnwrap(started))
+        }
+        func copy(_ port: UInt16, _ script: String) -> PageWithSockets {
+            let page = PageWithSockets()
+            page.context.evaluateScript("""
+                window.webkit = { messageHandlers: { lampGateway: {} } };
+                window.LampStore = {};
+                var answer = { socket: 'ws://127.0.0.1:\(port)/', peer: 'screen', key: '\(key.base64EncodedString())', peers: [],
+                               apps: [{ peer: 'screen', kind: 'tv', name: 'the screen' }] };
+                LampAI = { _post: function () { return Promise.resolve(answer); } };
+                """)
+            page.context.evaluateScript(TVTemplate.wishJS)
+            page.context.evaluateScript("""
+                var list = LampStore.shared('family'), photos = LampStore.sharedFiles('photos'), photo = null;
+                function held() { return list.all().map(function (p) { return p.id + '=' + p.name; }).join(','); }
+                photos.onChange(function (name) { photos.get(name).then(function (b) { if (b) photo = b.length + ':' + b[0]; }); });
+                """ + script)
+            return page
+        }
+        func wait(_ page: PageWithSockets, _ script: String, is want: String) async throws -> String {
+            for _ in 0..<150 where page.context.evaluateScript(script)?.toString() != want { try await Task.sleep(for: .milliseconds(100)) }
+            return page.context.evaluateScript(script)?.toString() ?? ""
+        }
+        func keptFiles() -> [String] { FileManager.default.subpaths(atPath: keep.path) ?? [] }
+
+        var (relay, port) = try await relayUp()
+        let first = copy(port, """
+            list.put([{ id: 'p1', name: 'Ada' }, { id: 'p2', name: 'Grace' }]);
+            var picture = new Uint8Array(150000); for (var i = 0; i < picture.length; i++) picture[i] = 9;
+            photos.put('fridge.jpg', picture, 'image/jpeg');
+            """)
+        for _ in 0..<150 where !keptFiles().contains(where: { $0.hasPrefix("files/") }) { try await Task.sleep(for: .milliseconds(100)) }
+        try await Task.sleep(for: .milliseconds(1500))
+        first.end()
+        relay.stop()
+        let kept = keptFiles()
+        XCTAssertTrue(kept.contains { $0.hasPrefix("files/") } && kept.contains { $0.hasSuffix(".kept") }, "Lamp kept the list and the file: \(kept)")
+        for file in kept where !file.hasSuffix("files") {
+            let data = (try? Data(contentsOf: keep.appendingPathComponent(file))) ?? Data()
+            XCTAssertNil(data.range(of: Data("Grace".utf8)), "sealed on disk: \(file)")
+        }
+
+        (relay, port) = try await relayUp()
+        let second = copy(port, "")
+        let got = try await wait(second, "held()", is: "p1=Ada,p2=Grace"), photo = try await wait(second, "photo", is: "150000:9")
+        XCTAssertEqual(got, "p1=Ada,p2=Grace", "the copy opening alone got the list from Lamp")
+        XCTAssertEqual(photo, "150000:9", "and the file")
+        XCTAssertEqual(second.context.evaluateScript("Lamp.wish.peers().length")?.toString(), "0", "Lamp isn't one of the copies")
+        second.context.evaluateScript("list.delete('p1'); list.put({ id: 'p3', name: 'Linus' });")
+        try await Task.sleep(for: .milliseconds(1500))
+        second.end()
+
+        let third = copy(port, "")
+        let later = try await wait(third, "held()", is: "p2=Grace,p3=Linus")
+        XCTAssertEqual(later, "p2=Grace,p3=Linus", "the change made alone reached a copy opened later")
+        third.end()
+        relay.stop()
+    }
 }

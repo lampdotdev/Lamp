@@ -14095,9 +14095,9 @@ enum Template {
 
         /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
         /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
-        /// (`LampStore.shared`), 6 the wish's own collections, shared by all its apps; an app from before says none, which
-        /// counts as 1.
-        private static let wire = 6
+        /// (`LampStore.shared`), 6 the wish's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
+        /// before says none, which counts as 1.
+        private static let wire = 7
         /// The wish's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
@@ -14115,6 +14115,11 @@ enum Template {
         private var opener: Sealer?
         private var handshake: (nonce: Data, tag: Data)?
         private var relayIn = false
+        /// Lamp's room said Lamp keeps the wish's shared collections: Lamp is shared with as a copy is, under its own name
+        /// (`keeper`), so a copy that opens alone gets the latest and what it changes reaches the others when they open.
+        /// Never one of the wish's apps or copies.
+        private var lampKeeps = false
+        nonisolated private static let keeper = "lamp"
         private var lampAway = false
         private var alone = false
         /// Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then an
@@ -14252,6 +14257,7 @@ enum Template {
             link.task = nil
             sealer = nil
             relayIn = false
+            lampKeeps = false
             relayPresent = [:]
             dropFiles("The link was stopped.") { _, _ in true }
             for direct in Array(directs.values) + Array(opening.values) { drop(direct) }
@@ -14858,6 +14864,15 @@ enum Template {
                 return transfer
             }
             guard data.count <= LampFiles.largest else { return failed("The file is too big to send: 64 MB at most.") }
+            // A shared file's bytes to Lamp, which keeps them for the copies that open later: through its room alone.
+            if peer == Self.keeper, channel.hasPrefix("store:") {
+                guard relayIn, lampKeeps, outgoing.keys.filter({ $0.hasPrefix(peer + "\t") }).count < LampFiles.transfers,
+                      fileMessage(["t": "file", "id": id, "name": String(name.prefix(200)), "type": String(type.prefix(100)), "size": data.count, "ch": channel],
+                                  to: peer, via: nil) else { return failed("Lamp isn't reachable now.") }
+                outgoing[key] = Outgoing(peer: peer, via: nil, transfer: transfer, bytes: data)
+                pump(key)
+                return transfer
+            }
             guard let app = self.peer(peer) else { return failed("The wish has no app called \"\(given)\".") }
             guard app.isOpen, state == .connected else { return failed(app.status.reason.isEmpty ? "\(Self.title(app.name)) isn't open now." : app.status.reason) }
             guard app.copies.contains(where: { $0.id == peer }) else { return failed("That copy of \(app.name) isn't open now.") }
@@ -14889,7 +14904,7 @@ enum Template {
             }
             var message = message
             message["to"] = peer
-            guard relayIn, relayPresent[peer] != nil, let json = Self.json(message) else { return false }
+            guard relayIn, relayPresent[peer] != nil || (peer == Self.keeper && lampKeeps), let json = Self.json(message) else { return false }
             say(json)
             return true
         }
@@ -15183,6 +15198,7 @@ enum Template {
                 undeliveredSaid = []
                 lampAway = false
                 relayIn = true
+                lampKeeps = m["keeps"] as? Bool == true
                 reported = ""
                 if let name = m["peer"] as? String, Self.isName(name) { me = Self.app(of: name) }
                 setRoster(m["apps"] as? [[String: Any]] ?? [])
@@ -15190,6 +15206,8 @@ enum Template {
                 for seen in m["peers"] as? [[String: Any]] ?? [] { present(seen) }
                 tellWhereIListen()
                 rebuild()
+                // Lamp keeps what the copies share: each tells the other what it has, as two copies do when they meet.
+                if lampKeeps, !me.isEmpty { sendSums(to: Self.keeper); fetchFiles() }
             case "joined":
                 if let joined = m["peer"] as? [String: Any] { present(joined) }
                 rebuild()
@@ -15246,6 +15264,7 @@ enum Template {
             opener = nil
             handshake = nil
             relayIn = false
+            lampKeeps = false
             relayPresent = [:]
             dropFiles("The link was lost.") { _, way in way == nil }
             // Turned away, or the room ended, or dropped before it was let in: the relay may have moved, or this app may
@@ -16267,13 +16286,13 @@ enum Template {
         /// and the copies of the wish's other apps that speak 6, which share only the wish's own (`shares`).
         private var storePeers: [String] {
             guard !me.isEmpty else { return [] }
-            return copies(for: nil).filter { $0 != copy && wire(of: $0) >= (Self.app(of: $0) == me ? 5 : 6) }
+            return copies(for: nil).filter { $0 != copy && wire(of: $0) >= (Self.app(of: $0) == me ? 5 : 6) } + (relayIn && lampKeeps ? [Self.keeper] : [])
         }
 
         /// Whether a collection goes to another copy and is taken from it: this app's own collections only between its own
         /// copies, never another app's of the wish; the wish's own between every app of it.
         private func shares(_ name: String, with peer: String) -> Bool {
-            !me.isEmpty && peer != copy && (Self.app(of: peer) == me || Self.isWishWide(name))
+            !me.isEmpty && peer != copy && (Self.app(of: peer) == me || Self.isWishWide(name) || peer == Self.keeper)
         }
 
         private func heardStore(_ m: [String: Any], from peer: String) {
@@ -16363,8 +16382,12 @@ enum Template {
             keepValues()
             if !changed.isEmpty { itemsChanged(name, changed, from: peer) } else if !collectionsUnsaved.isEmpty { saveCollectionsSoon() }
             // Passed on as values are: to the copies open now that the one it came from may not reach.
+            // Lamp tells each copy in its room what it keeps, so what came from Lamp goes no further; what came straight from a
+            // copy Lamp's room doesn't have goes on to Lamp.
             for each in storePeers where each != peer && !taken.isEmpty && shares(name, with: each) {
-                if directs[each]?.ready == true || (relayPresent[peer] == nil && relayPresent[each] != nil) { shareItems(name, taken, to: each) }
+                if directs[each]?.ready == true || (peer != Self.keeper && relayPresent[peer] == nil && (relayPresent[each] != nil || each == Self.keeper)) {
+                    shareItems(name, taken, to: each)
+                }
             }
         }
 
@@ -16393,7 +16416,7 @@ enum Template {
             frame["t"] = "store"
             if let direct = directs[peer], direct.ready {
                 if let json = Self.json(frame) { sealed(json, on: direct) }
-            } else if relayPresent[peer] != nil {
+            } else if relayPresent[peer] != nil || (peer == Self.keeper && relayIn && lampKeeps) {
                 frame["to"] = peer
                 if let json = Self.json(frame) { say(json) }
             }

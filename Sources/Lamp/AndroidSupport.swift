@@ -1022,8 +1022,11 @@ extension Template {
         const val valuesLimit = 64 * 1024
         /** What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
          *  2 brought values, 3 files, 4 copies of one app on several devices, 5 shared collections (`LampStore.shared`), 6 the
-         *  wish's own collections, shared by all its apps; an app from before says none, which counts as 1. */
-        private const val wire = 6
+         *  wish's own collections, shared by all its apps, 7 Lamp keeping them too; an app from before says none, which
+         *  counts as 1. */
+        private const val wire = 7
+        /** Lamp's own name in its room, as the keeper of the wish's shared collections: never one of the wish's apps. */
+        private const val keeper = "lamp"
 
         private val appsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
         private val peersFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
@@ -1135,6 +1138,9 @@ extension Template {
         private var networks: List<String> = emptyList()
         @Volatile private var routes: Map<String, Direct> = emptyMap()
         @Volatile private var relayed: Set<String> = emptySet()
+        /** Lamp's room said Lamp keeps the wish's shared collections: Lamp is shared with as a copy is, under its own name
+         *  (`keeper`), so a copy that opens alone gets the latest and what it changes reaches the others when they open. */
+        @Volatile private var lampKeeps = false
         /** What each other open copy speaks, for `set`, which is called from anywhere. */
         @Volatile private var wires: Map<String, Int> = emptyMap()
 
@@ -1811,6 +1817,13 @@ extension Template {
                 Log.e("LampWish", "the file \"$name\" wasn't sent: $reason")
                 transfer.end(LampTransfer.State.Failed(reason))
             }
+            // A shared file's bytes to Lamp, which keeps them for the copies that open later: through its room alone.
+            if (peer == keeper && channel.startsWith("store:")) {
+                val start = JSONObject().put("t", "file").put("id", transfer.id).put("name", name.take(200)).put("type", type.take(100)).put("size", bytes.size).put("ch", channel)
+                if (outgoing.keys.count { it.startsWith(peer + "\t") } >= fileTransfers || !fileMessage(start, peer, null)) return failed("Lamp isn't reachable now.")
+                outgoing["$peer\t${transfer.id}"] = Outgoing(peer, null, transfer, bytes)
+                return pump("$peer\t${transfer.id}")
+            }
             val app = appsFlow.value.firstOrNull { it.peer == appOf(peer) }
             val title = app?.name?.replaceFirstChar { it.uppercase() } ?: given
             when {
@@ -1847,7 +1860,7 @@ extension Template {
                 return true
             }
             val current = link
-            if (!relayIn || peer !in relayPresent || current?.sealer == null) return false
+            if (!relayIn || (peer !in relayPresent && !(peer == keeper && lampKeeps)) || current?.sealer == null) return false
             toRoom(current, message.put("to", peer).toString())
             return true
         }
@@ -2105,12 +2118,12 @@ extension Template {
             val mine = me
             if (mine.isEmpty()) return emptyList()
             val self = copy
-            return copiesFor(null).filter { it != self && wireOf(it) >= (if (appOf(it) == mine) 5 else 6) }
+            return copiesFor(null).filter { it != self && wireOf(it) >= (if (appOf(it) == mine) 5 else 6) } + (if (lampKeeps) listOf(keeper) else emptyList())
         }
 
         /** Whether a collection goes to another copy and is taken from it: this app's own only between its own copies, never
          *  another app's of the wish; the wish's own between every app of it. */
-        private fun shares(name: String, peer: String): Boolean = me.isNotEmpty() && peer != copy && (appOf(peer) == me || isWishWide(name))
+        private fun shares(name: String, peer: String): Boolean = me.isNotEmpty() && peer != copy && (appOf(peer) == me || isWishWide(name) || peer == keeper)
 
         private fun heardStore(m: JSONObject, from: String) {
             if (me.isEmpty() || from == copy) return
@@ -2206,12 +2219,13 @@ extension Template {
             keepValues()
             if (changed.isNotEmpty()) itemsChanged(name, changed, from) else if (removedAny) saveCollectionsSoon()
             if (taken.isEmpty()) return
-            // Passed on as values are: to the copies open now that the one it came from may not reach.
+            // Passed on as values are: to the copies open now that the one it came from may not reach. Lamp tells each copy
+            // in its room what it keeps, so what came from Lamp goes no further; what came straight goes on to Lamp.
             val ways = routes
             val inRoom = relayed
             for (each in storePeers()) {
                 if (each == from || !shares(name, each)) continue
-                if (each in ways || (from !in inRoom && each in inRoom)) shareItems(name, taken, each)
+                if (each in ways || (from != keeper && from !in inRoom && (each in inRoom || each == keeper))) shareItems(name, taken, each)
             }
         }
 
@@ -2239,7 +2253,7 @@ extension Template {
             val direct = routes[peer]
             val current = link
             if (direct != null) direct.send(plain(body.toString()), seal = true)
-            else if (peer in relayed && current != null && current.sealer != null) toRoom(current, plain(body.put("to", peer).toString()))
+            else if ((peer in relayed || (peer == keeper && lampKeeps)) && current != null && current.sealer != null) toRoom(current, plain(body.put("to", peer).toString()))
         }
 
         private fun sendSums(peer: String) {
@@ -2505,6 +2519,7 @@ extension Template {
 
         private fun relayGone() {
             relayIn = false
+            lampKeeps = false
             relayPresent.clear()
             dropFiles("The link was lost.") { _, way -> way == null }
         }
@@ -2567,6 +2582,7 @@ extension Template {
                     undeliveredSaid.clear()
                     lampAway = false
                     relayIn = true
+                    lampKeeps = m.optBoolean("keeps")
                     reported = ""
                     m.optString("peer").takeIf(::isName)?.let { me = appOf(it) }
                     setRoster(jsonList(m.optJSONArray("apps")))
@@ -2574,6 +2590,8 @@ extension Template {
                     for (seen in jsonList(m.optJSONArray("peers"))) present(seen)
                     tellWhereIListen()
                     rebuild()
+                    // Lamp keeps what the copies share: each tells the other what it has, as two copies do when they meet.
+                    if (lampKeeps && me.isNotEmpty()) { sendSums(keeper); fetchFiles() }
                 }
                 "joined" -> { m.optJSONObject("peer")?.let(::present); rebuild() }
                 "left" -> {

@@ -19,7 +19,8 @@ import Network
 /// (`WishChannel`), and everything after it is sealed, so what they say crosses the network unreadable. A peer names
 /// which app it is in its hello, hears who else is in the room (`welcome`, `joined`, `left`) and sends JSON messages to
 /// one peer or to all (`send` → `message`) and the values they share to one peer (`values`), under the same size and
-/// rate limits as a phone's; it keeps no values itself. Files go to one peer in pieces (`WishChannel.piece`) under the
+/// rate limits as a phone's; it keeps no values itself. What the copies share in collections (`LampStore.shared`) Lamp
+/// keeps, as a member under the relay's own name (`WishKeeper`), when Lamp gives the room a folder for it. Files go to one peer in pieces (`WishChannel.piece`) under the
 /// controllers' flow (`ControllerWire`: a window ahead of what's acknowledged, two at once each way between two apps),
 /// and a game's controls from a wish's app to its TV app's `Lamp.controllers` as `pad` messages; both only to an app
 /// that speaks 3 or more, since an earlier one would take a piece for a message gone wrong. The relay tells whoever
@@ -149,6 +150,8 @@ public final class Relay: @unchecked Sendable {
         var apps: [String: (kind: String, name: String)]
         var waiting: Set<String> = []
         var members: [String: Member] = [:]
+        /// Lamp keeping the wish's shared collections (`WishKeeper`), when Lamp gave the room a folder for them.
+        var keeper: WishKeeper?
         init(key: Data, apps: [String: (kind: String, name: String)]) {
             self.keyData = key
             self.key = SymmetricKey(data: key)
@@ -295,11 +298,13 @@ public final class Relay: @unchecked Sendable {
     /// Opens a wish's room, or brings it up to date (an app added or taken away). `key`: the wish's key, which every app
     /// of the wish holds and proves it does to get in; `apps`: each app the wish may have, by its peer id, with its kind
     /// and name; a peer whose id isn't among them is turned away. `waiting`: those of them Lamp hasn't made yet, so the
-    /// others can say so. A new key ends the old room first, letting its members go.
-    public func configureRoom(_ room: String, key: Data, apps: [String: (kind: String, name: String)], waiting: Set<String> = []) {
+    /// others can say so. `keep`: the folder Lamp keeps the wish's shared collections in (`WishKeeper`), none for a
+    /// room that keeps nothing. A new key ends the old room first, letting its members go.
+    public func configureRoom(_ room: String, key: Data, apps: [String: (kind: String, name: String)], waiting: Set<String> = [], keep: URL? = nil) {
         queue.async {
             if let known = self.rooms[room], known.keyData != key { self.closeRoom(room) }
             if let known = self.rooms[room] {
+                known.keeper?.appCount = apps.count
                 let changed = Set(known.apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" })
                     != Set(apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" }) || known.waiting != waiting
                 known.apps = apps
@@ -314,6 +319,7 @@ public final class Relay: @unchecked Sendable {
             } else {
                 let made = Room(key: key, apps: apps)
                 made.waiting = waiting
+                if let keep { made.keeper = self.keeper(for: made, in: keep) }
                 self.rooms[room] = made
                 self.tags[made.tag] = room
                 self.startTicking()
@@ -338,13 +344,36 @@ public final class Relay: @unchecked Sendable {
         }
     }
 
-    /// The wish is gone, or its room isn't wanted any more: its members are let go.
-    public func endRoom(_ room: String) {
-        queue.async { self.closeRoom(room) }
+    /// The wish is gone, or its room isn't wanted any more: its members are let go. `forget`: the wish is gone, and what
+    /// Lamp kept of its shared collections goes with it.
+    public func endRoom(_ room: String, forget: Bool = false) {
+        queue.async {
+            if forget { self.rooms[room]?.keeper?.forget() }
+            self.closeRoom(room)
+        }
+    }
+
+    /// Lamp as a keeper of the room's shared collections, speaking to its members as the relay's own name.
+    private func keeper(for room: Room, in folder: URL) -> WishKeeper {
+        let keeper = WishKeeper(folder: folder, key: room.key, queue: queue)
+        keeper.appCount = room.apps.count
+        keeper.send = { [weak room] copy, message in
+            guard let member = room?.members[copy], member.wire >= WishKeeper.wire else { return }
+            var out = message
+            out["from"] = WishChannel.relayName
+            member.send(Self.json(out))
+        }
+        keeper.sendPiece = { [weak room] copy, piece in
+            guard let member = room?.members[copy], member.wire >= WishKeeper.wire else { return false }
+            return member.peer.send(piece: piece, seal: { [weak member] plain in member?.sealer.seal(plain) ?? Data() })
+        }
+        keeper.present = { [weak room] in room?.members.mapValues(\.wire) ?? [:] }
+        return keeper
     }
 
     private func closeRoom(_ room: String) {
         guard let known = rooms.removeValue(forKey: room) else { return }
+        known.keeper?.close()
         if tags[known.tag] == room { tags[known.tag] = nil }
         for member in known.members.values { member.peer.close(code: 4005) }
         if !known.members.isEmpty { onRoomChanged(room, []) }
@@ -459,13 +488,17 @@ public final class Relay: @unchecked Sendable {
             old.peer.close(code: 4000)
             room.members[id] = nil
             Self.dropFiles(to: id, in: room)
+            room.keeper?.left(id)
             let left = Self.json(["t": "left", "peer": id])
             for (_, each) in room.members { each.send(left) }
         }
         let member = Member(peer: peer, kind: kind, name: name, device: device, wire: wire, sealer: sealer, opener: opener)
         let others = room.members.sorted { $0.key < $1.key }.map { Self.described($0.key, $0.value) }
         room.members[id] = member
-        member.send(Self.json(["t": "welcome", "role": "peer", "peer": id, "peers": others, "apps": Self.roster(room), "now": Self.now]))
+        var welcome: [String: Any] = ["t": "welcome", "role": "peer", "peer": id, "peers": others, "apps": Self.roster(room), "now": Self.now]
+        // Lamp keeps the wish's shared collections: a copy that knows it shares them with Lamp too.
+        if room.keeper != nil { welcome["keeps"] = true }
+        member.send(Self.json(welcome))
         let joined = Self.json(["t": "joined", "peer": Self.described(id, member)])
         for (other, each) in room.members where other != id { each.send(joined) }
         // Beats are the one thing said in clear, both ways: they carry nothing, and an app that can't hold a socket has Lamp
@@ -483,11 +516,13 @@ public final class Relay: @unchecked Sendable {
             guard let self, let room, let member, room.members[id] === member else { return }
             room.members[id] = nil
             Self.dropFiles(to: id, in: room)
+            room.keeper?.left(id)
             let left = Self.json(["t": "left", "peer": id])
             for each in room.members.values { each.send(left) }
             self.onRoomChanged(key, self.membersDescribed(room))
         }
         onRoomChanged(key, membersDescribed(room))
+        room.keeper?.joined(id, wire: wire)
     }
 
     private func fromMember(_ room: Room, key: String, id: String, member: Member, text: String) {
@@ -522,6 +557,9 @@ public final class Relay: @unchecked Sendable {
         // The app's shared collections (`LampStore.shared`), for one copy (or each copy of one app) that speaks 5: passed on
         // as they are, since each copy keeps and merges its own.
         if kind == "store", member.rate.allowed(member.peer), let to = message["to"] as? String {
+            // For Lamp, which keeps the wish's collections; and what copies say to each other is kept as well.
+            if to == WishChannel.relayName { return room.keeper?.heard(message, from: id) ?? () }
+            room.keeper?.overheard(message, from: id)
             var out = message
             out["to"] = nil
             out["from"] = id
@@ -554,6 +592,17 @@ public final class Relay: @unchecked Sendable {
     /// moving.
     private func fileOrPad(_ room: Room, id: String, member: Member, kind: String, message: [String: Any]) {
         guard let to = message["to"] as? String, to != id else { return }
+        // A shared file's bytes to or from Lamp, which keeps them (`WishKeeper`).
+        if to == WishChannel.relayName {
+            guard let keeper = room.keeper, kind != "pad" else { return }
+            if kind == "file" {
+                guard member.rate.allowed(member.peer) else { return }
+                keeper.fileStarts(message, from: id)
+            } else {
+                keeper.fileEnded(message, from: id)
+            }
+            return
+        }
         let target = room.members[to].flatMap { $0.wire >= 3 ? $0 : nil }
         switch kind {
         case "pad":
@@ -601,7 +650,13 @@ public final class Relay: @unchecked Sendable {
     /// name in its place. A piece past the file's size, or past the window the receiver has acknowledged, is a sender
     /// that doesn't keep to what it said: the file goes no further, and both hear so.
     private func pieceFromMember(_ room: Room, id: String, member: Member, data: Data) {
-        guard let (to, fileID, offset) = WishChannel.pieceHeader(data), let transfer = member.sending[Self.sendingKey(to, fileID)] else { return }
+        guard let (to, fileID, offset) = WishChannel.pieceHeader(data) else { return }
+        if to == WishChannel.relayName {
+            let bytes = data.dropFirst(offset)
+            guard !bytes.isEmpty, bytes.count <= ControllerWire.chunk else { return }
+            return room.keeper?.piece(Data(bytes), id: fileID, from: id) ?? ()
+        }
+        guard let transfer = member.sending[Self.sendingKey(to, fileID)] else { return }
         let bytes = data.count - offset
         let kept = room.members[to] != nil && bytes > 0 && bytes <= ControllerWire.chunk && transfer.passed + bytes <= transfer.size
             && transfer.passed + bytes - transfer.acknowledged <= ControllerWire.window + ControllerWire.chunk
@@ -924,6 +979,7 @@ public final class Relay: @unchecked Sendable {
             }
         }
         for room in rooms.values {
+            room.keeper?.tick()
             for member in room.members.values {
                 if now.timeIntervalSince(member.peer.heard) > ControllerWire.silence { member.peer.close(code: 4002); continue }
                 member.peer.send(#"{"t":"beat"}"#)
