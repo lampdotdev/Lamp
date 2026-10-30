@@ -280,6 +280,7 @@ extension Agent {
             + Agent.newApp(project)
             + GitHubProjects.note(for: prompt)
             + (LiveReload.eligible(project) ? Agent.liveNote : "")
+            + GameKit.unregisteredNote(project)
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }

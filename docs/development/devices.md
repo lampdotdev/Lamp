@@ -545,7 +545,16 @@ where it starts, and the cameras again after init, so what a start sets on one d
 registered as it is, so a new version that declares any of it differently refuses the swap (`redeclare`) and the code
 runs again, from what was held before that swap, which a swap gone wrong may have changed. This is a promise about
 what's registered only: `game({ renderer })` gets a renderer after it's built, so one the game makes for itself can't
-be reused, and three.js code the runtime never sees can't be kept. While the code runs again, the last frame and
+be reused, and three.js code the runtime never sees can't be kept. So Lamp checks: `GameKit.unregisteredNote` tells the
+agent with each request what the game's code doesn't register (read from the code, since a game brought in isn't open
+at its first edit, and only a hint: the page's word is what counts), and `apply` won't run the code again where the
+player's place wouldn't last (`keepsPlace`: no state registered and no snapshot() read back). That change is held for
+Reload as any held change is, its `why` naming what isn't registered, so the agent can register it in the same turn and
+Reload takes both in, once; older and imported games adopt this that way, on their first edit. The person's Reload
+always goes in. After each run the page tells Lamp what came through (`cameThrough`, a state of its own with the words in
+`why`, kept as `PageLive.report`), which the agent's next look carries. A look in the hidden copy shows a change
+whether or not the open game took it, and the open game takes it as that look plays, so its answer waits a moment for
+that and then says what the open game did (`GameKit.openGameNote`). While the code runs again, the last frame and
 the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
 Lamp's light crosses the window (`Store.pageShown`): the smoke built over the window stays through the run, rather than
 going as the page first answers. A swap gets the light at once; a page that opens again says `shown` at its first frame;

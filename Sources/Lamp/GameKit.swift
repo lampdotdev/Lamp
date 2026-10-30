@@ -704,6 +704,72 @@ enum GameKit {
         try write(for: project)
     }
 
+    /// What keeps a game's place, as `unregistered` lists it: the one thing whose lack holds a change for Reload. A renderer
+    /// or camera of the game's own starts again with the code, and the change goes in.
+    private static let unregisteredState = "its gameplay state (live.state)"
+
+    /// What a game on the runtime hasn't registered, read from its code, for the agent before it changes anything: the
+    /// open page's own word comes when a change goes in (lamp-game.js, `unregistered`), but a game brought in isn't
+    /// open yet, and its first requested edit is when it adopts this.
+    static func unregistered(_ project: LampProject) -> [String] {
+        guard isGame(project), engine(project) == .web, !ownsLoop(project) else { return [] }
+        let code = sourceText(project)
+        func has(_ pattern: String) -> Bool { code.range(of: pattern, options: .regularExpression) != nil }
+        let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]")
+        var left: [String] = []
+        if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])") && !has("\\.keep\\(\\s*['\"]renderer['\"]") { left.append("its renderer (live.renderer)") }
+        if !flat, !has("\\.camera\\(\\s*['\"]") && !has("\\.keep\\(\\s*['\"][^'\"]*[Cc]amera") { left.append("its camera (live.camera)") }
+        if !has("\\.state\\(\\s*['\"]") && !(has("\\bsnapshot\\b") && has("\\b(restore|pendingRestore)\\b")) { left.append(unregisteredState) }
+        return left
+    }
+
+    /// The game's own code: its modules in Web/ or its TypeScript in src/, without Lamp's files or what's bundled.
+    private static func sourceText(_ project: LampProject) -> String {
+        var text = ""
+        for folder in [webFolder, "src"] {
+            let root = project.dir.appendingPathComponent(folder)
+            for name in ((try? FileManager.default.subpathsOfDirectory(atPath: root.path)) ?? []).sorted()
+            where name.hasSuffix(".js") || name.hasSuffix(".mjs") || name.hasSuffix(".ts") {
+                let first = name.split(separator: "/").first.map(String.init) ?? name
+                if ["three", "rapier", "phaser", "app"].contains(first) || first.hasPrefix("lamp") { continue }
+                text += AppFile.text(root.appendingPathComponent(name), in: project) ?? ""
+                text += "\n"
+            }
+        }
+        return text
+    }
+
+    /// Goes with a request: what isn't registered yet, before the agent changes the game, which may be a part of the wish.
+    static func unregisteredNote(_ project: LampProject) -> String {
+        guard let game = ([project] + Parts.load(project)).first(where: { !unregistered($0).isEmpty }) else { return "" }
+        let left = unregistered(game)
+        let first = left.contains(unregisteredState) ? "Register its gameplay state in this change, with what else your change touches" : "Register what your change touches"
+        let held = left.contains(unregisteredState) ? " Until its state is registered or snapshot() is read back, a change that can't be swapped in waits for Reload rather than starting play over." : " What isn't registered starts again with the code."
+        return """
+
+
+        ---
+        This game hasn't registered \(left.joined(separator: ", ")). \(first), and leave the rest for the changes that \
+        touch it (the game skill, "Changes while it's played", says how, for a game from before this).\(held)
+        """
+    }
+
+    /// Goes with a look in the preview, a hidden copy that shows a change whether or not the person's open game took it.
+    @MainActor static func openGameNote(_ project: LampProject) -> String {
+        let left = unregistered(project)
+        let came = PageLive.shared.report(project, at: .mac).map { " What came through the open game's last change: \($0). Anything reset or not registered is the person's place lost: register it now, so the next change keeps it." } ?? ""
+        if PageLive.shared.holds(project) {
+            let why = PageLive.shared.reason(project).map { " (\($0))" } ?? ""
+            return " The person's open game doesn't show this: the change waits for Reload\(why). Don't say it's in."
+                + (left.isEmpty ? "" : " Register what isn't registered in this turn, so Reload takes both in.")
+        }
+        guard !left.isEmpty, PageLive.shared.isOpen(project, at: .mac) else { return came }
+        guard left.contains(unregisteredState) else {
+            return came + " In the person's open game, what isn't registered (\(left.joined(separator: ", "))) starts again with the code: register it as your change touches it."
+        }
+        return came + " The person's open game takes a change that can't be swapped in only with Reload, since it hasn't registered \(left.joined(separator: ", ")): register those in this turn, and don't say the change is in until a look says so."
+    }
+
     /// The scaffold's code: what a game that's still the scaffold has as Lamp wrote it.
     private static func scaffoldCode(web: Bool) -> [String] {
         web ? ["game.js", "world.js", "making.js"].map { "\(webFolder)/\($0)" } : ["Game/game.cpp"]
@@ -1328,7 +1394,9 @@ extension Agent.Rules {
     a fresh start would show (no title, intro or tutorial). Raise `version` with a `migrate` when a field changes its \
     meaning; a field you add takes its start value. Only what's registered is kept: a renderer, camera or variable of \
     the game's own starts again with the code. A 2D game registers its state, since Phaser's renderer and cameras \
-    are made again from it. Load pictures, models, sounds and \
+    are made again from it. Before a change that can't be swapped in, you're told what isn't registered: in a game \
+    whose place wouldn't last, the change waits for Reload rather than starting play over, and a look after a run says \
+    what was kept, built again and reset. Register what's missing in that same turn. Load pictures, models, sounds and \
     data through lamp-game.js (`texture('bricks.png')`, `model('car.glb')`, `sound.load('hit.wav')`, `asset('level.json')`), \
     never by a URL of your own, so a new copy goes into the running game; where the game makes something of its own from \
     a file (a material from shader source, clones of a model, a level from JSON), give game() `assetChanged(path)`, which \

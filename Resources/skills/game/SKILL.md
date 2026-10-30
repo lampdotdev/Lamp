@@ -193,6 +193,12 @@ game is written to keep the player's place through one:
   its place through them. Without either it starts again, from its saves. When you're asked to change such a game, register what your change
   touches as you make it, and leave the rest for the changes that touch it: move its renderer into `live.renderer` first, its
   main camera into `live.camera`, then its state, field by field out of snapshot() into `live.state`.
+- **Lamp checks and says.** With your request comes what the game hasn't registered. A change that would start play over
+  (no state registered, and no snapshot() it reads back) waits for the person's Reload rather than going in, and the
+  look names what's missing: register it in the same turn, and Reload takes both in. Those are the one change a game
+  needs to adopt this: after that, changes go in as it's played. After a run of the code, a look says what was kept, built again and reset,
+  and what isn't registered. Anything reset that you didn't mean to reset is the place the person lost: register it
+  now, so the next change keeps it.
 - A game with phones keeps them through all of this: they stay joined with their numbers, and the code never stops or
   starts `Lamp.controllers` for a change. So the state holds which player owns which slot (the seat, side, color or
   team each player number has), and the new code restores those slots before it sits anyone down. As its first frame
