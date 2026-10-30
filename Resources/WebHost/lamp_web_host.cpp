@@ -1,15 +1,17 @@
 // Lamp's web host on the Xbox: the same program for every web app, beside the app's Web/ folder in its package.
 //
 // A full-screen CoreWindow holding a WebView2 (Chromium, which the console keeps up to date) that shows Web/index.html
-// from the package, served at https://lamp.example/ by WebView2's own mapping of a host name to a folder, so pages load
-// their files with fetch as they would from a site. No XAML: the page is drawn into a composition visual, as WinUI's
-// control does it. The page's console, its uncaught errors, text it posts with chrome.webview.postMessage and what the
-// host itself has to say go to log.txt in the app's own folder, which Device Portal reads back.
+// from the package, served at https://lamp.example/ by WebView2's own mapping of a host name to a folder (by the host
+// itself for a shared app, below), so pages load their files with fetch as they would from a site. No XAML: the page
+// is drawn into a composition visual, as WinUI's control does it. The page's console, its uncaught errors, text it
+// posts with chrome.webview.postMessage and what the host itself has to say go to log.txt in the app's own folder,
+// which Device Portal reads back.
 //
 // lamp.js reaches Lamp on the Mac through the host (`http` messages): the page is https and Lamp's gateway plain http
 // on the home network, which Chromium won't let the page call itself. Only the app's own page may ask, only Lamp's own
 // paths are passed on, and an answer goes only to the page that asked: the app's token and its AI's answers are in
-// them. A link to anywhere else opens in the console's browser, never in this web view.
+// them. A link to anywhere else opens in the console's browser (for a shared app, only one to a site it was shared
+// with), never in this web view.
 //
 // A game's or a screen's page that's one of a wish's apps talks to the others over plain ws:// links (to Lamp's relay
 // room, and straight to the apps that listen), which an https page may not open. The host opens them for the page and
@@ -27,6 +29,15 @@
 // pipe straight into the relay, never over the network, so only the page can be the game's host. Stopping, the console setting the app aside, the page going
 // away, and no ask from it for 45 s end the session: listeners close, players are let go and the key is forgotten;
 // the page's next ask opens a new one.
+//
+// An app shared with the person carries network-policy.json beside the host, written by Lamp from the sites its safety
+// sheet named (lamp_web_guard.h). Its page then reaches only its own files and those sites, with or without Lamp: the
+// host serves the app's files itself rather than through WebView2's mapping of a folder, each answer carrying the policy
+// as its Content-Security-Policy; every request of the page, its frames and its workers is put to the policy, and one to
+// a site it doesn't list is refused; navigations and new windows go only to its pages or a listed site; the web view is
+// started so it opens no connection but to a listed site, which holds a preconnect too; WebRTC is taken out of every
+// frame; the http bridge goes only to Lamp on the Mac, and the ws bridge only to a listed site or a relay Lamp's own
+// answer named. An app with no policy file runs as it always has.
 //
 // The page is laid out at 1920x1080 CSS pixels, as in Lamp's preview on the Mac and as the rules say: the console's
 // web view would otherwise lay it out at 1280x720 and scale it up, so the host zooms it out to match.
@@ -66,6 +77,7 @@
 #include <memory>
 #include <string>
 #include "lamp_controllers.h"
+#include "lamp_web_guard.h"
 
 using namespace winrt;
 using namespace Windows::ApplicationModel::Core;
@@ -80,6 +92,30 @@ static const wchar_t* g_origin = L"https://lamp.example/";
 static bool is_app_page(std::wstring_view url) { return url.rfind(g_origin, 0) == 0; }
 
 static void say_line(std::wstring_view text);
+
+// network-policy.json beside the host: nil when the package has none, and empty text when it's there but can't be read,
+// which guards the app with nothing listed.
+static std::optional<std::string> read_policy(std::wstring const& path) {
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) {
+        DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return std::nullopt;
+        return std::string();
+    }
+    if (data.nFileSizeHigh || data.nFileSizeLow > 1024 * 1024) return std::string();
+    FILE* file = _wfopen(path.c_str(), L"rb");
+    if (!file) return std::string();
+    std::string text(data.nFileSizeLow, '\0');
+    size_t read = text.empty() ? 0 : fread(text.data(), 1, text.size(), file);
+    fclose(file);
+    return read == text.size() ? text : std::string();
+}
+
+// What the log says of where a refused request went: its site, never the whole address, which may carry what the page sent.
+static std::wstring site_of(std::string const& url) {
+    auto origin = lampg::origin_of(url);
+    return origin ? std::wstring(to_hstring(*origin)) : std::wstring(L"an address that isn't a website's");
+}
 
 // An IPv4 address on a home network: private (10/8, 172.16/12, 192.168/16) or link-local (169.254/16).
 static bool is_private_v4(std::wstring_view host) {
@@ -225,6 +261,7 @@ struct StreamTransport : lampc::Transport {
 
 struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     CoreWindow window{ nullptr };
+    CoreWebView2Environment env{ nullptr };
     CoreWebView2Controller controller{ nullptr };
     CoreWebView2 web{ nullptr };
     CoreWebView2DevToolsProtocolEventReceiver consoleCalls{ nullptr }, uncaught{ nullptr };
@@ -234,6 +271,9 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     Windows::UI::Composition::CompositionTarget target{ nullptr };
     Windows::UI::Composition::ContainerVisual root{ nullptr };
     std::wstring installed;
+    // A shared app's policy (lamp_web_guard.h), read once as the app opens, and the relays Lamp's own answers named.
+    lampg::Policy policy;
+    std::set<std::string> lamp_sockets;
     // One effect at a time on each controller: a new one, or a reset, takes the place of what was playing.
     // Each of the page's gamepads by its index: the controller it was found to be, and what's playing on it.
     struct Rumble {
@@ -265,6 +305,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
 
     void Initialize(CoreApplicationView const&) {
         installed = std::wstring(Windows::ApplicationModel::Package::Current().InstalledLocation().Path());
+        policy = lampg::Policy::read(read_policy(installed + L"\\" + std::wstring(to_hstring(lampg::policy_file))));
         CoreApplication::Suspending([this](auto const&, Windows::ApplicationModel::SuspendingEventArgs const& args) {
             say_line(L"Lamp: the console set the app aside.");
             for (int i = 0; i < 4; i++) still(i);
@@ -320,8 +361,11 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             // A console app plays its sound as it opens, as a game's title music does: WebView2, like Chrome, would hold
             // a page's sound back until the first press of a button, so that rule is turned off for the app's own page.
             CoreWebView2EnvironmentOptions options;
-            options.AdditionalBrowserArguments(L"--autoplay-policy=no-user-gesture-required");
-            auto env = co_await CoreWebView2Environment::CreateWithOptionsAsync(L"", L"", options);
+            std::wstring arguments = L"--autoplay-policy=no-user-gesture-required";
+            // A shared app's web view connects only to its listed sites, below the page (lamp_web_guard.h).
+            if (policy.guarded) arguments += L" " + std::wstring(to_hstring(lampg::browser_arguments(policy)));
+            options.AdditionalBrowserArguments(arguments);
+            env = co_await CoreWebView2Environment::CreateWithOptionsAsync(L"", L"", options);
             say(L"Lamp: WebView2 %ls.", env.BrowserVersionString().c_str());
             compositor = Windows::UI::Composition::Compositor();
             target = compositor.CreateTargetForCurrentView();
@@ -350,7 +394,8 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             settings.IsPinchZoomEnabled(false);
             // The page is the app's own, from its package, so nothing it opens needs SmartScreen's look first.
             settings.IsReputationCheckingRequired(false);
-            web.SetVirtualHostNameToFolderMapping(L"lamp.example", hstring(installed + L"\\Web"), CoreWebView2HostResourceAccessKind::Allow);
+            if (policy.guarded) co_await guard();
+            else web.SetVirtualHostNameToFolderMapping(L"lamp.example", hstring(installed + L"\\Web"), CoreWebView2HostResourceAccessKind::Allow);
             web.WebMessageReceived([this](auto const&, CoreWebView2WebMessageReceivedEventArgs const& args) {
                 JsonObject message{ nullptr };
                 if (JsonObject::TryParse(args.WebMessageAsJson(), message) && message.GetNamedString(L"lamp", L"") == L"http") {
@@ -385,6 +430,15 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             // is ever where the app's answers go.
             web.NavigationStarting([this](auto const&, CoreWebView2NavigationStartingEventArgs const& args) {
                 std::wstring uri(args.Uri());
+                // A shared app's page leaves only for a site it was shared with: going anywhere else is a request there.
+                if (policy.guarded) {
+                    auto where = lampg::navigation(policy, to_string(uri));
+                    if (where == lampg::Navigation::stay) { page++; end_pipes(0); phones_close(L"the page went away"); return; }
+                    args.Cancel(true);
+                    if (where == lampg::Navigation::browser) elsewhere(uri);
+                    else say(L"Lamp: the page's link to %ls wasn't opened: it isn't one of the sites the app was shared with.", site_of(to_string(uri)).c_str());
+                    return;
+                }
                 if (is_app_page(uri) || uri == L"about:blank") { page++; end_pipes(0); phones_close(L"the page went away"); return; }
                 args.Cancel(true);
                 elsewhere(uri);
@@ -392,6 +446,13 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             web.NewWindowRequested([this](auto const& sender, CoreWebView2NewWindowRequestedEventArgs const& args) {
                 args.Handled(true);
                 std::wstring uri(args.Uri());
+                if (policy.guarded) {
+                    auto where = lampg::navigation(policy, to_string(uri));
+                    if (where == lampg::Navigation::stay) sender.Navigate(args.Uri());
+                    else if (where == lampg::Navigation::browser) elsewhere(uri);
+                    else say(L"Lamp: the page's window for %ls wasn't opened: it isn't one of the sites the app was shared with.", site_of(to_string(uri)).c_str());
+                    return;
+                }
                 if (is_app_page(uri)) sender.Navigate(args.Uri()); else elsewhere(uri);
             });
             co_await fit_page();
@@ -400,6 +461,113 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         } catch (hresult_error const& e) {
             say(L"Lamp: WebView2 couldn't start (0x%08x): %ls", (unsigned)e.code(), e.message().c_str());
         }
+    }
+
+    // MARK: A shared app's sites
+
+    // Every request of the page, its frames and its workers (dedicated, shared and service) comes to `requested`; with no
+    // folder mapped, the app's own files are served there or not at all.
+    Windows::Foundation::IAsyncAction guard() {
+        auto lifetime = get_strong();
+        say(L"Lamp: this app was shared: it reaches its own files and the %u sites it was shared with, nothing else.", (unsigned)policy.origins.size());
+        try {
+            web.AddWebResourceRequestedFilter(L"*", CoreWebView2WebResourceContext::All, CoreWebView2WebResourceRequestSourceKinds::All);
+        } catch (hresult_error const&) {
+            // A WebView2 older than the one Lamp builds with: its workers' requests aren't shown to the host, and are held
+            // by the policy their own answers carry.
+            web.AddWebResourceRequestedFilter(L"*", CoreWebView2WebResourceContext::All);
+            say_line(L"Lamp: this WebView2 doesn't show the host its workers' requests; the policy still holds them.");
+        }
+        web.WebResourceRequested([this](auto const&, CoreWebView2WebResourceRequestedEventArgs const& args) { requested(args); });
+        web.FrameNavigationStarting([this](auto const&, CoreWebView2NavigationStartingEventArgs const& args) {
+            std::string uri = to_string(args.Uri());
+            if (lampg::frame_may_open(policy, uri)) return;
+            args.Cancel(true);
+            say(L"Lamp: a frame of the page wasn't let open %ls: it isn't one of the sites the app was shared with.", site_of(uri).c_str());
+        });
+        co_await web.AddScriptToExecuteOnDocumentCreatedAsync(to_hstring(lampg::no_webrtc_script()));
+    }
+
+    void requested(CoreWebView2WebResourceRequestedEventArgs const& args) {
+        std::string url = to_string(args.Request().Uri());
+        switch (lampg::request(policy, url)) {
+        case lampg::Request::allowed: return;
+        case lampg::Request::local: serve(args, url); return;
+        case lampg::Request::blocked:
+            say(L"Lamp: the page's request to %ls was refused: it isn't one of the sites the app was shared with.", site_of(url).c_str());
+            args.Response(respond(lampg::blocked(policy), nullptr));
+            return;
+        }
+    }
+
+    CoreWebView2WebResourceResponse respond(lampg::Head const& head, Windows::Storage::Streams::IRandomAccessStream const& body) {
+        std::wstring headers;
+        for (auto const& [name, value] : head.headers) headers += std::wstring(to_hstring(name)) + L": " + std::wstring(to_hstring(value)) + L"\r\n";
+        return env.CreateWebResourceResponse(body, head.status, to_hstring(head.reason), hstring(headers));
+    }
+
+    // One of the app's files under Web/ by its address: its path, name and size, a plain file reached through no link.
+    struct WebFile {
+        std::wstring path;
+        std::string name;
+        uint64_t size = 0;
+    };
+    std::optional<WebFile> web_file(std::string const& url) {
+        auto steps = lampg::steps(policy, url);
+        if (!steps) return std::nullopt;
+        std::wstring path = installed + L"\\Web";
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        for (auto const& step : *steps) {
+            path += L"\\" + std::wstring(to_hstring(step));
+            if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)
+                || (data.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM))) return std::nullopt;
+        }
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return std::nullopt;
+        return WebFile{ path, steps->back(), (uint64_t)data.nFileSizeHigh << 32 | data.nFileSizeLow };
+    }
+
+    // The file, or the part of it asked for: a whole one read as WebView2 takes it, a part (a video's, as it plays) read
+    // into memory, at most `lampg::range_piece`.
+    static Windows::Foundation::IAsyncOperation<Windows::Storage::Streams::IRandomAccessStream> open_part(std::wstring path, lampg::Range part) {
+        co_await resume_background();
+        auto file = co_await Windows::Storage::StorageFile::GetFileFromPathAsync(path);
+        Windows::Storage::Streams::IRandomAccessStream stream = co_await file.OpenReadAsync();
+        if (!part.partial) co_return stream;
+        stream.Seek(part.offset);
+        Windows::Storage::Streams::Buffer buffer((uint32_t)part.length);
+        auto read = co_await stream.ReadAsync(buffer, (uint32_t)part.length, Windows::Storage::Streams::InputStreamOptions::None);
+        Windows::Storage::Streams::InMemoryRandomAccessStream piece;
+        co_await piece.WriteAsync(read);
+        piece.Seek(0);
+        co_return piece;
+    }
+
+    // Answers a request for one of the app's files, the policy on the answer.
+    fire_and_forget serve(CoreWebView2WebResourceRequestedEventArgs args, std::string url) {
+        auto lifetime = get_strong();
+        auto dispatcher = window.Dispatcher();
+        auto deferral = args.GetDeferral();
+        auto request = args.Request();
+        std::wstring method(request.Method());
+        std::optional<std::string> asked;
+        lampg::Head head = lampg::refusal(policy, 404, "Not Found");
+        Windows::Storage::Streams::IRandomAccessStream body{ nullptr };
+        try {
+            if (request.Headers().Contains(L"Range")) asked = to_string(request.Headers().GetHeader(L"Range"));
+            if (method != L"GET" && method != L"HEAD") head = lampg::refusal(policy, 405, "Method Not Allowed");
+            else if (auto file = web_file(url)) {
+                if (auto part = lampg::range(asked, file->size)) {
+                    head = lampg::local_head(policy, file->name, file->size, *part);
+                    if (method == L"GET") body = co_await open_part(file->path, *part);
+                } else head = lampg::refusal(policy, 416, "Range Not Satisfiable");
+            }
+        } catch (...) {
+            head = lampg::refusal(policy, 404, "Not Found");
+            body = nullptr;
+        }
+        co_await resume_foreground(dispatcher);
+        try { args.Response(respond(head, body)); } catch (...) {}
+        deferral.Complete();
     }
 
     // The page's console and uncaught errors, through the DevTools protocol, so the log says what went wrong in it.
@@ -448,11 +616,14 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         JsonObject answer;
         answer.SetNamedValue(L"lamp", JsonValue::CreateStringValue(L"http"));
         answer.SetNamedValue(L"id", JsonValue::CreateNumberValue(id));
+        // What a shared app's answer from Lamp says, for the relays it names.
+        std::string told_path, told;
         try {
             Windows::Foundation::Uri url(message.GetNamedString(L"url", L""));
             std::wstring path(url.Path());
             bool lamps = path.rfind(L"/ai", 0) == 0 || path.rfind(L"/app/", 0) == 0;
             if (url.SchemeName() != L"http" || !lamps || !url.UserName().empty()) throw hresult_invalid_argument(L"not one of Lamp's paths");
+            if (!lampg::http_bridge(policy, to_string(url.AbsoluteUri()))) throw hresult_invalid_argument(L"not Lamp on the Mac");
             auto body = message.GetNamedString(L"body", L"");
             if (body.size() > 8 * 1024 * 1024) throw hresult_invalid_argument(L"too big");
             double timeout = message.GetNamedNumber(L"timeout", 240000);
@@ -475,11 +646,14 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             answer.SetNamedValue(L"status", JsonValue::CreateNumberValue((double)(int)response.StatusCode()));
             say(L"Lamp: %ls%ls answered %d.", url.Host().c_str(), path.c_str(), (int)response.StatusCode());
             answer.SetNamedValue(L"body", JsonValue::CreateStringValue(text));
+            if (policy.guarded) { told_path = to_string(path); told = to_string(text); }
         } catch (hresult_error const& e) {
             say(L"Lamp: a call to Lamp on the Mac failed (0x%08x): %ls", (unsigned)e.code(), e.message().c_str());
             answer.SetNamedValue(L"error", JsonValue::CreateStringValue(e.message()));
         }
         co_await resume_foreground(dispatcher);
+        // A relay Lamp named (its phones, a wish's room) is one the ws bridge may open for a shared app.
+        for (auto const& origin : lampg::sockets_in(told_path, told)) lamp_sockets.insert(origin);
         if (web && page == asked && is_app_page(web.Source())) web.PostWebMessageAsJson(answer.Stringify());
     }
 
@@ -496,6 +670,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
                 // A sweep of the network opens a few dozen at once; more than that is something gone wrong in the page.
                 if (pipes.count(id) || pipes.size() >= 64) throw hresult_invalid_argument(L"too many links");
                 if (!may_dial(url)) throw hresult_invalid_argument(L"not a link to this network");
+                if (!lampg::ws_bridge(policy, to_string(url.AbsoluteUri()), lamp_sockets)) throw hresult_invalid_argument(L"not one of the sites the app was shared with");
                 p = std::make_shared<Pipe>();
                 p->page = page;
                 pipes[id] = p;

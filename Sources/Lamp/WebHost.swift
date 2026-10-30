@@ -23,24 +23,45 @@ enum WebHost {
     private static var resources: URL? { Bundle.main.resourceURL?.appendingPathComponent("WebHost") }
 
     /// Whether a declared kind's apps run in this host. Lamp Dev can be sent back to the EdgeHTML host with
-    /// `defaults write <bundle id> xboxWebHost edgehtml`, to compare the two on the same console.
-    static func isUsed(by declared: Integration.AppKind.Declared) -> Bool {
+    /// `defaults write <bundle id> xboxWebHost edgehtml`, to compare the two on the same console; a shared app never is,
+    /// since only this host keeps it to its sites (`policy`).
+    static func isUsed(by declared: Integration.AppKind.Declared, guarded: Bool = false) -> Bool {
         guard declared.host == "webview2" else { return false }
-        return !(Edition.isDev && UserDefaults.standard.string(forKey: "xboxWebHost") == "edgehtml")
+        return guarded || !(Edition.isDev && UserDefaults.standard.string(forKey: "xboxWebHost") == "edgehtml")
+    }
+
+    /// What a shared app's page may reach on the console, which the host keeps to with or without Lamp
+    /// (`lamp_web_guard.h`): the sites it was shared with, and Lamp's own addresses for the page's calls to Lamp.
+    /// Written beside the host as `policyFile`, outside Web/, where nothing of the app's own can reach it.
+    struct Policy: Codable, Equatable {
+        /// The host's `lampg::policy_format`: a host that doesn't know it guards the app with nothing listed.
+        var format = 1
+        var origins: [String]
+        var lamp: [String]
+    }
+    static let policyFile = "network-policy.json"
+
+    /// The policy for an app shared with the person; nil for one of their own, which the host leaves as it is.
+    static func policy(for project: LampProject) -> Policy? {
+        guard let origins = SharedReach.allowedOrigins(for: project) else { return nil }
+        let routes = DeviceSupport.installValues(for: project)["routes"] as? [String] ?? []
+        return Policy(origins: Array(Set(origins.compactMap(SharedReach.canonical))).sorted(),
+                      lamp: Array(Set(routes.compactMap(SharedReach.canonical))).sorted())
     }
 
     /// Where a game's phone page goes in the package, beside Web/, which the host serves to phones itself.
     static let phoneFolder = "Phone"
 
-    /// The package's files: the host and WebView2's library at the top, the app's under Web/, and a game's phone page
-    /// under Phone/.
-    static func payload(_ files: [(path: String, data: Data)], phone: ControllerSnapshot? = nil) throws -> [(path: String, data: Data)] {
+    /// The package's files: the host and WebView2's library at the top, a shared app's policy beside them, the app's
+    /// under Web/, and a game's phone page under Phone/.
+    static func payload(_ files: [(path: String, data: Data)], phone: ControllerSnapshot? = nil, policy: Policy? = nil) throws -> [(path: String, data: Data)] {
         guard let resources,
               let host = try? Data(contentsOf: resources.appendingPathComponent(program)),
               let core = try? Data(contentsOf: resources.appendingPathComponent(library)) else {
             throw MSIX.Failure(message: "Lamp's web host for the Xbox is missing from Lamp itself.")
         }
-        return [(program, host), (library, core)] + files.map { (folder + "/" + $0.path, $0.data) }
+        let rule = try policy.map { [(policyFile, try JSONEncoder().encode($0))] } ?? []
+        return [(program, host), (library, core)] + rule + files.map { (folder + "/" + $0.path, $0.data) }
             + (phone?.files ?? []).map { (phoneFolder + "/" + $0.path, $0.data) }
     }
 }

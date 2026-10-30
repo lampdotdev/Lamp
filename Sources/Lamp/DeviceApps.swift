@@ -194,7 +194,13 @@ enum DeviceApps {
         if let page, declared.output.lowercased().hasSuffix(".zip") { try GamePage.check(payload: try MSIX.files(inZip: data), for: page) }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
-            try wrapMSIX(data, for: project, entry: WebHost.isUsed(by: declared) ? .webHost : .page(declared.start ?? "index.html"))
+            // A shared app's page is kept to its sites only by Lamp's own host; the system's would let it reach anywhere.
+            let policy = WebHost.policy(for: project)
+            let hosted = WebHost.isUsed(by: declared, guarded: policy != nil)
+            if policy != nil, !hosted {
+                throw Failure(message: "This app was shared with you, and goes on this device only in Lamp's own web player, which keeps it to the sites it was shared with.")
+            }
+            try wrapMSIX(data, for: project, entry: hosted ? .webHost : .page(declared.start ?? "index.html"), policy: policy)
         } else if !DeviceSupport.libraries(for: project).isEmpty, declared.output.lowercased().hasSuffix(".zip") {
             try await withFilledSupport(data, for: project).write(to: packageURL(for: project), options: .atomic)
         } else {
@@ -261,9 +267,9 @@ enum DeviceApps {
 
     /// The Windows package Lamp makes of the package step's zip: its own manifest, the app's icon as its logos, and
     /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
-    private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start) throws {
+    private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start, policy: WebHost.Policy? = nil) throws {
         var files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
-        if entry == .webHost { files = try WebHost.payload(files, phone: try GamePhones.xboxPage(for: project)) }
+        if entry == .webHost { files = try WebHost.payload(files, phone: try GamePhones.xboxPage(for: project), policy: policy) }
         let folder = buildFolder(for: project)
         let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
         var identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
