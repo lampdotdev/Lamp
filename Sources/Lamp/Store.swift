@@ -779,9 +779,10 @@ final class Store: ObservableObject {
         /// The sources a step of the agent's saves put into the game open on this Mac (`stepPage`): a build of the same
         /// sources has nothing to show the person, so it says nothing in the chat.
         var shownSources = ""
-        /// The agent's look is playing the game in the hidden copy (`playGame`), which a message from the person stops
-        /// (`stoppedForMessage`): they never wait behind Lamp's own checking.
-        var playingHidden = false
+        /// Stops the agent's look playing the game in the hidden copy (`playGame`), set while it plays: a message from the
+        /// person stops it (`stoppedForMessage`), so they never wait behind Lamp's own checking. It stops that play alone,
+        /// for the game being played (a wish's part, under the wish's turn), never a build the turn runs beside it.
+        var stopHidden: (@MainActor () -> Void)?
         var stoppedForMessage = false
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
@@ -3962,10 +3963,9 @@ final class Store: ObservableObject {
         }
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
         // A message never waits behind Lamp's own checking: a play in the hidden copy stops, so the turn goes on to it.
-        if let turn = turns[project.id], turn.playingHidden {
+        if let turn = turns[project.id], let stop = turn.stopHidden {
             turn.stoppedForMessage = true
-            WebGamePreview.stop(for: project.id)
-            if let process = turn.build { Subprocess.terminateTree(process) }
+            stop()
         }
         // Keeping the wish's other places current gives way to a request: they're tried again once it's done.
         for app in apps(of: wish(of: project)) where turns[app.id]?.updatingPlaces == true { turns[app.id]?.cancel() }
@@ -9856,11 +9856,19 @@ final class Store: ObservableObject {
     private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
         // Lamp's own checking, out of sight: nothing in the chat says it's happening.
         let played: GameKit.Played
-        owner.playingHidden = true
-        defer { owner.playingHidden = false }
+        var hiddenProcess: Process?
+        let id = project.id
+        owner.stopHidden = {
+            WebGamePreview.stop(for: id)
+            if let process = hiddenProcess { Subprocess.terminateTree(process) }
+        }
+        defer { owner.stopHidden = nil }
         do {
             played = GameKit.engine(project) == .web ? try await GameKit.playWeb(project, script: script)
-                : try await GameKit.play(project, script: script, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+                : try await GameKit.play(project, script: script, started: { [weak self] in
+                    self?.turns[project.id]?.build = $0
+                    hiddenProcess = $0
+                })
             turns[project.id]?.build = nil
         } catch {
             turns[project.id]?.build = nil
