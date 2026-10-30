@@ -3,22 +3,42 @@
 **Remixable software.** Start from scratch, or from an app or game someone made. Change it live. Run it wherever
 you want. No code.
 
-![Lamp icon](Resources/AppIcon.png)
-
 Lamp is a Mac app. Say what you'd like in your own words and it makes it: an app for your Mac, something in your
 menu bar, a widget, a game, a screen for the kitchen tablet or the TV, or an app for your iPhone or iPad. Each one is
 a **wish**: it opens straight away, with its chat beside it, and every change you ask for goes into it while you use
 it.
 
-Lamp comes with apps to start from, on its desk under **Starter apps**:
+Lamp comes with apps to start from, on its desk under **Starter apps**: games, screens for the kitchen tablet or the
+TV, and Mac apps for everyday things. New York is Mr.doob's Slop New York, Home HQ is Wes Bos's family dashboard,
+and the rest are Lamp's own.
 
-- **New York** (from Mr.doob's Slop New York): explore Manhattan on foot, by car, by bike or by helicopter, then ask
-  for a sports car, taxi fares or to play as a monster.
-- **Home HQ** (from Wes Bos's family dashboard): the day, calendar, chores, shopping and photos at a glance, on the
-  Mac, a tablet or the TV.
-- **The Little House**: a cozy room on a rainy night, with a fire and a ticking clock to listen to.
-- **Universal Remote**, **Buzzer Beater**, **Fireside**, **Local Crossings**, **Today**, **Disk Map**,
-  **Hours**, **Wedding Words**, **Transcriber**, **Tidy Up** and **Site-to-App**.
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/lampdotdev/newyork"><img src=".github/readme/newyork.jpg" width="260" alt="New York"></a><br><b>New York</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/homehq"><img src=".github/readme/homehq.jpg" width="260" alt="Home HQ"></a><br><b>Home HQ</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/thelittlehouse"><img src=".github/readme/thelittlehouse.jpg" width="260" alt="The Little House"></a><br><b>The Little House</b></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/lampdotdev/buzzerbeater"><img src=".github/readme/buzzerbeater.jpg" width="260" alt="Buzzer Beater"></a><br><b>Buzzer Beater</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/universalremote"><img src=".github/readme/universalremote.jpg" width="260" alt="Universal Remote"></a><br><b>Universal Remote</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/fireside"><img src=".github/readme/fireside.jpg" width="260" alt="Fireside"></a><br><b>Fireside</b></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/lampdotdev/localcrossings"><img src=".github/readme/localcrossings.jpg" width="260" alt="Local Crossings"></a><br><b>Local Crossings</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/today"><img src=".github/readme/today.jpg" width="260" alt="Today"></a><br><b>Today</b></td>
+    <td align="center"><img src=".github/readme/hotshelf.jpg" width="260" alt="Hot Shelf"><br><b>Hot Shelf</b></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/lampdotdev/diskmap"><img src=".github/readme/diskmap.jpg" width="260" alt="Disk Map"></a><br><b>Disk Map</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/hours"><img src=".github/readme/hours.jpg" width="260" alt="Hours"></a><br><b>Hours</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/weddingwords"><img src=".github/readme/weddingwords.jpg" width="260" alt="Wedding Words"></a><br><b>Wedding Words</b></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/lampdotdev/transcriber"><img src=".github/readme/transcriber.jpg" width="260" alt="Transcriber"></a><br><b>Transcriber</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/tidyup"><img src=".github/readme/tidyup.jpg" width="260" alt="Tidy Up"></a><br><b>Tidy Up</b></td>
+    <td align="center"><a href="https://github.com/lampdotdev/sitetoapp"><img src=".github/readme/sitetoapp.jpg" width="260" alt="Site-to-App"></a><br><b>Site-to-App</b></td>
+  </tr>
+</table>
 
 Change one and it's yours; the original stays under Starter apps. Every starter is a repository on GitHub
 (github.com/lampdotdev), and anything made with Lamp can be shared as a file, a link or a GitHub repository for
