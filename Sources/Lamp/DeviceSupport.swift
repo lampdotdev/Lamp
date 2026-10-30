@@ -335,6 +335,9 @@ enum DeviceSupport {
       // Lamp for once, just after Lamp has put it on the device, and keeps.
       var installed = /*LAMP_INSTALL*/null;
       var prefix = 'lamp:';
+      // Taken as the page loads: the wait before asking Lamp again is the page's, and a game's runtime takes away only
+      // the timers the game's own code left running (`Lamp.controllers` renews its session through this).
+      var browserTimeout = window.setTimeout;
 
       function read(key, fallback) {
         try { var v = window.localStorage.getItem(prefix + key); return v === null ? fallback : JSON.parse(v); }
@@ -515,7 +518,7 @@ enum DeviceSupport {
           if (i >= list.length) {
             // What the person said is paid for once it's heard: each way to the Mac once, never all of them again. Lamp
             // knows a recording by its id, so one that reaches it twice this way is still transcribed and charged once.
-            if (round === 0 && left() > 4000 && path !== '/ai/hear') return new Promise(function (r) { setTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
+            if (round === 0 && left() > 4000 && path !== '/ai/hear') return new Promise(function (r) { browserTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
             return Promise.reject(new Failure('Couldn\'t reach Lamp on your Mac. Keep this device on the same Wi-Fi as the Mac, with Lamp open, and try again.'));
           }
           return exchange(list[i], path, token, text, Math.min(timeout, left())).then(function (answer) {
