@@ -253,6 +253,8 @@ enum PageCopies {
                   var place = (member["device"] as? String).flatMap(place(of:)) else { continue }
             // Android's phone and TV places are one app: the copy is on whichever was built.
             if place == .android, built(project, at: .android) == nil, built(project, at: .androidTV) != nil { place = .androidTV }
+            // A copy already on an Xbox gets no new files from an app kept off it.
+            if place == .device, SharedNetwork.keptOffXbox(project) { outcome.waiting[place] = SharedNetwork.xboxRefusal; continue }
             let key = project.id + "\t" + copy
             // What it has: an earlier Lamp's lamp.js says nothing.
             let asking = Task { await Self.answer(from: copy, in: room, id: "", seconds: 6) }
