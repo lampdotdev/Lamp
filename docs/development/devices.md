@@ -492,7 +492,7 @@ modules can't rebind an importer's bindings, so a change those can't take opens 
 constructor or fields changed (read off its source without its methods) or that has private members (their brand is
 the old class's), an exported function or value that changed,
 or code outside the classes of a module exporting functions; and the HTML, a module nothing takes changes for (the one
-that builds the world), a circle of imports, or new code throwing in its first second (`swapGuard`), which opens it
+that starts the game, as a rule: a new game's world.js builds its world again in place), a circle of imports, or new code throwing in its first second (`swapGuard`), which opens it
 from the snapshot taken before the swap. The game's `accept((next, { changed }) => …)` may build again what a changed
 method built once, or return false to open the page again. Anything else (a file nothing put in, or code that can't be
 swapped) opens the page again with the game's `snapshot()` kept in sessionStorage ("reloading", with the page's reason

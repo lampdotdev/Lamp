@@ -151,8 +151,11 @@ game is written to keep the player's place through one:
   made again in `assetChanged(path)`, which returns true when it has.
 - Code goes into the running game too, with no reload, wherever the game's modules take it, and that's how a game is
   written, so the world it built (the scene, the geometry, the compiled shaders) and the player stay through most
-  changes. Build the world, and anything slow to build, in a module that rarely changes (`world.js`, the level's
-  geometry), and start the game from one that only puts the parts together (`game.js`). Put what changes as the
+  changes. Build the world, and anything slow to build, in a module of its own (`world.js`, the level's geometry): a
+  `World` class that builds it all into one group in its `build()`, keeps the worlds it made in
+  `hot(import.meta).data`, and whose `accept()` empties each group and builds it again, so a change to the world goes
+  into the running game too, keeping the player and the renderer and costing only the world's own build time (Lamp's
+  new game starts this way). Start the game from a module that only puts the parts together (`game.js`). Put what changes as the
   person plays (a vehicle and its tuning, the player's moves, missions, enemies, the HUD's code, the camera, a
   shader's settings) in modules of their own, each a class the game makes an object of, with the object holding the
   state and the module ending with `hot(import.meta).accept()` from lamp-game.js:
@@ -175,9 +178,10 @@ game is written to keep the player's place through one:
   is to that (the car's shape), give `accept((next, { changed }) => …)` the rebuild, or have it return false, which
   opens the page again. `hot(import.meta).dispose(data => …)` takes away what a version made at its top level (a
   listener, an element), keeping in `data` what the next version reads as `hot(import.meta).data`. A stylesheet goes
-  in by itself. The page opens again from the snapshot for the HTML, the world's module and the one that starts the
-  game, and for a change to a class's constructor or fields (or to a class with private `#` members), to an exported function or value, or anywhere in a
-  module that doesn't take its changes and that no module above it takes them for; the log says what was swapped
+  in by itself. The page opens again from the snapshot for the HTML and the module that starts the game, and for a
+  change to a class's constructor or fields (or to a class with private `#` members), to an exported function or
+  value, or anywhere in a module that doesn't take its changes and that no module above it takes them for; the log
+  says what was swapped
   and, when it wasn't, why. A game bundled from TypeScript is one file, so its code always opens the page again.
 - `busy()` is true while a match, race or round is on: a change that opens the page again then waits for the next
   pause, and the person can put it in at once with Reload. A swap goes in at once.

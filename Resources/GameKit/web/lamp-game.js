@@ -784,7 +784,7 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
 //   it: when every one of them, or one above it, takes them, it runs again for them, and they take theirs.
 //
 // Anything else opens the page again with the new code, keeping the player's place: the HTML, a module nothing above
-// takes changes for (the one that builds the world, as a rule), a module that imports others in a circle, a class whose
+// takes changes for (the one that starts the game, as a rule), a module that imports others in a circle, a class whose
 // constructor or fields changed (objects already made have the old fields) or that has private members (#name), an
 // exported function or value that changed (whoever imported it holds the old one), or code a module's exported
 // functions may use, changed outside its classes. The log says which, and why. Just before, `snapshot()` gives what matters of where the game is (the level,
