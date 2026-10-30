@@ -148,6 +148,19 @@ final class AppActRoutesTests: XCTestCase {
         XCTAssertTrue(reason?.contains("Install it again") == true, "the card shows the usual reason, not why: \(reason ?? "nil")")
     }
 
+    /// Download Again is offered only for a choice the download brings back: the catalog's model scans as its own id, so
+    /// another quant of it (`-q8_0`, kept from a repository with several) would stay missing after a download of the
+    /// catalog's, and the card would go on offering it.
+    @MainActor func testDownloadAgainOnlyForTheModelItRestores() {
+        func local(_ model: String) -> AppAI.TextRoute {
+            AppAI.TextRoute(id: "local:\(model)", label: model, group: "Native Mac AI", name: model,
+                            kind: .localModel(provider: "local", model: model), available: false)
+        }
+        XCTAssertEqual(AppAI.localModelAgain(local("qwen3.5-4b")), .textModelAgain("qwen3.5-4b"))
+        XCTAssertNil(AppAI.localModelAgain(local("qwen3.5-4b-q8_0")), "a download of the catalog's quant doesn't restore q8_0")
+        XCTAssertNil(AppAI.localModelAgain(local("qwen3.5-9b-instruct")), "nor another model that only starts like one")
+    }
+
     /// An MLX model whose chat template mlx-lm has no tool-call parser for hands a call back as plain text, so it's
     /// asked for the JSON plan instead, whatever the version. The templates in Tests/Fixtures/mlx-templates are the
     /// `chat_template` of each mlx-community repository's tokenizer_config.json, as published on 2026-10-29.

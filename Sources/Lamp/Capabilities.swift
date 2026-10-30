@@ -173,12 +173,12 @@ extension AppAI {
                           note: "\(missing.name) can't answer right now\(why)", upgrades: upgrades)
     }
 
-    /// Downloading again a removed model on this Mac, when it's one Lamp offers.
+    /// Downloading again a removed model on this Mac, when it's one Lamp offers and the download brings that very choice
+    /// back: Lamp's download scans as the catalog's id, so another quant of the same model (`qwen3.5-4b-q8_0`) or a
+    /// model whose name only starts the same isn't offered it; choosing what answers now is their way back.
     static func localModelAgain(_ route: TextRoute) -> Upgrade? {
         guard case .localModel(_, let model) = route.kind else { return nil }
-        let id = model.lowercased()
-        return LocalModels.catalog.first { id == $0.id || id.hasPrefix($0.id) || id.contains($0.repo.lowercased().split(separator: "/").last.map(String.init) ?? "\u{0}") }
-            .map { .textModelAgain($0.id) }
+        return LocalModels.catalog.first { $0.id == model }.map { .textModelAgain($0.id) }
     }
 
     /// What would let apps' text answer when nothing can: a key, then signing in to Claude Code or Codex where
