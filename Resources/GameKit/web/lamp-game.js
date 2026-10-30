@@ -1381,11 +1381,13 @@ function keep(path, key, build, options = {}) {
     const { dispose, inputs = [] } = typeof options === 'function' ? { dispose: options } : options;
     const id = `${path} ${key}`, text = source(build), had = kept.get(id), again = runningAgain;
     const same = had && had.inputs.length === inputs.length && inputs.every((v, i) => Object.is(v, had.inputs[i]));
-    if (had && !had.stale && had.text === text && same) {
+    // In the preview a part whose async build drew random numbers while it waited is built again: how many were its
+    // own can't be told, and a play must give the numbers a cold one does.
+    if (had && !had.stale && had.text === text && same && !(preview && had.draws == null)) {
         had.used = true;
         if (again) again.kept.push(key);
         // The random numbers its build drew are drawn past, so what comes after gets the numbers it got then.
-        for (let i = 0; i < had.draws; i++) random();
+        for (let i = 0; i < (had.draws || 0); i++) random();
         return had.value;
     }
     if (had) letGo(had);
@@ -1406,7 +1408,9 @@ function keep(path, key, build, options = {}) {
         const waiting = { added: [], made: [], timers: [], assets: entry.assets };
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
-        value.then(v => { entry.made = v; entry.timers = waiting.timers; own(v, waiting); }, () => { if (kept.get(id) === entry) kept.delete(id); });
+        const drawnBefore = draws;
+        value.then(v => { entry.made = v; entry.timers = waiting.timers; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
+            () => { if (kept.get(id) === entry) kept.delete(id); });
     } else entry.made = value;
     entry.value = value;
     kept.set(id, entry);
@@ -1882,7 +1886,7 @@ function hidePill() { if (pill) pill.style.display = 'none'; }
 // the game's code runs again in place from a fresh start (see "Running the game's code again"), with the clock, the
 // seed, the saves and the log as a new page has them, keeping what the game keeps, and the script plays. So only the
 // first play of a while builds the whole game. A kept part skips the random numbers its build drew, so the same script
-// gives the same pictures as a cold play (exactly, when an async build draws before its first await). Returns false
+// gives the same pictures as a cold play; one whose async build drew any while it waited is built again. Returns false
 // when it can't (the game hasn't started, or is starting), and Lamp opens a new preview.
 if (preview && preview.warm) {
     window.__lampPreviewAgain = next => {
