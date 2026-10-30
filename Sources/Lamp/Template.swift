@@ -21044,6 +21044,8 @@ enum Template {
     {{MAC_USAGE}}
     </dict></plist>
     PLIST
+    # The app's own files (LampAssets). A live build reads them from the app's folder.
+    if [[ -d Assets && "${LAMP_LIVE:-}" != 1 ]]; then rm -rf "$APP/Contents/Resources/Assets"; mkdir -p "$APP/Contents/Resources"; cp -R Assets "$APP/Contents/Resources/Assets"; fi
     intents {{EXE}} "$APP" "{{BUNDLE}}" Sources
     codesign --force -s - "$APP"
     echo "Built $APP"
