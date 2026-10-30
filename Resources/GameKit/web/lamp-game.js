@@ -1200,6 +1200,7 @@ async function swapModules(changed) {
 
     // What the old versions made at their top level goes before the new ones run, as each asked.
     let touched = false;
+    redeclared = null;
     for (const path of order) {
         const m = modules.get(path);
         for (const dispose of m ? m.disposers : []) {
@@ -1238,6 +1239,7 @@ async function swapModules(changed) {
             return { why: `${path} didn't load (${e && e.message || e})`, touched: true };
         } finally { loading.delete(path); }
     }
+    if (redeclared) return { why: `the declaration of ${redeclared} changed`, touched };
     // Each boundary's new exports must fit what the game holds of the old ones.
     for (const path of boundaries) {
         const rerun = (imports.get(path) || []).find(d => again.has(d));
@@ -1416,6 +1418,7 @@ let keeping = 0;
 function keep(path, key, build, options = {}) {
     const { dispose, inputs = [], lasting = false } = typeof options === 'function' ? { dispose: options } : options;
     const id = `${path} ${key}`, text = lasting ? bare(source(build)) : source(build), had = kept.get(id), again = runningAgain;
+    if (lasting && had && had.text !== text && redeclare(key)) return had.value;
     const same = had && had.inputs.length === inputs.length && inputs.every((v, i) => Object.is(v, had.inputs[i]));
     // In the preview a part whose async build drew random numbers while it waited is built again: how many were its
     // own can't be told, and a play must give the numbers a cold one does.
@@ -1522,7 +1525,8 @@ function letGo(k) {
 // nothing derived from it in a kept part. Raise `version` when a field's meaning changes: `migrate(old, oldVersion)`
 // gives the new state, and a version raised with no migrate, or one that throws, starts that state from `start()`. At a
 // fresh start, and in a new play of the preview, it's `start()`. It must be registered once per run, before game()
-// starts or in init; read in a module's top level it still has its start values.
+// starts or in init; read in a module's top level it still has its start values. A swap leaves what's registered as it
+// is, so a change to a declaration in a module that takes its changes runs the code again.
 //
 // This holds only for what's registered. A renderer or camera the game's code makes for itself, or the state it keeps
 // in its own variables, starts again with the code.
@@ -1530,12 +1534,23 @@ function letGo(k) {
 const cameras = new Map(), states = new Map();
 // What the run starting now is to put back: the old run's `heldNow()`, or what the page kept for its opening.
 let restoring = null;
+// What a swap's new versions declared differently. A swap keeps what's registered as it is, so it can't take that in: the
+// code runs again, where the new declaration counts. True when a swap is under way to hear of it.
+let redeclared = null;
+const redeclare = what => {
+    if (!loading.size || runningAgain) return false;
+    redeclared = redeclared || what;
+    return true;
+};
 const LENS = ['fov', 'aspect', 'near', 'far', 'zoom', 'focus', 'filmGauge', 'filmOffset', 'left', 'right', 'top', 'bottom'];
 
 function camera(id, build, { target } = {}) {
     const text = bare(source(build)), again = runningAgain;
     let entry = cameras.get(id);
-    if (entry && entry.used) return entry.value;
+    if (entry && entry.used) {
+        if (entry.text !== text) redeclare(`camera ${id}`);
+        return entry.value;
+    }
     // A new play of the preview starts from what build() sets, as a cold one does.
     if (!entry || entry.text !== text || (preview && again)) {
         if (entry && again) again.built.push(`camera ${id}`);
@@ -1571,8 +1586,12 @@ function putPose(entry, pose) {
 function state(id, { version = 1, start, migrate } = {}) {
     let entry = states.get(id);
     if (!entry) states.set(id, entry = { id, value: {} });
-    if (entry.used) return entry.value;
-    Object.assign(entry, { version, start, migrate, used: true, settled: false });
+    const text = `${version} ${bare(source(start))} ${migrate ? bare(source(migrate)) : ''}`;
+    if (entry.used) {
+        if (entry.text !== text) redeclare(`state ${id}`);
+        return entry.value;
+    }
+    Object.assign(entry, { version, start, migrate, text, used: true, settled: false });
     fill(entry.value, startOf(entry));
     if (restoring) settle(entry);
     return entry.value;
@@ -1712,8 +1731,9 @@ async function runAgain(change, state, roster) {
     // The old code stops: its frame loop, what it asked to have taken away, and what it left running.
     loops++;
     started = false;
-    // What's registered, as the last frame left it. A preview's new play has none: it starts from the top.
-    restoring = state ? heldNow() : null;
+    // What's registered, as the last frame left it, or as it was before a swap that went wrong, which may have changed
+    // it. A preview's new play has none: it starts from the top.
+    restoring = !state ? null : change.touched ? state.held : heldNow();
     if (state) again.state = { ...state, held: restoring };
     for (const entry of [...cameras.values(), ...states.values()]) entry.used = entry.settled = false;
     swapGuard = null;

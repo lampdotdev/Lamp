@@ -240,4 +240,50 @@ final class GameRegistrationTests: XCTestCase {
         let kept = try await text("JSON.stringify([window.made, camera.position.toArray(), window.world === window.worldBefore])")
         XCTAssertEqual(kept, "[1,[3,3,3],true]")
     }
+
+    // MARK: A module that takes its changes
+
+    /// The game's state, declared in a module that takes its changes. `then` is what its new version does as it goes in.
+    private static func stateModule(version: Int = 1, start: String = "{ level: 1 }", extra: String = "", then: String = "") -> String {
+        """
+        import { hot } from './lamp-game.js';
+        export const play = hot(import.meta).state('play', { version: \(version), start: () => (\(start)) \(extra) });
+        window.stateVersion = \(version);
+        hot(import.meta).accept(() => { \(then) });
+        """
+    }
+
+    private static let gameOfModules = """
+        import { game } from './lamp-game.js';
+        import { play } from './state.js';
+        \(builds)
+        window.run = (window.run || 0) + 1;
+        window.play = play;
+        game({ renderer: makeRenderer(), frame() { window.drawn = window.run; } });
+        """
+
+    /// The runtime knows a module takes changes once it has read its source and first version.
+    private func openOfModules() async throws {
+        try await open(Self.gameOfModules, also: ["state.js": Self.stateModule()])
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try await js("play.level = 7")
+    }
+
+    func testAChangedStateDeclarationInAModuleThatTakesChangesStillTakesEffect() async throws {
+        try await openOfModules()
+        files.text["state.js"] = Self.stateModule(version: 2, start: "{ level: 1, lives: 3 }", extra: ", migrate: old => ({ ...old, level: old.level * 10 })")
+        try await js("window.__lampLive({ changed: ['state.js'], gen: 1, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 2 }
+        let state = try await text("JSON.stringify(play)")
+        XCTAssertEqual(state, #"{"level":70,"lives":3}"#, "the new start and the migrate both took effect")
+    }
+
+    func testASwapThatFailsPutsTheStateBackAsItWasBeforeTheSwap() async throws {
+        try await openOfModules()
+        files.text["state.js"] = Self.stateModule(then: "window.play.level = 99; throw new Error('no');")
+        try await js("window.__lampLive({ changed: ['state.js'], gen: 1, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 2 }
+        let level = try await number("play.level")
+        XCTAssertEqual(level, 7, "what the failed swap did to it doesn't come through")
+    }
 }

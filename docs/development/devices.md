@@ -541,7 +541,9 @@ object filled in place, so whoever holds it keeps holding it. All of it is `held
 snapshot in what `takeSnapshot` gives (`held`), so it goes wherever a snapshot goes: taken again as the old code stops
 for a run in place, kept in sessionStorage for a page that opens again, and in localStorage for a newer install. It's
 put back after `claim()` and before init, since what's registered at a module's top level runs before the page knows
-where it starts, and the cameras again after init, so what a start sets on one doesn't win. This is a promise about
+where it starts, and the cameras again after init, so what a start sets on one doesn't win. A swap keeps what's
+registered as it is, so a new version that declares any of it differently refuses the swap (`redeclare`) and the code
+runs again, from what was held before that swap, which a swap gone wrong may have changed. This is a promise about
 what's registered only: `game({ renderer })` gets a renderer after it's built, so one the game makes for itself can't
 be reused, and three.js code the runtime never sees can't be kept. While the code runs again, the last frame and
 the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
