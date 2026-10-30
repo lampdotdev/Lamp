@@ -8662,9 +8662,13 @@ enum Template {
             }
             try? await Task.sleep(for: .seconds(LampShowcase.script["lead"] as? Double ?? 0.8))
             let steps = LampShowcase.script["steps"] as? [[String: Any]] ?? []
-            // A key held down (a game's controls) belongs to a batch, which lets it go.
-            _ = Handover.begin(id: "showcase", count: steps.count) { _ in }
-            for step in steps { await playShowcase(step) }
+            // A key held down (a game's controls) belongs to a batch, which lets it go. The person's click or Esc stops
+            // the batch, and the take with it: nothing more is played on an app they took back.
+            let batch = Handover.begin(id: "showcase", count: steps.count) { _ in }
+            for step in steps {
+                guard batch.carriesOn else { LampShowcase.note("missing", "the rest of the steps: the app was taken back"); break }
+                await playShowcase(step)
+            }
             LampShowcase.note("end")
         }
 
@@ -8700,7 +8704,10 @@ enum Template {
             // Taken from a run-loop timer (`after`), as `perform` takes its steps: an action that opens a dialog doesn't
             // return until it closes, and the steps after it are how it gets answered. Those resume on the main queue,
             // which keeps running while the dialog is open only because the action isn't itself on that queue.
-            after(0) { LampShowcase.note("did", run(action)) }
+            after(0) {
+                guard Handover.current?.carriesOn == true else { return }
+                LampShowcase.note("did", run(action))
+            }
             try? await Task.sleep(for: .milliseconds(150))
         }
 

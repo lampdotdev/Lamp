@@ -98,6 +98,9 @@ segments.append((t, src_to, 1.0))
 # A storyboard's {"mark": "cut"} and the next {"mark": "resume"} leave out what's between them: a hard cut. Never over a voice.
 marks = [(e[0], e[2][0]) for e in events if e[1] == "mark"]
 cuts = [(t, next((u for u, w in marks if w == "resume" and u > t), src_to)) for t, w in marks if w == "cut"]
+for v in voices:
+    if any(v["t"] < y and x < v["t"] + v["dur"] for x, y in cuts):
+        sys.exit(f"A cut would land on what's said at {v['t']:.1f} s: \"{v['caption']}\". Move the storyboard's marks.")
 for x, y in cuts:
     segments = [part for a, b, speed in segments for part in ((a, min(b, x), speed), (max(a, y), b, speed)) if part[0] < part[1]]
 def out_time(src):
