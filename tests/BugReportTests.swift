@@ -33,6 +33,7 @@ struct BugReportTests {
             (ErrorMessages.appDoesNotBuild, "The app failed to build."),
             (ErrorMessages.restoreFailed, "Returning to an earlier version failed."),
             (ErrorMessages.providerBusy, "The AI provider rate-limited the request."),
+            (ErrorMessages.connectionFailed, "The connection to the AI failed."),
             (ErrorMessages.localServerUnreachable, "The local model server could not be reached."),
             (ErrorMessages.openFailed(privateDetail), "The app could not be opened."),
             (ErrorMessages.installFailed(privateDetail), "The app could not be installed."),

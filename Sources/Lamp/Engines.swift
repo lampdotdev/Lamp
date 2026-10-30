@@ -602,6 +602,9 @@ extension Agent {
             if obj["subtype"] as? String == "init", let id = obj["session_id"] as? String { return [.session(id)] }
             if obj["subtype"] as? String == "compact_boundary" { return [.compacted] }
         case "assistant":
+            // A request that failed: Claude Code words its error as a message from the model, then says the same on
+            // the `result` line, which is what puts the error card in the chat.
+            if obj["error"] is String { return [] }
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             return content.flatMap { block -> [AgentEvent] in
                 switch block["type"] as? String {
