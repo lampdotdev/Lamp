@@ -18,7 +18,8 @@ A capability given to one engine must be given to all of them that can take it, 
   in the chat as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
   after them. The Reload line shows while a change waits for it, whether the Mac copy's held build, a game's step held
-  whole or in part (its line says what shows after Reload, never "Put into", `Store.stepPage`) or a page's change
+  whole or in part (its line says what shows after Reload, never "Put into", `Store.stepPage`, and the Reload line
+  says how much waits: all of it, the rest, or a change that goes in by itself at the next pause, `PageLive.Hold`) or a page's change
   that a copy on another device couldn't take in place (`Transcript`, `Store.awaitsReloadElsewhere`), and pressing it
   puts the change on every place the person has the wish on (`Store.reloadEverywhere`), saying where in one line. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
   `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;

@@ -1290,7 +1290,7 @@ final class LampPageBlockedHost: NSObject {
         let pageChanged = answer["changed"] as? [String] ?? []
         // Only the phone page: the game's own page has nothing to do.
         if pageChanged.isEmpty, !now { tell(next, "phone"); return }
-        let change: [String: Any] = ["gen": next, "changed": pageChanged, "now": now, "pill": Self.place != "mac"]
+        let change: [String: Any] = ["gen": next, "changed": pageChanged, "removed": answer["removed"] as? [String] ?? [], "now": now, "pill": Self.place != "mac"]
         guard let page, let json = try? JSONSerialization.data(withJSONObject: change) else { return }
         let taken = try? await page.evaluateJavaScript("window.__lampLive ? window.__lampLive(\(String(decoding: json, as: UTF8.self))) : false", in: nil, contentWorld: .page)
         // A page without Lamp's game runtime is opened again as it is.

@@ -670,14 +670,27 @@ enum ToolGroup {
 /// The line under a change that waits for the app to be reopened (`Store.awaitReload`): its button does what the
 /// one in the app's title bar does.
 enum ReloadLine {
-    static func text(_ name: String) -> String { "Reload \(name) to see this change." }
+    /// `held` is how much of the change the open game took (`PageLive.Hold`): a page may have some of it, or take it by
+    /// itself at a pause, and the line says so rather than that nothing shows until Reload.
+    static func text(_ name: String, held: PageLive.Hold.Kind = .reload) -> String {
+        switch held {
+        case .reload: "Reload \(name) to see this change."
+        case .partly: "Part of this change is in. Reload \(name) to see the rest."
+        case .pause: "This change goes in at the next pause, or Reload \(name) to see it now."
+        }
+    }
     /// Reload reaches the wish's other places too (`Store.reloadEverywhere`): where it opens the app again (where it's
     /// open) and where it only puts the new version, for next time, so nobody using a TV or a phone is surprised.
-    static func text(_ name: String, reopens: [String], updates: [String]) -> String {
-        guard reopens.count + updates.count > 1 || !updates.isEmpty else { return text(name) }
+    static func text(_ name: String, reopens: [String], updates: [String], held: PageLive.Hold.Kind = .reload) -> String {
+        guard reopens.count + updates.count > 1 || !updates.isEmpty else { return text(name, held: held) }
         let open = reopens.isEmpty ? "" : "Reload opens \(name) again on \(listed(reopens))"
         let next = updates.isEmpty ? "" : (open.isEmpty ? "Reload puts this change on " : ", and puts it on ") + listed(updates) + " for next time"
-        return open + next + "."
+        let lead = switch held {
+        case .reload: ""
+        case .partly: "Part of this change is in. "
+        case .pause: "This change goes in at the next pause. "
+        }
+        return lead + open + next + "."
     }
     static func listed(_ names: [String]) -> String {
         names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!

@@ -775,6 +775,8 @@ final class Store: ObservableObject {
         var autoApply: Task<Void, Never>?
         var applying: Task<Void, Never>?
         var applyingSources = ""
+        /// The sources the last step of a game's page was tried with, whatever came of it (`stepPage`, `awaitStep`).
+        var finishedStep: String?
         var autoApplied = 0
         /// The sources a step of the agent's saves put into the game open on this Mac (`stepPage`): a build of the same
         /// sources has nothing to show the person, so it says nothing in the chat.
@@ -1020,6 +1022,8 @@ final class Store: ObservableObject {
     /// (`reloadInTurn`), other work when it's done, and the chat says so meanwhile (`ReloadLine.queued`), since
     /// nothing else would seem to happen.
     @Published private(set) var reloadWhenFree: Set<String> = []
+    /// The holds the agent has heard of, by wish (`untoldHolds`).
+    private var toldHolds: [String: Set<String>] = [:]
 
     /// Whether reopening the app now would close it under the person: a request's turn, the Mac app open, and not a
     /// new app's first turn (nobody is using it yet, and its passes are built for the person to watch go in). Then
@@ -4706,8 +4710,10 @@ final class Store: ObservableObject {
         let sentAgain = messages.contains { $0.replaces != nil || !$0.tookBack.isEmpty }
         let pointed = asked.compactMap { id in logs[project.id]?.first { $0.id == id }?.pointed }
         let made = Parts.madeNote(for: project, apps: apps(of: project))
+        let carriedHolds = holdsForRequest(project)
         let notes = Attachments.note(for: saved) + PointedAt.note(for: pointed) + Versions.note(for: project) + made.text
             + GameFun.note(for: project, apps: apps(of: project), request: prompt)
+            + (carriedHolds.note.map { "\n\n" + $0 } ?? "")
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         // A crash the agent hasn't heard of goes with the request, and counts as told only once the request has reached
         // the agent, like the note about going back: a run that never started leaves it for the next request.
@@ -4718,6 +4724,7 @@ final class Store: ObservableObject {
         turns[project.id]?.carriedSetAside = carried
         let ran = await runAgent(prompt + notes + crashAside, files: files, sendsRequest: true, on: project)
         project = current(project) ?? project
+        settleHolds(carriedHolds, reached: asked.last.map { Self.reachedAgent($0, in: logs[project.id] ?? []) } ?? ran, for: project)
         if let carried, let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []),
            setAsideChanges[project.id]?.crash == carried {
             setAsideChanges[project.id]?.told = true
@@ -5491,6 +5498,80 @@ final class Store: ObservableObject {
         }
     }
 
+    /// What the agent hasn't heard of the changes open copies of a wish hold (`PageLive.holds`), each once, and nothing
+    /// once it's resolved: a change that goes in by itself reaches the agent only through something it calls after that,
+    /// so every tool's answer carries this (`agentRequest`, `mcp`), whichever engine asks, and a request carries what
+    /// no tool's answer got to. An agent with no call left ends the turn without it, and the chat's Reload line under its
+    /// answer says what waits. What it was told stays true to it until it hears otherwise, so the end of a hold is told too.
+    /// `untoldHolds` for a request: counted as told only once the request reaches the agent (`settleHolds`), since a run
+    /// can fail before it starts, and nothing else would say it again.
+    func holdsForRequest(_ project: LampProject) -> (note: String?, before: Set<String>?) {
+        let before = toldHolds[wish(of: project).id]
+        return (untoldHolds(project), before)
+    }
+
+    func settleHolds(_ carried: (note: String?, before: Set<String>?), reached: Bool, for project: LampProject) {
+        if !reached { toldHolds[wish(of: project).id] = carried.before }
+    }
+
+    func untoldHolds(_ project: LampProject) -> String? {
+        let wish = wish(of: project)
+        let holds = apps(of: wish).flatMap { app in PageLive.shared.holds(of: app).map { (hold: $0, name: app.name) } }
+        let told = toldHolds[wish.id] ?? []
+        toldHolds[wish.id] = Set(holds.map(\.hold.id))
+        var notes = holds.filter { !told.contains($0.hold.id) }.map { Self.holdNote($0.hold, name: $0.name) }
+        if !told.isEmpty, holds.isEmpty { notes.append("Note from Lamp: the change that was waiting has gone in, so nothing waits for Reload now; don't tell the person to press it.") }
+        return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
+    }
+
+    /// A change the open game hasn't taken whole, for the agent, with what's waiting by name, so it never says the person
+    /// sees it. The chat says the same in plain words (`ReloadLine`).
+    static func holdNote(_ hold: PageLive.Hold, name: String) -> String {
+        let open = hold.place == .simulator ? "\(name) in the simulator" : name
+        let why = hold.why.map { " Why: \($0)." } ?? ""
+        switch hold.kind {
+        case .partly:
+            return "Note from Lamp: your change went into the open \(open), except \(ReloadLine.listed(hold.files)), which nothing in the running game read again: "
+                + "that shows only after the person presses Reload. Never say it's on screen. With nothing left to do, tell them in a sentence to press Reload to see it."
+        case .pause:
+            return "Note from Lamp: your change waits for a pause in the open \(open): it goes in by itself at the next pause, or at once if the person presses Reload.\(why) "
+                + "Until then what's on screen isn't this change, so never say it is."
+        case .reload:
+            return "Note from Lamp: your change can't go into the open \(open) while it runs, and shows only after the person presses Reload.\(why) "
+                + "Never say it's on screen. With nothing left to do, tell them in a sentence to press Reload to see it."
+        }
+    }
+
+    /// `progress` says what's saved is whole, which is what lets the open game take it (`autoApply`), and the agent's next
+    /// words may be its last: so its answer waits for how that went, ten seconds at most, and carries it (`untoldHolds`).
+    /// One attempt at what's saved now: it stops when that attempt ends however it went (a game that won't build isn't
+    /// tried again, so nothing more would come), when no step can run, and when the sources move on.
+    private func awaitStep(_ project: LampProject) async {
+        guard let turn = turns[project.id] ?? turns[wish(of: project).id], let app = stepped(project) else { return }
+        await awaitStep(of: app, in: turn)
+    }
+
+    func awaitStep(of app: LampProject, in turn: Turn) async {
+        var mac = app
+        mac.chosen = .mac
+        let sources = Runtime.fingerprint(mac)
+        var waited = 0
+        while waited < 20, turn.finishedStep != sources, Runtime.fingerprint(mac) == sources,
+              // A step under way runs whatever began since: its own build is what keeps the next one off.
+              turn.applying != nil || (stepCanRun(mac, in: turn) && Runtime.sourcesChanged(mac) && pageSignature(mac) != turn.shownPage) {
+            try? await Task.sleep(for: .milliseconds(500))
+            waited += 1
+        }
+    }
+
+    /// Whether `autoApply` can take a step of an open game's page now.
+    private func stepCanRun(_ app: LampProject, in turn: Turn) -> Bool {
+        let crash = setAsideChanges[wish(of: app).id]
+        return !turn.stopped && turn.agent != nil && !turn.building && !turn.keptOpen && stepsPage(app) && !Runtime.waitsForReload(app)
+            && (!turn.look.inProgress || turn.stopHidden != nil)
+            && (crash?.told != false || turn.carriedSetAside == crash?.crash)
+    }
+
     /// Whether a tool call ends the agent's turn: any after it asked, other than the ask itself, and any at all once
     /// its change waits for the person. Said once, here, so the three engines are held to the same rule.
     static func endsAgent(asked: Bool, paused: Bool, before tool: String) -> Bool {
@@ -5504,6 +5585,8 @@ final class Store: ObservableObject {
     /// an app that doesn't show its change, so the turn stops there (`pause`): the agent says it needs to see the
     /// change, and goes on after Reload.
     private func held(_ turn: Turn, in project: LampProject, note: String, using: Bool = false) -> (Int, [String: Any]) {
+        // What this says is what `untoldHolds` would.
+        _ = untoldHolds(project)
         if Self.stopsToSee(told: turn.toldHeld, using: using) {
             return pause(turn, in: project, saying: Self.seeNote(reloadOffered: Runtime.waitsForReload(project)), status: using ? 409 : 200)
         }
@@ -6425,14 +6508,17 @@ final class Store: ObservableObject {
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "lampify": (status, answer) = await lampify(arguments, for: project)
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
-            case "ask", "progress", "write_wish", "device_permission": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "progress", "write_wish", "device_permission":
+                (status, answer) = talk(name, arguments, for: project)
+                if name == "progress" { await awaitStep(project) }
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
             if status != 200 {
                 return reply(["content": [["type": "text", "text": answer["error"] as? String ?? "Lamp couldn't do that."]], "isError": true])
             }
-            var content: [[String: Any]] = [["type": "text", "text": answer["text"] as? String ?? ""]]
+            let text = [answer["text"] as? String ?? "", untoldHolds(project)].compactMap { $0 }.joined(separator: "\n\n")
+            var content: [[String: Any]] = [["type": "text", "text": text]]
             for picture in Self.pictureData(answer["screenshots"] as? [String] ?? [], in: project) {
                 content.append(["type": "image", "data": picture["data"] ?? "", "mimeType": picture["mimeType"] ?? "image/png"])
             }
@@ -8212,7 +8298,10 @@ final class Store: ObservableObject {
         }
         let unique = { (names: [String]) in names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } } }
         let opened = unique(reopens)
-        return ReloadLine.text(placeName(wish), reopens: opened, updates: unique(updates).filter { !opened.contains($0) })
+        // How much of it is waiting, where every open copy that holds some says the same.
+        let kinds = Set(apps(of: wish).flatMap { PageLive.shared.holds(of: $0) }.map(\.kind))
+        return ReloadLine.text(placeName(wish), reopens: opened, updates: unique(updates).filter { !opened.contains($0) },
+                               held: kinds.count == 1 ? kinds.first! : .reload)
     }
 
     /// What the person calls one of their devices the app was put on.
@@ -9058,6 +9147,11 @@ final class Store: ObservableObject {
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
         // A turn's project is the wish while the game is one of its parts.
         func stillOwned() -> Bool { !turn.stopped && (turns[project.id] === turn || turns[wish(of: project).id] === turn) }
+        // Tried, whatever comes of it, for `progress` waiting on this step.
+        var tried = project
+        tried.chosen = .mac
+        let sources = Runtime.fingerprint(tried)
+        defer { turn.finishedStep = sources }
         // Nothing the page is made of changed since the last step: nothing to put in, nor to say.
         let page = pageSignature(project)
         guard page != turn.shownPage else { return }
@@ -9266,7 +9360,7 @@ final class Store: ObservableObject {
             owner?.reloadWhy = owner?.pageReopened == true || owner?.pageRanAgain == true ? PageLive.shared.reason(project) : nil
             if outcome != .unchanged { owner?.shown.append(Date()) }
             if !partial { pageWentIn(project, saying: false) }
-            if inFront { log(project, .status, "\(project.name) is updated") }
+            if inFront, !partial { log(project, .status, "\(project.name) is updated") }
         }
         // The copy installed on this Mac is the older one now: the build goes in when the app closes.
         if place == .mac {
@@ -13027,6 +13121,15 @@ final class Store: ObservableObject {
             }
         }
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
+        var answer = await agentRoute(request, route: route, for: project)
+        if !["/agent/approve", "/agent/steer"].contains(route), answer.0 == 200, let text = answer.1["text"] as? String, let note = untoldHolds(project) {
+            answer.1["text"] = text + "\n\n" + note
+        }
+        return answer
+    }
+
+    /// pi's routes, each a tool of its own (Claude Code and Codex reach the same tools through `mcp`).
+    private func agentRoute(_ request: Gateway.Request, route: String, for project: LampProject) async -> (Int, [String: Any]) {
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return Self.withPictureData(await lookCall(arguments, for: project), in: project)
@@ -13055,7 +13158,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/talk" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-            return talk(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+            let answer = talk(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+            if body["tool"] as? String == "progress" { await awaitStep(project) }
+            return answer
         }
         if route == "/agent/setup" {
             return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
