@@ -122,7 +122,10 @@ final class SharingScreenTests: XCTestCase {
         let shipped = try fm.subpathsOfDirectory(atPath: three.path).compactMap { try? String(contentsOf: three.appendingPathComponent($0), encoding: .utf8) }
         XCTAssertFalse(shipped.isEmpty)
         let known = Sharing.knownLibraries
-        Sharing.knownLibraries = Set(shipped.map(Sharing.fingerprint))
+        // As Lamp knows them: the version it ships and those it shipped before, which a starter's copy may be.
+        let earlier = (try? String(contentsOf: three.deletingLastPathComponent().appendingPathComponent("earlier.txt"), encoding: .utf8))?
+            .split(whereSeparator: \.isNewline).map(String.init) ?? []
+        Sharing.knownLibraries = Set(shipped.map(Sharing.fingerprint)).union(earlier)
         defer { Sharing.knownLibraries = known }
 
         func inspected(_ change: ((URL) throws -> Void)? = nil) throws -> Sharing.Inspection {

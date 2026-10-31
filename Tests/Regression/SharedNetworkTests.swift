@@ -59,6 +59,9 @@ final class SharedNetworkTests: XCTestCase {
         for path in FileManager.default.subpaths(atPath: three.path) ?? [] where path.hasSuffix(".js") {
             if let text = try? String(contentsOf: three.appendingPathComponent(path), encoding: .utf8) { Sharing.knownLibraries.insert(Sharing.fingerprint(text)) }
         }
+        // And those of the versions Lamp shipped before, which a starter's copy may be.
+        let earlier = (try? String(contentsOf: three.appendingPathComponent("earlier.txt"), encoding: .utf8)) ?? ""
+        Sharing.knownLibraries.formUnion(earlier.split(whereSeparator: \.isNewline).map(String.init))
 
         let house = try RepoImport.open(folder: StarterTrees.tree("thelittlehouse"))
         defer { try? FileManager.default.removeItem(at: house.folder) }

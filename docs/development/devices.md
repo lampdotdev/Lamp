@@ -243,8 +243,8 @@ read from wherever the console's SSDP answer points (`Read.description`), since 
 Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out. Its apps may be 3D games: three.js ships
 with Lamp (`Resources/WebLibraries/three`, MIT: its WebGL build, its WebGPU renderer with node materials (`three/webgpu`,
 `three/tsl`, drawing with WebGL 2 where there's no WebGPU) and the light addons, put there by `scripts/update-three.sh`
-from one commit of three.js's repository, each file checked against the git hash the commit lists; a commit rather
-than a release while the New York starter needs a fix made since the last one; the node renderer and the addons built
+from one commit of three.js's repository (r187's), each file checked against the git hash the commit lists; a commit
+other than a release's only while Lamp needs a fix made since the last one; the node renderer and the addons built
 on it, `DeviceSupport.threeNodeFiles`, go only into an app whose page imports `three/webgpu` or `three/tsl`) as a library a kind asks for like the building blocks
 (`DeviceSupport.Library.three`, `"three": "Web/three"`, a folder the page loads through an import map), so nothing loads
 from the network. It replaced Babylon.js, which was chosen for EdgeHTML; under WebView2 the agent writes three.js more

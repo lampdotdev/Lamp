@@ -214,7 +214,7 @@ TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `i
 its requests go (`WebReach`), not from words in its code: "Connects to" names the outside sites a request goes to, "May connect
 outside this app" stands where a request's address can't be worked out (or a web address in the code reaches nothing it can
 follow), links are "Opens websites when clicked", and a page that only reads its own files says none of these. A copy of a library Lamp ships
-(three.js, Rapier) that is Lamp's byte for byte is left out of the review wherever it sits (`Sharing.knownLibraries`);
+(three.js, Rapier) that is Lamp's byte for byte, the version it ships or one it shipped before (`Resources/WebLibraries/earlier.txt`, which the update scripts add to), is left out of the review wherever it sits (`Sharing.knownLibraries`);
 one changed in any way is the sender's code.
 
 A page that arrives from someone else (a shared file, its update, or a part of its wish) is then held to what its sheet
