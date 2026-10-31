@@ -206,23 +206,6 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 	});
 }
 
-/** Compacts the conversation at Lamp's size (`Conversation.compactAt`, in LAMP_COMPACT_TOKENS) rather than near the
- * model's window, as Claude Code and Codex are told to: a model with a million tokens would otherwise carry every
- * request's history, and its cost, for days. pi's own compaction does the work, and reports it as it does when it
- * compacts on its own (`compaction_end`). Once per run: the summary it leaves is far under the line. */
-function compactsEarly(pi: ExtensionAPI) {
-	const limit = Number(process.env.LAMP_COMPACT_TOKENS ?? "");
-	if (!Number.isFinite(limit) || limit <= 0) return;
-	let compacted = false;
-	pi.on("turn_end", (_event, ctx) => {
-		const tokens = ctx.getContextUsage()?.tokens;
-		if (compacted || tokens == null || tokens <= limit) return undefined;
-		compacted = true;
-		ctx.compact({});
-		return undefined;
-	});
-}
-
 /** The person's messages sent since the agent started, taken from Lamp after each turn (Store.steer). pi puts
  * them in the conversation as the person's own, before the model's next request; after the agent's last
  * reply that request is made for them, so none is left for the turn after. */
@@ -766,7 +749,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(editWithDoing());
 	pi.registerTool(writeWithDoing());
 	keepsPicturesFew(pi);
-	compactsEarly(pi);
 	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
