@@ -258,8 +258,7 @@ enum Icons {
     /// Falls back to the .icns, then the small sidebar preview, when there's no design to draw.
     static func largePreview(_ project: LampProject) async -> URL? {
         let fm = FileManager.default
-        let folder = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Forge/Icons/\(project.id)", isDirectory: true)
+        let folder = Edition.cachesFolder.appendingPathComponent("Icons/\(project.id)", isDirectory: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys   // the same design must make the same key every time
         guard let spec = load(project), let encoded = try? encoder.encode(spec) else {

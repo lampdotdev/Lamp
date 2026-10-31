@@ -3446,7 +3446,7 @@ final class Store: ObservableObject {
     nonisolated private static let sharing = NSLock()
 
     nonisolated static var sharedFolder: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Forge/Shared", isDirectory: true)
+        Edition.cachesFolder.appendingPathComponent("Shared", isDirectory: true)
     }
 
     func chooseExport(_ project: LampProject) {
