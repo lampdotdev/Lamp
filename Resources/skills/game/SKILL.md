@@ -324,11 +324,57 @@ single picture hides.
 
 ## Playtesting
 
-Play it the way the person would before you finish: a game that only looks right isn't done. Web: Lamp's preview
-plays the game from a script of the controller's moves (`use_app` with `stick`, `button` and `wait`), with the same
-random numbers each time, so the same moves after a change show exactly what it changed. Play a whole round: start,
-learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there always something
-to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and play it again.
+Play it the way the person would before you finish: a game that only looks right isn't done. Ask of each stretch
+whether it's fun: is there always something to do, does each action answer, is it too easy or too hard, does anything
+surprise. Fix what isn't, and play it again.
+
+### The whole journey
+
+For a new game, or a change to its rules, flow, ending or restart, play all of this with the real controls before you
+say it's done:
+
+1. From the real opening, through its start, into play.
+2. Score, or change what the round keeps, so there's something to reset.
+3. Reach the game's real ending, a win or a loss, and read the results: they say what happened, and the numbers are the
+   ones you played.
+4. Use the game's own replay, as the `Flow:` line has it: Rematch, Play Again, or back round through the opening.
+5. See what belongs to the round back at its start (score, lives, clock, board), and what outlasts it kept: best
+   scores, settings, the session's choices.
+6. Do something that changes play or the score again. A reset screen isn't a second round; a second round that answers
+   is.
+
+Fix what breaks, and play the part of the journey it touched again. Get to the ending by playing: never add a shortcut,
+shorten the round or change a rule so the check can finish.
+
+A game with no rounds (a sandbox, a place to explore) has no ending to invent. Play the return or restart it really
+has, and say it has no round ending by design. That's a different thing to report from an ending you couldn't reach:
+say that one as a part you didn't play.
+
+### Where you can play it
+
+On Lamp's game runtime and the C++ kit, the preview plays a script of the controller's moves (`use_app` with `stick`,
+`button` and `wait`) with the same random numbers each time. It's yours to play without being asked.
+
+- Play a stretch, see where it lands, then add the next moves: every `use_app` plays all the moves so far again from
+  the start, on the code as you saved it, with no look needed to build it.
+- Every look starts the moves over, a plain look at the person's open window too. After a fix, go on with `use_app`; if
+  a look came first, send all the moves again in one `use_app`.
+- A fix that changes timing or navigation can put the same moves somewhere else, so check they still reach the same
+  places before you trust the picture after them.
+- Log each change of phase and score, a line per event: what the play logged backs up the pictures, and is all there is
+  when the person keeps pictures from you.
+- Lamp's web runtime plays 10 minutes in all, the opening, every wait and both rounds counted, and an action lasts 60
+  seconds at most. Past 10 minutes the frames stop, so a picture that repeats is not progress: the stats say how much
+  was played. If the journey doesn't fit, say how far it got, and leave the game as it is.
+
+Before you call a step unplayable because it wants a click, find how this game takes it: a phone page's clicks and
+gestures go through `phone` on an action (the phone-pages skill), a page with a loop of its own takes `use_app`'s
+clicks where you last looked, and a menu on the runtime answers its confirm button. Only a step none of those reach
+goes in what you didn't play.
+
+SpriteKit in a Swift app and a page with a loop of its own have no scripted preview: `use_app` there acts where the
+person sees it, so it waits for them to ask. Without that, keep to what `look_at_app` shows, and say which part of the
+journey wasn't played rather than calling it checked.
 
 ## A game and the wish's other apps
 

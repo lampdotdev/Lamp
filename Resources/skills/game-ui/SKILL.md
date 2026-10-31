@@ -198,8 +198,7 @@ Sound carries the same world as the screens; the game skill says how to make and
 
 Play the journey, don't only look at it:
 
-- the whole of the flow, from its opening through a round to how it ends, then a rematch or a return with the choices
-  kept;
+- the whole journey the game skill's "Playtesting" sets out, from the opening through a real ending and a second round;
 - pause, help and Back from each place, returning to where they were;
 - each input the game supports, and a mix of them where players differ;
 - long text, a small window and a wide one;
@@ -214,7 +213,9 @@ device or path you didn't run.
 ## Check the real opening
 
 After your last edit to any screen and before you say a new game is done, or a change to its flow, see what a new
-player sees. A look from before that edit doesn't count, so every later edit to a screen means this check again.
+player sees. A look from before that edit doesn't count, so every later edit to a screen means this check again. It
+comes after the game skill's "Playtesting", since its look starts the moves over: when it leads to a fix to play or
+flow, play the part of the journey that touched again, then come back here.
 
 On Lamp's web runtime, `look_at_app` with `reopen` gives a fresh preview from the start: a plain look shows where the
 person is in an open game, and `use_app` adds to the moves already played, so after playtesting it can land anywhere.

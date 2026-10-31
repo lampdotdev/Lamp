@@ -225,6 +225,28 @@ final class SkillsTests: XCTestCase {
         for name in Skills.everywhere { XCTAssertTrue(tv.contains("  • \(name): \(shipped[name]!.description)\n"), "the TV prompt lists \(name)") }
     }
 
+    /// However a game is made or reached, its prompt says to play the whole journey: the failure names the routes that don't.
+    func testEveryGamesPromptAsksForTheWholeJourney() throws {
+        var web = app(.game), native = app(.game)
+        web.engine = "web"
+        native.engine = "native"
+        let ownFolder = folder.appendingPathComponent("own-loop")
+        try FileManager.default.createDirectory(at: ownFolder.appendingPathComponent("Web"), withIntermediateDirectories: true)
+        try "xbox-one\n".write(to: ownFolder.appendingPathComponent(DeviceApps.marker), atomically: true, encoding: .utf8)
+        try "{\"game\":true}".write(to: ownFolder.appendingPathComponent("icon.json"), atomically: true, encoding: .utf8)
+        try "<canvas></canvas>".write(to: ownFolder.appendingPathComponent("Web/index.html"), atomically: true, encoding: .utf8)
+        var ownLoop = LampProject(id: "own-\(UUID().uuidString)", name: "Own", exe: "Own", dir: ownFolder)
+        ownLoop.platform = .game
+        ownLoop.engine = "web"
+        XCTAssertTrue(GameKit.ownsLoop(ownLoop))
+        let routes = [
+            "new web game": Agent.gamePrompt(for: web), "native game": Agent.gamePrompt(for: native), "own-loop game": Agent.gamePrompt(for: ownLoop),
+            "game part": Agent.gamePrompt(part: "Game"), "game alone in a wish": Agent.gamePrompt(part: "Game", alone: true),
+            "app becoming a web game": Agent.Rules.gameChange(web), "app becoming a native game": Agent.Rules.gameChange(native),
+        ]
+        XCTAssertEqual(routes.filter { !$0.value.contains(Agent.Rules.gameJourney) }.keys.sorted(), [])
+    }
+
     /// An app on a TV is offered how to design for one, whichever kind it is and however it's made, listed once for all
     /// its TVs; an app on no TV isn't. A make_app_for that puts an app on a TV names the skill, once.
     func testAnAppOnATVIsOfferedItsDesign() {

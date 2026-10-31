@@ -1322,7 +1322,7 @@ extension Agent {
         // A page made for the Xbox before Lamp's game runtime keeps its own loop, and its own way of being tried.
         let kit = ownLoop ? [Rules.gameOwnLoop] : [web ? Rules.gameWebKit : Rules.gameKit, web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.gameWebLive] : [])
         let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, Rules.gameFlow] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
-                     web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : Rules.gameTry, Rules.appMd, Rules.audience,
+                     web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : Rules.gameTry, Rules.gameJourney, Rules.appMd, Rules.audience,
                      Skills.index(Skills.offered(.game)), Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
@@ -1334,7 +1334,7 @@ extension Agent {
     /// without those about the wish as a whole. A game made beside other apps is a page, as every new game is.
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.gameWebEdit, Rules.gameFlow, Rules.gameWebKit, Rules.gameWebSound, Rules.gameWebLive, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
-                     Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
+                     Rules.gameTry, Rules.gameJourney, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
         return (Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
@@ -1359,7 +1359,7 @@ extension Agent.Rules {
     what the Mac window saved. Either way you get a picture with its screen as text and what its console printed; neither \
     is the person's Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys where you \
     last looked: the arrows, enter, back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's \
-    move), then shows it again. Try it by playing it. `look_at_app` with `on_device` opens it where Try On points (its \
+    move), then shows it again, in plain sight, so only when the person asks you to try it. `look_at_app` with `on_device` opens it where Try On points (its \
     window on this Mac, or the Xbox) and shows that screen and its log.
 
     """
@@ -1417,10 +1417,21 @@ extension Agent.Rules {
 
     """
 
+    /// Said to every game, however it's made: playing it was already asked for, and an agent could stop at the first
+    /// round that looked right. What the journey is and how each kind of game plays it are the game skill's.
+    static let gameJourney = """
+    - For a new game, or a change to its rules, flow, ending or restart: before you say it's done, play the whole \
+    journey in the game skill's "Playtesting": from the real opening through a real win or loss and its results, then \
+    the game's own replay into a second round that resets and answers. A game with no rounds has no ending to invent: \
+    play its real return or restart and say it has no round ending by design. Where you can't play a part, say which \
+    part wasn't played, and never call it checked.
+
+    """
+
     /// What `make_app_for` answers with when an app becomes a game.
     static func gameChange(_ project: LampProject) -> String {
-        GameKit.engine(project) == .web ? gameWebEdit + gameFlow + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry
-            : gameEdit + gameFlow + gameKit + gameSound + gameBudget + gameTry
+        GameKit.engine(project) == .web ? gameWebEdit + gameFlow + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry + gameJourney
+            : gameEdit + gameFlow + gameKit + gameSound + gameBudget + gameTry + gameJourney
     }
 
     static var gameWebEdit: String { """
@@ -1673,8 +1684,9 @@ extension Agent.Rules {
     preview from the start. `use_app` plays on in the preview with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
     1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, b, x, y, lb, rb, lt, rt, menu, \
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
-    Each look or use plays the whole game again from the start with the same moves, so after a change to the code \
-    the same moves show what changed. Play it as the person would before you finish: a game that only looks right \
+    Each use plays the whole game again from the start with the moves so far, so after a change to the code the same \
+    moves show what changed (one to timing or navigation can land them elsewhere: check). Each look starts the moves \
+    over, a plain look at the person's open window too. Play it as the person would before you finish: a game that only looks right \
     isn't done. Read how the game takes the controller first (APP.md, its controls code): a vehicle's gas is often a \
     trigger, held as `key` rt alongside the stick that steers, and a game that barely moves under your moves is one \
     you're driving with the wrong control, not one that can't be tried. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \

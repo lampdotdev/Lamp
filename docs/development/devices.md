@@ -384,7 +384,7 @@ model writes both best and every place has a web view, and on the Xbox a game in
 console. Which of the two is the agent's choice as it writes the game, from what the person asked for: `Rules.gameWebKit`
 has it choose 2D or 3D and read the `game` and `game-ui` skills with the `2d-game` or `3d-game` skill, which are the only guidance that
 names the library and its recipe (entry point, renderer, frame callback, where setup goes). How a new game opens, teaches, restarts and returns is chosen
-for that game in the `game-ui` skill and kept in a `Flow:` line in APP.md; `Rules.gameFlow`, in every game's prompt, only points there. The kind and the scaffold are
+for that game in the `game-ui` skill and kept in a `Flow:` line in APP.md; `Rules.gameFlow`, in every game's prompt, only points there. What the agent plays before it says a game is done, a real ending and a second round, is the `game` skill's "Playtesting"; `Rules.gameJourney`, in every game's prompt, only points there. The kind and the scaffold are
 the same, and the placeholder card is three.js's either way. A web game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
@@ -787,7 +787,8 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 `look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`), or, for a web game
 open on this Mac, looks at its window (above); `use_app` takes
 `stick`, `button` and `wait`, adds them to that play and plays the whole of it again from the start (`GameKit.plays`,
-`Store.useOnGame`), so after a change to the code the same moves show what changed, wherever the game is played.
+`Store.useOnGame`, which builds the preview itself), so after a change to the code the same moves show what changed, wherever the game is played. Any look
+starts the play over, a look at the open game's window too, so a change is carried through a long play by `use_app`.
 `look_at_app` with `on_device` opens it where Try On points and looks there: its window on this Mac, the simulator, or the
 Xbox. On the Xbox, `on_device`, Play and the end of a turn build for the console and put it there through the
 integration's bridge: `stop` ends
