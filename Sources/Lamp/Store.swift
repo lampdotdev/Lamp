@@ -784,6 +784,8 @@ final class Store: ObservableObject {
         var lastStepAt: Date?
         /// The game's page as the last step put it in (`pageSignature`): a save that leaves it the same puts nothing in.
         var shownPage = ""
+        /// The game's page as the last step held for Reload had it: said once in the chat, not at every save after.
+        var heldStepPage = ""
         /// The sources the agent's last look played in the hidden copy (`lookedAtGame`), by app: what it looks at is a
         /// state it means to show, so the game open on this Mac takes it too, without waiting for a progress line.
         var lookedSources: [String: String] = [:]
@@ -9079,14 +9081,40 @@ final class Store: ObservableObject {
             Runtime.forgetBuilt(current)
             return
         }
-        // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
-        guard stillOwned(), !Runtime.waitsForReload(current) else { return }
+        guard stillOwned() else { return }
+        let report = turn.pageRanAgain ? PageLive.shared.lastReport(current, at: .mac) : nil
+        // Held for Reload (it needs the page opened again), whole or in part: the chat says what shows after Reload, never
+        // that it's in, and its Reload line puts it in.
+        if Runtime.waitsForReload(current) {
+            guard turn.heldStepPage != page else { return }
+            turn.heldStepPage = page
+            turn.lastStepAt = boundary
+            if let report, !report.waits.isEmpty {
+                log(current, .status, "Partly in \(current.name), the rest after Reload" + (words.map { ": " + $0 } ?? ""))
+                log(current, .detail, "The game ran its new code in place\(report.rebuilt.map { ", rebuilding \($0)" } ?? ""), but nothing in it read \(report.waits.joined(separator: ", ")) again, so that shows after Reload.")
+            } else {
+                log(current, .status, (PageLive.shared.holdsForPause(current) ? "Shows at the next pause, or after Reload" : "Shows after Reload")
+                    + (words.map { ": " + $0 } ?? ""))
+                if let why = PageLive.shared.reason(current) { log(current, .detail, "It waits for Reload: \(why).") }
+            }
+            return
+        }
         turn.shownSources = Runtime.fingerprint(current)
         turn.shownPage = page
         turn.lastStepAt = boundary
         turn.autoApplied += 1
         log(current, .status, words.map { "Put into \(current.name): " + $0 } ?? "Put the change into \(current.name)")
-        log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
+        log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
+            + (report?.rebuilt.map { ", rebuilding \($0) and keeping the rest of the world." } ?? "."))
+    }
+
+    /// The open game ran a change's code again but some of the change didn't reach it (a file nothing read again,
+    /// `PageLive.Report.waits`): it waits for Reload, as a change held whole does.
+    func pageWaitsInPart(_ project: LampProject) {
+        guard let current = current(project) else { return }
+        let owner = turns[current.id] ?? turns[wish(of: current).id]
+        owner?.reloadWhy = PageLive.shared.lastReport(current, at: .mac)?.words
+        awaitReload(current, owner: owner)
     }
 
     /// Reload pressed while a request's agent works on the app (`reloadWaiting`): the change held for it goes in as soon
@@ -9229,13 +9257,15 @@ final class Store: ObservableObject {
             if let owner, owner.look.inProgress, let doing = logs[wish(of: project).id]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty {
                 note(doing, for: project)
             } else { note(Activity.thinking, for: project) }
+            // Run again with part of it left for Reload (a file nothing read again): that part waits as a held change does.
+            let partial = outcome == .went("rerun") && PageLive.shared.lastReport(project, at: place)?.waits.isEmpty == false
             owner?.updatedInPlace = true
-            owner?.outcomes.append(.live)
+            owner?.outcomes.append(partial ? .held : .live)
             owner?.pageReopened = outcome == .went("reloading")
             owner?.pageRanAgain = outcome == .went("rerun")
             owner?.reloadWhy = owner?.pageReopened == true || owner?.pageRanAgain == true ? PageLive.shared.reason(project) : nil
             if outcome != .unchanged { owner?.shown.append(Date()) }
-            pageWentIn(project, saying: false)
+            if !partial { pageWentIn(project, saying: false) }
             if inFront { log(project, .status, "\(project.name) is updated") }
         }
         // The copy installed on this Mac is the older one now: the build goes in when the app closes.
