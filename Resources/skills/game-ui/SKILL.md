@@ -1,6 +1,6 @@
 ---
 name: game-ui
-description: A game's screens and how they feel - picking the screen flow that fits this game (how it opens, teaches, restarts and returns) before drawing any of them, what the shared display and each phone show in each phase, authored art direction, an overworld where one suits, one signature motion, landscape phone controllers, teaching controls in play, and checking the real opening. Read before designing or changing a game's opening, title, menus, level select, HUD, pause or results, whatever the game is made with.
+description: A game's screens and how they feel - picking the screen flow that fits this game (how it opens, teaches, restarts and returns) before drawing any of them, what the shared display and each phone show in each phase, authored art direction, an overworld where one suits, one signature motion, phone controllers built for the player's job, teaching controls in play, and checking the real opening. Read before designing or changing a game's opening, title, menus, level select, HUD, pause or results, whatever the game is made with.
 ---
 
 # A game's screens
@@ -86,7 +86,7 @@ Each screen has one job. "What is this game?" and "which level?" are two questio
 ### With phones
 
 Before writing a phone's screens, go through each phase of the flow and settle what the shared display shows and what
-each player's phone shows, and put that in the `Flow:` line too. The shared display is whatever everyone looks at: the
+each player's phone shows, and keep that as a small table under the `Flow:` line. The shared display is whatever everyone looks at: the
 Mac, a TV, or a phone or iPad running the game. A phone used as a controller, by a phone page or an app of the wish's own
 (the phone-controllers skill), is a different thing from a phone running the game, which has only its own screen and
 needs no split.
@@ -105,6 +105,23 @@ A party quiz might come out like this; another game's will differ:
 - Waiting always says for what, on both, and the game never sits silent.
 - A phone that drops is named on the shared display, and the flow says whether the game holds or carries on. It comes
   back to the current phase as the same player, never to the start.
+
+When making or changing a phone controller, design it from the player's job in this game, then its phases:
+
+- **Primary interaction:** what this player mostly does on the phone, shaped by the mechanic. A pattern lock takes the
+  whole screen and is drawn on with one finger, and each attempt's clues stack up beside it.
+- **Supporting actions:** only what the job needs around it (Undo, Submit, ready, a power-up).
+- **Feedback and information:** what the phone tells this player that the shared display doesn't, right where they're
+  acting: a wrong attempt answers on the phone, with no change of phase.
+- **Each phase its own screen:** controls for another phase aren't on it, so a player between rounds isn't left looking
+  at a dimmed copy of play.
+- **A plainer way:** a gesture has one to the same move where the mechanic allows it, spelled out in the design: tap the
+  nodes in order, with Undo and Submit. Where the mechanic is the timing or the skill of the gesture itself, don't
+  promise the same game by another route: give an easier setting, or say there's no plainer way.
+
+Then ask: do the phone's actions, feedback and information fit this player's job? This is a question to answer for the
+game, not a rule against any layout. A buzzer, a wheel or a pad can suit many games, and a pad is often right when eyes
+stay on the shared display. Lock art around generic buttons doesn't fit: the player still only presses buttons.
 
 ## Authored, not defaulted
 
@@ -171,10 +188,10 @@ What makes it work anywhere:
 - With phones as controllers, the shared screen shows what's public (who's in, whose turn, the score); each phone shows
   its player's current action, and that a choice was received. A join code belongs to the joining screen (the
   phone-pages skill), which a game played only with phones may open on; it's never on a title.
-- A phone controller is part of the game, held sideways by default: movement under the left thumb, the main action under
-  the right, identity and Back quiet in the middle. Same medium and palette as the game, and buttons named with its verbs
-  ("Hop", not "OK"). What isn't usable now looks it, and a press shows only what the game accepted, so a phone with no
-  game there says so. A gesture is optional, and always has a tap beside it. The phone-pages skill has the layout.
+- A phone controller is part of the game ("With phones"), held the way its primary interaction suits: two thumbs
+  sideways, a lock upright. Same medium and palette as the game, and buttons named with its verbs ("Hop", not "OK").
+  What isn't usable now looks it, and a move shows only what the game accepted, so a phone with no game there says so.
+  The phone-pages skill has the layouts, and how views, moves and interrupted gestures work.
 - Never carry essential information by sound alone.
 
 ## Feedback and layout
@@ -204,7 +221,8 @@ Play the journey, don't only look at it:
 - each input the game supports, and a mix of them where players differ;
 - long text, a small window and a wide one;
 - mute and reduced motion;
-- joining, a failed join and reconnecting, where the game takes phones.
+- joining, a failed join and reconnecting, where the game takes phones, and a gesture interrupted partway (the
+  phone-pages skill).
 
 Look at each screen, and at motion with `look_at_app`'s `motion`: one picture proves appearance, not navigation or
 sound. Lamp's preview can open a phone page and play it (the phone-pages skill), but a real join is proved only where
@@ -243,5 +261,6 @@ with prompts that match the real bindings, and starting that does something the 
 
 Once the journey plays, look at each screen against your brief once, the phone page included (`use_app` with `phone`, the
 phone-pages skill). Name the one thing on it that reads as a template, and fix that, along with anything you saw break.
+For a phone controller you made or changed, answer the question in "With phones" when you report, from what you played.
 Then stop polishing; navigation that doesn't work is fixed however many passes it takes. This pass doesn't paint new
 pictures, and a wish that asked for something small stays small.

@@ -31,10 +31,10 @@ The tools Lamp has for games:
   the keys or touch. Lamp's preview of the game plays with its scripted pad, and can join the game's phone page as one
   player (the phone-pages skill). Read a phone's buttons in `frame(f)` from `f.phones`, as the pads are read (`frame().phones`
   in a Phaser scene): one `{ player, down, pressed, released }` for each phone joined, each button by the name the phone
-  page gave it, so `for (const p of f.phones) if (p.pressed.a) start()`. `pressed` and `released` last the one frame after
+  page gave it, so `for (const p of f.phones) if (p.pressed.go) start()`. `pressed` and `released` last the one frame after
   it happened, and a press let go again between two frames is still a press. `onButton` runs between frames, so a flag
   it sets and `frame` clears is lost: keep it for what can't wait for a frame. Sticks and messages still come by
-  `onAxis` and `onMessage`.
+  `onAxis` and `onMessage`, so the game keeps its own queue for them (the phone-pages skill's "Views and moves").
 - **A TV app's page**: a game made as a Samsung or LG TV app before games took phones (`kind` "app") has no
   lamp-game.js: it follows the TV rules and lamp.js instead, with its own `requestAnimationFrame`. The rest of this
   skill holds for it wherever it doesn't name the runtime.
