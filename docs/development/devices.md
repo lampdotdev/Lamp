@@ -614,7 +614,9 @@ from the new files (`PageCopies`).
 
 **Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
 has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,
-shared with the game (`GameFiles`) and copied with a starter. On this Mac the game runs its own phones, so they go on
+shared with the game (`GameFiles`) and copied with a starter. What a controller is for a game is designed from the player's
+job in the `game-ui` skill, and how the game sends each player a view and takes their moves is the `phone-pages` skill's
+("Views and moves"); the runtime has no view or move of its own. On this Mac the game runs its own phones, so they go on
 playing, and new ones join, whether Lamp is open or not: the phone page is staged at each build (`TVs.stagePhone`) and
 put in the game's bundle as it's installed (`GamePhones`, in `Contents/Resources/Phone`, with lamp-controller.js), and
 the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) from `ControllerRuntime`, LampRelayKit's

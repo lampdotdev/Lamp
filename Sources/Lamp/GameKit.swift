@@ -1409,7 +1409,8 @@ extension Agent.Rules {
     static let gameFlow = """
     - For a new game or a requested change to how its screens go: before drawing any screen, pick the screen flow that \
     fits this game with the game-ui skill (how it opens, where it teaches, how a restart and a return go; with phones, \
-    what the shared display and each player's phone show in each phase) and keep it in a `Flow:` line in APP.md. The \
+    what the shared display and each player's phone show in each phase, with what this player does on a phone \
+    controller you make or change) and keep it in a `Flow:` line in APP.md, with phones a small table of phases under it. The \
     opening never shows controls or key bindings, whatever the flow and however many players share the keyboard: they \
     come after the start press, on a short screen of their own or as the match begins. After your last edit to any \
     screen, before you say it's done, run that skill's check of the real opening again: any key name or control label \
