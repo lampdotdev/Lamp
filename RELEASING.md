@@ -181,7 +181,7 @@ shows everything, and is worth doing once for a release that changes setup.
 Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.org) 2. Once a day, and from **Lamp → Check for Updates…**, Lamp reads the update feed at `https://updates.lamp.dev/appcast.xml`. When there's a newer release, Sparkle shows its standard window with the release notes and an **Install** button. Builds from source, which have no Apple Team ID, don't check for updates.
 
 - **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. The private key is kept in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
-- **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team, served at `updates.lamp.dev`; `lamp.dev` itself is kept for the site) that keeps the repo private:
+- **The feed:** `updates/` is a small Vercel app (project `lamp-updates` on the Roo Code team, served at `updates.lamp.dev`; `lamp.dev` itself is kept for the site) that keeps the repo private:
   - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
   - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG; `/download/latest`
     picks the newest published release, which is where the website's Download button points. `/download/<tag>/<file>`
@@ -195,7 +195,7 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 
 `site/` is the page at `lamp.dev`: one static Astro page styled with Tailwind, in its own Vercel project
 (`lamp-site` on the Roo Code team). `lamp.dev` is registered through Vercel on that team, with its DNS there
-too, and `updates.lamp.dev` belongs to `forge-updates`. The page has nothing release-specific: its Download
+too, and `updates.lamp.dev` belongs to `lamp-updates`. The page has nothing release-specific: its Download
 button goes to `https://updates.lamp.dev/download/latest`, so a new release needs nothing done here.
 
 - Run it locally with `cd site && npm install && npm run dev`, or `npm run build && npx astro preview` for
