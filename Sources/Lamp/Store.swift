@@ -5039,8 +5039,11 @@ final class Store: ObservableObject {
         let started = Date()
         var cost = 0.0
         var failure: String?
-        // Guard against runaway agents (small local models can loop): stop after the same step 6 times
-        // in a row, or 150 tool calls in one turn.
+        // Guard against runaway agents: stop after the same step 6 times in a row, whatever builds; and after 150 steps
+        // in one turn for a model on this Mac, which can loop without repeating itself exactly. Claude Code, Codex and
+        // the cloud's models take far more than that on a big request (a city moved somewhere else) and get there, so
+        // theirs is only a backstop.
+        let stepLimit = engine == .pi && Builder.piProvider == Builder.localProvider ? 150 : 500
         var lastTool = ""
         var repeats = 0
         var toolCalls = 0
@@ -5202,10 +5205,10 @@ final class Store: ObservableObject {
                     // Compared in full: six different searches of one file all read "grep cache.json".
                     repeats = fullCall == lastTool ? repeats + 1 : 1
                     lastTool = fullCall
-                    if repeats >= 6 || toolCalls > 150, failure == nil {
+                    if repeats >= 6 || toolCalls > stepLimit, failure == nil {
                         failure = repeats >= 6
                             ? "The model got stuck repeating the same step, so Lamp stopped it."
-                            : "The model made over 150 changes in one go, so Lamp stopped it."
+                            : "This took over \(stepLimit) steps, so Lamp paused it. Say “keep going” to carry on."
                         if let process = turn.agent { Subprocess.terminateTree(process) }
                     }
                     steer(project)
@@ -5321,6 +5324,11 @@ final class Store: ObservableObject {
         if turn.endedOnQuestions { return true }
         if let failure, failure.hasPrefix("The model ") {
             log(project, .error, failure + " Try again, or pick a stronger model in Settings.")
+            return false
+        }
+        // Paused at the step limit: the work so far is kept, and the person's "keep going" carries it on.
+        if let failure, failure.hasPrefix("This took over ") {
+            log(project, .error, failure)
             return false
         }
         if status != 0 && failure == nil { failure = "\(engine.title) exited with status \(status)" }
