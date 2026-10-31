@@ -63,6 +63,8 @@ public struct WishLinkCard: View {
     let retaking: Bool
     /// The wish can go with its link as a file (its kind can be shared as one): the card offers it.
     let canIncludeFile: Bool
+    /// Said under Include the wish itself while it's ticked: the work in the wish that came with no license.
+    let noLicense: String?
     /// Copy Link the first time, Update Link after a change: shares what's on the card and copies the link.
     let share: () -> Void
     let copy: () -> Void
@@ -72,8 +74,10 @@ public struct WishLinkCard: View {
     let width: CGFloat?
 
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
-                stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, share: @escaping () -> Void,
-                copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
+                stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, noLicense: String? = nil,
+                share: @escaping () -> Void, copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void,
+                width: CGFloat? = 480) {
+        self.noLicense = noLicense
         self.icon = icon
         self.picture = picture
         self._values = values
@@ -135,6 +139,9 @@ public struct WishLinkCard: View {
                 Toggle("Include the wish itself, so people with Lamp get this exact one", isOn: $values.includeFile)
                     .toggleStyle(.checkbox)
                     .help("Its code and files go with the link, as when you share the wish as a file. Lamp checks them for keys first. Never your chat or the app's data.")
+                if values.includeFile, let noLicense {
+                    Text(noLicense).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             if let link { linkRow(link) }
             if case .failed(let message) = stage {

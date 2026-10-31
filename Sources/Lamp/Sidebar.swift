@@ -592,7 +592,8 @@ final class SidebarServer {
             newPicture: shown?.picture != nil && shown?.picture != card.pictureDigest,
             sending: card.stage == .sending, problem: { if case .failed(let message) = card.stage { message } else { nil } }(),
             copied: card.copied, canRetake: WishLinkCards.shared.canRetake(project), retaking: card.retaking,
-            limits: [WishLink.Limit.name, WishLink.Limit.line, WishLink.Limit.words])
+            limits: [WishLink.Limit.name, WishLink.Limit.line, WishLink.Limit.words],
+            noLicense: ShareCheck.warningLine(Credits.load(project)))
     }
 
     private var wishLinkPictures: [String: (digest: String?, data: Data?)] = [:]
@@ -704,6 +705,7 @@ final class SidebarServer {
 
     /// Share…: the file is made here, where the wish is, and handed to the sidebar, which shows the share menu.
     private func share(_ project: LampProject) {
+        guard Sharing.askToShare(project) else { return }
         Task { [weak self] in
             do {
                 let file = try await Task.detached(priority: .userInitiated) { () -> SidebarFile in
@@ -714,7 +716,8 @@ final class SidebarServer {
                 self?.sharing[project.id] = SidebarSharing(id: UUID(), file: file, wish: project.id)
                 self?.scheduleUpdate()
             } catch {
-                Store.shared.log(project, .error, error.localizedDescription)
+                // What's wrong and what to do about it, as an alert would show both.
+                Store.shared.log(project, .error, WishLinkCards.problem(error))
             }
         }
     }

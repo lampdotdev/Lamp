@@ -793,6 +793,15 @@ struct WishDrag: NSViewRepresentable {
         }
 
         private func begin(from event: NSEvent) {
+            // A wish with work under no license asks first, as Share… does; a drag can't wait on the answer, so it's the
+            // next drag that carries the file.
+            if store.canShare(project) {
+                let credits = Credits.load(project)
+                if ShareCheck.warning(of: project, credits: credits) != nil, !ShareCheck.accepted(project, credits: credits) {
+                    _ = Sharing.askToShare(project)
+                    return
+                }
+            }
             let writer: NSPasteboardWriting
             if store.canShare(project) {
                 let installed = project.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)

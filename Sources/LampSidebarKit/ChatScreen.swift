@@ -1297,7 +1297,7 @@ struct WishLinkPanel: View {
                          stage: card.sending ? .sending : card.problem.map(WishLinkCard.Stage.failed) ?? .editing,
                          copied: card.copied && !changed,
                          retake: card.canRetake ? { link.send(.wishLink(.retake)) } : nil, retaking: card.retaking,
-                         canIncludeFile: card.canIncludeFile ?? false,
+                         canIncludeFile: card.canIncludeFile ?? false, noLicense: card.noLicense,
                          share: {
                              link.send(.wishLink(.share(SidebarWishLinkValues(name: values.name, line: values.line, words: values.words,
                                                                                includePicture: values.includePicture,

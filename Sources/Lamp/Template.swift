@@ -3935,31 +3935,53 @@ enum Template {
 
     /// File ▸ Share…: the app as a file someone else opens with Lamp. Lamp makes it from the app's folder, the same
     /// file as Lamp's own Share…, and the app shows the system's share picker for it from its window, as Apple's apps
-    /// do. When Lamp isn't open it's opened, and asked again once it answers.
+    /// do. When Lamp isn't open it's opened, and asked again once it answers. What Lamp says first (work in the app that
+    /// came with no license) is asked here with Share Anyway, and what stops the share is shown as Lamp says it.
     @MainActor enum LampShareApp {
         private static var picker: NSSharingServicePicker?
 
+        /// Lamp's answer: the file, something to ask first, why it can't be shared, or nothing (Lamp isn't reachable).
+        private enum Answer {
+            case file([String: Any])
+            case ask(String, String, [String])
+            case refused(String, String)
+            case unreachable
+        }
+
         static func share() {
             Task {
-                var answer = await ask()
-                if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty,
+                var answer = await ask(anyway: nil)
+                if case .unreachable = answer, NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty,
                    let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
                     _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
-                    for _ in 0..<40 where answer == nil {
+                    for _ in 0..<40 {
+                        guard case .unreachable = answer else { break }
                         try? await Task.sleep(for: .milliseconds(500))
-                        answer = await ask()
+                        answer = await ask(anyway: nil)
                     }
                 }
-                guard let answer, let path = answer["file"] as? String else {
+                // Asked again when the app took in more such work while the question was up: Lamp holds the answer to
+                // what was shown.
+                while case .ask(let message, let detail, let sources) = answer {
                     let alert = NSAlert()
-                    alert.messageText = "This app couldn't be shared"
-                    alert.informativeText = "Lamp makes the file to share it. Open Lamp and try again."
-                    alert.runModal()
-                    return
+                    alert.messageText = message
+                    alert.informativeText = detail
+                    alert.addButton(withTitle: "Share Anyway")
+                    alert.addButton(withTitle: "Cancel")
+                    guard alert.runModal() == .alertFirstButtonReturn else { return }
+                    answer = await ask(anyway: sources)
                 }
-                let items: [Any] = [answer["note"] as? String, (answer["picture"] as? String).map(URL.init(fileURLWithPath:)),
+                let found: [String: Any]
+                switch answer {
+                case .file(let file): found = file
+                case .refused(let message, let detail): return tell(message, detail)
+                case .unreachable: return tell("This app couldn't be shared", "Lamp makes the file to share it. Open Lamp and try again.")
+                case .ask: return
+                }
+                guard let path = found["file"] as? String else { return }
+                let items: [Any] = [found["note"] as? String, (found["picture"] as? String).map(URL.init(fileURLWithPath:)),
                                     URL(fileURLWithPath: path)].compactMap { $0 }
                 let picker = NSSharingServicePicker(items: items)
                 self.picker = picker
@@ -3983,21 +4005,32 @@ enum Template {
             }
         }
 
-        /// Lamp's answer: where the file and its picture are. Nil when Lamp didn't answer or couldn't make it.
-        private static func ask() async -> [String: Any]? {
-            guard let url = URL(string: lampGateway + "/app/share") else { return nil }
+        private static func tell(_ message: String, _ detail: String) {
+            let alert = NSAlert()
+            alert.messageText = message
+            alert.informativeText = detail
+            alert.runModal()
+        }
+
+        /// Asks Lamp for the file; `anyway` once the person chose Share Anyway, with the work they were shown.
+        private static func ask(anyway sources: [String]?) async -> Answer {
+            guard let url = URL(string: lampGateway + "/app/share") else { return .unreachable }
             var request = URLRequest(url: url, timeoutInterval: 120)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = Data("{}".utf8)
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
-            let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                fputs("LampShareApp: \(answer?["error"] as? String ?? "Lamp didn't make the file")\n", stderr)
-                return nil
+            var body: [String: Any] = [:]
+            if let sources { body = ["anyway": true, "sources": sources] }
+            request.httpBody = (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return .unreachable }
+            let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            if let warning = answer["warning"] as? String {
+                return .ask(warning, answer["detail"] as? String ?? "", answer["sources"] as? [String] ?? [])
             }
-            return answer
+            guard (response as? HTTPURLResponse)?.statusCode == 200, answer["file"] is String else {
+                return .refused(answer["error"] as? String ?? "This app couldn't be shared", answer["detail"] as? String ?? "")
+            }
+            return .file(answer)
         }
     }
 

@@ -780,11 +780,15 @@ public struct SidebarWishLink: Codable, Equatable {
     public var canRetake: Bool
     public var retaking: Bool
     public var limits: [Int]
+    /// The line said under Include the wish itself when the wish uses work that came with no license
+    /// (`ShareCheck.warningLine`). Missing from a Lamp before it.
+    public var noLicense: String?
 
     public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool = false, canIncludeFile: Bool = false,
                 revision: Int, picture: Data?, icon: Data?,
                 link: String?, shown: SidebarWishLinkValues?, newPicture: Bool, sending: Bool, problem: String?, copied: Bool,
-                canRetake: Bool, retaking: Bool, limits: [Int]) {
+                canRetake: Bool, retaking: Bool, limits: [Int], noLicense: String? = nil) {
+        self.noLicense = noLicense
         self.name = name
         self.line = line
         self.words = words

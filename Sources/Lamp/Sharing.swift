@@ -55,8 +55,28 @@ enum Sharing {
         anchors.allObjects.first { $0.origin == origin && $0.window === window && !$0.isHiddenOrHasHiddenAncestor }
     }
 
+    /// Before Share…, Copy Wish File, Export… or a drag makes the file: a wish using work that came with no license says
+    /// so once, and goes only with Share Anyway. The answer is kept for the wish until it takes in more such work
+    /// (`ShareCheck.accepted`), so the same question isn't asked at every copy.
+    @MainActor static func askToShare(_ project: LampProject) -> Bool {
+        // Asked again if the wish took in more such work while the question was up: only what was named is agreed to.
+        while true {
+            let credits = Credits.load(project)
+            guard let warning = ShareCheck.warning(of: project, credits: credits), !ShareCheck.accepted(project, credits: credits) else { return true }
+            // Asked from the chat beside an app too, so Lamp comes forward with its question.
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = warning.message
+            alert.informativeText = warning.detail ?? ""
+            alert.addButton(withTitle: "Share Anyway")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            ShareCheck.accept(project, sources: ShareCheck.fingerprint(credits))
+        }
+    }
+
     @MainActor static func share(_ project: LampProject, from origin: Origin) {
-        guard let window = NSApp.keyWindow, let content = window.contentView else { return }
+        guard let window = NSApp.keyWindow, let content = window.contentView, askToShare(project) else { return }
         // Where the command was clicked, for when its control has gone by the time the file is ready.
         let clicked = NSRect(origin: content.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil),
                              size: NSSize(width: 1, height: 1))
@@ -214,7 +234,8 @@ enum Sharing {
                 throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share games written in C++.")
             }
         }
-        // Others' work in it goes only with its license and credit, and work with no license doesn't go at all.
+        // Others' work in it goes only with its license and credit. Work with no license goes too: the person was told
+        // before the share began (`askToShare`, a sheet's line).
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
         let fm = FileManager.default

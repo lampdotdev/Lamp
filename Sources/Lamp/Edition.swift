@@ -46,6 +46,9 @@ enum Edition {
     /// ~/Applications/Lamp (Dev) Apps: where built apps are installed.
     static let appsFolder = home.appendingPathComponent("Applications/\(name) Apps")
     static let logsFolder = home.appendingPathComponent("Library/Logs/\(name)")
+    /// ~/Library/Caches/Lamp (Dev): what this Lamp makes for the moment and can make again (a shared wish's file, an
+    /// icon's large preview), its own so that two Lamps never hand on or show each other's.
+    static let cachesFolder = home.appendingPathComponent("Library/Caches/\(name)")
     /// ~/Library/Developer/Lamp: tools too large to keep a copy of for each Lamp (Android's SDK, a Java runtime),
     /// shared by every Lamp on this Mac on purpose, as the app-signing keychain is. The agent's sandbox lets a
     /// build read the person's developer folder and never write it, so what Lamp runs from here is what Lamp put

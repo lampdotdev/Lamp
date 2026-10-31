@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// - Work under an open license (MIT, BSD, Apache and the like) goes, with its license file and its credit.
 /// - Work under a share-alike license (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) goes too, and the remix stays under it:
 ///   a shared file carries the code anyway, and a published page says so (`notes`).
-/// - Work with no license can be used on this Mac but not passed on: the share is refused, naming it.
+/// - Work with no license goes too, once the person has been told (`warning`): whether to pass it on is theirs to decide.
 /// - A license file the credits name has to still be in the wish.
 /// - No key, token or secret Lamp keeps for the person or the app may be in what goes (`secrets`).
 enum ShareCheck {
@@ -101,14 +101,9 @@ enum ShareCheck {
         return .ownTerms
     }
 
-    /// Why the wish can't leave this Mac, or nil when it can.
+    /// Why the wish can't leave this Mac, or nil when it can: a license or notice file the credits name is gone, and a
+    /// copy without it couldn't be shared on. Work with no license isn't a reason (`warning`).
     static func refusal(of project: LampProject, credits: Credits) -> Sharing.ImportError? {
-        let unlicensed = credits.upstream.filter { licence($0.license) == .none }
-        if !unlicensed.isEmpty {
-            let names = unlicensed.map(Credits.line(for:)).joined(separator: ", ")
-            return Sharing.ImportError("\(project.name) can't be shared.",
-                                       detail: "It uses \(names), which came with no license. It can still be used on this Mac.")
-        }
         for source in credits.upstream {
             guard let gone = source.termsFiles.first(where: { !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent($0).path) })
             else { continue }
@@ -116,6 +111,51 @@ enum ShareCheck {
                                        detail: "The license of \(source.name) is missing from it. Ask Lamp to put \(gone) back.")
         }
         return nil
+    }
+
+    /// The work in the wish that came with no license, which the person is told of before it leaves this Mac.
+    static func unlicensed(_ credits: Credits) -> [Credits.Source] {
+        credits.upstream.filter { licence($0.license) == .none }
+    }
+
+    /// What the person is told before a wish with work under no license leaves this Mac, or nil when it has none. Its
+    /// author may not want it passed on, which only the person can weigh; Lamp says so and lets them decide.
+    static func warning(of project: LampProject, credits: Credits) -> Sharing.ImportError? {
+        warningLine(credits).map { Sharing.ImportError("\(project.name) uses work that came with no license.", detail: $0) }
+    }
+
+    /// The same in one line, which a sheet shows among its facts when what it puts up can be seen by others.
+    static func warningLine(_ credits: Credits) -> String? {
+        let unlicensed = unlicensed(credits)
+        guard !unlicensed.isEmpty else { return nil }
+        let lines = unlicensed.map(Credits.line(for:))
+        let names = lines.count < 3 ? lines.joined(separator: " and ") : lines.dropLast().joined(separator: ", ") + ", and " + lines.last!
+        return "\(names) came with no license. Make sure you're comfortable sharing \(unlicensed.count == 1 ? "it" : "them")."
+    }
+
+    /// What the person last agreed to share with no license, for each wish: they're asked once, and again only when the
+    /// wish takes in more such work. Kept in Lamp's settings, not the wish's folder, where the agent could write it.
+    /// Kept by the wish's own identity rather than its folder's name, which a later wish may take.
+    static func accepted(_ project: LampProject, credits: Credits) -> Bool {
+        let wanted = fingerprint(credits)
+        return wanted.isEmpty || (UserDefaults.standard.dictionary(forKey: acceptedKey)?[key(project)] as? [String]).map { Set(wanted).isSubset(of: $0) } == true
+    }
+
+    /// Kept as agreed to: `sources` is what the person was shown (`fingerprint`), never what the wish holds by the time
+    /// they answer, which a change landing meanwhile may have added to.
+    static func accept(_ project: LampProject, sources: [String]) {
+        var all = UserDefaults.standard.dictionary(forKey: acceptedKey) ?? [:]
+        all[key(project)] = sources
+        UserDefaults.standard.set(all, forKey: acceptedKey)
+    }
+
+    private static let acceptedKey = "sharedWithNoLicense"
+
+    private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
+
+    /// The unlicensed work named in a warning, so an answer to it is held to what it named.
+    static func fingerprint(_ credits: Credits) -> [String] {
+        unlicensed(credits).map { [$0.name, $0.url ?? "", $0.commit ?? ""].joined(separator: "\u{1F}") }.sorted()
     }
 
     /// What a published page says of the licenses of what it's based on: one line for each share-alike licence, and one

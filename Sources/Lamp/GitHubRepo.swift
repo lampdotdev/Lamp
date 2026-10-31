@@ -520,6 +520,9 @@ enum GitHubRepo {
         /// an update never adds a license the person left out, nor takes away one they chose.
         var isPrivate = false
         var license = true
+        /// Whether what was staged goes where anyone can read it: as GitHub says for a repository that's up, as chosen
+        /// for a new one.
+        var isPublic: Bool?
 
         /// Ready, or failed with the tree still staged, so Put on GitHub tries again.
         var canPut: Bool {
@@ -549,6 +552,7 @@ enum GitHubRepo {
         cards[project.id]?.stage = .preparing
         if let old = cards[project.id]?.staged { try? FileManager.default.removeItem(at: old.folder.deletingLastPathComponent()) }
         cards[project.id]?.staged = nil
+        cards[project.id]?.isPublic = nil
         Task {
             guard let gh = await Publish.gh() else { return set(project, .needsGitHub(.install)) }
             guard let login = await Publish.login(gh: gh) else { return set(project, .needsGitHub(.signIn)) }
@@ -575,6 +579,7 @@ enum GitHubRepo {
                 cards[project.id]?.login = login
                 cards[project.id]?.repo = repo
                 cards[project.id]?.staged = staged
+                cards[project.id]?.isPublic = isPublic
                 if cards[project.id]?.kept == nil, !GitHubRepo.canOfferLicense(staged.credits) { cards[project.id]?.license = false }
                 cards[project.id]?.stage = .ready
             } catch {
@@ -660,6 +665,8 @@ enum GitHubRepo {
         let credits = card.staged?.credits ?? Credits.load(project)
         var notes = ShareCheck.notes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
+        // A private repository passes nothing on, so only a public one says what came with no license.
+        if card.isPublic ?? !card.isPrivate, let line = ShareCheck.warningLine(credits) { notes.append(line) }
         let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
         // What the README offers: in a public repository the repository itself on lamp.dev, so no Share Link is asked
         // for; in a private one the Share Link, when there is one.
