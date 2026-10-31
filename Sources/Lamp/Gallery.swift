@@ -164,6 +164,26 @@ enum Gallery {
             LogLine(kind: .oldCopy, text: "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),
             LogLine(kind: .status, text: "Today is ready on the iPhone"),
         ]),
+        screen("A request waiting for what builds", group: "Chat screen", [
+            LogLine(kind: .user, text: "Make it a snowy winter night"),
+            LogLine(kind: .needsBuilder, text: ""),
+        ]),
+        screen("A request waiting, with a sign-in to use", group: "Chat screen", [
+            LogLine(kind: .user, text: "Make it a snowy winter night"),
+            LogLine(kind: .needsBuilder, text: BuilderLine.text([.claude, .codex])),
+        ]),
+        screen("A newer original", group: "Chat screen", [
+            LogLine(kind: .user, text: "Make it a snowy winter night"),
+            LogLine(kind: .agent, text: "Snow falls over the whole city now, and the streets have drifts."),
+            LogLine(kind: .newerOriginal, text: "e21e2de686a12bb7ca08e7c549cd5f088cc590b6"),
+        ]),
+        screen("A newer original, brought in", group: "Chat screen", [
+            LogLine(kind: .newerOriginal, text: NewerOriginalLine.done + "e21e2de686a12bb7ca08e7c549cd5f088cc590b6"),
+            LogLine(kind: .status, text: "Brought in what's new from the original, keeping your changes. Building it now…"),
+        ]),
+        screen("Started over", group: "Chat screen", [
+            LogLine(kind: .status, text: Conversation.startedOverFromLatest),
+        ]),
         screen("The old team's copy, kept and removed", group: "Chat screen", [
             LogLine(kind: .oldCopy, text: OldCopyLine.kept + "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),
             LogLine(kind: .oldCopy, text: OldCopyLine.removed + "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),

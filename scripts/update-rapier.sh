@@ -26,5 +26,8 @@ Rapier $version (https://rapier.rs, github.com/dimforge/rapier), the npm package
 under the Apache License 2.0 in LICENSE: dist/rapier.mjs as published, named rapier.js here, the package checked
 against the SHA-512 npm lists for it (scripts/update-rapier.sh).
 EOF
+# The version going out stays known: a wish shared from a Lamp that shipped it carries it, and the review still
+# tells it from the sender's own code (Sharing.knownLibraries, by each file's SHA-256).
+[[ -d "$out" ]] && { cat Resources/WebLibraries/earlier.txt 2>/dev/null; find "$out" -type f -exec shasum -a 256 {} + | cut -d" " -f1; } | sort -u > "$work/earlier.txt" && mv "$work/earlier.txt" Resources/WebLibraries/earlier.txt
 rm -rf "$out" && mv "$work/rapier" "$out"
 du -sh "$out"

@@ -29,10 +29,10 @@ enum Sandbox {
     /// whatever runs there runs as the agent's commands do, never as Lamp: with Lamp's keys, sign-ins and the
     /// other apps out of reach.
     static func run(_ command: String, for project: LampProject, cwd: URL? = nil, env: [String: String] = [:], opening folders: [String] = [],
-                    reading: [String] = [],
+                    reading: [String] = [], offline: Bool = false,
                     started: (@MainActor (Process) -> Void)? = nil,
                     onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
-        guard let confined = wrapEngine("/bin/zsh -c " + quoted(command), for: project, opening: folders, reading: reading) else {
+        guard let confined = wrapEngine("/bin/zsh -c " + quoted(command), for: project, opening: folders, reading: reading, offline: offline) else {
             await onLine("Lamp couldn't set up the sandbox for \(project.name), so nothing was run.")
             return unconfined
         }
@@ -150,9 +150,10 @@ enum Sandbox {
     }
 
     /// A whole run of a program, confined to the app with what it needs opened as well: `opening` for reading
-    /// and writing, `reading` for reading. Nil when the profile can't be written.
-    static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = []) -> String? {
-        guard let file = writeProfile(for: project, opening: folders, reading: reading) else { return nil }
+    /// and writing, `reading` for reading. `offline`: with no network at all, for a command that has no need of one. Nil
+    /// when the profile can't be written.
+    static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = [], offline: Bool = false) -> String? {
+        guard let file = writeProfile(for: project, opening: folders, reading: reading, offline: offline) else { return nil }
         return launch(command, profile: file)
     }
 
@@ -166,9 +167,9 @@ enum Sandbox {
     nonisolated(unsafe) private static var cleared = Date.distantPast
     private static let lock = NSLock()
 
-    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = []) -> URL? {
+    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = [], offline: Bool = false) -> URL? {
         let fm = FileManager.default
-        let text = profile(for: project, opening: folders, reading: reading)
+        let text = profile(for: project, opening: folders, reading: reading) + (offline ? "\n(deny network*)\n" : "")
         let digest = SHA256.hash(data: Data(text.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
         let file = folder.appendingPathComponent("\(project.id)-\(digest).sb")
         lock.lock()

@@ -274,8 +274,10 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
     /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
+    /// `needsBuilder` asks for what builds, for a request waiting in the chat (`BuilderLine`).
     /// `oldCopy` asks whether to take the copy signed for the app's old team off the phone (`OldCopyLine`).
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy }
+    /// `newerOriginal` offers a changed starter's copy the newer starter this Lamp ships (`NewerOriginalLine`).
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, needsBuilder, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy, newerOriginal }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -648,8 +650,6 @@ final class Store: ObservableObject {
 
     func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
     @Published var setup = SetupCheck()
-    /// A request is waiting for what builds, and the desk is asking for it (`SetupView`).
-    @Published var askingForSetup = false
     /// Whether Lamp has really looked at setup yet, with the saved keys in. Before that `setup` can't be gone
     /// by: it starts out assuming everything is in place, and a look made before the keys are read finds no key.
     private let setupLook = FirstLook()
@@ -660,7 +660,7 @@ final class Store: ObservableObject {
     @Published var icons: [String: NSImage] = [:]
     /// The icon's background chosen with the app's name, before its icon is designed: the blueprint shows it.
     @Published var iconColors: [String: String] = [:]
-    /// The shared app whose review is up. When it goes, the next one kept from before setup gets its turn.
+    /// The shared app whose review is up. When it goes, the next one kept during the welcome gets its turn.
     @Published var pendingImport: PendingImport? {
         didSet { if pendingImport == nil, oldValue != nil { openWaitingImport() } }
     }
@@ -776,6 +776,22 @@ final class Store: ObservableObject {
         var applying: Task<Void, Never>?
         var applyingSources = ""
         var autoApplied = 0
+        /// The sources a step of the agent's saves put into the game open on this Mac (`stepPage`): a build of the same
+        /// sources has nothing to show the person, so it says nothing in the chat.
+        var shownSources = ""
+        /// When a change last went in by itself as the agent saved (`autoApply`): what went in next is what the agent
+        /// did since (`stepWords`).
+        var lastStepAt: Date?
+        /// The game's page as the last step put it in (`pageSignature`): a save that leaves it the same puts nothing in.
+        var shownPage = ""
+        /// The sources the agent's last look played in the hidden copy (`lookedAtGame`), by app: what it looks at is a
+        /// state it means to show, so the game open on this Mac takes it too, without waiting for a progress line.
+        var lookedSources: [String: String] = [:]
+        /// Stops the agent's look playing the game in the hidden copy (`playGame`), set while it plays: a message from the
+        /// person stops it (`stoppedForMessage`), so they never wait behind Lamp's own checking. It stops that play alone,
+        /// for the game being played (a wish's part, under the wish's turn), never a build the turn runs beside it.
+        var stopHidden: (@MainActor () -> Void)?
+        var stoppedForMessage = false
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
@@ -1101,7 +1117,6 @@ final class Store: ObservableObject {
         for project in projects { discardIfUnused(project.id) }
         // The wishes Lamp comes with don't count: they're there before the welcome is.
         Onboarding.settle(hasApps: projects.contains { !Starters.isStarter($0) })
-        if !Onboarding.isDone { installStarters() }
         // Lamp opens on the desk (`WishDesk`), not on a wish's chat.
         selection = nil
         startGateway()
@@ -1145,9 +1160,10 @@ final class Store: ObservableObject {
         // be chosen it waits too, so there's one thing to do at a time.
         // Only for a request that waits for them: a Mac that makes only games and screens never needs them.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && setup.hasBuilder
-            && (waitsForAppleTools || waitingImport.count > 0) { requestBuildTools() }
+            && waitsForAppleTools { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
         prepareStarters()   // the prebuilt ones need no build tools, nor do games and screens
+        if !setup.hasBuilder { await offerSignedInEngines() }
         if setup.ready && !wasReady { await becameReady() }
         // A request that needs no tools starts as soon as what builds is set up.
         for project in projects where !(queued[project.id] ?? []).isEmpty && readyFor(project) { startQueued(project) }
@@ -1211,7 +1227,6 @@ final class Store: ObservableObject {
     private func becameReady() async {
         for project in projects where !(queued[project.id] ?? []).isEmpty { startQueued(project) }
         saveWaiting()
-        openWaitingImport()
         await backfillIcons()
         resumeWaitingIcons()
     }
@@ -1236,7 +1251,9 @@ final class Store: ObservableObject {
     /// (`deskPick`), else the chat in front. The pick stays apart from `selection`, which also says what's been read and
     /// which window asks the store's questions: a wish picked on the desk has had neither happen.
     func commandTarget(deskPick: LampProject.ID?) -> LampProject? {
-        deskPick.flatMap { id in projects.first { $0.id == id } } ?? selected
+        // A starter picked on the desk that isn't on it yet is no wish: nothing to act on.
+        if let deskPick { return projects.first { $0.id == deskPick } }
+        return selected
     }
 
     /// Whether Duplicate… can be chosen for a wish, in the File menu and the wish's own. `remix` asks again when it runs.
@@ -1810,7 +1827,7 @@ final class Store: ObservableObject {
     /// The starter a remix names, when this Lamp ships it and it runs here.
     static func starter(named remix: Wish.Remix) -> Starters.Starter? {
         guard case .starter(let id) = remix.from else { return nil }
-        return Starters.bundled.first { $0.folder.lastPathComponent == id && Starters.runsHere($0.tree) }
+        return Starters.bundled.first { $0.folder.lastPathComponent == id && Starters.runsHere($0) }
     }
 
     /// Opens the starter with the request in its box: a copy already on the desk that nothing has been asked of and
@@ -1832,13 +1849,19 @@ final class Store: ObservableObject {
             return draft.text.trimmed.isEmpty && draft.attachments.isEmpty && draft.pointed == nil && draft.replacing == nil
         }
         let reused = copies.first { $0.id == remixApp } ?? copies.first(where: emptyBox)
-        guard let project = reused ?? put(starter: starter) else {
-            NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of \(starter.name).")).runModal()
-            return
+        func opened(_ project: LampProject) {
+            remixApp = project.id
+            open(fromDesk: project)
+            if let request { writeIn(request, for: project) }
         }
-        remixApp = project.id
-        open(fromDesk: project)
-        if let request { writeIn(request, for: project) }
+        if let reused { return opened(reused) }
+        fetching(starter, asking: "copy:" + (request ?? ""), alerting: true) { [self] starter in
+            guard let project = put(starter: starter) else {
+                NSAlert(error: Sharing.ImportError("Lamp couldn't make a copy of \(starter.name).")).runModal()
+                return
+            }
+            opened(project)
+        }
     }
 
     /// A remix link Lamp won't open: it names something other than a starter this Lamp ships or a repository on GitHub.
@@ -2098,20 +2121,48 @@ final class Store: ObservableObject {
         SidebarServer.shared.send(project)
     }
 
-    /// Asks for what builds, on the desk: wishes run without it, so the first request is when it's needed.
-    func askForSetup() {
-        showDesk()
-        askingForSetup = true
+    /// Asks for what builds, where the request was made: wishes run without it, so the first request is when it's
+    /// needed. One line in the chat (`BuilderLine`), the latest request's, under which that request waits. Claude Code or
+    /// Codex already signed in on this Mac is offered there, never chosen for the person: it's their plan and their code.
+    func askForSetup(_ project: LampProject) {
+        logs[project.id]?.removeAll { $0.kind == .needsBuilder }
+        log(project, .needsBuilder, "")
+        Task { await offerSignedInEngines() }
     }
 
-    /// What a shared app waits for before its review can open: what builds, on the desk, then Apple's tools.
-    func askForWhatsMissing() {
-        if !setup.hasBuilder || !setup.hasAgent {
-            askForSetup()
-        } else if !setup.hasBuildTools, !setup.installRequested {
-            requestBuildTools()
+    /// What the lines asking for what builds offer, as of now: looked at again with each look at setup, so a request
+    /// waiting from before a relaunch, or a sign-in made elsewhere meanwhile, offers what's there.
+    private func offerSignedInEngines() async {
+        guard logs.values.contains(where: { $0.contains { $0.kind == .needsBuilder } }) else { return }
+        if !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
+        await EngineSignIn.refresh(olderThan: 5)
+        let offered = BuilderLine.text(BuilderLine.offers(installed: { EngineInstall.path(for: $0) != nil }, signedIn: { EngineSignIn.known[$0] == true }))
+        for project in projects {
+            guard let index = logs[project.id]?.firstIndex(where: { $0.kind == .needsBuilder }),
+                  logs[project.id]?[index].text != offered else { continue }
+            logs[project.id]?[index].text = offered
+            saveChat(project)
         }
     }
+
+    /// The person took what `askForSetup` offered: saved as their choice, and the request waiting starts with the next
+    /// look at setup (`recheckSetup`). A sign-in that has run out since goes to the sheet, which signs in.
+    func useSignedIn(_ engine: Engine, for project: LampProject, line: UUID) {
+        guard let stated = logs[project.id]?.first(where: { $0.id == line }), stated.kind == .needsBuilder,
+              BuilderLine.engines(in: stated.text).contains(engine), !choosingBuilder else { return }
+        choosingBuilder = true
+        Builder.engine = engine
+        Task {
+            defer { choosingBuilder = false }
+            await EngineSignIn.refresh(olderThan: 0)
+            await recheckSetup()
+            guard !setup.hasBuilder, let stated = logs[project.id]?.first(where: { $0.id == line }) else { return }
+            SetupSheet.shared.show(project, line: stated)
+        }
+    }
+
+    /// A click on a line's offer has been taken: a second one meanwhile is the same click.
+    private var choosingBuilder = false
 
     /// The desk's window in front.
     func showDesk() {
@@ -3279,18 +3330,22 @@ final class Store: ObservableObject {
         Task {
             let folder = RepoImport.cloneFolder()
             do {
-                let tree = try await RepoImport.clone(source, into: folder)
+                // With no git on this Mac, GitHub's archive of the commit, for anything but an update: that's a merge, which
+                // takes git in any case.
+                let fetched = !Versions.hasGit && target == nil ? try await RepoArchive.fetch(source, into: folder) : nil
+                let tree: URL
+                if let fetched { tree = fetched.tree } else { tree = try await RepoImport.clone(source, into: folder) }
                 // Someone's own project, not a wish: the agent can make it into one, which then gets its updates as
                 // any wish does (`AppUpdates`). A wish's own update that finds no wish there is an error as before.
                 if target == nil, !RepoImport.holdsWish(tree) {
                     // The commit fetched, so the app is made from exactly the version the person opened.
-                    let commit = RepoImport.repository(of: tree)?.commit
+                    let commit = fetched?.commit ?? RepoImport.repository(of: tree)?.commit
                     try? FileManager.default.removeItem(at: folder)
                     offerToAdapt(source, commit: commit)
                     return
                 }
                 if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
-                importApp(from: tree, updating: target)
+                importApp(from: tree, updating: target, fetched: fetched)
             } catch {
                 try? FileManager.default.removeItem(at: folder)
                 NSAlert(error: error).runModal()
@@ -3452,41 +3507,38 @@ final class Store: ObservableObject {
         return projects.first { $0.holdsApp && $0.platform == package.platform && $0.hasScaffold && Sharing.identity(of: $0, create: false) == identity }
     }
 
-    /// Opens a shared `.lampapp`. Its review (fixed checklist + AI check) opens only when setup is really done
-    /// and the welcome is over, so that an AI agent is there to check the app before it runs. Until then the
-    /// file is kept, and its review opens by itself once the person is through setup.
-    func importApp(from file: URL, updating target: String? = nil) {
+    /// Opens a shared `.lampapp`, with nothing set up if need be: its review opens as soon as the welcome is over, the
+    /// AI's check being a part of it only when AI is set up (`Sharing.review`), and building it always takes a click on
+    /// that review (`ImportReview.opening`). During the welcome the file is kept and the welcome gives way to it
+    /// (`OnboardingView.arrive`); its review opens as the welcome ends.
+    func importApp(from file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil) {
         NSApp.activate()
         Task {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
             await setupLook.wait()
             guard reviewsCanOpen else {
-                let alert = NSAlert()
-                alert.messageText = "Finish setting up Lamp first"
-                if waitingImport.keep(file, updating: target) {
-                    alert.informativeText = waitingImport.count > 1
-                        ? "Lamp will open your shared apps as soon as it can build them."
-                        : "Lamp will open the shared app as soon as it can build it."
+                if waitingImport.keep(file, updating: target, fetched: fetched) {
+                    arrivedImport += 1
                 } else {
+                    let alert = NSAlert()
+                    alert.messageText = "Finish the welcome first"
                     alert.informativeText = "Then open the shared app again."
+                    alert.runModal()
                 }
-                alert.runModal()
-                // Nothing else would ask: no request is waiting in a chat for what this needs.
-                if Onboarding.isDone || welcomeFinished { askForWhatsMissing() }
                 return
             }
-            review(file, updating: target)
+            review(file, updating: target, fetched: fetched)
         }
     }
 
-    /// Setup is in place (Apple's tools and an AI agent) and the person is through the welcome.
+    /// Lamp has looked at setup and the person is through the welcome.
     private var reviewsCanOpen: Bool {
-        WaitingImport.reviewsCanOpen(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+        WaitingImport.reviewsCanOpen(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
     }
 
     /// Unpacks a shared app and shows its review.
-    private func review(_ file: URL, updating target: String? = nil) {
+    private func review(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
         // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
@@ -3497,7 +3549,7 @@ final class Store: ObservableObject {
             // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
             let package: Sharing.Package
             do {
-                package = try await Task.detached { try Sharing.open(file) }.value
+                package = try await Task.detached { try Sharing.open(file, fetched: fetched) }.value
             } catch {
                 guard importRequest == request else { return }
                 importRequest = nil
@@ -3519,17 +3571,19 @@ final class Store: ObservableObject {
 
     private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
 
+    /// Goes up as a shared app is kept during the welcome, which gives way to it (`OnboardingView.arrive`).
+    @Published private(set) var arrivedImport = 0
+
     /// A shared app is kept for its review.
     var hasWaitingImport: Bool { waitingImport.count > 0 }
 
-    /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
-    /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a
-    /// review closes.
+    /// Shared apps kept during the welcome get their reviews once it's over, one at a time in the order they were
+    /// opened: called after Lamp's first look at setup, when the welcome ends, and when a review closes.
     /// Whether a shared app is now being looked at, waiting or not.
     @discardableResult func openWaitingImport() -> Bool {
         guard pendingImport == nil, importRequest == nil else { return true }
-        let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
-        if let file { review(file, updating: WaitingImport.target(beside: file)) }
+        let file = waitingImport.take(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
+        if let file { review(file, updating: WaitingImport.target(beside: file), fetched: WaitingImport.fetched(beside: file)) }
         return file != nil
     }
 
@@ -3730,7 +3784,9 @@ final class Store: ObservableObject {
     /// the credits take the new file's, since they're Lamp's to merge, which moves the chain's commit on. A clean merge
     /// is saved and built here; one with conflicts goes to the agent as a request with a note saying which files hold
     /// markers (`Versions.rememberConflicts`), which settles the obvious itself and asks only where it can't tell.
-    private func mergeUpdate(_ package: Sharing.Package, into project: LampProject) async {
+    /// `original` is the starter a starter's copy is updated to (`updateFromOriginal`): the package is it, as this Lamp
+    /// ships it, and its starter.md goes in with the credits.
+    func mergeUpdate(_ package: Sharing.Package, into project: LampProject, original: Starters.Starter? = nil) async {
         let fm = FileManager.default
         defer { try? fm.removeItem(at: package.folder) }
         let before = "Before bringing in an update"
@@ -3746,7 +3802,7 @@ final class Store: ObservableObject {
         let origin = AppInfoView.origin(of: project)
         let source = origin?.url.flatMap(RepoImport.source(from:))
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
-        let place = source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish"
+        let place = original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish"
         let merged: Upstream.Merged
         do {
             merged = try await Upstream.merge(package, into: project, from: source, commit: origin?.commit, arrival: arrival)
@@ -3757,6 +3813,7 @@ final class Store: ObservableObject {
                 SharedNetwork.arrive(part.package, in: app, arriving: false)
             }
             if let credits = package.credits { try Credits.add(credits, to: project) }
+            if let original { try Starters.keepFile(of: original, in: project) }
         } catch {
             _ = await Versions.git("git read-tree --reset -u HEAD && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
             print("Merging \(project.name) from \(place) failed: \(error)")
@@ -3780,7 +3837,8 @@ final class Store: ObservableObject {
         }
         defer { finish(project) }
         if await Versions.hasUnsavedChanges(project) {
-            guard await Versions.save(project, message: source == nil ? "Merged a newer shared file" : "Merged the latest from GitHub") else {
+            let message = original != nil ? "Merged the latest original" : source == nil ? "Merged a newer shared file" : "Merged the latest from GitHub"
+            guard await Versions.save(project, message: message) else {
                 log(project, .error, Self.updateFailed)
                 return
             }
@@ -3939,7 +3997,7 @@ final class Store: ObservableObject {
         let ready = readyFor(project)
         if !ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
         if !setup.hasBuilder || !setup.hasAgent {
-            askForSetup()
+            askForSetup(project)
         } else if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested {
             requestBuildTools()
         }
@@ -3954,6 +4012,11 @@ final class Store: ObservableObject {
             saveChat(project)
         }
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
+        // A message never waits behind Lamp's own checking: a play in the hidden copy stops, so the turn goes on to it.
+        if let turn = turns[project.id], let stop = turn.stopHidden {
+            turn.stoppedForMessage = true
+            stop()
+        }
         // Keeping the wish's other places current gives way to a request: they're tried again once it's done.
         for app in apps(of: wish(of: project)) where turns[app.id]?.updatingPlaces == true { turns[app.id]?.cancel() }
         startQueued(project)
@@ -4979,9 +5042,15 @@ final class Store: ObservableObject {
         let started = Date()
         var cost = 0.0
         var failure: String?
-        // Guard against runaway agents (small local models can loop): stop after the same step 6 times
-        // in a row, or 150 tool calls in one turn.
+        // Guard against runaway agents: stop after the same step 6 times in a row, whatever builds; and after 150 steps
+        // in one turn for a model on this Mac, which can loop without repeating itself exactly. Claude Code, Codex and
+        // the cloud's models take far more than that on a big request (a city moved somewhere else) and get there, so
+        // theirs is only a backstop.
+        let stepLimit = engine == .pi && Builder.piProvider == Builder.localProvider ? 150 : 500
         var lastTool = ""
+        // Set when Lamp itself stopped the model (either guard): its reason stands through what the process still
+        // prints and through its exit, and is told whatever its words.
+        var stoppedByLamp = false, stoppedRepeating = false
         var repeats = 0
         var toolCalls = 0
         // The tool call the model is writing at the moment, for the activity shown to the user.
@@ -5082,7 +5151,7 @@ final class Store: ObservableObject {
                 // extension drops the pictures of a request that was too big: lamp-tools.ts), so that attempt is
                 // no longer the turn's failure. Lamp's own reasons for stopping the model stand: the process is
                 // being ended, and what it had already printed can still arrive.
-                if let text = failure, !text.hasPrefix("The model ") {
+                if failure != nil, !stoppedByLamp {
                     switch event {
                     case .text, .textPiece, .tool, .step: failure = nil
                     default: break
@@ -5153,10 +5222,12 @@ final class Store: ObservableObject {
                     // Compared in full: six different searches of one file all read "grep cache.json".
                     repeats = fullCall == lastTool ? repeats + 1 : 1
                     lastTool = fullCall
-                    if repeats >= 6 || toolCalls > 150, failure == nil {
-                        failure = repeats >= 6
+                    if repeats >= 6 || toolCalls > stepLimit, !stoppedByLamp {
+                        stoppedByLamp = true
+                        stoppedRepeating = repeats >= 6
+                        failure = stoppedRepeating
                             ? "The model got stuck repeating the same step, so Lamp stopped it."
-                            : "The model made over 150 changes in one go, so Lamp stopped it."
+                            : "This took over \(stepLimit) steps, so Lamp paused it. Say “keep going” to carry on."
                         if let process = turn.agent { Subprocess.terminateTree(process) }
                     }
                     steer(project)
@@ -5231,7 +5302,7 @@ final class Store: ObservableObject {
             turn.codexStarted = false
             turn.codexActing = []
             // Codex exits with an error on a turn it was asked to end; that's not this turn's failure.
-            if failure?.hasPrefix("The model ") != true { (status, failure) = (0, nil) }
+            if !stoppedByLamp { (status, failure) = (0, nil) }
             // Not when the engine was changed in Settings meanwhile: this conversation is Codex's.
             guard !turn.stopped, !turn.endedOnQuestions, failure == nil, Builder.engine == engine,
                   let id = Self.savedSession(sessionFile), exists(project) else { break }
@@ -5271,8 +5342,10 @@ final class Store: ObservableObject {
         // Ended by Lamp on the agent's own questions: the engine's exit says nothing went wrong.
         if turn.endedOnQuestions { return true }
         if status == 0, failure == nil { rewriting.forEach(DeviceApps.finishRewrite) }
-        if let failure, failure.hasPrefix("The model ") {
-            log(project, .error, failure + " Try again, or pick a stronger model in Settings.")
+        // Stopped by Lamp: stuck repeating a step (a stronger model may not be), or paused at the step limit, where the work
+        // so far is kept and the person's "keep going" carries it on.
+        if stoppedByLamp, let failure {
+            log(project, .error, stoppedRepeating ? failure + " Try again, or pick a stronger model in Settings." : failure)
             return false
         }
         if status != 0 && failure == nil { failure = "\(engine.title) exited with status \(status)" }
@@ -7104,7 +7177,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// `assets`: ready-made models, sprites, tiles, icons and textures from Lamp's index of free work (`AssetCatalog`).
+    /// `assets`: ready-made models, sprites, tiles, icons, textures, sounds and music from Lamp's index of free work (`AssetCatalog`).
     /// With `find` (and `kind`) it lists what fits, within what the slowest place the app is shown can draw, and with
     /// `show` their pictures in one sheet; with `fetch` it brings the chosen ones into where the app's build takes files
     /// from (Web/assets/ for a game or another page, a native Android app's packaged assets, else Assets/), checked
@@ -7129,7 +7202,7 @@ final class Store: ObservableObject {
             let shown = Array(fitting.prefix(min(max(arguments["limit"] as? Int ?? 12, 1), 30)))
             guard !shown.isEmpty else {
                 let heavy = found.isEmpty ? "" : " (\(found.count) were too heavy for \(budget.place))"
-                return (200, ["text": "Nothing in Lamp's free assets fits that\(heavy). Try other words or a broader kind, or make it in code or with make_art."])
+                return (200, ["text": "Nothing in Lamp's free assets fits that\(heavy). Try other words or a broader kind, or make it in code (or a picture with make_art)."])
             }
             var text = "Free assets that fit, best first, with their size in the file's own units (y up). Bring one in with `fetch` and its id:\n"
                 + shown.map { AssetCatalog.line($0, budget: budget) }.joined(separator: "\n")
@@ -7195,6 +7268,7 @@ final class Store: ObservableObject {
                     line += String(format: " (box x %.2f…%.2f, y %.2f…%.2f, z %.2f…%.2f in its units)", box[0], box[3], box[1], box[4], box[2], box[5])
                 }
                 if !item.animations.isEmpty { line += "; animations: " + item.animations.prefix(12).joined(separator: ", ") }
+                if item.loops { line += "; loops" }
                 if let notes = item.notes { line += "; \(notes)" }
                 if let note = files.compactMap(\.note).first { line += "; \(note)" }
                 if AssetCatalog.needsCredit(item.license) { line += "; \(item.license): credit \"\(item.name) by \(item.author)\" where the app shows its credits" }
@@ -7205,7 +7279,7 @@ final class Store: ObservableObject {
         }
         var text = ""
         if !said.isEmpty {
-            let loading = page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`"
+            let loading = page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`, `await sound.load('assets/…')`"
                 : android ? "inside the app's packaged assets, as `LampAssets` reads them" : "inside Assets/, as `LampAssets.url(\"…\")` takes them"
             text = "Brought in, under \(base) (paths below are \(loading)), and credited in credits.json:\n"
                 + said.joined(separator: "\n")
@@ -7324,26 +7398,79 @@ final class Store: ObservableObject {
 
     // MARK: - Starters
 
-    /// The wishes Lamp comes with (`Starters`), copied onto the desk on the first launch. Saved as their first
-    /// version and built afterwards (`prepareStarters`), once Apple's tools are there: git is one of them.
-    private func installStarters() {
-        guard !UserDefaults.standard.bool(forKey: Starters.installedKey) else { return }
-        UserDefaults.standard.set(true, forKey: Starters.installedKey)
-        let made = Starters.bundled.compactMap(add(starter:))
-        guard !made.isEmpty else { return }
-        reload()
-        startersInstall = Task {
-            // Drawn only for a starter shipped without its icon: the others' are on the desk already.
-            for project in made where !Starters.hasShippedIcon(project) {
-                if let spec = Icons.load(project) { await renderIcon(project, spec: spec) }
+    // The wishes Lamp comes with (`Starters`) are listed under the desk's Starter apps from the first launch, and each is
+    // copied onto the desk only when it's first opened or remixed (`fetching`, then `put(starter:)`): Lamp's bundle
+    // holds only what lists them, so copying them all at the first launch would download every one.
+
+    /// Starters being fetched for their first opening, by folder: their row says "Getting it ready…", as for one being
+    /// built (`openWhenReady`).
+    @Published private(set) var fetchingStarters: Set<String> = []
+    /// Starters whose fetch failed, by folder, with what to say: the row says it, and Open tries again.
+    @Published private(set) var starterFetchFailed: [String: String] = [:]
+
+    /// The starter's files (its tree, and its prebuilt app when this Lamp has one), fetched when they aren't on this
+    /// Mac yet (`StarterDownloads`), then `then` with it. Without a connection, the starter's row on the desk says so
+    /// and Open tries again; `alerting` (a remix link, New Copy of the Original: something asked for away from the
+    /// row) says it in an alert too, with Try Again.
+    /// `asking` names what the caller will do with it (Open, a request, a copy): a second ask while it's coming (a
+    /// change sent from the panel after Open, another link) waits for the same download and is answered in turn, and
+    /// one that's already waiting isn't added again, so Try Again on the row doesn't open it twice. What's waiting stays
+    /// through a failure, for the next try; Cancel in the alert lets it go.
+    func fetching(_ starter: Starters.Starter, asking: String = "", alerting: Bool = false,
+                  then: @escaping @MainActor (Starters.Starter) -> Void) {
+        let folder = starter.folder.lastPathComponent
+        let prebuiltHere = StarterDownloads.prebuilt(of: starter) == nil || StarterDownloads.prebuiltArchive(of: starter) != nil
+        if Starters.hasTree(starter), prebuiltHere { return then(starter) }
+        var waiting = fetchWaiters[folder] ?? []
+        // Opening it with a change asked covers opening it plainly: both would make a copy, and one is meant.
+        if asking == "open:", waiting.contains(where: { $0.asking.hasPrefix("open:") }) {
+            if alerting { fetchAlerts.insert(folder) }
+            return fetchAgain(starter)
+        }
+        waiting.removeAll { $0.asking == asking || (asking.hasPrefix("open:") && $0.asking == "open:") }
+        waiting.append((asking, then))
+        fetchWaiters[folder] = waiting
+        if alerting { fetchAlerts.insert(folder) }
+        fetchAgain(starter)
+    }
+
+    /// The starter's download, with whatever waits on it, unless it's under way already.
+    private func fetchAgain(_ starter: Starters.Starter) {
+        let folder = starter.folder.lastPathComponent
+        guard fetchWaiters[folder]?.isEmpty == false, fetchingStarters.insert(folder).inserted else { return }
+        starterFetchFailed[folder] = nil
+        let needsPrebuilt = !setup.hasBuildTools
+        Task {
+            do {
+                try await StarterDownloads.fetch(starter, needsPrebuilt: needsPrebuilt)
+                fetchingStarters.remove(folder)
+                fetchAlerts.remove(folder)
+                for waiting in fetchWaiters.removeValue(forKey: folder) ?? [] { waiting.then(starter) }
+            } catch {
+                fetchingStarters.remove(folder)
+                starterFetchFailed[folder] = error.localizedDescription
+                guard fetchAlerts.remove(folder) != nil else { return }
+                let alert = NSAlert()
+                alert.messageText = "Lamp couldn't get \(starter.name)"
+                alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: "Try Again")
+                alert.addButton(withTitle: "Cancel")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    fetchAlerts.insert(folder)
+                    fetchAgain(starter)
+                } else {
+                    fetchWaiters[folder] = nil
+                }
             }
         }
     }
-    private var startersInstall: Task<Void, Never>?
+    private var fetchWaiters: [String: [(asking: String, then: @MainActor (Starters.Starter) -> Void)]] = [:]
+    /// Starters a caller wants told of a failure in an alert (a link, a menu command), not only on the row.
+    private var fetchAlerts: Set<String> = []
 
-    /// One starter put on the desk from Lamp's bundle, as on the first launch: its files in a new app, saved as
-    /// its first version and built by `prepareStarters`. The caller reloads the desk. Nil when it couldn't be
-    /// written, and then nothing of it is left.
+    /// One starter put on the desk, its files fetched (`fetching`): its files in a new app, saved as its first version
+    /// and built by `prepareStarters`. The caller reloads the desk. Nil when it couldn't be written, and then nothing
+    /// of it is left.
     func add(starter: Starters.Starter) -> LampProject? {
         do {
             let project = try Template.draft(name: uniqueName(starter.name), platform: starter.kind, in: root)
@@ -7364,8 +7491,9 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A starter put on the desk after the first launch (a remix of one from the site, once it was deleted): added, shown on the desk, and
-    /// saved and built out of sight like the first launch's (`prepareStarters`).
+    /// A starter put on the desk (opened from the desk's Starter apps, a remix of one from the site, New Copy of the
+    /// Original), once its files are fetched (`fetching`): added, shown on the desk, and saved and built out of sight
+    /// (`prepareStarters`).
     @discardableResult func put(starter: Starters.Starter) -> LampProject? {
         guard let added = add(starter: starter) else { return nil }
         reload()
@@ -7400,8 +7528,163 @@ final class Store: ObservableObject {
     /// Whether a chat holds nothing but Lamp's own lines about building and opening the app: no request, no word
     /// from the agent, no card.
     private static func nothingSaid(in lines: [LogLine]) -> Bool {
-        lines.allSatisfy { [.status, .detail, .error].contains($0.kind) }
+        lines.allSatisfy { [.status, .detail, .error, .newerOriginal].contains($0.kind) }
     }
+
+    // MARK: Starters kept current
+
+    /// Copies brought up to a newer starter at this launch, to be built again out of sight (`prepare`).
+    private var broughtUp: Set<String> = []
+    private var startersBroughtUp = false
+
+    /// Once a launch, when git is there: every copy of a starter this Lamp ships newer (`Starters.newer`) is brought up
+    /// to it. One unchanged since it arrived takes the new starter's files in place of its own, as a new "From Lamp"
+    /// version that Undo takes back, keeping its data and its chat, and is built again out of sight (`prepare`, with the
+    /// prebuilt copy when it's the starter's). One open or being worked on now waits for the next launch, or Update from
+    /// the Original. One changed here is offered that, once, in its chat.
+    private func bringStartersUp() async {
+        guard !startersBroughtUp, Versions.hasGit else { return }
+        startersBroughtUp = true
+        for project in projects where Starters.newer(for: project) != nil {
+            guard let project = current(project), let starter = Starters.newer(for: project),
+                  await Versions.list(project).contains(where: { Self.arrivalMessages.contains($0.message) }) else { continue }
+            if await original(toStartAgain: project) != nil {
+                offerNewerOriginal(project, starter: starter)
+                continue
+            }
+            // The newer starter's files, fetched for it: without a connection it waits for the next launch.
+            guard !isRunning(project), (try? await StarterDownloads.fetch(starter)) != nil,
+                  let held = current(project), begin(held) != nil else { continue }
+            // Looked at again under the hold: the person may have opened or changed it while the files came.
+            guard !isRunning(held), await original(toStartAgain: held) == nil else {
+                finish(held)
+                if await original(toStartAgain: held) != nil { offerNewerOriginal(held, starter: starter) }
+                continue
+            }
+            let brought = await bringUp(held, to: starter)
+            finish(held)
+            if brought { broughtUp.insert(held.id) }
+        }
+    }
+
+    /// The chat's card offering a changed copy the newer starter (`NewerOriginalLine`), once for each.
+    private func offerNewerOriginal(_ project: LampProject, starter: Starters.Starter) {
+        guard let pin = starter.commit, !(logs[project.id] ?? []).contains(where: { $0.kind == .newerOriginal && $0.text.hasSuffix(pin) }) else { return }
+        log(project, .newerOriginal, pin)
+    }
+
+    /// The copy's offers of a newer starter, answered: it has it now.
+    private func newerOriginalTaken(_ project: LampProject) {
+        guard var lines = logs[project.id], lines.contains(where: { $0.kind == .newerOriginal && !NewerOriginalLine.isDone($0.text) }) else { return }
+        for index in lines.indices where lines[index].kind == .newerOriginal && !NewerOriginalLine.isDone(lines[index].text) {
+            lines[index].text = NewerOriginalLine.done + lines[index].text
+        }
+        logs[project.id] = lines
+        saveChat(project)
+    }
+
+    /// The starter as this Lamp ships it in place of a copy's files, under the caller's hold (`begin`), saved as a new
+    /// "From Lamp" version: the version the copy arrived as from now on. The copy keeps its name, its data and its chat.
+    /// False when it couldn't be, with the copy as it was.
+    private func bringUp(_ project: LampProject, to starter: Starters.Starter) async -> Bool {
+        let fm = FileManager.default
+        // Lamp's records of what arrived are outside the versions: kept to put back.
+        let records = [Starters.file(of: project), project.dir.appendingPathComponent(Credits.arrivedPath)]
+        let before = records.map { try? Data(contentsOf: $0) }
+        func putBack() async {
+            _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+            for (url, data) in zip(records, before) {
+                if let data { try? data.write(to: url, options: .atomic) } else { try? fm.removeItem(at: url) }
+            }
+        }
+        do {
+            try Starters.copy(starter, into: project, replacing: true)
+            try Template.writeOwnedFiles(for: project)
+        } catch {
+            NSLog("Lamp couldn't bring \(project.name) up to its newer starter: \(error.localizedDescription)")
+            await putBack()
+            return false
+        }
+        if await Versions.hasUnsavedChanges(project) {
+            guard await Versions.save(project, message: "From Lamp") else {
+                await putBack()
+                return false
+            }
+            versionsRevision += 1
+        }
+        newerOriginalTaken(project)
+        return true
+    }
+
+    /// Update from the Original: a copy of a starter this Lamp ships newer is brought up to it, in its chat (`opening`
+    /// opens it from the desk). One unchanged since it arrived takes the new starter's files (`bringUp`); one changed here
+    /// has the new starter merged into its changes as an update from GitHub is (`mergeUpdate`), from the starter in
+    /// Lamp's bundle, the agent settling only what both sides changed. Undo takes either back.
+    func updateFromOriginal(_ project: LampProject, opening: Bool = true) {
+        guard let starter = Starters.newer(for: project) else { return newerOriginalTaken(project) }
+        guard begin(project) != nil else {
+            let alert = NSAlert()
+            alert.messageText = "“\(project.name)” is busy right now"
+            alert.informativeText = "Try again when it's done."
+            alert.runModal()
+            return
+        }
+        if opening { open(fromDesk: project) }
+        Task {
+            // The newer starter's files, fetched for it; the card stays to try again.
+            do { try await StarterDownloads.fetch(starter) } catch {
+                finish(project)
+                return log(project, .error, "Lamp couldn't get the newer original. \(error.localizedDescription)")
+            }
+            if await original(toStartAgain: project) != nil {
+                let package: Sharing.Package
+                do { package = try Starters.package(of: starter) } catch {
+                    finish(project)
+                    log(project, .error, Self.updateFailed)
+                    return
+                }
+                await mergeUpdate(package, into: project, original: starter)
+                if Starters.newer(for: project) == nil { newerOriginalTaken(project) }
+                return
+            }
+            defer { finish(project) }
+            guard await bringUp(project, to: starter) else { return log(project, .error, Self.updateFailed) }
+            let updated = await followRestored(project)
+            log(updated, .status, "Updated to the latest original. Building it now…")
+            if await build(updated) == nil {
+                await installReportingCrash(updated)
+            } else {
+                log(updated, .error, ErrorMessages.appDoesNotBuild)
+            }
+            await rebuildParts(of: current(updated) ?? updated, onlyChanged: true)
+        }
+    }
+
+    /// Start Over for a copy of a starter this Lamp ships, under the caller's hold: the version it arrived as, then the
+    /// starter as this Lamp ships it over that (`bringUp`), as one version, so it lands there one Undo away, whether it
+    /// was behind or merged up to it since. The conversation starts again as Start Over's does
+    /// (`startConversationAgain`).
+    func startOverBegun(_ project: LampProject, to starter: Starters.Starter, from arrival: AppVersion?) async {
+        // The starter's files first, so nothing is taken back when they can't be had.
+        do { try await StarterDownloads.fetch(starter) } catch {
+            return log(project, .error, "Lamp couldn't get the original, so your app is just as it was. \(error.localizedDescription)")
+        }
+        dropPausedRequest(project)
+        if let arrival {
+            guard await Versions.restoreFiles(project, to: arrival) else { return log(project, .error, Self.startOverFailed) }
+        }
+        guard await bringUp(project, to: starter) else { return log(project, .error, Self.startOverFailed) }
+        let restored = await followRestored(project)
+        await startConversationAgain(restored, line: Conversation.startedOverFromLatest)
+        if let arrival {
+            await rebuild(restored, restoredFrom: arrival)
+        } else {
+            versionsRevision += 1
+            if await build(restored) == nil { await installReportingCrash(restored) }
+            await rebuildParts(of: restored, onlyChanged: true)
+        }
+    }
+    private static let startOverFailed = "Lamp couldn't start over. Your app is just as it was."
 
     /// Starters being built for the first time, out of sight: their icons spin on the desk.
     @Published private(set) var preparing: Set<String> = []
@@ -7411,6 +7694,9 @@ final class Store: ObservableObject {
     /// Starters whose first build failed this time: not tried again until Lamp next starts, and opening one
     /// shows its chat, which has the failure.
     private var unpreparedStarters: Set<String> = []
+    /// Starters whose prebuilt copy this Mac couldn't use while it has no Apple tools to build one: tried again only when
+    /// the person opens one (`openWhenReady`), or built once the tools are there, not at every look at setup.
+    private var refusedPrebuilt: Set<String> = []
 
     /// Builds the starters nobody has opened yet, one at a time, as soon as Apple's tools are there, so each
     /// opens at once when used. One that's being waited for goes first.
@@ -7419,10 +7705,11 @@ final class Store: ObservableObject {
         preparingStarters = true
         Task {
             defer { preparingStarters = false }
-            await startersInstall?.value
             // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them, or a game
             // made before them, gets its first version when they arrive.
             if setup.hasBuildTools { await saveFirstVersions() }
+            // Copies of starters this Lamp ships newer are brought up to them, once a launch: built in the loop below.
+            if setup.hasBuildTools { await bringStartersUp() }
             // Each once: one that couldn't be made ready without the tools waits for them, not for this loop.
             // Known by instance, not folder: a starter deleted and added back meanwhile takes the same folder
             // name, and is a new one to build.
@@ -7454,28 +7741,42 @@ final class Store: ObservableObject {
         for project in projects where !project.isPart { await saveFirstVersion(of: project) }
     }
 
-    /// A starter that's never been built and that nothing else is working on.
+    /// A starter that's never been built, or was brought up to a newer one since (`bringStartersUp`), and that nothing
+    /// else is working on.
     func needsPreparing(_ project: LampProject) -> Bool {
         Starters.isStarter(project) && !unpreparedStarters.contains(project.id) && !busy.contains(project.id)
-            && !FileManager.default.fileExists(atPath: project.installedURL.path)
+            && (!FileManager.default.fileExists(atPath: project.installedURL.path) || broughtUp.contains(project.id))
     }
 
     /// Whether some starter can be made ready now: any, once Apple's build tools are there, and before then the
-    /// ones Lamp came with already built (`PrebuiltStarters`).
+    /// ones Lamp came with already built (`PrebuiltStarters`). One opened whose prebuilt copy this Lamp pins but couldn't
+    /// get (an old nightly's, gone) goes on to wait for the tools as a refused one does (`awaitToolsToOpen`).
     func canPrepare(_ project: LampProject? = nil) -> Bool {
         if setup.hasBuildTools { return true }
-        if let project { return PrebuiltStarters.has(project) || !needsAppleTools(project) }
-        return projects.contains { needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)) }
+        if let project { return PrebuiltStarters.has(project) || PrebuiltStarters.unavailable(project) || !needsAppleTools(project) }
+        return projects.contains {
+            needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)
+                || (PrebuiltStarters.unavailable($0) && openWhenReady.contains($0.id)))
+        }
     }
 
+    /// Whether a starter's turn comes: one whose prebuilt copy was refused, on a Mac with no tools to build it, only once
+    /// the person opens it.
+    nonisolated static func triesStarter(refused: Bool, opened: Bool, hasTools: Bool) -> Bool { !refused || opened || hasTools }
+
     private func nextStarterToPrepare(excluding tried: Set<String> = []) -> LampProject? {
-        let waiting = projects.filter { needsPreparing($0) && canPrepare($0) && !tried.contains($0.instance) }
+        let waiting = projects.filter {
+            needsPreparing($0) && canPrepare($0) && !tried.contains($0.instance)
+                && Self.triesStarter(refused: refusedPrebuilt.contains($0.id), opened: openWhenReady.contains($0.id), hasTools: setup.hasBuildTools)
+        }
         return waiting.first { openWhenReady.contains($0.id) } ?? waiting.first
     }
 
     /// A starter's first build and install, without opening it and without a word in its chat: its chat stays
     /// empty for the person's first change. A failure stays in the chat, for the agent that is asked to fix it.
     private func prepare(_ project: LampProject) async {
+        // One brought up to a newer starter is built again only while it's closed: opened, it's built as it opens.
+        if broughtUp.remove(project.id) != nil, isRunning(project) || !Runtime.sourcesChanged(project) { return }
         guard begin(project) != nil else { return }
         preparing.insert(project.id)
         let before = Set((logs[project.id] ?? []).map(\.id))
@@ -7503,10 +7804,31 @@ final class Store: ObservableObject {
             saveChat(project)
         }
         if !made, canBuild { unpreparedStarters.insert(project.id) }
+        if !made, !canBuild { refusedPrebuilt.insert(project.id) }
         preparing.remove(project.id)
         finish(project)
-        guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
+        guard openWhenReady.contains(project.id), let current = current(project) else { return }
+        // Asked for, and nothing to open until Apple's tools come: that starter goes on when they do. The other
+        // starters aren't held up meanwhile, this wait being its own.
+        if !made, !canBuild { return awaitToolsToOpen(current) }
+        openWhenReady.remove(project.id)
         if made { open(fromDesk: current) } else { showChat(current.id) }
+    }
+
+    /// A starter the person opened whose prebuilt copy can't be used here: Apple's tools are asked for, its chat says
+    /// so, with Stop to give up on it, and it's built and opened when they arrive.
+    private func awaitToolsToOpen(_ project: LampProject) {
+        guard let turn = begin(project) else { return }
+        showChat(project.id)
+        Task {
+            let before = Set((logs[project.id] ?? []).map(\.id))
+            let came = await waitForAppleTools(project, in: turn)
+            logs[project.id]?.removeAll { !before.contains($0.id) && $0.kind == .status }
+            saveChat(project)
+            if !came { openWhenReady.remove(project.id) }
+            finish(project)
+            if came { prepareStarters() }
+        }
     }
 
     func run(_ project: LampProject) async {
@@ -8010,7 +8332,7 @@ final class Store: ObservableObject {
         }
         let restored = await takeName(renaming, await followRestored(project))
         Versions.remember(restored, restoredTo: target.label, from: target.date)
-        // Undoing a Start Again from the Original brings back the chat and the conversations it set aside.
+        // Undoing a Start Over brings back the chat and the conversations it set aside.
         if let record = Conversation.startedAgain(at: undoing.id, in: restored) {
             settleChat(restored)
             if let chat = Conversation.bringBack(record, in: restored) {
@@ -8031,7 +8353,7 @@ final class Store: ObservableObject {
     }
 
     /// `restore` for a caller that has begun the wish's work itself (`begin`), and finishes it afterwards.
-    /// `startingAgain`: Start Again from the Original, which starts the conversation again too (`startAgain`).
+    /// `startingAgain`: Start Over, which starts the conversation again too (`startAgain`).
     func restoreBegun(_ project: LampProject, to version: AppVersion, startingAgain: Bool = false) async {
         dropPausedRequest(project)
         let renaming = self.renaming(project, to: version, in: await Versions.list(project))
@@ -8041,7 +8363,7 @@ final class Store: ObservableObject {
         }
         let restored = await takeName(renaming, await followRestored(project))
         if startingAgain {
-            await startConversationAgain(restored)
+            await startConversationAgain(restored, line: Conversation.startedAgain)
         } else {
             Versions.remember(restored, restoredTo: version.label, from: version.date)
             log(restored, .status, Versions.restoredMessage(to: version))
@@ -8049,11 +8371,11 @@ final class Store: ObservableObject {
         await rebuild(restored, restoredFrom: version)
     }
 
-    /// After Start Again from the Original has put back the original's files: every engine's conversation about the
+    /// After Start Over has put back the original's files: every engine's conversation about the
     /// game that's gone is set aside, and the chat with it, down to one line; the next request starts fresh, told the
     /// original's APP.md (`Conversation.freshNote`). Both are kept with the version the restore made, so Undo of it
     /// brings back the code, the chat and the conversations together (`undo`).
-    private func startConversationAgain(_ project: LampProject) async {
+    private func startConversationAgain(_ project: LampProject, line: String) async {
         settleChat(project)
         let record = Conversation.setAside(Engine.allCases, of: project, reason: "start-again", chat: logs[project.id] ?? [])
         if let record, var saved = Conversation.record(in: record, of: project), let head = await Versions.head(project) {
@@ -8063,7 +8385,7 @@ final class Store: ObservableObject {
         conversationCompacted(project)
         progress[project.id] = nil
         logs[project.id] = []
-        log(project, .status, Conversation.startedAgain)
+        log(project, .status, line)
     }
 
     /// Goes back to the version a request in the chat made, or to the one before it.
@@ -8294,17 +8616,18 @@ final class Store: ObservableObject {
     /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
     /// the app installs the whole build anyway.
     /// `ownStep`: the build a game's step makes while it's the change being put in (`stepPage`), which doesn't wait for
-    /// itself; every other build waits for that change.
-    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false) async -> String? {
+    /// itself; every other build waits for that change. `phone`: the version of the phone page that step checked, the only
+    /// one it publishes.
+    private func build(_ project: LampProject, inPlace: Bool = true, ownStep: Bool = false, phone: String? = nil) async -> String? {
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
-        let problem = await buildNow(project, inPlace: inPlace, ownStep: ownStep)
+        let problem = await buildNow(project, inPlace: inPlace, ownStep: ownStep, phone: phone)
         if glowing, problem != nil { AppTransition.end(project) }
         return problem
     }
 
-    private func buildNow(_ project: LampProject, inPlace: Bool, ownStep: Bool = false) async -> String? {
+    private func buildNow(_ project: LampProject, inPlace: Bool, ownStep: Bool = false, phone: String? = nil) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         // Only the wish, its apps all in folders of their own: nothing to build here.
         guard project.holdsApp else { return nil }
@@ -8316,7 +8639,9 @@ final class Store: ObservableObject {
         if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
         if !ownStep { await owner?.applying?.value }
         await owner?.warming?.value
-        log(project, .status, "Building…")
+        // Not said when the game open on this Mac already shows these sources (a step put them in), nor for a step's own
+        // build, which runs beside the agent's work and is said once it's in ("Put into …"): the person waits on neither.
+        if !ownStep, owner?.shownSources.isEmpty != false || owner?.shownSources != Runtime.fingerprint(project) { log(project, .status, "Building…") }
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
         // its install comes after the package is made, so the icon is brought up to date first, not there.
         if project.onDevice, !DeviceSupport.icons(for: project).isEmpty { await prepareIcon(project) }
@@ -8347,7 +8672,7 @@ final class Store: ObservableObject {
         // A game's page for phones is copied where Lamp serves it from, wherever the game is built for (on a TV, with the
         // rest of its files, just below).
         if project.platform.target.takesPhones, !project.onTV {
-            do { try await TVs.stagePhone(project) } catch {
+            do { try await TVs.stagePhone(project, expecting: phone) } catch {
                 log(project, .detail, "Build failed:\n" + error.localizedDescription)
                 return error.localizedDescription
             }
@@ -8570,7 +8895,7 @@ final class Store: ObservableObject {
     /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
     private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
         Task { [weak self] in
-            var seen = "", tried = "", seenAt = Date(), lastPageStep = Date.distantPast
+            var seen = "", tried = "", seenAt = Date()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 // Reload pressed while the agent works goes in here, between its steps, inside this turn.
@@ -8579,31 +8904,39 @@ final class Store: ObservableObject {
                     continue
                 }
                 // A game's page also takes a step while the agent's look plays the game in the hidden copy, which can
-                // run for minutes: only the look's build, which writes the same folders, is waited for.
+                // run for minutes. Not while the look stages that copy, which reads the same folders.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.building, !turn.keptOpen, turn.applying == nil,
-                      let current = current(project), LiveReload.eligible(current) || stepsPage(current),
-                      !turn.look.inProgress || stepsPage(current),
-                      isRunning(current), !Runtime.waitsForReload(current),
+                      let current = stepped(project), LiveReload.eligible(current) || stepsPage(current) || stepsPhones(current),
+                      !turn.look.inProgress || (stepsPage(current) && turn.stopHidden != nil) || stepsPhones(current),
+                      isRunning(current) || stepsPhones(current),
+                      // A change waiting for Reload holds back the rest of the app, not a phone's page (`stepPhones`).
+                      !Runtime.waitsForReload(current) || stepsPage(current) || stepsPhones(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
                       setAsideChanges[project.id]?.told != false
                           || turn.carriedSetAside == setAsideChanges[project.id]?.crash else { continue }
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
                 if now != seen { seen = now; seenAt = Date(); continue }
-                // A game's page takes a change once the saving has paused a while, and no more often than every 15 s:
-                // each can hold the picture for a moment, and a run of small ones, seconds apart, reads as stutter.
-                if stepsPage(current), Date().timeIntervalSince(seenAt) < 6 || Date().timeIntervalSince(lastPageStep) < 15 { continue }
+                // A game's page takes a change once the saving has paused a moment and the agent has said the state is
+                // whole: in a progress line of what's in it (`progressSinceStep`), or by looking at these very sources in
+                // the hidden copy (`lookedSources`), which can take minutes the person would otherwise wait out. A save in
+                // between, half a piece of work, waits for one or the other.
+                let held = Runtime.waitsForReload(current)
+                if stepsPage(current), !held, Date().timeIntervalSince(seenAt) < 3
+                    || (progressSinceStep(current, turn) == nil && turn.lookedSources[current.id] != now) { continue }
+                // Phones take theirs after the same pause: no change of the game is going on screen to narrate.
+                if stepsPhones(current) || held, Date().timeIntervalSince(seenAt) < 3 { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
                 let saved = seenAt
                 turn.applyingSources = now
-                if stepsPage(current) {
-                    lastPageStep = Date()
+                if stepsPage(current) || stepsPhones(current) {
                     turn.applying = Task { [weak self] in
                         guard let self else { return }
                         defer { turn.applying = nil }
-                        await stepPage(current, in: turn, saved: saved)
+                        if stepsPage(current), !held { await stepPage(current, in: turn, saved: saved) }
+                        else { await stepPhones(current, saved: saved) }
                     }
                     await turn.applying?.value
                     continue
@@ -8636,7 +8969,7 @@ final class Store: ObservableObject {
                         turn.autoApplied += 1
                         // A step, not the turn's end: "is updated" is said once the request is done, and here the
                         // agent is still at work on it.
-                        log(current, .status, "Put the change into \(current.name)")
+                        log(current, .status, stepWords(current, turn))
                         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
                             + (warmWait > 1 ? ", \(Int(warmWait.rounded())) s of them waiting for the warm-up." : "."))
                     } else {
@@ -8661,22 +8994,108 @@ final class Store: ObservableObject {
         PageLive.takes(project) && PageLive.shared.isOpen(project, at: .mac)
     }
 
+    /// What a change that went in as the agent saved was, in the agent's own words for the steps it took since the last
+    /// one went in ("Put into New York: Switching the car to rainbow paint"), never its files; the plain line when it
+    /// named none.
+    private func stepWords(_ project: LampProject, _ turn: Turn) -> String {
+        let words = doingSinceStep(project, turn)
+        turn.lastStepAt = Date()
+        return words.map { "Put into \(project.name): " + $0 } ?? "Put the change into \(project.name)"
+    }
+
+    /// What the agent said its steps were for since a change last went in, the last three at most: only steps that can
+    /// change a file (a write, an edit, a command), never its looks, reads or skills; nil when it named none.
+    private func doingSinceStep(_ project: LampProject, _ turn: Turn) -> String? {
+        let since = turn.lastStepAt ?? turn.began
+        var words: [String] = []
+        for line in logs[wish(of: project).id] ?? [] where line.kind == .tool && (line.at ?? .distantPast) >= since {
+            guard let said = line.said?.trimmed, !said.isEmpty, !line.text.hasPrefix("look_at_app"), !line.text.hasPrefix("use_app"),
+                  [.write, .edit, .run, .delete].contains(ToolCall(line.text).action), !words.contains(said) else { continue }
+            words.append(said)
+        }
+        return words.isEmpty ? nil : words.suffix(3).joined(separator: "; ")
+    }
+
+    /// The agent's latest progress line since a change last went in as it saved, or nil.
+    private func progressSinceStep(_ project: LampProject, _ turn: Turn) -> String? {
+        let since = turn.lastStepAt ?? turn.began
+        return logs[wish(of: project).id]?.last { $0.kind == .progress && ($0.at ?? .distantPast) >= since }?.text
+    }
+
+    /// The game's pages as they are (each file's path, size and time), its phone page among them, to tell a save that
+    /// changed what's shown from one that changed nothing they're made of (notes, APP.md, a file saved again as it was).
+    private func pageSignature(_ project: LampProject) -> String {
+        var hasher = SHA256()
+        let files = [GameKit.webFolder, TVTemplate.phoneFolder]
+            .flatMap { FileManager.default.enumerator(at: project.dir.appendingPathComponent($0), includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])?.allObjects as? [URL] ?? [] }
+            .sorted { $0.path < $1.path }
+        for file in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            hasher.update(data: Data("\(file.path)\n\(values?.fileSize ?? 0)\n\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)".utf8))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The app a turn's saves are stepped into: the turn's own, or for a wish whose apps are all in folders of their own,
+    /// the one whose page is open or whose phones Lamp serves.
+    private func stepped(_ project: LampProject) -> LampProject? {
+        guard let app = current(project) else { return nil }
+        return app.holdsApp ? app : parts(of: app).first { stepsPage($0) || stepsPhones($0) }
+    }
+
+    /// Phones on a page Lamp serves (a game on a TV or the Xbox, a TV app, the TV preview) with no copy on this Mac being
+    /// stepped: each change of the phone page is published as it's saved, and a page open on a phone finds the new version
+    /// itself. A game hosting its own phones on this Mac is handed its page by `stepPage`.
+    private func stepsPhones(_ project: LampProject) -> Bool {
+        Self.servesPhonePage(project) && !stepsPage(project)
+    }
+
+    /// The phone page as it's saved, once its scripts parse, published only if what's copied is what was checked: a save
+    /// made meanwhile waits for the next step, so an open phone never reloads into something half written. Also how a game
+    /// open on this Mac, with a change of its page waiting for Reload, is handed a new phone page: that change stays held.
+    private func stepPhones(_ project: LampProject, saved: Date) async {
+        let source = project.dir.appendingPathComponent(TVTemplate.phoneFolder)
+        guard let checked = (try? ControllerSnapshot.read(source))?.version, checked != TVs.phoneVersion(of: project),
+              await GameKit.codeProblem(project, in: TVTemplate.phoneFolder) == nil,
+              (try? await TVs.stagePhone(project, expecting: checked)) == true else { return }
+        if stepsPage(project), PageLive.shared.takesPhonePage(project, at: .mac) { _ = await PageLive.shared.put(project, at: .mac) }
+        log(project, .status, "Updated the phone page")
+        log(project, .detail, "The phone page was published \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
+    }
+
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
+        // A turn's project is the wish while the game is one of its parts.
+        func stillOwned() -> Bool { !turn.stopped && (turns[project.id] === turn || turns[wish(of: project).id] === turn) }
+        // Nothing the page is made of changed since the last step: nothing to put in, nor to say.
+        let page = pageSignature(project)
+        guard page != turn.shownPage else { return }
+        // The line this step goes in for, and where it starts: a line the agent posts while it goes in is the next step's.
+        // A step its look let in, with no line, is said in the words of the steps the agent took to make it.
+        let words = progressSinceStep(project, turn) ?? doingSinceStep(project, turn), boundary = Date()
+        // Read before it's checked: what's published is that version or nothing (`TVs.stagePhone`).
+        let phone = (try? ControllerSnapshot.read(project.dir.appendingPathComponent(TVTemplate.phoneFolder)))?.version
         // Still being written, or broken: tried again once it changes.
-        guard await GameKit.codeProblem(project) == nil else { return }
+        guard await GameKit.codeProblem(project) == nil, await GameKit.codeProblem(project, in: TVTemplate.phoneFolder) == nil else { return }
         // The copy open on this Mac, wherever Try On points: it's built and given the change as the Mac's.
         var mac = project
         mac.chosen = .mac
-        guard await build(mac, ownStep: true) == nil, turns[project.id] === turn, !turn.stopped, var current = current(project) else { return }
+        guard await build(mac, ownStep: true, phone: phone) == nil, stillOwned(), var current = current(project) else { return }
         current.chosen = .mac
         guard await pageInPlace(current, at: .mac, owner: turn, inFront: false) else {
             AppTransition.end(current)
+            // Not into this copy (one an earlier Lamp built, a change of its Swift): the build counted these sources as
+            // built, so the turn's end would install nothing and say nothing. It builds them again and installs them,
+            // held for Reload while the person plays.
+            Runtime.forgetBuilt(current)
             return
         }
         // Held for Reload (it needs the page opened again): the chat's Reload line says so, not that it went in.
-        guard turns[project.id] === turn, !turn.stopped, !Runtime.waitsForReload(current) else { return }
+        guard stillOwned(), !Runtime.waitsForReload(current) else { return }
+        turn.shownSources = Runtime.fingerprint(current)
+        turn.shownPage = page
+        turn.lastStepAt = boundary
         turn.autoApplied += 1
-        log(current, .status, "Put the change into \(current.name)")
+        log(current, .status, words.map { "Put into \(current.name): " + $0 } ?? "Put the change into \(current.name)")
         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved.")
     }
 
@@ -8791,9 +9210,9 @@ final class Store: ObservableObject {
     /// installed as usual (a change of its Swift, a copy Lamp isn't hearing from, a page that didn't answer).
     private func pageInPlace(_ project: LampProject, at place: PageLive.Place, owner: Turn?, inFront: Bool) async -> Bool {
         guard PageLive.takes(project), PageLive.shared.isOpen(project, at: place) else { return false }
-        // The game on the Mac serves its phone page from its bundle: a change to the page goes in with the game installed
-        // again, so the open game, its phones and any that join have the same page.
-        if place == .mac, GamePhones.changed(project) { return false }
+        // A game on the Mac that can only serve its phone page from its bundle (an older Lamp built it): a change to the
+        // page goes in with the game installed again, so the open game, its phones and any that join have the same page.
+        if place == .mac, GamePhones.changed(project), !PageLive.shared.takesPhonePage(project, at: place) { return false }
         note("Updating \(project.name) in place…", for: project)
         let outcome = await PageLive.shared.put(project, at: place)
         switch outcome {
@@ -8809,13 +9228,17 @@ final class Store: ObservableObject {
             // Only the game runtime says `shown`: a screen, a web app or a game running its own loop opens again with its
             // own page, and the smoke goes as before (`install`).
             let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
-            if outcome == .went("swapped") { AppTransition.land(project) }
+            if outcome == .went("swapped") || outcome == .went("phone") { AppTransition.land(project) }
             else if saysShown, outcome == .went("rerun") || outcome == .went("reloading") {
                 awaitShown(project)
                 // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
                 await untilShown(project)
                 try? await Task.sleep(for: .milliseconds(400))
             }
+            // In: the activity line says what the agent is doing again (its look, or thinking), not the update now over.
+            if let owner, owner.look.inProgress, let doing = logs[wish(of: project).id]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty {
+                note(doing, for: project)
+            } else { note(Activity.thinking, for: project) }
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.pageReopened = outcome == .went("reloading")
@@ -9817,9 +10240,20 @@ final class Store: ObservableObject {
         if let problem = await buildGamePreview(project, owner: turn) { return (200, ["text": problem]) }
         let script = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
         GameKit.plays[project.id] = script
-        let said = motion ? "Lamp played the game in the preview from its start for two seconds, no one touching the controller; a frame every half second follows, oldest first."
-            : "Lamp played the game in the preview from its start for two seconds, no one touching the controller; the last frame follows."
-        return await playGame(project, script: script, owner: turn, said: said, pictures: Set(script.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }))
+        let phone = GameKit.phonePreviewProblem(project) == nil ? " Its phone page is yours to see and press too: `phone` on `use_app`'s actions." : ""
+        let said = (motion ? "Lamp played the game in the preview from its start for two seconds, no one touching the controller; a frame every half second follows, oldest first."
+            : "Lamp played the game in the preview from its start for two seconds, no one touching the controller; the last frame follows.") + phone
+        var answer = await playGame(project, script: script, owner: turn, said: said, pictures: Set(script.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }))
+        // The open game takes what was played as the play goes on (`autoApply`): what it did with it is known a moment
+        // after, and the agent is about to say what the person sees.
+        let open = PageLive.shared.isOpen(project, at: .mac)
+        var waited = 0
+        while open, waited < 12, !PageLive.shared.holds(project), turn.applying != nil || Runtime.sourcesChanged(current(project) ?? project) {
+            try? await Task.sleep(for: .milliseconds(500))
+            waited += 1
+        }
+        if let text = answer.1["text"] as? String { answer.1["text"] = text + GameKit.openGameNote(project) }
+        return answer
     }
 
     /// `use_app` for a game: the controller's moves added to the play so far, and the whole of it played
@@ -9832,8 +10266,10 @@ final class Store: ObservableObject {
         if let problem = moves.problem { return (200, ["text": problem]) }
         if let problem = await buildGamePreview(project, owner: owner) { return (200, ["text": problem]) }
         let script = play + moves.lines
+        if script.contains(where: { $0.hasPrefix("phone ") }), let problem = GameKit.phonePreviewProblem(project) { return (200, ["text": problem]) }
         GameKit.plays[project.id] = script
-        let mine = Set(moves.lines.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) })
+        let shot = moves.lines.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }
+        let mine = Set(shot + shot.map { GameKit.phonePicture + $0 })
         let said = "What happened, played again from the start in the preview with the moves before these:\n" + moves.said.joined(separator: "\n")
             + "\n\nA picture at the end of each follows, oldest first (the last four at most)."
         return await playGame(project, script: script, owner: owner, said: said, pictures: mine)
@@ -9842,7 +10278,6 @@ final class Store: ObservableObject {
     /// The preview's build, or what stops it, in the words the agent is given.
     private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
         // The preview is drawn out of sight, often while the person plays the game itself: these say it's a copy.
-        note("Building a hidden copy…", for: project)
         // Its copy of the page is made from the same folders a step of the agent's saves builds from (a TypeScript game's
         // Web/app/ among them): one going in is waited for, and none starts until the copy is made (`autoApply` waits
         // while the turn builds); the preview then plays from its own copy, alongside any step.
@@ -9863,15 +10298,76 @@ final class Store: ObservableObject {
         return nil
     }
 
+    /// Marks the agent's look or use being played as one in the hidden copy: the step's words are the agent's own ("Seeing
+    /// the new car in the city"), and the person's game shows something else until the change goes in. Lamp says where,
+    /// whatever the agent wrote.
+    private func markHiddenCopy(_ project: LampProject, in turn: Turn) {
+        let wish = self.wish(of: project).id
+        guard var lines = logs[wish], let index = lines.lastIndex(where: {
+            $0.kind == .tool && ($0.at ?? .distantPast) >= turn.began && ($0.text.hasPrefix("look_at_app") || $0.text.hasPrefix("use_app"))
+        }) else { return }
+        let said = lines[index].said?.trimmed.nilIfEmpty ?? TurnProgress.activity(for: ToolCall(lines[index].text))
+        guard !said.hasSuffix(Self.inHiddenCopy) else { return }
+        lines[index].said = said + Self.inHiddenCopy
+        logs[wish] = lines
+        saveChat(self.wish(of: project))
+    }
+
+    /// The look's own step, when its play ended before `autoApply` took it: a preview plays its frames without waiting for
+    /// the clock, so a look can be over within the loop's first readings, and the agent's next save would leave the state
+    /// it looked at behind. Taken here, before the look returns, while the sources are still the ones it played.
+    private func stepLooked(_ project: LampProject, owner: Turn, since lookedAt: Date) async {
+        guard turns[wish(of: project).id] === owner || turns[project.id] === owner, !owner.stopped, owner.agent != nil,
+              owner.applying == nil, !owner.building, let current = current(project), stepsPage(current),
+              let looked = owner.lookedSources[current.id], Runtime.fingerprint(current) == looked, Runtime.sourcesChanged(current),
+              setAsideChanges[current.id]?.told != false || owner.carriedSetAside == setAsideChanges[current.id]?.crash else { return }
+        owner.applyingSources = looked
+        owner.applying = Task { [weak self] in
+            defer { owner.applying = nil }
+            await self?.stepPage(current, in: owner, saved: lookedAt)
+        }
+        await owner.applying?.value
+    }
+
+    /// The end of a step played in the hidden copy.
+    nonisolated static let inHiddenCopy = " · in a hidden copy"
+
     private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
-        note("Trying the change in a hidden copy", for: project)
+        // Lamp's own checking, out of sight: the activity line says what the agent said it's checking, never the building
+        // before it, with where it's played (`markHiddenCopy`). The change goes into the open game as it plays (`autoApply`).
+        let wish = self.wish(of: project).id
+        markHiddenCopy(project, in: owner)
+        // What the agent looks at is what it means to show: the game open on this Mac takes it as it plays (`autoApply`).
+        owner.lookedSources[project.id] = Runtime.fingerprint(current(project) ?? project)
+        let lookedAt = Date()
+        if let doing = logs[wish]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty { note(doing, for: project) }
         let played: GameKit.Played
+        var hiddenProcess: Process?
+        let id = project.id
+        owner.stopHidden = {
+            WebGamePreview.stop(for: id)
+            if let process = hiddenProcess { Subprocess.terminateTree(process) }
+        }
+        defer { owner.stopHidden = nil }
         do {
             played = GameKit.engine(project) == .web ? try await GameKit.playWeb(project, script: script)
-                : try await GameKit.play(project, script: script, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+                : try await GameKit.play(project, script: script, started: { [weak self] in
+                    self?.turns[project.id]?.build = $0
+                    hiddenProcess = $0
+                })
             turns[project.id]?.build = nil
         } catch {
             turns[project.id]?.build = nil
+            if owner.stoppedForMessage {
+                owner.stoppedForMessage = false
+                // Nothing in it for the person: the change is in their game, and they've moved on. The agent says nothing of it.
+                // Said to be on screen only when a step put these very sources into the open game.
+                var mac = project
+                mac.chosen = .mac
+                let shown = !owner.shownSources.isEmpty && owner.shownSources == Runtime.fingerprint(mac)
+                return (200, ["text": (shown ? "Your change is in the game open on the person's Mac, and they've written again" : "The person has written again")
+                    + ": go on with their new message. This is Lamp's own detail, not something to tell them."])
+            }
             return (200, ["text": error.localizedDescription])
         }
         guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
@@ -9885,7 +10381,18 @@ final class Store: ObservableObject {
             try? AppFolder.write(printed, to: Runtime.logURL(project), in: project.dir)
         }
         var text = said
+        // The same sources went into the game open on this Mac as it played (`autoApply`): told, so the agent never asks
+        // for a Reload the person doesn't need. A change held for Reload is said by the chat's Reload line, not here.
+        await owner.applying?.value
+        await stepLooked(project, owner: owner, since: lookedAt)
+        var mac = current(project) ?? project
+        mac.chosen = .mac
+        if !owner.shownSources.isEmpty, owner.shownSources == Runtime.fingerprint(mac) {
+            text += "\n\nThis change is also in the game open on the person's Mac now, where they are in it: no Reload needed."
+        }
         if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
+        if GameKit.previewHeldBack(project) { text += "\n\nThis game declares the local network, so its preview reaches no network at all: nothing there touches the person's devices." }
+        if let phone = played.phone { text += "\n\n" + phone.text(screen: Privacy.sharesPictures, log: Privacy.sharesLog) }
         // It names the game's sound files and comes from what the preview printed: the agent's only when the log is.
         if Privacy.sharesLog, let sound = played.sound { text += "\n\nThe preview's sound, mixed but not played: \(sound)" }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
@@ -9893,7 +10400,10 @@ final class Store: ObservableObject {
         let pictures = Privacy.sharesPictures ? Array(played.pictures.filter { wanted.contains($0.deletingPathExtension().lastPathComponent) }.suffix(4)) : []
         if !Privacy.sharesPictures { text += " " + Privacy.picturesOff }
         else if pictures.isEmpty { text += "\n\nNo picture came out of the preview." }
-        else { text += "\n\n\(pictures.count == 1 ? "The picture is" : "The pictures are") 1920x1080, as the game is drawn everywhere, drawn on this Mac out of sight: where it's played draws the same frames slower or faster." }
+        else {
+            text += "\n\n\(pictures.count == 1 ? "The picture is" : "The pictures are") 1920x1080, as the game is drawn everywhere, drawn on this Mac out of sight: where it's played draws the same frames slower or faster."
+            if played.phone != nil { text += " With each is the phone page at that moment, at the phone's size: its x and y are what `use_app` takes." }
+        }
         return (200, ["text": text, "screenshots": Self.agentPictures(pictures, in: project)])
     }
 
@@ -12101,11 +12611,18 @@ final class Store: ObservableObject {
             }
             return Gateway.Page(status: 200, type: Self.pageType("json"), body: body)
         }
+        // Which version of the page is published now, for a page already open on a phone to find a newer one.
+        if names == [PhonePageServer.versionFile] {
+            guard let version = TVs.phoneVersion(of: project) else { return missing }
+            return Gateway.Page(status: 200, type: Self.pageType("json"), body: PhonePageServer.versionAnswer(version))
+        }
         // Only the staged copy's own files: no step up, nothing hidden, no empty name, nothing that isn't a plain file.
         guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") && !$0.contains("\0") }) else { return missing }
         guard let file = TVs.phoneFile(names, in: TVs.phoneFolder(for: project)),
               let data = try? Data(contentsOf: file) else { return missing }
-        return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: data)
+        let html = ["html", "htm"].contains(file.pathExtension.lowercased())
+        let body = html ? TVs.phoneVersion(of: project).map { PhonePageServer.marked(data, version: $0) } ?? data : data
+        return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: body)
     }
 
     /// The type a page's file is served as: the list a game's own phone page is served by too (`PhonePageServer`).
@@ -13051,7 +13568,7 @@ final class Store: ObservableObject {
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
         // An app that controls the person's devices presses on real ones: only on the device the person allowed on Lamp's
         // card, which the call names.
-        if DevicePermissions.reachesDevices(app) {
+        if DevicePermissions.useNeedsDevice(app) {
             let device = (arguments["device"] as? String)?.trimmed ?? ""
             guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
                 return (400, ["error": DevicePermissions.useRefusal])
@@ -13295,7 +13812,11 @@ final class Store: ObservableObject {
                         + " and started from its snapshot: the person waited for the world to be built again. Where you can, make the next change one its modules swap in (the game skill, \"Changes while it's played\")."
                 } else if turn.pageRanAgain {
                     note = "The change went into the open game by running its code again in place" + (turn.reloadWhy.map { " (\($0))" } ?? "")
-                        + ": it started from its snapshot, keeping the page, the renderer and the parts it keeps, and built the rest again. The game's log says what was kept and how long it took (the game skill, \"Changes while it's played\")."
+                        + ": it started from what it registered, keeping the page and built the rest again. The game's log says how long it took (the game skill, \"Changes while it's played\")."
+                }
+                // What came through, so what was lost can be registered in this turn.
+                if turn.pageReopened || turn.pageRanAgain, let report = PageLive.shared.report(project, at: project.onIOS ? .simulator : .mac) {
+                    note += " What came through: \(report). Anything reset or not registered is the person's place lost: register it now, so the next change keeps it."
                 }
                 if turn.endedReloadWait {
                     note += " The change that was waiting for Reload went in with it, so nothing waits for Reload now; don't tell the person to press it."

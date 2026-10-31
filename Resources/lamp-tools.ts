@@ -16,7 +16,7 @@
  *   in a line what they cover. These open them when a request needs them, and replace them.
  * - `make_art`: asks Lamp to paint a picture for the app in its icon's style and save it in Assets/; the reply
  *   shows it to the agent.
- * - `assets`: asks Lamp to find free ready-made models, sprites, tiles, icons and textures in its index, or to fetch the
+ * - `assets`: asks Lamp to find free ready-made models, sprites, tiles, icons, textures, sounds and music in its index, or to fetch the
  *   chosen ones into the app and credit them; Lamp does the fetching, and the reply may show their pictures.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.

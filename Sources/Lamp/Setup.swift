@@ -111,6 +111,8 @@ struct SetupCheck {
     }
 }
 
+/// What builds, chosen for a request waiting in its chat, in Lamp's sheet (`SetupSheet`). Apple's tools aren't asked for
+/// here: only what's compiled needs them, and once this is chosen they're asked for if the request does (`recheckSetup`).
 struct SetupView: View {
     @EnvironmentObject private var store: Store
     /// Puts it off: the request stays in its chat, and the next one asks again.
@@ -146,23 +148,6 @@ struct SetupView: View {
                 Label("Lamp's AI builder is missing from the app. Download Lamp again.",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
-            }
-
-            step(done: store.setup.hasBuildTools,
-                 title: "Install Apple's app-building tools",
-                 detail: store.setup.installRequested
-                    ? "Apple's installer window is open. Click **Install**, then **Agree**. It usually takes 5–10 minutes, and Lamp carries on by itself when it's done."
-                    : "Free from Apple, and no developer account needed.") {
-                VStack(alignment: .trailing, spacing: 6) {
-                    if store.setup.installRequested {
-                        ProgressView().controlSize(.small)
-                        Button("Show Installer Again", action: SetupCheck.showInstaller)
-                            .buttonStyle(.link)
-                            .font(.caption)
-                    } else {
-                        Button("Install…") { store.requestBuildTools() }
-                    }
-                }
             }
 
             step(done: store.setup.hasBuilder,
@@ -202,7 +187,11 @@ struct SetupView: View {
                         let engine: Engine = choice == "claude" ? .claude : .codex
                         Button("Use \(engine.title)") { use(engine) }
                     default:
-                        Button("Choose a Model…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
+                        Button("Choose a Model…") {
+                            // Settings can't come in front of the sheet, which floats over the app.
+                            later()
+                            openSettings(tab: "providers", sheet: Builder.localProvider)
+                        }
                     }
                 }
                 .padding(.leading, 36)
@@ -711,6 +700,8 @@ struct BuildingSettings: View {
                 // The model is saved under its provider before the provider changes, so the change reads it back.
                 Builder.piProvider = parts[1]
                 Builder.piModel = parts[2]
+                // A GGUF model picked to run here: what runs it comes now, rather than with the first request.
+                if parts[1] == Builder.localProvider, LocalModels.model(parts[2])?.format == .gguf { LocalModels.shared.getServer() }
                 provider = parts[1]
                 model = parts[2]
                 engine = Engine.pi.rawValue
@@ -1996,6 +1987,7 @@ private struct LocalAISheet: View {
         let inUse = decides ? AppAI.decisionRoute(for: nil)?.provider == "local"
                             : Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == model.id
         let needsMLX = model.format == .mlx && LocalModels.mlxServerPath == nil
+        let needsServer = model.format == .gguf && !local.serverInstalled
         return HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
@@ -2008,11 +2000,20 @@ private struct LocalAISheet: View {
                     .font(.caption).foregroundStyle(.secondary)
                 if needsMLX { Text("Needs a one-time install before it can run.").font(.caption).foregroundStyle(.orange) }
                 if needsMLX, let error = tools.errors[.mlx] { Text(error).font(.caption).foregroundStyle(.red) }
+                if needsServer { Text("Needs a one-time download before it can run.").font(.caption).foregroundStyle(.orange) }
+                if needsServer, let error = local.errors[LocalModels.serverID] { Text(error).font(.caption).foregroundStyle(.red) }
             }
             Spacer()
             if needsMLX {
                 if tools.installing.contains(.mlx) { ProgressView().controlSize(.small) }
                 else { Button("Install") { installMLX() } }
+            } else if needsServer {
+                if let progress = local.progress[LocalModels.serverID] {
+                    ProgressView(value: progress).frame(width: 90)
+                    Button("Cancel") { local.cancel(LocalModels.serverID) }
+                } else {
+                    Button("Download") { local.getServer() }
+                }
             } else if !inUse {
                 if decides {
                     Button("Use for Decisions") {

@@ -30,8 +30,9 @@ struct InstalledModel: Identifiable, Hashable {
 /// Models that run on this Mac. Downloads go into the shared Hugging Face cache
 /// (~/.cache/huggingface/hub, the same layout the `hf` CLI and Local use), and Lamp also picks up models
 /// already there or in Local's folder:
-/// - GGUF models run on the bundled llama.cpp server (router mode on 127.0.0.1:47812), which gets a folder
-///   of symlinks into the cache, so nothing is copied.
+/// - GGUF models run on llama.cpp's server (router mode on 127.0.0.1:47812, behind `apiKey`), which gets a folder of symlinks into
+///   the cache, so nothing is copied. The server isn't in Lamp's bundle: it's fetched the first time a GGUF model is
+///   downloaded or picked (`LlamaInstall`), with the model's own progress, or on its own (`getServer`).
 /// - MLX models (e.g. ones downloaded for Local) run on `mlx_lm.server` (127.0.0.1:47813) when it's installed.
 /// pi reaches both through providers Lamp writes into its `models.json`.
 @MainActor
@@ -86,11 +87,90 @@ final class LocalModels: ObservableObject {
     @Published var progress: [String: Double] = [:]          // catalog/spec id → 0…1 while downloading
     @Published var errors: [String: String] = [:]
     @Published var serverRunning = false
+    /// llama.cpp's server is on this Mac (`LlamaInstall`). Fetching it on its own shows under `serverID`.
+    @Published private(set) var serverInstalled = LlamaInstall.isInstalled
+    static let serverID = "llama-server"
     @Published var mlxModel: String?                         // the model mlx_lm.server is serving
 
     private var server: Process?
     private var mlxServer: Process?
     private var downloads: [String: Task<Void, Never>] = [:]
+
+    init() {
+        // A newer Lamp that pins another build of the server fetches it for someone who has used local models.
+        if LlamaInstall.hasOlder { getServer() }
+    }
+
+    /// Fetches llama.cpp's server on its own, with progress and errors under `serverID`: for a GGUF model that came
+    /// from elsewhere (another app's download), picked to run here.
+    func getServer() {
+        guard !LlamaInstall.isInstalled, downloads[Self.serverID] == nil else { return }
+        errors[Self.serverID] = nil
+        progress[Self.serverID] = 0
+        downloads[Self.serverID] = Task {
+            defer { downloads[Self.serverID] = nil; progress[Self.serverID] = nil }
+            do { try await installServer(as: Self.serverID) } catch is CancellationError {
+            } catch {
+                errors[Self.serverID] = error.localizedDescription
+            }
+        }
+    }
+
+    /// The server's fetch, reporting into `progress[id]` over its first `share`, for a model downloaded with it. One
+    /// fetch at a time, which every caller (a pick, a model's download, a request) waits on, each seeing its progress:
+    /// two at once would put the same folder in place over each other. A caller that's cancelled (Cancel) stops
+    /// waiting at once, and the fetch itself stops once nobody waits on it.
+    private func installServer(as id: String, share: Double = 1) async throws {
+        let key = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+                serverWaiters[key] = (id, share, done)
+                if serverInstall == nil { startServerInstall() }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.stopWaitingForServer(key) }
+        }
+        serverInstalled = LlamaInstall.isInstalled
+    }
+
+    private func startServerInstall() {
+        let token = UUID()
+        serverInstall = (token, Task { [weak self] in
+            var failure: Error?
+            do {
+                try await LlamaInstall.install { fraction in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        for waiter in self.serverWaiters.values { self.progress[waiter.id] = fraction * waiter.share }
+                    }
+                }
+            } catch { failure = error }
+            await self?.serverInstallEnded(token, failure: failure)
+        })
+    }
+
+    private func serverInstallEnded(_ token: UUID, failure: Error?) {
+        guard serverInstall?.token == token else { return }
+        serverInstall = nil
+        serverInstalled = LlamaInstall.isInstalled
+        let waiting = serverWaiters.values
+        serverWaiters = [:]
+        for waiter in waiting {
+            if let failure { waiter.done.resume(throwing: failure) } else { waiter.done.resume() }
+        }
+    }
+
+    private func stopWaitingForServer(_ key: UUID) {
+        guard let waiter = serverWaiters.removeValue(forKey: key) else { return }
+        waiter.done.resume(throwing: CancellationError())
+        guard serverWaiters.isEmpty, let install = serverInstall else { return }
+        install.task.cancel()
+        serverInstall = nil
+    }
+
+    private var serverInstall: (token: UUID, task: Task<Void, Never>)?
+    /// Who waits on the server's fetch: where its progress shows, the share of that progress it fills, and how to go on.
+    private var serverWaiters: [UUID: (id: String, share: Double, done: CheckedContinuation<Void, Error>)] = [:]
 
     // MARK: Finding models
 
@@ -290,22 +370,30 @@ final class LocalModels: ObservableObject {
     // MARK: Downloads (into the Hugging Face cache layout)
 
     func download(_ spec: LocalModelSpec) {
-        download(id: spec.id, repo: spec.repo, files: spec.files) { [weak self] in
+        download(id: spec.id, repo: spec.repo, files: spec.files, withServer: spec.files.contains { $0.hasSuffix(".gguf") },
+                 sizeGB: spec.sizeGB) { [weak self] in
             self?.refresh()
             self?.restartServerIfRunning()
         }
     }
 
     /// Downloads `files` from a repo (every file when nil) into the Hugging Face cache, with progress and
-    /// errors under `id`. Image models use this too; `done` runs after a complete download.
-    func download(id: String, repo: String, files: [String]?, done: @escaping @MainActor () -> Void = {}) {
+    /// errors under `id`. Image models use this too; `done` runs after a complete download. A GGUF model brings
+    /// llama.cpp's server with it the first time (`withServer`), in the same progress, by its share of the bytes.
+    func download(id: String, repo: String, files: [String]?, withServer: Bool = false, sizeGB: Double = 0,
+                  done: @escaping @MainActor () -> Void = {}) {
         guard downloads[id] == nil else { return }
         errors[id] = nil
         progress[id] = 0
         downloads[id] = Task {
             defer { downloads[id] = nil; progress[id] = nil }
             do {
-                try await fetch(id: id, repo: repo, files: files)
+                var share = 0.0
+                if withServer, !LlamaInstall.isInstalled, let size = LlamaInstall.pin?.asset.size {
+                    share = Double(size) / (Double(size) + max(sizeGB * 1e9, 1))
+                    try await installServer(as: id, share: share)
+                }
+                try await fetch(id: id, repo: repo, files: files, after: share)
                 done()
             } catch is CancellationError {
             } catch {
@@ -318,7 +406,7 @@ final class LocalModels: ObservableObject {
 
     /// Writes blobs/<sha256>, snapshots/<commit>/<file> → ../../blobs/<sha256> and refs/main,
     /// exactly as huggingface_hub does, so other tools reuse the download.
-    private func fetch(id: String, repo: String, files wanted: [String]?) async throws {
+    private func fetch(id: String, repo: String, files wanted: [String]?, after share: Double = 0) async throws {
         let fm = FileManager.default
         let (commit, tree) = try await Self.repoInfo(repo)
         let files = wanted ?? tree.keys.sorted()
@@ -343,9 +431,9 @@ final class LocalModels: ObservableObject {
             if (try? blob.resourceValues(forKeys: [.fileSizeKey]))?.fileSize != entry.size {
                 let url = URL(string: "https://huggingface.co/\(repo)/resolve/\(commit)/\(file)")!
                 let base = done
-                let tracker = ProgressTracker { [weak self] written in
+                let tracker = DownloadProgress { [weak self] written in
                     guard total > 0 else { return }
-                    Task { @MainActor in self?.progress[id] = Double(base + Int(written)) / Double(total) }
+                    Task { @MainActor in self?.progress[id] = share + (1 - share) * Double(base + Int(written)) / Double(total) }
                 }
                 let (temp, response) = try await URLSession.shared.download(from: url, delegate: tracker)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else {
@@ -419,13 +507,26 @@ final class LocalModels: ObservableObject {
 
     // MARK: Servers
 
-    nonisolated static var serverBinary: URL? {
-        let url = Bundle.main.resourceURL?.appendingPathComponent("llama/llama-server")
-        return url.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
-    }
+    /// llama.cpp's server, once it's on this Mac (`LlamaInstall`).
+    nonisolated static var serverBinary: URL? { LlamaInstall.isInstalled ? LlamaInstall.server : nil }
 
     nonisolated static var baseURL: String { "http://127.0.0.1:\(port)" }
     nonisolated static var mlxBaseURL: String { "http://127.0.0.1:\(mlxPort)" }
+
+    /// The key llama-server takes (`--api-key`), so that only Lamp and pi, which hold it, can use the person's model: the
+    /// server answers any origin with CORS headers, so without one any page in a browser on this Mac could, and so could
+    /// any program. Kept in Lamp's own folder, which the agent's commands can't read, and the same from one launch to the
+    /// next, since a server a previous Lamp left running keeps the key it started with (`ensureLlama` reuses one that
+    /// answers). A server from before there was a key takes any. The router's workers, one per loaded model on a port
+    /// of its own, take it from the environment (`ensureLlama`). mlx_lm.server has no key to give.
+    nonisolated static let apiKey: String = {
+        let url = Edition.supportFolder.appendingPathComponent("local-model-key")
+        if let kept = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !kept.isEmpty { return kept }
+        let made = UUID().uuidString + UUID().uuidString
+        try? FileManager.default.createDirectory(at: Edition.supportFolder, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: url.path, contents: Data(made.utf8), attributes: [.posixPermissions: 0o600])
+        return made
+    }()
 
     /// Starts whichever server runs this model, waits until it answers, and returns its base URL.
     @discardableResult
@@ -448,12 +549,28 @@ final class LocalModels: ObservableObject {
 
     private func ensureLlama() async throws {
         if await Self.healthy("\(Self.baseURL)/health") { serverRunning = true; return }
-        guard let binary = Self.serverBinary else { throw LocalError("Lamp's local model server is missing. Download Lamp again.") }
+        // Fetched the first time a model needs it, as when one is picked; checked as Lamp's own each time it starts.
+        if Self.serverBinary == nil {
+            do { try await installServer(as: Self.serverID) } catch {
+                errors[Self.serverID] = error.localizedDescription
+                throw LocalError("Lamp couldn't get what runs models on this Mac. \(error.localizedDescription)")
+            }
+        }
+        guard let binary = Self.serverBinary, let folder = LlamaInstall.folder, LlamaInstall.verified(folder) else {
+            if let folder = LlamaInstall.folder { try? FileManager.default.removeItem(at: folder) }
+            serverInstalled = false
+            throw LocalError("What runs models on this Mac wasn't right, so Lamp removed it. Try again to download it afresh.")
+        }
         rebuildRouter()
         let process = Process()
         process.executableURL = binary
-        process.arguments = ["--models-dir", Self.routerDir.path, "--jinja", "--host", "127.0.0.1",
+        process.arguments = ["--models-dir", Self.routerDir.path, "--jinja", "--host", "127.0.0.1", "--api-key", Self.apiKey,
                              "--port", String(Self.port), "-ngl", "999", "-c", String(Self.contextSize)]
+        // The router runs each loaded model in a worker of its own, on a loopback port of its own, and leaves the key
+        // out of the worker's arguments; the worker inherits the environment, and reads the key from there.
+        var env = ProcessInfo.processInfo.environment
+        env["LLAMA_API_KEY"] = Self.apiKey
+        process.environment = env
         process.standardOutput = logFile("llama-server.log")
         process.standardError = process.standardOutput
         process.standardInput = FileHandle.nullDevice
@@ -528,7 +645,7 @@ final class LocalModels: ObservableObject {
         let gguf = installed.filter { $0.format == .gguf }
         if !gguf.isEmpty {
             providers[Builder.localProvider] = [
-                "baseUrl": "\(Self.baseURL)/v1", "api": "openai-completions", "apiKey": "local",
+                "baseUrl": "\(Self.baseURL)/v1", "api": "openai-completions", "apiKey": Self.apiKey,
                 "models": gguf.map { ["id": $0.id, "contextWindow": Self.contextSize,
                                       "input": $0.vision ? ["text", "image"] : ["text"]] as [String: Any] },
             ]
@@ -554,16 +671,3 @@ final class LocalModels: ObservableObject {
     }
 }
 
-/// Reports bytes written for a URLSession download.
-private final class ProgressTracker: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    let onProgress: (Int64) -> Void
-    private var observation: NSKeyValueObservation?
-
-    init(onProgress: @escaping (Int64) -> Void) { self.onProgress = onProgress }
-
-    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
-        observation = task.progress.observe(\.completedUnitCount) { [weak self] progress, _ in
-            self?.onProgress(progress.completedUnitCount)
-        }
-    }
-}

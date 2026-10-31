@@ -214,7 +214,7 @@ TV app's and the Swift as any app's, without its comments (`Sharing.inspect`, `i
 its requests go (`WebReach`), not from words in its code: "Connects to" names the outside sites a request goes to, "May connect
 outside this app" stands where a request's address can't be worked out (or a web address in the code reaches nothing it can
 follow), links are "Opens websites when clicked", and a page that only reads its own files says none of these. A copy of a library Lamp ships
-(three.js, Rapier) that is Lamp's byte for byte is left out of the review wherever it sits (`Sharing.knownLibraries`);
+(three.js, Rapier) that is Lamp's byte for byte, the version it ships or one it shipped before (`Resources/WebLibraries/earlier.txt`, which the update scripts add to), is left out of the review wherever it sits (`Sharing.knownLibraries`);
 one changed in any way is the sender's code.
 
 A page that arrives from someone else (a shared file, its update, or a part of its wish) is then held to what its sheet
@@ -227,7 +227,9 @@ Content-Security-Policy naming only those sites; the page never leaves its own a
 (redirects included); a link opens in the browser only on the person's click, once they've seen where it goes; what
 no policy covers (WebRTC, a link's preconnect and prefetch) is off (`NetworkPolicy.holdBack`). A page whose sheet said
 "May connect outside this app" shows what was blocked, and the person can allow that site, once they've seen it whole,
-or every site for good, on that device. Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
+or every site for good, on that device. A game's own controllers relay is the one way out the app adds: the rules name
+it at `ws://127.0.0.1:<port>` for connecting only, for that launch, never kept with the sites or taken from the page
+(`ControllerRuntime.pageSites`, "Lamp's player" in the devices guide). Lamp's previews serve the same rules (`StagedFiles.policy`), with Lamp's own relay open to a TV game's page in its preview (the TV guide). A copy of the wish
 (a remix, an update's copy) is held as the wish is (`SharedNetwork.carry`, `arrive`). A phone's controller page reads it
 too (`PhonePageReach`, under "TV apps"): its servers allow only the policy's sites, an app with Swift of the sender's
 included, since Lamp and an LG TV serve it outside the app's process; a game that serves its own page on the Mac,
@@ -336,8 +338,8 @@ github.com address with nothing after its name, and a commit only in full, 40 he
 commit as its ref). A starter opens with its chat, the request written into its box (`writeIn`, `Store.openCopy`): a copy of it on the
 desk that nothing has been asked of and whose box is empty (the one Lamp came with, or one an earlier link opened; its
 first build out of sight isn't asking, and the copy the last link opened is taken with that link's request in its box),
-else a fresh copy, made as the first launch makes one (`put(starter:)`, its chain naming the
-starter at the commit this Lamp ships). A link without a request opens it with an empty box. A repository
+else a fresh copy, fetched and made as opening it from the desk makes one (`fetching`, `put(starter:)`, its chain naming
+the starter at the commit this Lamp ships). A link without a request opens it with an empty box. A repository
 goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
 box. Nothing is sent or built from the link. During the welcome a starter's remix waits a moment (`Onboarding.keptRemix`, saved
 like the welcome's wish) and opens as the welcome gives way to the desk, with nothing set up, in the desk's own copy of the starter, put there moments

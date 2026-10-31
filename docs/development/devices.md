@@ -293,8 +293,8 @@ read from wherever the console's SSDP answer points (`Read.description`), since 
 Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out. Its apps may be 3D games: three.js ships
 with Lamp (`Resources/WebLibraries/three`, MIT: its WebGL build, its WebGPU renderer with node materials (`three/webgpu`,
 `three/tsl`, drawing with WebGL 2 where there's no WebGPU) and the light addons, put there by `scripts/update-three.sh`
-from one commit of three.js's repository, each file checked against the git hash the commit lists; a commit rather
-than a release while the New York starter needs a fix made since the last one; the node renderer and the addons built
+from one commit of three.js's repository (r187's), each file checked against the git hash the commit lists; a commit
+other than a release's only while Lamp needs a fix made since the last one; the node renderer and the addons built
 on it, `DeviceSupport.threeNodeFiles`, go only into an app whose page imports `three/webgpu` or `three/tsl`) as a library a kind asks for like the building blocks
 (`DeviceSupport.Library.three`, `"three": "Web/three"`, a folder the page loads through an import map), so nothing loads
 from the network. It replaced Babylon.js, which was chosen for EdgeHTML; under WebView2 the agent writes three.js more
@@ -432,7 +432,7 @@ and an app kind that takes places one at a time (an Apple TV or a TV beside a Sw
 A game is drawn with three.js, or with Phaser when it's 2D (`GameKit.Engine.web`, written in its `.lamp-game` mark): the
 model writes both best and every place has a web view, and on the Xbox a game installed as a game gets enough of the
 console. Which of the two is the agent's choice as it writes the game, from what the person asked for: `Rules.gameWebKit`
-has it choose 2D or 3D and read the `game` skill with the `2d-game` or `3d-game` skill, which are the only guidance that
+has it choose 2D or 3D and read the `game` and `game-ui` skills with the `2d-game` or `3d-game` skill, which are the only guidance that
 names the library and its recipe (entry point, renderer, frame callback, where setup goes). The kind and the scaffold are
 the same, and the placeholder card is three.js's either way. A web game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
@@ -526,12 +526,22 @@ capabilities.json) reopens it, held for Reload while the person has it open. On 
 from Lamp's player (below) unless it has Swift of its own.
 
 A change to a game while it's played. While the agent works, each change it saves goes into the game open on this Mac
-once it compiles and the saving has paused, not waiting for the agent to look or for the turn to end
-(`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app: the saved files are read every two
-seconds, and a game's are tried once they've held still for six seconds, no more often than every fifteen, since each
-step can hold the picture for a moment), and while the agent's look plays the game in the hidden copy, which can take
-minutes (only the look's build, which writes the same folders, is waited for; `PageLive.put` puts one change into a
-copy at a time). The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+once it compiles, the saving has paused a few seconds and the agent has said the state is whole: in a progress line of
+what's now in it, or by looking at it (`Store.stepPage`, from the `autoApply` loop that does the same for a Mac app; the
+`progress` and `look_at_app` tools' descriptions say so, for every engine). Only the agent can tell an edit the person
+would see from one they wouldn't (a refactor, half a piece of work), so a save in between waits; a progress line is
+the chat's word for the step ("Put into New York: The car is rainbow now"), and a look's step is said in the words of
+the agent's steps that made it ("Put into New York: Adding a sports car"). A look at a game plays it in the hidden copy
+(`playGame`), which can take minutes, so the sources it plays (`Turn.lookedSources`) go into the open game as it plays
+(or, for a play over before the loop took them, before the look returns: `stepLooked`) rather than when the agent's
+checking is done, and a fix it looks at later goes in the same way (the look's result says
+when its sources are in the open game, so the agent never asks for a Reload the person doesn't need); a save that leaves the
+page's files as the last step put them in (`pageSignature`) puts nothing in. What the page does with it is what it does
+with any change (below): a swap goes in at once, busy or not; code run again in place waits for a pause while `busy()`;
+and a change that opens the page again is held for Reload, never opened under the player (`PageLive.put` puts one change
+into a copy at a time). The step of a look or use played in the hidden copy ends in " · in a hidden copy"
+(`Store.markHiddenCopy`), Lamp's words whatever the agent's `doing` said, so "Seeing the new car in the city" never
+reads as the person's own game while it still shows the old one. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the
@@ -565,15 +575,36 @@ disposers run, and what it left running is taken away (lamp-game.js watches the 
 contexts and workers from the start, the runtime's own going through the browser's functions it kept first); the
 page's head (all but its scripts) and body are put back as the HTML now has them, Lamp's elements kept; every module
 of the game runs again in order, loaded from its source with its imports pointed at the new versions; and the module
-that starts the game calls game() again, whose init starts from the snapshot taken before (`pendingRestore()`, as after
-a reload). What stays is what a reload loses: the WebGL or WebGPU context and its compiled shaders, the files the
+that starts the game calls game() again, whose init starts from what it registered and the snapshot taken before
+(`pendingRestore()`, as after a reload). What stays is what a reload loses: the WebGL or WebGPU context and its compiled shaders, the files the
 runtime loaded, the sound, the controllers, and the parts the game kept with `hot(import.meta).keep(key, build, {
 inputs })`. A kept part is built again when the module that kept it or one it imports changed, its build function's
 code changed, or one of its `inputs` isn't the same object (a part built again builds again the parts made from it);
 for the module that starts the game, which imports everything, it goes by the modules whose imports the build function
 names, and a game bundled from TypeScript, one file, builds again everything it kept. New York keeps its renderer, the
 ground's heights and each part of the city, so a change to its HUD runs again in about 2 s instead of a 16 s start,
-and a change to its trees builds only the street details, traffic and road paint again. While the code runs again, the last frame and
+and a change to its trees builds only the street details, traffic and road paint again. What a game registers lasts
+beyond that (lamp-game.js, "What the game registers"; the scaffold and the game skill start every new game with it):
+`live.renderer(build)` is one entry of `keep` outside any module (`lasting`, so no change of a module marks it stale,
+only its build's own code), `live.camera` keeps the object and its pose, lens and target, and `live.state` a plain
+object filled in place, so whoever holds it keeps holding it. All of it is `heldNow()`, plain JSON beside the game's own
+snapshot in what `takeSnapshot` gives (`held`), so it goes wherever a snapshot goes: taken again as the old code stops
+for a run in place, kept in sessionStorage for a page that opens again, and in localStorage for a newer install. It's
+put back after `claim()` and before init, since what's registered at a module's top level runs before the page knows
+where it starts, and the cameras again after init, so what a start sets on one doesn't win. A swap keeps what's
+registered as it is, so a new version that declares any of it differently refuses the swap (`redeclare`) and the code
+runs again, from what was held before that swap, which a swap gone wrong may have changed. This is a promise about
+what's registered only: `game({ renderer })` gets a renderer after it's built, so one the game makes for itself can't
+be reused, and three.js code the runtime never sees can't be kept. So Lamp checks: `GameKit.unregisteredNote` tells the
+agent with each request what the game's code doesn't register (read from the code, since a game brought in isn't open
+at its first edit, and only a hint: the page's word is what counts), and `apply` won't run the code again where the
+player's place wouldn't last (`keepsPlace`: no state registered and no snapshot() read back). That change is held for
+Reload as any held change is, its `why` naming what isn't registered, so the agent can register it in the same turn and
+Reload takes both in, once; older and imported games adopt this that way, on their first edit. The person's Reload
+always goes in. After each run the page tells Lamp what came through (`cameThrough`, a state of its own with the words in
+`why`, kept as `PageLive.report`), which the agent's next look carries. A look in the hidden copy shows a change
+whether or not the open game took it, and the open game takes it as that look plays, so its answer waits a moment for
+that and then says what the open game did (`GameKit.openGameNote`). While the code runs again, the last frame and
 the old HUD stay on screen, still, and fade once the new code has drawn; the page then says `shown`, which is when
 Lamp's light crosses the window (`Store.pageShown`): the smoke built over the window stays through the run, rather than
 going as the page first answers. A swap gets the light at once; a page that opens again says `shown` at its first frame;
@@ -609,8 +640,36 @@ the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) 
 Swift built into the player and every compiled game as one file (`GameKit.controllerKit`, which build.sh writes). As
 `Lamp.controllers` starts, it serves the page (`PhonePageServer`) and runs a `Relay` in the game's process, each on a
 port the system gives it, with a key made for that session and kept only in its memory; `Lamp.controllers.stop()` and
-the game quitting close both. A change of the phone page can't go into the open game as it's played, so it goes in
-with the game installed again (`pageInPlace`, `GamePhones.changed`). A copy built by an earlier Lamp that asks Lamp is
+the game quitting close both. A shared game's page is held to its sites by rules fixed as its document loads, so its
+relay comes first: a port on 127.0.0.1 alone is taken before the document is served and named in its rules for
+connecting only (`ControllerRuntime.pageSites`), phones join at a port of their own that opens with the session, and
+the held port stays the game's through every stop until it quits, so nothing else can take a port a live page may
+reach. One lost anyway is asked for back, and if it's gone the pages open again under the new one
+(`onPagePortMoved`, `LampPageGuard.retirePages`). The session is the page's, so it outlives a run of the game's code: lamp.js's service
+takes its timers from the browser as the page loads, before `watch` wraps them, so `takeAwayLeft` never reaches its
+beat, its renewal or its link. A run's own callbacks are the run's (`watchPhones`, as `watch` follows its listeners; a
+kept part's stay with the part): the old run's end as it stops (`holdPhones`), a `stop()` from its `dispose` is
+ignored, the new run's hear nothing of players until it's about to draw (`bringPhones`, in `ranAgain`), which calls
+its `onLeave` and `onJoin` with the difference and the present roster, and held buttons stay in `isHeld` while old
+presses and messages are dropped. The game's snapshot keeps which player has which slot. What a frame reads of phones'
+buttons is `f.phones` (`readPhones`, sampled in `step` beside the pads): the runtime hears `onButton` under what `watchPhones`
+wraps, so it belongs to no run, and keeps each phone's held buttons and what they did since the last frame, so a press and
+release between two frames is both. Those edges go with a phone that leaves and with a run that ends (`holdPhones`), and what
+arrives while the code runs again changes what's held without becoming a press. While the agent works, a change of the phone page goes out as it's saved through `Store.autoApply`: with a game's page
+for a game open on this Mac (`stepPage`), and after the same pause for phones on a page Lamp serves with no Mac copy open
+(`stepPhones`). Its scripts, inline ones included, are parsed first (`GameKit.codeProblem`), and what's published is held to
+what was checked (`TVs.stagePhone`'s `expecting`). A change of the phone page goes into the open game with its page (`PageLive.put`): the copy
+on the Mac or in the simulator says it can take one (`phone` in its `/app/page/live` ask), Lamp hands it the whole page by
+hash, and `LampPageLive` writes it to a folder of its own and only then swaps it in (`ControllerRuntime.use`), under the
+session that's open; a change of the game's page held for Reload stays held, and the phone page goes on stepping meanwhile. A copy built by an earlier Lamp has the game installed again instead (`pageInPlace`,
+`GamePhones.changed`). A page already open on a phone takes the newer one itself: every page Lamp or the game serves
+starts with its version (`PhonePageServer.marked`, an HTML comment, which also says the host publishes versions), and
+lamp-controller.js reads `lamp-phone.json` every three seconds while it's visible and as it comes back. Once the version
+differs it opens again, keeping the credential, so it's the same player, at a moment nothing is lost: no button or stick
+held, no file on its way, nothing being typed, and the page's own `busy()` says false. A page with `onUpdate` is told
+instead and opens when the person says. It does this once for each version. The socket does go down and come back, so
+the game hears that phone leave and return, unlike a run of its code again in place. An LG TV's and an Xbox's own hosts
+don't mark their pages, so their phones stay on the page they opened until the game is installed there. A copy built by an earlier Lamp that asks Lamp is
 told to update. On an iPhone or iPad the game does the same while it's in front: the page goes in its bundle as
 `Phone/` at the top (`GamePhones.write`: the simulator's bundle in `finishSimulatorBundle`, and the copy Xcode builds
 from in `Devices.stage`, with `Template.withPhoneFolder` in the project), the controller kit is built in with
@@ -620,6 +679,17 @@ background mode keeps it alive. `ControllerAddresses` gives a phone only an addr
 network, never a loopback one: a device on no network says so (503). `scripts/check-controller-kit.sh` type-checks
 the kit and LampPage.swift for the Mac, the simulator and a device. Lamp serves the page itself in the TV preview, a
 window of Lamp's own, and on a Samsung or LG TV (staged with the rest, `TVs.stage`).
+
+**The phone page in the game's preview.** The agent sees and presses a web game's real phone page with `phone` on
+`use_app`'s actions (`PhonePreview`, the `phone-pages` skill): `GameKit.stageWeb` copies `Phone/` beside the page, never
+over the published one, with Lamp's real lamp-controller.js, and the page opens at 844x390 in a second hidden web view
+at the play's first `phone` line, held to its own files. Its socket is a stand-in with no network behind it: what either
+side says waits for the next `phone` or `shot` line (`phoneStep` in lamp-game.js), which hands it across between two
+frames, the page's timers and clocks moved on by the frames played since the last one, and to `Lamp.controllers` the phone
+is a player that came another way (`_attach`), so a play with a phone is one
+script like any other, played from the start, and never in a warm preview. In the preview `Lamp.controllers` asks no host
+for a session and draws its join card from a made-up address. This shows the page, its layout and what it sends; the join,
+the relay, files, rotation lock, notches, the keyboard and tilt are still only a real phone's to show.
 
 **Which host.** The game chooses who hosts its phones as it starts them: `Lamp.controllers.start({ host: 'game' })`
 (the game itself: the Mac's and iPhone's `ControllerRuntime` above, and the LG service and the Xbox's host below) or `start({ host: 'lamp' })`

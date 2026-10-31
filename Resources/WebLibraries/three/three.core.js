@@ -3,7 +3,7 @@
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT
  */
-const REVISION = '187dev';
+const REVISION = '187';
 
 /**
  * Represents mouse buttons and interaction types in context of controls.
@@ -2152,14 +2152,14 @@ function probeAsync( gl, sync, interval ) {
  * @type {Object}
  */
 const ReversedDepthFuncs = {
-	[ NeverDepth ]: AlwaysDepth,
+	[ NeverDepth ]: NeverDepth,
 	[ LessDepth ]: GreaterDepth,
-	[ EqualDepth ]: NotEqualDepth,
+	[ EqualDepth ]: EqualDepth,
 	[ LessEqualDepth ]: GreaterEqualDepth,
 
-	[ AlwaysDepth ]: NeverDepth,
+	[ AlwaysDepth ]: AlwaysDepth,
 	[ GreaterDepth ]: LessDepth,
-	[ NotEqualDepth ]: EqualDepth,
+	[ NotEqualDepth ]: NotEqualDepth,
 	[ GreaterEqualDepth ]: LessEqualDepth,
 };
 
@@ -12304,7 +12304,7 @@ class Object3D extends EventDispatcher {
 	 * A callback that is executed immediately before a 3D object is rendered.
 	 *
 	 * @param {Renderer|WebGLRenderer} renderer - The renderer.
-	 * @param {Object3D} object - The 3D object.
+	 * @param {Object3D} scene - The scene.
 	 * @param {Camera} camera - The camera that is used to render the scene.
 	 * @param {BufferGeometry} geometry - The 3D object's geometry.
 	 * @param {Material} material - The 3D object's material.
@@ -12316,7 +12316,7 @@ class Object3D extends EventDispatcher {
 	 * A callback that is executed immediately after a 3D object is rendered.
 	 *
 	 * @param {Renderer|WebGLRenderer} renderer - The renderer.
-	 * @param {Object3D} object - The 3D object.
+	 * @param {Object3D} scene - The scene.
 	 * @param {Camera} camera - The camera that is used to render the scene.
 	 * @param {BufferGeometry} geometry - The 3D object's geometry.
 	 * @param {Material} material - The 3D object's material.
@@ -12953,15 +12953,18 @@ class Object3D extends EventDispatcher {
 	raycast( /* raycaster, intersects */ ) {}
 
 	/**
-	 * Abstract method to test whether this 3D object intersects the given frustum.
-	 * Renderable 3D objects such as {@link Mesh}, {@link Line} or {@link Points}
-	 * implement this method in order to use frustum culling.
+	 * Returns `true` if this 3D object intersects the given frustum. Renderable 3D objects
+	 * such as {@link Mesh}, {@link Line} or {@link Points} override this method in order
+	 * to use frustum culling. The default implementation always returns `true`.
 	 *
-	 * @abstract
 	 * @param {Frustum|FrustumArray} frustum - The frustum to test.
-	 * @return {boolean|undefined} Whether this 3D object intersects the given frustum or not.
+	 * @return {boolean} Whether this 3D object intersects the given frustum or not.
 	 */
-	intersectsFrustum( /* frustum */ ) {}
+	intersectsFrustum( /* frustum */ ) {
+
+		return true;
+
+	}
 
 	/**
 	 * Executes the callback on this 3D object and all descendants.
@@ -26288,6 +26291,18 @@ class FrustumArray {
 	}
 
 	/**
+	 * Returns the cached frustum for the sub-camera at the given index.
+	 *
+	 * @param {number} index - The sub-camera index.
+	 * @return {Frustum|undefined} The cached frustum.
+	 */
+	getFrustum( index ) {
+
+		return this._frustums[ index ];
+
+	}
+
+	/**
 	 * Returns `true` if the 3D object's bounding sphere is intersecting any cached frustum.
 	 *
 	 * {@link FrustumArray#setFromArrayCamera} must be called once per render before this method.
@@ -26704,10 +26719,19 @@ class BatchedMesh extends Mesh {
 		this._multiDrawCount = 0;
 		this._multiDrawBytesPerElement = 1;
 
+		// buffers for instanced draws, consecutive draws with the same range are merged
+		this._mergedDrawCounts = new Int32Array( maxInstanceCount );
+		this._mergedDrawStarts = new Int32Array( maxInstanceCount );
+		this._mergedDrawInstanceCounts = new Int32Array( maxInstanceCount );
+		this._mergedDrawCount = 0;
+
 		// Local matrix per geometry by using data texture
 		this._matricesTexture = null;
 		this._indirectTexture = null;
 		this._colorsTexture = null;
+
+		// previous frame matrices for motion vectors, created by the renderer
+		this._previousMatricesTexture = null;
 
 		this._initMatricesTexture();
 		this._initIndirectTexture();
@@ -27721,6 +27745,17 @@ class BatchedMesh extends Mesh {
 
 		this._multiDrawCounts = multiDrawCounts;
 		this._multiDrawStarts = multiDrawStarts;
+
+		const mergedDrawCounts = new Int32Array( maxInstanceCount );
+		const mergedDrawStarts = new Int32Array( maxInstanceCount );
+		const mergedDrawInstanceCounts = new Int32Array( maxInstanceCount );
+		copyArrayContents( this._mergedDrawCounts, mergedDrawCounts );
+		copyArrayContents( this._mergedDrawStarts, mergedDrawStarts );
+		copyArrayContents( this._mergedDrawInstanceCounts, mergedDrawInstanceCounts );
+
+		this._mergedDrawCounts = mergedDrawCounts;
+		this._mergedDrawStarts = mergedDrawStarts;
+		this._mergedDrawInstanceCounts = mergedDrawInstanceCounts;
 		this._maxInstanceCount = maxInstanceCount;
 
 		// update texture data for instance sampling
@@ -27741,6 +27776,13 @@ class BatchedMesh extends Mesh {
 			colorsTexture.dispose();
 			this._initColorsTexture();
 			copyArrayContents( colorsTexture.image.data, this._colorsTexture.image.data );
+
+		}
+
+		if ( this._previousMatricesTexture !== null ) {
+
+			this._previousMatricesTexture.dispose();
+			this._previousMatricesTexture = null;
 
 		}
 
@@ -27908,6 +27950,9 @@ class BatchedMesh extends Mesh {
 		this._multiDrawCounts = source._multiDrawCounts.slice();
 		this._multiDrawStarts = source._multiDrawStarts.slice();
 		this._multiDrawBytesPerElement = source._multiDrawBytesPerElement;
+		this._mergedDrawCounts = source._mergedDrawCounts.slice();
+		this._mergedDrawStarts = source._mergedDrawStarts.slice();
+		this._mergedDrawInstanceCounts = source._mergedDrawInstanceCounts.slice();
 
 		this._indirectTexture = source._indirectTexture.clone();
 		this._indirectTexture.image.data = this._indirectTexture.image.data.slice();
@@ -27954,6 +27999,13 @@ class BatchedMesh extends Mesh {
 
 		}
 
+		if ( this._previousMatricesTexture !== null ) {
+
+			this._previousMatricesTexture.dispose();
+			this._previousMatricesTexture = null;
+
+		}
+
 	}
 
 	/**
@@ -27964,8 +28016,9 @@ class BatchedMesh extends Mesh {
 	 * @param {Camera} camera - The camera of the next draw.
 	 * @param {BufferGeometry} geometry - The batch's geometry.
 	 * @param {Material} material - The material of the next draw.
+	 * @param {('multiDraw'|'merged')} [drawFormat='multiDraw'] - The format of the draw parameters.
 	 */
-	_updateDrawParameters( camera, geometry, material ) {
+	_updateDrawParameters( camera, geometry, material, drawFormat = 'multiDraw' ) {
 
 		// if visibility has not changed and frustum culling and object sorting is not required
 		// then skip iterating over all items
@@ -27995,6 +28048,9 @@ class BatchedMesh extends Mesh {
 		const instanceInfo = this._instanceInfo;
 		const multiDrawStarts = this._multiDrawStarts;
 		const multiDrawCounts = this._multiDrawCounts;
+		const mergedDrawStarts = this._mergedDrawStarts;
+		const mergedDrawCounts = this._mergedDrawCounts;
+		const mergedDrawInstanceCounts = this._mergedDrawInstanceCounts;
 		const geometryInfoList = this._geometryInfo;
 		const perObjectFrustumCulled = this.perObjectFrustumCulled;
 		const indirectTexture = this._indirectTexture;
@@ -28025,6 +28081,7 @@ class BatchedMesh extends Mesh {
 		}
 
 		let multiDrawCount = 0;
+		let mergedDrawCount = 0;
 		if ( this.sortObjects ) {
 
 			// get the camera position in the local frame
@@ -28079,8 +28136,31 @@ class BatchedMesh extends Mesh {
 			for ( let i = 0, l = list.length; i < l; i ++ ) {
 
 				const item = list[ i ];
-				multiDrawStarts[ multiDrawCount ] = item.start * bytesPerElement * multiDrawMultiplier;
-				multiDrawCounts[ multiDrawCount ] = item.count * multiDrawMultiplier;
+				const start = item.start * bytesPerElement * multiDrawMultiplier;
+				const count = item.count * multiDrawMultiplier;
+
+				if ( drawFormat === 'merged' ) {
+
+					if ( mergedDrawCount > 0 && mergedDrawStarts[ mergedDrawCount - 1 ] === start && mergedDrawCounts[ mergedDrawCount - 1 ] === count ) {
+
+						mergedDrawInstanceCounts[ mergedDrawCount - 1 ] ++;
+
+					} else {
+
+						mergedDrawStarts[ mergedDrawCount ] = start;
+						mergedDrawCounts[ mergedDrawCount ] = count;
+						mergedDrawInstanceCounts[ mergedDrawCount ] = 1;
+						mergedDrawCount ++;
+
+					}
+
+				} else {
+
+					multiDrawStarts[ multiDrawCount ] = start;
+					multiDrawCounts[ multiDrawCount ] = count;
+
+				}
+
 				indirectArray[ multiDrawCount ] = item.index;
 				multiDrawCount ++;
 
@@ -28110,8 +28190,31 @@ class BatchedMesh extends Mesh {
 					if ( ! culled ) {
 
 						const geometryInfo = geometryInfoList[ geometryId ];
-						multiDrawStarts[ multiDrawCount ] = geometryInfo.start * bytesPerElement * multiDrawMultiplier;
-						multiDrawCounts[ multiDrawCount ] = geometryInfo.count * multiDrawMultiplier;
+						const start = geometryInfo.start * bytesPerElement * multiDrawMultiplier;
+						const count = geometryInfo.count * multiDrawMultiplier;
+
+						if ( drawFormat === 'merged' ) {
+
+							if ( mergedDrawCount > 0 && mergedDrawStarts[ mergedDrawCount - 1 ] === start && mergedDrawCounts[ mergedDrawCount - 1 ] === count ) {
+
+								mergedDrawInstanceCounts[ mergedDrawCount - 1 ] ++;
+
+							} else {
+
+								mergedDrawStarts[ mergedDrawCount ] = start;
+								mergedDrawCounts[ mergedDrawCount ] = count;
+								mergedDrawInstanceCounts[ mergedDrawCount ] = 1;
+								mergedDrawCount ++;
+
+							}
+
+						} else {
+
+							multiDrawStarts[ multiDrawCount ] = start;
+							multiDrawCounts[ multiDrawCount ] = count;
+
+						}
+
 						indirectArray[ multiDrawCount ] = i;
 						multiDrawCount ++;
 
@@ -28125,6 +28228,7 @@ class BatchedMesh extends Mesh {
 
 		indirectTexture.needsUpdate = true;
 		this._multiDrawCount = multiDrawCount;
+		this._mergedDrawCount = mergedDrawCount;
 		this._multiDrawBytesPerElement = bytesPerElement;
 		this._visibilityChanged = false;
 
@@ -42856,7 +42960,7 @@ class Interpolant {
 	 *
 	 * @param {number} i1 - An index into the sample value buffer.
 	 * @param {number} t0 - The previous interpolation factor.
-	 * @param {number} t - The current interpolation factor.
+	 * @param {number} t1 - The next interpolation factor.
 	 */
 	intervalChanged_( /* i1, t0, t1 */ ) {
 
@@ -46975,6 +47079,7 @@ class LightShadow {
 		this.blurSamples = source.blurSamples;
 
 		this.mapSize.copy( source.mapSize );
+		this.mapType = source.mapType;
 
 		this.biasNode = source.biasNode;
 
@@ -47009,6 +47114,7 @@ class LightShadow {
 		object.radius = this.radius;
 		object.blurSamples = this.blurSamples;
 		object.mapSize = this.mapSize.toArray();
+		object.mapType = this.mapType;
 
 		object.camera = this.camera.toJSON( false ).object;
 		delete object.camera.matrix;
@@ -50607,6 +50713,7 @@ class ObjectLoader extends Loader {
 			if ( data.shadow.focus !== undefined ) object.shadow.focus = data.shadow.focus;
 			if ( data.shadow.aspect !== undefined ) object.shadow.aspect = data.shadow.aspect;
 			if ( data.shadow.mapSize !== undefined ) object.shadow.mapSize.fromArray( data.shadow.mapSize );
+			if ( data.shadow.mapType !== undefined ) object.shadow.mapType = data.shadow.mapType;
 			if ( data.shadow.camera !== undefined ) object.shadow.camera = this.parseObject( data.shadow.camera );
 
 		}
@@ -51554,6 +51661,18 @@ class ArrayCamera extends PerspectiveCamera {
 		 * @type {Array<PerspectiveCamera>}
 		 */
 		this.cameras = array;
+
+		/**
+		 * Whether 3D objects are frustum culled per sub camera or not.
+		 *
+		 * Since this requires an additional frustum test per sub camera, it should only be
+		 * enabled when the frustums of the sub cameras barely overlap. The property has
+		 * no effect with multiview rendering.
+		 *
+		 * @type {boolean}
+		 * @default false
+		 */
+		this.perCameraFrustumCulled = false;
 
 	}
 

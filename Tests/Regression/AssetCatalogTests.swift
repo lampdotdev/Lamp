@@ -52,6 +52,74 @@ final class AssetCatalogTests: XCTestCase {
         XCTAssertEqual(AssetCatalog.items(from: shipped).count, listed, "every asset in the shipped index may be offered")
     }
 
+    private func clip(_ id: String, kind: String = "sound", files: [String]) -> [String: Any] {
+        ["id": "pack/\(id)", "name": id, "kind": kind, "files": files, "bytes": 1, "license": "CC0-1.0"]
+    }
+
+    /// A sound or music is offered only as the sound files the runtimes decode, and pictures only as pictures: the kind
+    /// and the file have to agree, and every other check holds for them as for a picture.
+    func testSoundsAreOfferedOnlyAsSoundFiles() {
+        var direct = model("loop", license: "CC0-1.0", url: "https://example.com/loop.ogg")
+        direct["kind"] = "music"
+        var directHTTP = model("plain", license: "CC0-1.0", url: "http://example.com/plain.ogg")
+        directHTTP["kind"] = "music"
+        var directMP3 = model("song", license: "CC0-1.0", url: "https://example.com/song.mp3")
+        directMP3["kind"] = "music"
+        var unchecked = model("unchecked", license: "CC0-1.0", url: "https://example.com/unchecked.wav", sha: "nothex")
+        unchecked["kind"] = "sound"
+        let items = AssetCatalog.items(from: index([
+            direct, directHTTP, directMP3, unchecked,
+            clip("coin", files: ["Sounds/coin.wav"]),
+            clip("click", files: ["Audio/click.OGG"]),
+            clip("escape", files: ["../../coin.wav"]),
+            clip("program", files: ["Sounds/coin.command"]),
+            clip("picture", files: ["Sounds/coin.png"]),
+            clip("in-a-sheet", kind: "sprites", files: ["Sounds/coin.wav"]),
+        ]))
+        XCTAssertEqual(items.map(\.name), ["loop", "coin", "click"])
+        XCTAssertTrue(items.allSatisfy(\.isAudio))
+        XCTAssertNil(items[0].thumb, "a sound has no picture to fetch")
+        XCTAssertEqual(AssetCatalog.search("", kind: "music", in: items).map(\.name), ["loop"])
+        XCTAssertEqual(AssetCatalog.search("", kind: "model", in: items), [], "a sound is no 3D kind")
+    }
+
+    /// Files out of an archive land side by side in their pack's folder, so two from different folders with one name
+    /// would have the second written over the first and both credited. The second is left out, however its name is
+    /// cased, since a Mac's disk doesn't tell them apart. The same file listed twice is one file.
+    func testTwoFilesLandingOnOneNameAreNotOffered() {
+        let items = AssetCatalog.items(from: index([
+            clip("first", files: ["A/coin.wav"]),
+            clip("second", files: ["B/coin.wav"]),
+            clip("cased", files: ["C/Coin.WAV"]),
+            clip("same-file", files: ["A/coin.wav"]),
+            clip("inside-one", files: ["D/jump.wav", "E/jump.wav"]),
+            clip("other", files: ["B/jump.wav"]),
+        ]))
+        XCTAssertEqual(items.map(\.name), ["first", "same-file", "other"])
+    }
+
+    /// The shipped sounds are CC0, found by what a game asks for, in formats the catalog takes, with their length, and
+    /// credited as their pack. A sound's line says how long it is and whether it loops.
+    func testShippedSoundsAreFoundAndCredited() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let shipped = AssetCatalog.items(from: try Data(contentsOf: root.appendingPathComponent("Resources/asset-catalog.json")))
+        let sounds = shipped.filter(\.isAudio)
+        XCTAssertGreaterThan(sounds.count, 20)
+        XCTAssertTrue(sounds.allSatisfy { $0.license == "CC0-1.0" }, "a CC-BY track needs credit the app shows, which these don't carry")
+        XCTAssertTrue(sounds.allSatisfy { ($0.seconds ?? 0) > 0 })
+        XCTAssertEqual(AssetCatalog.search("coin", kind: "sound", in: shipped).first?.id, "subspace-retro-sfx/coin")
+        let menu = try XCTUnwrap(AssetCatalog.search("relaxed menu", kind: "music", in: shipped).first)
+        XCTAssertEqual(menu.id, "subspace-music-loops/menu-relaxed")
+        XCTAssertNotNil(menu.file, "one loop is fetched alone, not out of its pack's 33 MB archive")
+        let line = AssetCatalog.line(menu, budget: nil)
+        XCTAssertTrue(line.contains("55 s") && line.contains("loops"), line)
+
+        let credits = AssetCatalog.credits(for: [(menu, ["Web/assets/subspace-music-loops/menu-relaxed.ogg"])])
+        XCTAssertEqual(credits.upstream.map(\.name), ["12 Music Loops"])
+        XCTAssertEqual(credits.upstream.first?.author, "Juhani Junkala (SubspaceAudio)")
+        XCTAssertEqual(credits.upstream.first?.files, ["Web/assets/subspace-music-loops/menu-relaxed.ogg"])
+    }
+
     /// What's fetched is credited with its files: a pack of CC0 work once, CC-BY work as itself, and a second fetch from
     /// the same pack adds its files to the same entry, which the About window shows with its license.
     func testFetchedAssetsAreCreditedWithTheirFiles() throws {

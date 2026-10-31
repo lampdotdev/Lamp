@@ -22,6 +22,9 @@ frameworks. A game whose play is flat is better made in 2D with Phaser (the 2d-g
 TV's browser has no WebGL 2. The game skill holds what every game needs
 (the frame loop, controls, sound, saves); read it too.
 
+A menu that's a place (the game-ui skill) is a list of stops with a camera position for each, eased between in `frame`,
+with the stop in the game's registered state and the camera registered (the game skill, "Changes while it's played").
+
 ## The renderer
 
 ### A game on Lamp's runtime
@@ -33,20 +36,23 @@ needs them. Nothing else is there, so no Draco or KTX2 files (the `assets` tool 
 loaded from the network. Physics is
 Rapier, mapped in the import map when a game needs it (Physics, below).
 
-game.js makes one `THREE.WebGLRenderer({ antialias: true })` and calls `game({ renderer, init, frame, touch })` from
-lamp-game.js once:
+game.js registers one renderer, `live.renderer(() => new THREE.WebGLRenderer({ antialias: true }))` (with
+`const live = hot(import.meta)`), each camera with `live.camera(id, build)` and its state with `live.state` (the game
+skill, "Changes while it's played", has the recipe), and calls `game({ renderer, init, frame, touch })` from
+lamp-game.js once. A `WebGPURenderer` is made and given its `await r.init()` in an async build:
+`const renderer = await live.renderer(async () => { const r = new THREE.WebGPURenderer(); await r.init(); return r; })`.
 
 - Lamp sizes the canvas to 1920x1080 and fits it to the window or screen.
 - `init` runs once, before the first frame. It may be async, to load models with
-  `new GLTFLoader().loadAsync('ship.glb')` or sounds; make or load every sound here. It starts the game where
-  `pendingRestore()` says, after a change of its code: `const was = pendingRestore();` then the level, the player,
-  the camera and the open menu or overlay from `was` when there is one, and the title or intro only when there isn't
-  (the game skill, "Changes while it's played").
+  `new GLTFLoader().loadAsync('ship.glb')` or sounds; make or load every sound here. It builds what the state says:
+  the level, the player and the open menu or overlay from the registered state, which is already back after a change
+  of the code, and the title or intro only when `play.mode` says so (the game skill, "Changes while it's played"; the
+  game-ui skill says what the title and menus are). A camera's start pose goes in its `build`, never here.
 - `frame(f)` runs about 60 times a second. It reads the controller as `f.pads[0]`, moves things by `f.dt` (and
   `f.time`), and ends with `renderer.render(scene, camera)`.
 - `touch` names the buttons Lamp's touch controls show on a phone or tablet.
-- game.js only puts the parts together, and keeps the renderer and the world's parts with `hot(import.meta).keep`
-  (the game skill, "Changes while it's played", has the recipe). The world is built in parts (the ground, the
+- game.js only puts the parts together, and keeps the scene, the lights and the world's parts with
+  `hot(import.meta).keep` (the game skill, "Changes while it's played", has the recipe). The world is built in parts (the ground, the
   buildings, the trees and street details, the props, the traffic), each in a module of its own and into a group of
   its own, so a change to one part builds only that part again; each thing that moves or changes in play (the player,
   a vehicle, the camera, enemies, the HUD's code) is a class in a module that ends with `hot(import.meta).accept()`,

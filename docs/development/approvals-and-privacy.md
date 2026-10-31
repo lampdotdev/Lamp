@@ -108,6 +108,15 @@ A capability given to one engine must be given to all of them that can take it, 
   with `AppFolder` (never through a link). They're data: a model, a picture, an atlas's XML; nothing is run, opened or
   made executable, and an archive is read by Lamp for the files the index names, never unpacked. No command runs, so
   there's nothing to approve; what the agent fetches with its own commands is still judged as fetching (#830).
+- **What Lamp fetches for itself** (`StarterDownloads`, `LlamaInstall`, `Downloads`): llama.cpp's server and libraries
+  come from Lamp's own release at the size and SHA-256 the bundle pins, and each program and library is checked for the
+  certificate that signed Lamp, once unpacked and again before the server starts; a starter's tree comes from its repository's
+  archive at the pinned commit and is used only when it hashes, as git hashes a tree, to the tree the commit object in
+  Lamp's bundle names, and that object hashes to the pin; a starter's prebuilt app comes from Lamp's own release and is
+  used only at the size and SHA-256 the bundle pins and once it's signed with the certificate that signed Lamp itself
+  (`Downloads.signedLikeLamp`, nested code too), checked before anything of it changes. Anything else is refused and
+  removed. Both are kept in Lamp's own folder, which the agent's sandbox closes. A new download Lamp runs or builds from
+  goes through `Downloads` on the same terms.
 - **The person's devices**: the agent may read a device on the network freely, but changes one (a key press, opening
   an app, volume, input, power, a setting) only once the person has said yes on Lamp's own card (`device_permission`,
   `DevicePermissions`): "Try it on your <device>?" ("Try it on <device>?" for one Lamp only found, which may not be the person's), answered Allow once (until the person next writes), Always for the
@@ -116,6 +125,12 @@ A capability given to one engine must be given to all of them that can take it, 
   nothing), in its own folder by the wish's instance, never in the app's folder, which the agent can write.
   `use_app` on an app that reaches devices (`DevicePermissions.reachesDevices`: LampRoku or LampNetwork in its code, or a
   local network reason or Bonjour types in capabilities.json) is refused unless its `device` names one the person allowed.
+  A game on Lamp's web runtime is the one exception (`DevicePermissions.useStaysInPreview`): phones joining it declare the
+  local network too, and `use_app` plays it only in the hidden preview, which is held off every network for such a game
+  (`GameKit.previewPolicy`), shared or not, and whose TypeScript build runs with no network at all, since a Bun macro is
+  the game's code run at build time (`Sandbox.run`'s `offline`). A compiled game's preview, a process nothing holds, and a
+  page with its own loop aren't. All of this reads what the game declares, which the agent can change, as the gate itself
+  always has: it stops a mistaken press, not an agent set on one.
   Each engine's command check carries the same rule (`DevicePermissions.commandRule`): pi's `CommandRisk` counts such a
   command as reaching beyond the app, so it gets Lamp's card; Claude Code's auto mode gets it as a `soft_deny` rule after
   its own (`$defaults`, `Engines.swift`); Codex's reviewer is told to refuse it (`CodexReview`), but sees only what needs

@@ -530,10 +530,10 @@ enum Sharing {
     static let maxFiles = 2000
 
     /// A shared file, or a folder holding a wish as Put on GitHub lays it out (a clone of its repository, `RepoImport`).
-    static func open(_ file: URL) throws -> Package {
+    static func open(_ file: URL, fetched: RepoArchive.Fetched? = nil) throws -> Package {
         let fm = FileManager.default
         var isFolder: ObjCBool = false
-        if fm.fileExists(atPath: file.path, isDirectory: &isFolder), isFolder.boolValue { return try RepoImport.open(folder: file) }
+        if fm.fileExists(atPath: file.path, isDirectory: &isFolder), isFolder.boolValue { return try RepoImport.open(folder: file, fetched: fetched) }
         let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("This file is too large to be a Lamp app (over 64 MB).") }
         let folder = workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
@@ -1378,7 +1378,9 @@ extension Sharing {
     /// these byte for byte is Lamp's own library wherever it sits, so the review leaves it out, as it does Lamp's files
     /// around the page. One that differs in any way is the sender's code and is read like the rest. Tests stand in
     /// their own, since a test run has none of Lamp's resources.
+    /// The versions Lamp shipped before count too (`DeviceSupport.earlierLibraryFingerprints`).
     nonisolated(unsafe) static var knownLibraries: Set<String> = Set((DeviceSupport.threeFiles + DeviceSupport.rapierFiles).map { fingerprint($0.contents) })
+        .union(DeviceSupport.earlierLibraryFingerprints)
 
     static func fingerprint(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()

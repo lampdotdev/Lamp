@@ -104,7 +104,8 @@ A capability given to one engine must be given to all of them that can take it, 
 
 When a conversation starts again, Lamp says so in a line of the chat, as any status: "Started a fresh conversation for
 <wish>: the last one had grown too large to send" when a request couldn't be sent, and, alone in a cleared chat,
-"Started again from the original" (both in `Conversation`; "How big a conversation grows" in the engines guide).
+"Started over from the original", or "Started over from the latest original" for a starter's copy brought up to the
+starter this Lamp ships (all in `Conversation`; "How big a conversation grows" in the engines guide).
 
 ## The chat's one screen
 
@@ -141,7 +142,10 @@ the desk forward (⌘[).
 
 What only Lamp could hold is handed to it, as Share hands over the file it makes: a setup card's header is in the chat,
 with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a hand-drawn icon, are in Lamp's sheet
-(`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. A device's
+(`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. The same goes
+for what builds, asked for when a request finds nothing does (`BuilderLine`): the line is in the chat, with a button for
+each of Claude Code and Codex that's on this Mac and signed in (`SidebarLine.choices`), which only a click takes since it
+spends the person's plan, and the key or sign-in in the sheet (`SetupView`). A device's
 step opens its setup window, and an iPhone or Android setup line its kind's setup. A new wish's empty chat shows its
 intro (`SidebarIntro`, `ChatLook.Intro`: its icon, its name to change, what to do, and ideas that go into the message
 box), and Apple's tools installing shows above every chat (`SidebarBanner`). A sidebar built by an earlier Lamp reads

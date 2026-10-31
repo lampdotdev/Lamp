@@ -43,7 +43,7 @@ index.html keeps the scaffold's head (lamp.js, then the import map, whose `phase
 ```js
 import * as Phaser from 'phaser';
 import { phaser, pad } from './lamp-phaser.js';
-import { BUTTON, STICK, sound, save, load, random, log, label, glyph, onInput, pendingRestore } from './lamp-game.js';
+import { BUTTON, STICK, sound, save, load, random, log, label, glyph, onInput, hot } from './lamp-game.js';
 
 const CONTROLS = { move: STICK.LEFT, jump: BUTTON.A, back: BUTTON.B, pause: BUTTON.MENU };
 
@@ -78,8 +78,9 @@ What Lamp has changed in Phaser, so its usual code works here:
   gamepad are off: `this.input.keyboard` and `this.input.gamepad` are null, so never `createCursorKeys` or
   `addKey`. Phaser's pointer input works with the mouse on the Mac; on a touch screen Lamp's touch controls lie over
   the canvas, so a game played by tapping the screen itself passes `touch: false` and reads `this.input.on('pointerdown')`.
-- **Sound is the runtime's.** Phaser's sound is off: `this.load.audio` and `this.sound` play nothing. Make effects with
-  `sound.tone` in a scene's `create` (or once, at the top of game.js), or load files with `await sound.load('hit.wav')`.
+- **Sound is the runtime's.** Phaser's sound is off: `this.load.audio` and `this.sound` play nothing. Load files from the
+  `assets` tool (the game skill, "Sound") with `await sound.load('assets/…')`, once, at the top of game.js; `sound.tone`
+  makes an effect in code where nothing there fits, in a scene's `create` or at the top of game.js.
 - **The stage is 1920x1080**, fitted to the window or screen with black around it. Lay everything out in those units.
   The page is never resized to the window: don't listen for resize.
 - **Loading.** Load each scene's files in its `preload`, best all in a first Boot scene, and start play from `create`.
@@ -88,10 +89,15 @@ What Lamp has changed in Phaser, so its usual code works here:
 
 ### Structure
 
-- **Scenes**: one for each screen (Boot, which loads; Title; Play; GameOver). A pause menu is a scene launched over
+- **Scenes**: one for each screen (Boot, which loads; Title; Play; GameOver); the game-ui skill says which screens a
+  game needs and how they look. A pause menu is a scene launched over
   play (`this.scene.launch('pause'); this.scene.pause()`), which reads the pad itself and resumes play
   (`this.scene.resume('play'); this.scene.stop()`). Keep the game's state (score, lives, level) in a plain object
   passed in `this.scene.start('play', state)`, not spread over scenes.
+- **A map as a menu**, where the game-ui skill's example suits: the stops in an array, one sprite tweened between them
+  with `this.tweens.add` as the choice changes, `this.cameras.main.pan` or `zoomTo` from the title's view, and input
+  ignored only for the tween's few frames so a fast press can go on to the next stop. The registered state keeps the stop and the
+  camera's position, and `create` sets them directly from it.
 - **The step**: move by `delta`, and give Arcade physics the work of falling, sliding and colliding. Arcade steps its
   world at a fixed 60 times a second whatever the screen's rate (its `fps`, the default), so jumps reach the same
   height on a 120 Hz Mac and a 50 Hz TV. Game logic that must be exact (a puzzle's grid, a rhythm) counts in its own
@@ -173,35 +179,40 @@ Nothing is loaded from the network, ever: the art is in Web/ or made in code.
 
 ### Sound and saves
 
-The game skill's: effects from `sound.tone` for each thing the player does or meets (a jump sliding up, a coin's two
-quick notes, noise for a hit), made once; music quiet or none. The best score, levels reached and settings with
+The game skill's: look in the `assets` tool first for an effect for each thing the player does or meets and for the
+music, loaded once; `sound.tone` only for what nothing there fits (a jump sliding up, a coin's two quick notes, noise
+for a hit), made once; music quiet or none. The best score, levels reached and settings with
 `save(name, value)` and `load(name)`, read with a default for anything new (`load('best') ?? 0`).
-`snapshot()` in phaser() keeps the player's place through a change (the scene, its mode, which menu or DOM card is
-open, the player's position, the score, the time), and `busy()` holds a change that runs the game's code again during a round (the game skill,
-"Changes while it's played"). The first scene reads `pendingRestore()` and goes straight to the scene the snapshot
-names, and that scene's `create` reads it again and builds that place with no title card or intro, so a fresh start
-and a change's start are one path:
+A registered state keeps the player's place through a change (the scene, its mode, which menu or DOM card is
+open, the player's position, the score, the time), and `busy()` in phaser() holds a change that runs the game's code again during a round (the game skill,
+"Changes while it's played"). A 2D game registers only its state: Phaser's game and cameras are made again from it. The first scene
+goes straight to the scene the state names, and that scene's `create` builds that place with no title card or intro,
+so a fresh start and a change's start are one path:
 
 ```js
+const play = hot(import.meta).state('play', {
+    version: 1,
+    start: () => ({ scene: 'title', mode: 'ready', level: 1, score: 0, paused: false, player: { x: 120, y: 400 } }),
+});
 class Boot extends Phaser.Scene {
     constructor() { super('boot'); }
     preload() { … }
-    create() { this.scene.start(pendingRestore() ? 'play' : 'title'); }
+    create() { this.scene.start(play.scene); }
 }
 class Play extends Phaser.Scene {
     constructor() { super('play'); }
     create() {
-        const was = pendingRestore();          // null on a fresh start and on every restart after the game began
-        this.level = buildLevel(was ? was.level : 1);
-        this.mode = was ? was.mode : 'ready';
-        if (was && was.paused) this.showPause(); else if (!was) hud.card('Level 1');
+        play.scene = 'play';
+        this.level = buildLevel(play.level);
+        this.hero.setPosition(play.player.x, play.player.y);
+        if (play.paused) this.showPause(); else if (play.mode === 'ready') hud.card(`Level ${play.level}`);
     }
+    update() { play.player.x = this.hero.x; play.player.y = this.hero.y; … }
 }
 ```
 
-Read it in `create`, not from the scene's data: `this.scene.restart()` with no data starts the scene with its last
-data again, so a snapshot passed that way would be put back on every restart. A picture Phaser's loader read goes in again through `assetChanged(path)` in phaser() (load it again and
-swap the texture), or the game's code runs again in place from the snapshot.
+A picture Phaser's loader read goes in again through `assetChanged(path)` in phaser() (load it again and
+swap the texture), or the game's code runs again in place from the state.
 
 ### Keeping it smooth on the slowest place
 
@@ -231,7 +242,7 @@ Once it plays right, `look_at_app` with `on_device` where Try On points.
 ## SpriteKit in a Mac or iPhone app
 
 The game is an `SKScene` subclass for each screen, shown in SwiftUI with `SpriteView`, with SwiftUI over it for the
-score, menus and prompts:
+score, menus and prompts (the game-ui skill says which screens a game needs and how they look):
 
 ```swift
 import SwiftUI
@@ -276,7 +287,7 @@ the scene as `@Observable` (Observation), which `@State` holds as above; a scene
   a fixed letter, and keys by the key ("Space", "←").
 - **Pixel art**: `texture.filteringMode = .nearest` on every texture, positions rounded to whole pixels, and the scene
   scaled by a whole number.
-- **Sound and saves**: as the game skill says for Swift (effects made once with AVAudioEngine, `.ambient` on iPhone),
+- **Sound and saves**: as the game skill says for Swift (files with AVAudioPlayer or effects made once with AVAudioEngine, `.ambient` on iPhone),
   and the best score and settings in LampStore.
 - **Game Center** (`GKLocalPlayer.local.authenticateHandler`, leaderboards) works only in an app signed for the
   person's Apple team with Game Center on: keep the game whole without it, scores in LampStore as well.

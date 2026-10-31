@@ -5,15 +5,16 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Ready-made models, sprites, tiles, icons and textures the agent can bring into an app with the `assets` tool: free
-/// work by people who publish it for anyone to use (Kenney, Quaternius, KayKit, ambientCG, Google's Poly). Lamp ships
+/// Ready-made models, sprites, tiles, icons, textures, sounds and music the agent can bring into an app with the `assets`
+/// tool: free work by people who publish it for anyone to use (Kenney, Quaternius, KayKit, ambientCG, Google's Poly,
+/// SubspaceAudio). Lamp ships
 /// only the index (Resources/asset-catalog.json, written by scripts/update-assets.py, which reads every license from
 /// where the work is published and pins every file by its SHA-256), never the files: one is fetched into the app's
 /// folder when the agent chooses it, checked against its hash, and credited in the wish's credits.json, so sharing,
 /// publishing and Put on GitHub carry its credit as they carry any other.
 ///
 /// Lamp itself fetches and writes the files, as data: nothing fetched is run, opened or made executable, and only the
-/// files the index names (a .glb, a picture, an atlas's XML) are taken out of an archive, by Lamp's own reading of it.
+/// files the index names (a .glb, a picture, an atlas's XML, a sound) are taken out of an archive, by Lamp's own reading of it.
 enum AssetCatalog {
     /// The licenses an asset may have to be offered: work anyone may use, change and share without asking. CC-BY asks for
     /// credit, which Lamp writes. Anything else in the index (a license it was refreshed with by mistake) is never offered.
@@ -52,11 +53,14 @@ enum AssetCatalog {
         var animations: [String]
         var pixels: [Int]?
         var atlas: Bool
+        var seconds: Double?
+        var loops: Bool
         var notes: String?
         var tags: [String]
         var thumb: URL?
 
         var isModel: Bool { file?.pathExtension.lowercased() == "glb" }
+        var isAudio: Bool { audioKinds.contains(kind) }
     }
 
     struct Archive: Equatable, Decodable {
@@ -99,6 +103,8 @@ enum AssetCatalog {
             var animations: [String]?
             var pixels: [Int]?
             var atlas: String?
+            var seconds: Double?
+            var loops: Bool?
             var notes: String?
             var archive: Archive?
         }
@@ -110,12 +116,14 @@ enum AssetCatalog {
         .map(items) ?? []
 
     /// The assets in an index that may be offered: a license Lamp allows, an https address, a hash to check it by, and
-    /// file paths that stay inside where they're put. One that fails any of these is left out, not repaired.
+    /// file paths that stay inside where they're put, each with a name of its own in its pack's folder, where they all
+    /// land side by side. One that fails any of these is left out, not repaired.
     static func items(from data: Data) -> [Item] {
         guard let index = try? JSONDecoder().decode(Index.self, from: data) else { return [] }
         var result: [Item] = []
         for pack in index.packs {
             guard isID(pack.id) else { continue }
+            var landed: [String: String] = [:]
             for asset in pack.assets {
                 let license = asset.license ?? pack.license
                 guard isUsable(license), let license, asset.id.hasPrefix(pack.id + "/"), isID(String(asset.id.dropFirst(pack.id.count + 1))) else { continue }
@@ -123,11 +131,22 @@ enum AssetCatalog {
                 let archive = asset.archive ?? pack.archive
                 let members = asset.files ?? []
                 if let file {
-                    guard asset.sha256.map(isHash) == true, ["glb", "png", "jpg"].contains(file.pathExtension.lowercased()) else { continue }
+                    let types = audioKinds.contains(asset.kind) ? audioFiles : ["glb", "png", "jpg"]
+                    guard asset.sha256.map(isHash) == true, types.contains(file.pathExtension.lowercased()) else { continue }
                 } else {
                     guard let archive, https(archive.url.absoluteString) != nil, isHash(archive.sha256), !members.isEmpty,
-                          members.allSatisfy(isMember) else { continue }
+                          members.allSatisfy({ isMember($0, kind: asset.kind) }) else { continue }
                 }
+                // The same file twice is fine; two files with one name would have the second written over the first.
+                let names = file.map { [($0.absoluteString, "\(slug(of: asset.id)).\($0.pathExtension)")] }
+                    ?? members.map { ((archive?.url.absoluteString ?? "") + "#" + $0, ($0 as NSString).lastPathComponent) }
+                var claimed = landed
+                guard names.allSatisfy({ source, name in
+                    let name = name.lowercased()
+                    defer { claimed[name] = source }
+                    return claimed[name] == nil || claimed[name] == source
+                }) else { continue }
+                landed = claimed
                 let page = (asset.page.flatMap(https) ?? https(pack.source))?.absoluteString ?? ""
                 result.append(Item(
                     id: asset.id, name: asset.name, kind: asset.kind, pack: pack.id, packName: pack.name,
@@ -137,9 +156,9 @@ enum AssetCatalog {
                     file: file, sha256: file == nil ? nil : asset.sha256, archive: file == nil ? archive : nil,
                     members: file == nil ? members : [], bytes: asset.bytes, triangles: asset.tris, box: asset.box,
                     texture: asset.texture, animations: asset.animations ?? [], pixels: asset.pixels,
-                    atlas: asset.atlas == "xml", notes: asset.notes, tags: asset.tags ?? [],
-                    // A Poly Pizza model's picture is beside its file, under the same name.
-                    thumb: (asset.thumb ?? pack.thumb).flatMap(https)
+                    atlas: asset.atlas == "xml", seconds: asset.seconds, loops: asset.loops == true, notes: asset.notes, tags: asset.tags ?? [],
+                    // A Poly Pizza model's picture is beside its file, under the same name. A sound has no picture to show.
+                    thumb: audioKinds.contains(asset.kind) ? nil : (asset.thumb ?? pack.thumb).flatMap(https)
                         ?? file.flatMap { $0.pathExtension == "glb" ? $0.deletingPathExtension().appendingPathExtension("webp") : nil }))
             }
         }
@@ -154,17 +173,26 @@ enum AssetCatalog {
     private static func isID(_ text: String) -> Bool {
         !text.isEmpty && text.count <= 80 && text.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") }
     }
-    /// A file inside an archive that may be taken out: a picture or an atlas, by a plain relative path.
-    private static func isMember(_ path: String) -> Bool {
-        guard Credits.validPath(path) != nil, !path.contains("\\") else { return false }
-        return ["png", "jpg", "xml"].contains((path as NSString).pathExtension.lowercased())
+    /// A file inside an archive that may be taken out, by a plain relative path: a picture or an atlas, or for a sound or
+    /// music, a sound file.
+    private static func isMember(_ path: String, kind: String) -> Bool {
+        // Part by part: a pack's folders can be longer together than a credit's line may be.
+        guard !path.hasPrefix("/"), !path.contains("\\"),
+              path.split(separator: "/").allSatisfy({ Credits.validPath(String($0)) != nil }) else { return false }
+        let types = audioKinds.contains(kind) ? audioFiles : ["png", "jpg", "xml"]
+        return types.contains((path as NSString).pathExtension.lowercased())
     }
+    private static func slug(of id: String) -> String { String(id.split(separator: "/").last ?? "") }
 
     // MARK: Finding
 
     /// The kinds the tool takes: each a word in the index, and two that gather several.
     static let modelKinds: Set<String> = ["model", "building", "vehicle", "character", "nature", "prop"]
     static let flatKinds: Set<String> = ["sprites", "tileset", "ui", "icons"]
+    /// Heard, not seen: they skip everything done to pictures. Their files are only those Lamp's runtimes and the
+    /// index's check decode (`scripts/update-assets.py`).
+    static let audioKinds: Set<String> = ["sound", "music"]
+    private static let audioFiles: Set<String> = ["ogg", "wav"]
 
     static func matches(_ item: Item, kind: String?) -> Bool {
         guard let kind = kind?.lowercased(), !kind.isEmpty, kind != "any" else { return true }
@@ -242,6 +270,8 @@ enum AssetCatalog {
         }
         if !item.animations.isEmpty { facts.append("\(item.animations.count) animations") }
         if let pixels = item.pixels, pixels.count == 2 { facts.append("\(pixels[0])×\(pixels[1]) px" + (item.atlas ? " with an XML atlas" : "")) }
+        if let seconds = item.seconds { facts.append(String(format: seconds < 10 ? "%.2g s" : "%.0f s", seconds)) }
+        if item.loops { facts.append("loops") }
         facts.append(size(item.bytes))
         if let budget, let triangles = item.triangles, triangles > budget.triangles { facts.append("too heavy for \(budget.place)") }
         let notes = item.notes.map { ": \($0)" } ?? ""
@@ -288,7 +318,7 @@ enum AssetCatalog {
     /// archive's files as `<pack>/<file name>`. Pictures larger than the budget are made smaller first, a model's inside it;
     /// an atlas's sheet is kept as it is, since its XML gives places in pixels.
     static func files(of item: Item, budget: Budget) async throws -> [(path: String, data: Data, note: String?)] {
-        let slug = String(item.id.split(separator: "/").last ?? "")
+        let slug = slug(of: item.id)
         if let file = item.file, let sha256 = item.sha256 {
             if let triangles = item.triangles, triangles > budget.triangles {
                 throw Failure(message: "it has \(triangles.formatted()) triangles, more than one model should have on \(budget.place) (about \(budget.triangles.formatted()))")
@@ -309,7 +339,7 @@ enum AssetCatalog {
             guard var data = Zip.read(member, from: zip) else { throw Failure(message: "its archive has no \(member)") }
             var note: String?
             let ext = (member as NSString).pathExtension.lowercased()
-            if !item.atlas, ext != "xml", let smaller = Pictures.shrinking(data, to: budget.texture) {
+            if !item.atlas, !item.isAudio, ext != "xml", let smaller = Pictures.shrinking(data, to: budget.texture) {
                 data = smaller
                 note = "made \(budget.texture) px at most, for \(budget.place)"
             }

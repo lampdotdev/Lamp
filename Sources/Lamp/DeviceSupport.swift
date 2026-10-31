@@ -140,6 +140,15 @@ enum DeviceSupport {
     /// loads the same in every host. Given only to a game whose page imports it (`GameKit.usesRapier`).
     static let rapierFiles = bundled("WebLibraries/rapier")
 
+    /// The SHA-256 of every file of the versions of those libraries Lamp shipped before (`WebLibraries/earlier.txt`,
+    /// which scripts/update-three.sh and update-rapier.sh add to as a version goes out), so a wish shared from an older
+    /// Lamp still has its copy told from the sender's own code (`Sharing.knownLibraries`).
+    static let earlierLibraryFingerprints: Set<String> = {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/earlier.txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return Set(text.split(whereSeparator: \.isNewline).map(String.init))
+    }()
+
     /// A folder of Lamp's bundle, every file by its path in the folder, read once; empty in a build without it, which
     /// then writes nothing for it.
     private static func bundled(_ path: String) -> [(name: String, contents: String)] {
@@ -346,6 +355,9 @@ enum DeviceSupport {
       // Lamp for once, just after Lamp has put it on the device, and keeps.
       var installed = /*LAMP_INSTALL*/null;
       var prefix = 'lamp:';
+      // Taken as the page loads: the wait before asking Lamp again is the page's, and a game's runtime takes away only
+      // the timers the game's own code left running (`Lamp.controllers` renews its session through this).
+      var browserTimeout = window.setTimeout;
 
       function read(key, fallback) {
         try { var v = window.localStorage.getItem(prefix + key); return v === null ? fallback : JSON.parse(v); }
@@ -526,7 +538,7 @@ enum DeviceSupport {
           if (i >= list.length) {
             // What the person said is paid for once it's heard: each way to the Mac once, never all of them again. Lamp
             // knows a recording by its id, so one that reaches it twice this way is still transcribed and charged once.
-            if (round === 0 && left() > 4000 && path !== '/ai/hear') return new Promise(function (r) { setTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
+            if (round === 0 && left() > 4000 && path !== '/ai/hear') return new Promise(function (r) { browserTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
             return Promise.reject(new Failure('Couldn\'t reach Lamp on your Mac. Keep this device on the same Wi-Fi as the Mac, with Lamp open, and try again.'));
           }
           return exchange(list[i], path, token, text, Math.min(timeout, left())).then(function (answer) {

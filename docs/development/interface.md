@@ -53,11 +53,13 @@ that reads `Store` in its drawing can't be listed: split it first.
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
 Providers**, the four providers in one list, with their sign-ins, key and downloads (other tabs' menus
-end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (`ExperimentalSettings.hasAny`; now publishing games as web pages, in Lamp Dev only).
+end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does, and whether usage counts go to the Lamp team; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (`ExperimentalSettings.hasAny`; now publishing games as web pages, in Lamp Dev only).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),
-`ImageModelRow`, and `.settingsPane()` at the end of each tab. A PR that adds to Settings says which tab, and why the option needs to exist at all.
+`ImageModelRow`, and `.settingsPane()` at the end of each tab. Something a choice needs fetched first (MLX's install,
+llama.cpp for a GGUF model) is one orange line under it, "Needs a one-time …", with its button and then its progress
+in the button's place, as a model's download shows. A PR that adds to Settings says which tab, and why the option needs to exist at all.
 
 ### The app's info panel
 
@@ -70,7 +72,8 @@ anything that's the same for every app and already in Settings.
 - **Credits first.** A wish built on someone else's work starts with Credits: what it's based on and its license,
   what else it uses, and the wishes it was remixed from (`AppInfoView.creditsSection`), with one button to the page of
   the work it's based on. A wish with none has no such section. Its buttons act on where the wish came from: Check for
-  Updates…, and Start Again from the Original for a wish changed since it arrived (its "Your copy" row says so).
+  Updates… (Update from the Original for a starter's copy, which follows the starter this Lamp ships rather than its
+  repository), and Start Over for a wish changed since it arrived (its "Your copy" row says so).
 - **Read-only.** A thing that can be changed is changed in Settings: each section ends in one small button
   that opens the tab where it's chosen ("Configure Providers…", "Building Settings…"). The only exception is
   undoing what an app was left with by an earlier Lamp ("Use Settings' Choices", shown only when there is

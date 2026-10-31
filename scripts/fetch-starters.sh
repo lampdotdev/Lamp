@@ -10,7 +10,25 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 folders=("$@")
-(( $#folders )) || folders=(Resources/Starters/*(N/:t))
+if (( $#folders )); then
+  swept=()
+else
+  folders=(Resources/Starters/*(N/:t))
+  # A starter taken out of Lamp leaves its fetched tree (never committed) behind, in a folder with no starter.md and
+  # nothing else in it: swept away, so it isn't built into the app. A folder with anything of its own is left, and told of.
+  swept=()
+  for folder in "${folders[@]}"; do
+    dir="Resources/Starters/$folder"
+    [[ -f "$dir/starter.md" ]] && continue
+    others=("$dir"/*(N) "$dir"/.[^.]*(N))
+    if (( $#others == 1 )) && [[ "${others[1]:t}" == tree ]]; then
+      echo "$folder: no longer a starter, removing its fetched tree"
+      rm -rf "$dir"
+      swept+=("$folder")
+    fi
+  done
+  folders=(${folders:|swept})
+fi
 failed=0
 for folder in "${folders[@]}"; do
   starter="Resources/Starters/$folder/starter.md"

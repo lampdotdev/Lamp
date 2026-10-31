@@ -82,7 +82,8 @@ public struct NetworkPolicy: Codable, Equatable, Sendable {
     /// to itself, and plugins never run. A site's scheme is as exact as CSP makes it: a ws: site lets that host and port's
     /// http: through too, and an http: site its https: (CSP's own matching), never another host or port. `connect` are
     /// sites the page may only connect to, never load from, and only while its host says so: Lamp's own controllers relay
-    /// in its TV preview, at whichever port it listens on now. They're never the page's sites, so never kept as them.
+    /// in its TV preview, at whichever port it listens on now, and a game's own relay at the port it holds
+    /// (`ControllerRuntime.pageSites`). They're never the page's sites, so never kept as them.
     public func contentSecurityPolicy(own: String, extra: [String] = [], connect: [String] = []) -> String? {
         guard restricts else { return nil }
         let sites = Array(Set(origins + extra.compactMap(Self.origin))).sorted()

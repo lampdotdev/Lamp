@@ -5,11 +5,11 @@
 #
 # They come from one commit of three.js's own repository, the builds it keeps in build/ and the addons in
 # examples/jsm, each file checked against the git hash the repository lists for it at that commit, so what's fetched is
-# exactly that commit's. A commit rather than a release: the New York starter is drawn with node materials that need a
-# fix made after the last release (0.186.1). Run it to move to another commit: change the line below.
+# exactly that commit's: the commit of a release's tag (r187), or another commit when a fix Lamp needs isn't released
+# yet. Run it to move to another commit: change the line below.
 set -euo pipefail
 cd "${0:A:h}/.."
-commit=fae873455dff9602a916b4d2e8a985921448b62a
+commit=7e89746a687bb88271253698fa108b1dd59825d0  # r187
 
 out=Resources/WebLibraries/three
 work=$(mktemp -d)
@@ -62,6 +62,9 @@ for f in sorted(kept):
 for b in builds: open(os.path.join(work, "three", os.path.basename(b)), "wb").write(fetch(b))
 print(f"{len(kept)} addons kept of {len(files)}")
 EOF
+# The version going out stays known: a wish shared from a Lamp that shipped it carries it, and the review still
+# tells it from the sender's own code (Sharing.knownLibraries, by each file's SHA-256).
+[[ -d "$out" ]] && { cat Resources/WebLibraries/earlier.txt 2>/dev/null; find "$out" -type f -exec shasum -a 256 {} + | cut -d" " -f1; } | sort -u > "$work/earlier.txt" && mv "$work/earlier.txt" Resources/WebLibraries/earlier.txt
 rm -rf "$out" && mv "$work/three" "$out"
 cat > "$out/NOTICE.md" <<EOF
 three.js at commit $commit of github.com/mrdoob/three.js (r$(grep -o "REVISION = '[^']*'" "$out/three.core.js" | cut -d"'" -f2)),

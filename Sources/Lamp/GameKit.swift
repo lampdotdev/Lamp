@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import JavaScriptCore
+import LampRelayKit
 
 /// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js, or with Phaser for a 2D game
 /// (`web/lamp-phaser.js` over the runtime), and played through Lamp's game runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
@@ -436,19 +437,21 @@ enum GameKit {
     /// nil: what a change the agent is still writing goes into the open game by (`Store.stepPage`). Parsed as modules by
     /// the Bun inside Lamp's pi (its transpiler, which reads them as a browser does and runs nothing), in the game's
     /// sandbox; Lamp's own files and the libraries beside the page are left out. A game bundled from TypeScript is checked
-    /// by its bundling instead.
-    static func codeProblem(_ project: LampProject) async -> String? {
-        guard !compilesSource(project), let bun = Agent.executable else { return nil }
-        let web = project.dir.appendingPathComponent(webFolder)
+    /// by its bundling instead. `folder`: the app's phone page (`Store.stepPhones`), whose scripts aren't modules, so
+    /// nothing is asked of them that only a module must keep to, and whose pages' inline scripts are read too.
+    static func codeProblem(_ project: LampProject, in folder: String = webFolder) async -> String? {
+        let modules = folder == webFolder
+        guard !(modules && compilesSource(project)), let bun = Agent.executable else { return nil }
+        let web = project.dir.appendingPathComponent(folder)
         let base = web.standardizedFileURL.path + "/"
         let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .map { String($0.standardizedFileURL.path.dropFirst(base.count)) }
             .filter { path in
-                ["js", "mjs"].contains((path as NSString).pathExtension.lowercased()) && !path.hasPrefix("three/") && !path.hasPrefix("phaser/")
+                (modules ? ["js", "mjs"] : ["js", "mjs", "html", "htm"]).contains((path as NSString).pathExtension.lowercased()) && !path.hasPrefix("three/") && !path.hasPrefix("phaser/")
                     && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
             }.sorted()
         guard !files.isEmpty else { return nil }
-        if let strict = strictProblem(in: files, of: web, project: project) { return strict }
+        if modules, GameKit.isGame(project), let strict = strictProblem(in: files, of: web, project: project) { return strict }
         // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
         // it runs in a scratch folder, reading the page's files by their paths.
         let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-check-\(project.id)-\(UUID().uuidString.prefix(8))")
@@ -516,8 +519,19 @@ enum GameKit {
     private static let parseCheck = """
         const [web, ...files] = process.argv.slice(2);
         const parse = new Bun.Transpiler({ loader: 'js' });
+        // The code in a file: all of it, or in a page each script written inline that runs, line breaks kept so a line is right.
+        function code(file, text) {
+          if (!/\\.html?$/i.test(file)) return [text];
+          const found = [];
+          for (const m of text.matchAll(/<script\\b([^>]*)>([\\s\\S]*?)<\\/script\\s*>/gi)) {
+            const type = /\\btype\\s*=\\s*["']?([^"'\\s>]+)/i.exec(m[1]);
+            if (/\\bsrc\\s*=/i.test(m[1]) || (type && !/^(module|(text|application)\\/(javascript|ecmascript))$/i.test(type[1]))) continue;
+            found.push('\\n'.repeat(text.slice(0, m.index).split('\\n').length - 1) + m[2]);
+          }
+          return found;
+        }
         for (const file of files) {
-          try { parse.transformSync(await Bun.file(web + '/' + file).text()); }
+          try { for (const part of code(file, await Bun.file(web + '/' + file).text())) parse.transformSync(part); }
           catch (e) {
             const m = (e.errors && e.errors[0]) || e;
             console.log(`${file}${m.position ? ':' + m.position.line : ''}: ${m.message || e}`);
@@ -556,9 +570,11 @@ enum GameKit {
             + "--banner '// Lamp builds this from src/ before every build and look: change src/, never this folder.' "
             + "&& cd \"$LAMP_APP\" && /bin/rm -rf \(Sandbox.quoted(compiledFolder)) && /bin/cp -Rp \"$LAMP_SCRATCH/app\" \(Sandbox.quoted(compiledFolder))"
         var output: [String] = []
+        // Off the network: a Bun macro (`with { type: 'macro' }`) is the game's code run here at build time, with no command
+        // check and before any preview holds it, and Bun's --no-macros doesn't stop one. A build fetches nothing.
         let status = await Sandbox.run(command, for: project, cwd: project.dir,
                                        env: ["LAMP_SCRATCH": scratch.path, "LAMP_APP": project.dir.path],
-                                       opening: [scratch.path], reading: [bun.deletingLastPathComponent().path]) { output.append($0) }
+                                       opening: [scratch.path], reading: [bun.deletingLastPathComponent().path], offline: true) { output.append($0) }
         guard status == 0 else {
             throw Failure(message: (["The game's TypeScript doesn't build:"] + output.suffix(30)).joined(separator: "\n"))
         }
@@ -688,6 +704,72 @@ enum GameKit {
         try write(for: project)
     }
 
+    /// What keeps a game's place, as `unregistered` lists it: the one thing whose lack holds a change for Reload. A renderer
+    /// or camera of the game's own starts again with the code, and the change goes in.
+    private static let unregisteredState = "its gameplay state (live.state)"
+
+    /// What a game on the runtime hasn't registered, read from its code, for the agent before it changes anything: the
+    /// open page's own word comes when a change goes in (lamp-game.js, `unregistered`), but a game brought in isn't
+    /// open yet, and its first requested edit is when it adopts this.
+    static func unregistered(_ project: LampProject) -> [String] {
+        guard isGame(project), engine(project) == .web, !ownsLoop(project) else { return [] }
+        let code = sourceText(project)
+        func has(_ pattern: String) -> Bool { code.range(of: pattern, options: .regularExpression) != nil }
+        let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]")
+        var left: [String] = []
+        if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])") && !has("\\.keep\\(\\s*['\"]renderer['\"]") { left.append("its renderer (live.renderer)") }
+        if !flat, !has("\\.camera\\(\\s*['\"]") && !has("\\.keep\\(\\s*['\"][^'\"]*[Cc]amera") { left.append("its camera (live.camera)") }
+        if !has("\\.state\\(\\s*['\"]") && !(has("\\bsnapshot\\b") && has("\\b(restore|pendingRestore)\\b")) { left.append(unregisteredState) }
+        return left
+    }
+
+    /// The game's own code: its modules in Web/ or its TypeScript in src/, without Lamp's files or what's bundled.
+    private static func sourceText(_ project: LampProject) -> String {
+        var text = ""
+        for folder in [webFolder, "src"] {
+            let root = project.dir.appendingPathComponent(folder)
+            for name in ((try? FileManager.default.subpathsOfDirectory(atPath: root.path)) ?? []).sorted()
+            where name.hasSuffix(".js") || name.hasSuffix(".mjs") || name.hasSuffix(".ts") {
+                let first = name.split(separator: "/").first.map(String.init) ?? name
+                if ["three", "rapier", "phaser", "app"].contains(first) || first.hasPrefix("lamp") { continue }
+                text += AppFile.text(root.appendingPathComponent(name), in: project) ?? ""
+                text += "\n"
+            }
+        }
+        return text
+    }
+
+    /// Goes with a request: what isn't registered yet, before the agent changes the game, which may be a part of the wish.
+    static func unregisteredNote(_ project: LampProject) -> String {
+        guard let game = ([project] + Parts.load(project)).first(where: { !unregistered($0).isEmpty }) else { return "" }
+        let left = unregistered(game)
+        let first = left.contains(unregisteredState) ? "Register its gameplay state in this change, with what else your change touches" : "Register what your change touches"
+        let held = left.contains(unregisteredState) ? " Until its state is registered or snapshot() is read back, a change that can't be swapped in waits for Reload rather than starting play over." : " What isn't registered starts again with the code."
+        return """
+
+
+        ---
+        This game hasn't registered \(left.joined(separator: ", ")). \(first), and leave the rest for the changes that \
+        touch it (the game skill, "Changes while it's played", says how, for a game from before this).\(held)
+        """
+    }
+
+    /// Goes with a look in the preview, a hidden copy that shows a change whether or not the person's open game took it.
+    @MainActor static func openGameNote(_ project: LampProject) -> String {
+        let left = unregistered(project)
+        let came = PageLive.shared.report(project, at: .mac).map { " What came through the open game's last change: \($0). Anything reset or not registered is the person's place lost: register it now, so the next change keeps it." } ?? ""
+        if PageLive.shared.holds(project) {
+            let why = PageLive.shared.reason(project).map { " (\($0))" } ?? ""
+            return " The person's open game doesn't show this: the change waits for Reload\(why). Don't say it's in."
+                + (left.isEmpty ? "" : " Register what isn't registered in this turn, so Reload takes both in.")
+        }
+        guard !left.isEmpty, PageLive.shared.isOpen(project, at: .mac) else { return came }
+        guard left.contains(unregisteredState) else {
+            return came + " In the person's open game, what isn't registered (\(left.joined(separator: ", "))) starts again with the code: register it as your change touches it."
+        }
+        return came + " The person's open game takes a change that can't be swapped in only with Reload, since it hasn't registered \(left.joined(separator: ", ")): register those in this turn, and don't say the change is in until a look says so."
+    }
+
     /// The scaffold's code: what a game that's still the scaffold has as Lamp wrote it.
     private static func scaffoldCode(web: Bool) -> [String] {
         web ? ["game.js", "world.js", "making.js"].map { "\(webFolder)/\($0)" } : ["Game/game.cpp"]
@@ -715,9 +797,10 @@ enum GameKit {
     Nothing yet: fresh scaffold, a card saying "Lamp is making this game.", for the game to replace.
 
     ## Code
-    game.js puts the parts together and keeps the renderer and the world through a change (`hot(import.meta).keep`),
-    world.js builds the world (the scene and camera) and builds it again in place when it changes, and making.js (the
-    card) is a part that changes while the game is played: a class in a module ending with `hot(import.meta).accept()`.
+    game.js puts the parts together and registers what lasts through a change: the renderer, the camera, the gameplay
+    state and the world (`hot(import.meta).renderer`, `camera`, `state`, `keep`). world.js builds the world and builds it
+    again in place when it changes, and making.js (the card) is a part that changes while the game is played: a class
+    in a module ending with `hot(import.meta).accept()`.
 
     """
 
@@ -941,6 +1024,7 @@ enum GameKit {
         var printed: [String]
         var stats: String?
         var sound: String?   // what the game played and how loud the mix came out
+        var phone: PhonePreview.Report?
     }
 
     /// Plays the script in the preview: the game from its start, saves cleared, pictures where the script says.
@@ -989,16 +1073,30 @@ enum GameKit {
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         try write(for: project)
         try await compileSource(project)
-        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(webFolder)) \"$LAMP_TO\""
+        // The phone page comes too, for the preview's phone (`PhonePreview`).
+        let phoneFolder = Sandbox.quoted(TVTemplate.phoneFolder), phone = phonePreviewFolder(project)
+        try? fm.removeItem(at: phone)
+        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(webFolder)) \"$LAMP_TO\" && if [ -e \(phoneFolder) ] || [ -L \(phoneFolder) ]; then /bin/cp -Rp \(phoneFolder) \"$LAMP_PHONE\"; fi"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the game's files.") }
         var output: [String] = []
-        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": page.path], login: false) { output.append($0) }
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": page.path, "LAMP_PHONE": phone.path], login: false) { output.append($0) }
         guard status == 0 else { throw Failure(message: "Lamp couldn't copy the game's files.\n\n" + output.suffix(4).joined(separator: "\n")) }
-        let linked = ([page] + (fm.enumerator(at: page, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
-            .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
-        if linked {
+        func holdsLink(_ folder: URL) -> Bool {
+            ([folder] + (fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
+                .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        }
+        if holdsLink(page) {
             try? fm.removeItem(at: page)
             throw Failure(message: "Web/ holds a shortcut to another file. Put the file itself in its place.")
+        }
+        if holdsLink(phone) {
+            try? fm.removeItem(at: phone)
+            throw Failure(message: "Some of the phone page's files are shortcuts to other files. Put the files themselves in their place.")
+        }
+        // Lamp's files beside it, as a phone is served them; the port is never dialed, the preview's socket being a stand-in.
+        if fm.fileExists(atPath: phone.appendingPathComponent("index.html").path) {
+            try Data(TVTemplate.phoneControllerJS.utf8).write(to: phone.appendingPathComponent("lamp-controller.js"))
+            try Data(#"{"port":1,"app":"preview"}"#.utf8).write(to: phone.appendingPathComponent("lamp-relay.json"))
         }
         guard fm.fileExists(atPath: page.appendingPathComponent("index.html").path) else { throw Failure(message: "The game has no Web/index.html.") }
         // The preview is played on this Mac, so its page is told it's the Mac's.
@@ -1010,7 +1108,7 @@ enum GameKit {
     @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
-        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: SharedNetwork.policy(for: project)) else {
+        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project), phone: phonePreviewFolder(project)) else {
             throw Failure(message: "The game didn't start in the preview, or ran for more than two minutes without finishing the play: "
                 + "check that Web/index.html loads it and that game() is called once, and look for an error in what it logged.")
         }
@@ -1028,8 +1126,38 @@ enum GameKit {
             let url = folder.appendingPathComponent("pictures/\(name).png")
             try AppFolder.write(png, to: url, in: project.dir)
             pictures.append(url)
+            guard let phone = drawn[phonePicture + name] else { continue }
+            let beside = folder.appendingPathComponent("pictures/\(phonePicture + name).png")
+            try AppFolder.write(phone, to: beside, in: project.dir)
+            pictures.append(beside)
         }
-        return Played(pictures: pictures, printed: logs, stats: result["stats"] as? String, sound: result["sound"] as? String)
+        return Played(pictures: pictures, printed: logs, stats: result["stats"] as? String, sound: result["sound"] as? String,
+                      phone: result["phone"] as? PhonePreview.Report)
+    }
+
+    /// What a web game's preview is held to: for a game that declares the local network no network at all, shared or not
+    /// (the sites of a shared game's rules may be on the home network), so that using it in the preview can't press a
+    /// device of the person's (`DevicePermissions`); otherwise a shared game's rules.
+    static func previewPolicy(_ project: LampProject) -> NetworkPolicy? {
+        previewHeldBack(project) ? NetworkPolicy() : SharedNetwork.policy(for: project)
+    }
+
+    /// Whether the preview reaches no network because of what the game declares.
+    static func previewHeldBack(_ project: LampProject) -> Bool {
+        engine(project) == .web && DevicePermissions.reachesDevices(project)
+    }
+
+    /// The name a picture of the phone page has beside the game's picture of that moment.
+    static let phonePicture = "phone-"
+
+    /// Why the game's phone page can't be played in the preview, nil when it can.
+    static func phonePreviewProblem(_ project: LampProject) -> String? {
+        guard engine(project) == .web, !ownsLoop(project) else { return "Only a game on Lamp's web runtime has its phone page in the preview." }
+        let stagedOrOwn = [phonePreviewFolder(project), project.dir.appendingPathComponent(TVTemplate.phoneFolder)]
+        guard stagedOrOwn.contains(where: { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) }) else {
+            return "This game has no phone page: put one in Phone/index.html."
+        }
+        return nil
     }
 
     /// The script for `use_app`'s actions on the controller, or why one can't be played. Each action ends with a picture.
@@ -1037,6 +1165,14 @@ enum GameKit {
         var lines: [String] = [], said: [String] = []
         var number = shot
         for action in actions {
+            if action["phone"] as? Bool == true {
+                let moves = phoneMoves(action)
+                if let problem = moves.problem { return (lines, said, problem) }
+                number += 1
+                lines += moves.lines + ["shot \(number)"]
+                said += moves.said.map { [$0] } ?? []
+                continue
+            }
             let kind = action["action"] as? String ?? ""
             let seconds = min(max(action["amount"] as? Double ?? (kind == "button" ? 0.1 : 1), 1.0 / 60), 60)
             var hold = Hold(frames: max(1, Int((seconds * 60).rounded())))
@@ -1213,9 +1349,10 @@ extension Agent.Rules {
 
     static let gameWebKit = """
     - Writing the game: read Web/lamp-game.js first, all of it; it's Lamp's runtime and the whole interface to the \
-    device. Choose 2D or 3D from what the person asked for as you begin, then read the game skill and the 2d-game or \
-    3d-game skill with `read_skill` before writing any of it: they say what the page draws with, how index.html loads \
-    it, how game.js starts the runtime, where the game sets itself up and how each frame runs. index.html loads lamp.js, \
+    device. Choose 2D or 3D from what the person asked for as you begin, then read the game skill, the game-ui skill and \
+    the 2d-game or 3d-game skill with `read_skill` before writing any of it: they say what the page draws with, how \
+    index.html loads it, how game.js starts the runtime, where the game sets itself up, how each frame runs and which \
+    screens it has. index.html loads lamp.js, \
     then the scaffold's import map, then game.js as a module: keep that. The runtime fits the 1920x1080 stage to the \
     window or screen and runs the game's frames about 60 times a second. Never call requestAnimationFrame, setTimeout or \
     setInterval for the game, nor read the clock, Math.random or localStorage: move things by the frame's time and use \
@@ -1245,22 +1382,29 @@ extension Agent.Rules {
 
     /// How a change goes into the game while it's played (lamp-game.js, "Changes while it's played"; `PageLive`).
     static let gameWebLive = """
-    - Your changes go into the game while the person plays it, so write it to keep their place. Give game() (or phaser()) \
-    `snapshot()`, returning as plain JSON everything that says where the game is (the mode, which menu or overlay is open, \
-    the level, the player's position, heading and speed, what they ride or hold, the camera, the score, lives, time, the \
-    time of day…). The new code starts straight there: as the game starts (in init, or the first Phaser scene), \
-    `pendingRestore()` from lamp-game.js gives that state, or null for a fresh start, and the game builds exactly that \
-    place, with that menu or overlay open and nothing a fresh start would show (no title, intro or tutorial), never \
-    starting fresh and then patching it. Keep snapshot() current as you add state, and let the start take a snapshot from \
-    before your change (a missing field keeps its start value). Load pictures, models, sounds and \
+    - Your changes go into the game while the person plays it, so write it to keep their place: register what has to \
+    last by name, once, as the game skill ("Changes while it's played") says, and the runtime keeps it. With \
+    `const live = hot(import.meta)` from lamp-game.js: `live.renderer(build)` for the renderer, so new code gets the one \
+    the game has rather than making another; `live.camera(id, build, { target })` for each camera, which keeps its pose, \
+    lens and target; `live.state(id, { version, start })` for everything that says where the game is, as one plain \
+    object the game changes and never replaces (the mode, which menu or overlay is open, the level, the player's \
+    position, heading and speed, what they ride or hold, the score, lives, time, the time of day…); and \
+    `live.keep(key, build, { inputs })` for each part of the world. All of it is back before init reads it and before \
+    the first frame, so the one start reads the state and builds that place, with that menu or overlay open and nothing \
+    a fresh start would show (no title, intro or tutorial). Raise `version` with a `migrate` when a field changes its \
+    meaning; a field you add takes its start value. Only what's registered is kept: a renderer, camera or variable of \
+    the game's own starts again with the code. A 2D game registers its state, since Phaser's renderer and cameras \
+    are made again from it. Before a change that can't be swapped in, you're told what isn't registered: in a game \
+    whose place wouldn't last, the change waits for Reload rather than starting play over, and a look after a run says \
+    what was kept, built again and reset. Register what's missing in that same turn. Load pictures, models, sounds and \
     data through lamp-game.js (`texture('bricks.png')`, `model('car.glb')`, `sound.load('hit.wav')`, `asset('level.json')`), \
     never by a URL of your own, so a new copy goes into the running game; where the game makes something of its own from \
     a file (a material from shader source, clones of a model, a level from JSON), give game() `assetChanged(path)`, which \
     makes it again and returns true. A change of code goes into the running game without the page opening again: \
     swapped where a module that ends with `hot(import.meta).accept()` takes it, else by the game's code running again \
-    in place from the snapshot, keeping the renderer and the parts kept with `hot(import.meta).keep`. So write the game \
-    in parts as the game skill ("Changes while it's played") says: the starting module only puts them together and keeps \
-    the renderer and each part of the world, the HUD and menus are made at each start, and what changes often is a class \
+    in place, keeping everything registered. So write the game \
+    in parts as the game skill ("Changes while it's played") says: the starting module only puts them together and \
+    registers what lasts, the HUD and menus are made at each start, and what changes often is a class \
     in a module that takes its changes. The log says what was swapped or kept and how long it took. While a match, race \
     or round is on, `busy()` returns true: a change that runs the code again waits for the next pause and the person \
     can press Reload. A change of code with no snapshot that can't be swapped starts the game again.
@@ -1268,10 +1412,13 @@ extension Agent.Rules {
 
     static let gameWebSound = """
     - Sound: a game has it, through `sound` in lamp-game.js, never an <audio> tag or a library. Give each thing the \
-    player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. Make them in \
-    code with `sound.tone({ wave, from, to, attack, hold, release, volume })` (a square or triangle wave sliding up \
-    for a jump or a pickup, down for a fall or a loss, noise for a hit or an explosion, a few milliseconds of attack \
-    so nothing clicks) unless the person gave sound files, which go in Web/ and load with `await sound.load('hit.wav')`. \
+    player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. Look in the `assets` tool before \
+    writing any: `kind` sound, `limit` 30 and no `find` lists every effect, and `kind` music every loop (the assets \
+    skill). Only sound files the person gave, which go in Web/, come before it. A file loads with \
+    `await sound.load('assets/subspace-retro-sfx/sfx_coin_single1.wav')`. Only for what nothing there fits, or what \
+    must follow the game as it's played, make it in code with `sound.tone({ wave, from, to, attack, hold, release, volume })` (a square or triangle wave sliding up for a jump or \
+    a pickup, down for a fall or a loss, noise for a hit or an explosion, a few milliseconds of attack so nothing \
+    clicks). \
     Make or load every sound once, as the game sets itself up (the 2d-game or 3d-game skill says where), never during \
     play, then `sound.play(s, { volume, pan, pitch })` as things happen, varying \
     pitch a little (0.9 to 1.1, from random()) for one heard often; `{ loop: true }` for a sound that lasts, changed \
@@ -1283,7 +1430,7 @@ extension Agent.Rules {
     static let gameWebAssets = """
     - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac. A model, picture \
     or sound the game uses is copied into Web/, which goes into the app, and loaded by its path there through lamp-game.js. \
-    Ready-made models, sprite sheets, tilesets and textures come from the `assets` tool, in one style (the assets \
+    Ready-made models, sprite sheets, tilesets, textures, sounds and music come from the `assets` tool, in one style (the assets \
     skill); otherwise shapes and colors made in code: a game of simple shapes, well lit and well colored, looks better \
     than one of mismatched models.
     """
@@ -1324,13 +1471,14 @@ extension Agent.Rules {
     static let gameSound = """
     - Sound: a game has it, through the kit (the sound part of lamp_game.h), never anything of the system's. Give \
     each thing the player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. \
-    Make them in code with `lamp_sound_tone` (a square or triangle wave sliding up for a jump or a pickup, down for a \
-    fall or a loss, noise for a hit or an explosion, a few milliseconds of attack so nothing clicks) unless the \
-    person gave sound files; theirs go in Assets/ (.wav or .ogg for effects, .ogg or .mp3 for music) and load with \
-    `lamp_sound_load`. Load or make every sound once in game_init, then `lamp_play` it as things happen, varying \
+    Look in the `assets` tool before writing any: `kind` sound, `limit` 30 and no `find` lists every effect, and `kind` \
+    music every loop (the assets skill). Only sound files the person gave come before it (they go in Assets/: .wav or .ogg for effects, .ogg \
+    or .mp3 for music). A file loads with `lamp_sound_load`. Only for what nothing there fits, or what must follow the \
+    game as it's played, make it in code with `lamp_sound_tone` (a square or triangle wave sliding up for a jump or a pickup, down for a fall or a loss, \
+    noise for a hit or an explosion, a few milliseconds of attack so nothing clicks). Load or make every sound once in game_init, then `lamp_play` it as things happen, varying \
     `pitch` a little (0.9 to 1.1, from `lamp_random_float`) for one heard often; `lamp_play_loop` for a sound that \
     lasts (an engine), changed with `lamp_voice_set` and ended with `lamp_stop`. Music is optional and quiet \
-    (0.3 to 0.4) under effects at 0.5 to 0.8: `lamp_music` for a file the person gave, or a short tune of your own \
+    (0.3 to 0.4) under effects at 0.5 to 0.8: `lamp_music` for a file the person gave or the `assets` tool brought in, or where nothing there fits a short tune of your own \
     made into samples (`lamp_sound_samples`, notes of a gentle wave with soft ends) played with `lamp_music_sound`. The pause menu \
     (Menu) turns sound and music on and off with `lamp_volume`, kept with `lamp_save`. The preview plays nothing \
     aloud; each look says what was played and how loud the mix came out: keep its loudest under -3 dB, and play \
@@ -1414,7 +1562,9 @@ extension Agent.Rules {
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
     Each look or use plays the whole game again from the start with the same moves, so after a change to the code \
     the same moves show what changed. Play it as the person would before you finish: a game that only looks right \
-    isn't done. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \
+    isn't done. Read how the game takes the controller first (APP.md, its controls code): a vehicle's gas is often a \
+    trigger, held as `key` rt alongside the stick that steers, and a game that barely moves under your moves is one \
+    you're driving with the wrong control, not one that can't be tried. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \
     `look_at_app` with `on_device` builds the game for where Try On points, opens it there and shows its own picture \
     of the screen and its log: the game's window on this Mac, the iPhone or iPad simulator, or the person's Xbox (its \
     frame times are in its log). Do that once the game plays right in the preview, to see it start where the person \

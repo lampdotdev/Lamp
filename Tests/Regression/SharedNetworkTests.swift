@@ -2,7 +2,7 @@ import Network
 import WebKit
 import XCTest
 @testable import Lamp
-import LampRelayKit
+@testable import LampRelayKit
 
 /// A page shared with this person reaches only its own files and the exact sites its review named: the policy is read
 /// from the code the sheet read, carried in the app's Info.plist, and served with every file of the page, where WebKit
@@ -59,6 +59,9 @@ final class SharedNetworkTests: XCTestCase {
         for path in FileManager.default.subpaths(atPath: three.path) ?? [] where path.hasSuffix(".js") {
             if let text = try? String(contentsOf: three.appendingPathComponent(path), encoding: .utf8) { Sharing.knownLibraries.insert(Sharing.fingerprint(text)) }
         }
+        // And those of the versions Lamp shipped before, which a starter's copy may be.
+        let earlier = (try? String(contentsOf: three.appendingPathComponent("earlier.txt"), encoding: .utf8)) ?? ""
+        Sharing.knownLibraries.formUnion(earlier.split(whereSeparator: \.isNewline).map(String.init))
 
         let house = try RepoImport.open(folder: StarterTrees.tree("thelittlehouse"))
         defer { try? FileManager.default.removeItem(at: house.folder) }
@@ -169,6 +172,172 @@ final class SharedNetworkTests: XCTestCase {
         _ = shared
     }
 
+    /// A held game reaches its own relay, at a port named before its document was served and owned until it quits, and
+    /// nothing else on this Mac: not an unrelated listener while the relay runs, and neither that nor anything that
+    /// could take the relay's place after the session stops.
+    @MainActor func testAHeldGameReachesItsOwnRelayAndNoOtherListenerEvenAfterItStops() async throws {
+        let (runtime, folder) = try Self.heldRuntime()
+        defer { runtime.stop(); try? FileManager.default.removeItem(at: folder) }
+        let unrelated = try Listener()
+        defer { unrelated.stop() }
+        let other = "127.0.0.1:\(try await unrelated.port())"
+
+        let sites = runtime.pageSites()
+        let port = try XCTUnwrap(sites.first.flatMap { URL(string: $0)?.port })
+        XCTAssertFalse(runtime.isRunning, "a port kept for the page is no session")
+        XCTAssertTrue(Self.isTaken(port), "the port is the game's before its document is served")
+
+        let (status, answer) = runtime.startNow()
+        XCTAssertEqual(status, 200)
+        let link = try XCTUnwrap((answer["links"] as? [[String: Any]])?.first)
+        XCTAssertEqual(link["socket"] as? String, sites[0] + "/", "the page is told the address its rules name")
+        let relayJSON = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(try XCTUnwrap(runtime.pagePort))/lamp-relay.json")!).0
+        let phonePort = try XCTUnwrap((JSONSerialization.jsonObject(with: relayJSON) as? [String: Any])?["port"] as? Int)
+        XCTAssertNotEqual(phonePort, port, "phones join at a port of their own, which closes with the session")
+
+        let view = try await Self.serve("""
+            <!DOCTYPE html><script>
+            window.said = [];
+            function reach(url) {
+              var s = new WebSocket(url), name = url.split('//')[1];
+              s.onmessage = function (e) { said.push(name + ' ' + JSON.parse(e.data).role); };
+              s.onopen = function () { s.send(\(Self.quoted(["t": "hello", "app": "padgame", "credential": link["credential"] as Any]))); };
+              s.onerror = function () { said.push(name + ' error'); };
+            }
+            reach('\(sites[0])/');
+            reach('ws://\(other)/open');
+            fetch('http://\(other)/open-fetch').catch(function () {});
+            </script>
+            """, policy: NetworkPolicy(origins: []), connect: sites, scheme: "lamp-game")
+        func run(_ script: String) async -> [String] {
+            await withCheckedContinuation { done in view.evaluateJavaScript(script) { value, _ in done.resume(returning: value as? [String] ?? []) } }
+        }
+        func said() async -> [String] { await run("said") }
+        let first = await said()
+        XCTAssertTrue(first.contains("127.0.0.1:\(port)/ host"), "the page's own relay lets it in: \(first)")
+        XCTAssertEqual(unrelated.paths, [], "the unrelated listener heard nothing")
+
+        // The session ends while the page stays open: its port still answers to nothing but the game.
+        runtime.stop()
+        XCTAssertFalse(runtime.isRunning)
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertTrue(Self.isTaken(port), "a stopped relay's port stays the game's: a live page's rules name it")
+        XCTAssertFalse(Self.isTaken(phonePort), "phones' port closes with the session")
+        _ = await run("""
+            said = [];
+            reach('\(sites[0])/');
+            reach('ws://\(other)/stopped');
+            fetch('http://\(other)/stopped-fetch').catch(function () {});
+            0
+            """)
+        try await Task.sleep(for: .seconds(2))
+        let stopped = await said()
+        XCTAssertFalse(stopped.contains("127.0.0.1:\(port)/ host"), "no session, no way in: \(stopped)")
+        XCTAssertEqual(unrelated.paths, [], "after the relay stops the unrelated listener still hears nothing")
+
+        // The next session is at the same address, and what the last one handed out gets nowhere.
+        let again = runtime.startNow()
+        XCTAssertEqual(((again.answer["links"] as? [[String: Any]])?.first?["socket"] as? String), sites[0] + "/")
+        _ = await run("said = []; reach('\(sites[0])/'); 0")
+        try await Task.sleep(for: .seconds(1))
+        let stale = await said()
+        XCTAssertFalse(stale.contains("127.0.0.1:\(port)/ host"), "an earlier session's credential is turned away: \(stale)")
+    }
+
+    /// A port that can't be kept is another service's: the pages named it, so they're told to go, and the rules that
+    /// follow name only the one the game has now.
+    func testAHeldPortLostToAnotherServiceRetiresThePages() throws {
+        let (runtime, folder) = try Self.heldRuntime()
+        defer { runtime.stop(); try? FileManager.default.removeItem(at: folder) }
+        let moved = expectation(description: "the pages are told to go")
+        runtime.onPagePortMoved = { moved.fulfill() }
+        let port = try XCTUnwrap(runtime.pageSites().first.flatMap { URL(string: $0)?.port })
+
+        var taker: Int32 = -1
+        defer { if taker >= 0 { close(taker) } }
+        runtime.loseRelay {
+            for _ in 0..<100 where taker < 0 {
+                taker = Self.listen(on: port)
+                if taker < 0 { usleep(50_000) }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(taker, 0, "the other service took the port")
+        wait(for: [moved], timeout: 5)
+        let now = try XCTUnwrap(runtime.pageSites().first.flatMap { URL(string: $0)?.port })
+        XCTAssertNotEqual(now, port, "rules from here on never name the port another service has")
+    }
+
+    /// A page served before there was a port (no phone page yet, or none to be had) has no rule for one: it's told to go
+    /// rather than handed an address it would be refused at, and comes back with it.
+    func testAPageWithNoPortInItsRulesComesBackForIt() throws {
+        let (runtime, folder) = try Self.heldRuntime()
+        defer { runtime.stop(); try? FileManager.default.removeItem(at: folder) }
+        let moved = expectation(description: "the page is told to go")
+        runtime.onPagePortMoved = { moved.fulfill() }
+        XCTAssertEqual(runtime.startNow().status, 503)
+        wait(for: [moved], timeout: 5)
+        let sites = runtime.pageSites()
+        XCTAssertEqual(sites.count, 1)
+        let links = runtime.startNow().answer["links"] as? [[String: Any]]
+        XCTAssertEqual(links?.first?["socket"] as? String, sites[0] + "/")
+    }
+
+    /// A later file of a page whose rules are fixed (a picture, a missing file) is no document: a port that comes with
+    /// it isn't in those rules, so the page goes.
+    func testAPortThatComesWithALaterFileRetiresThePage() throws {
+        let (runtime, folder) = try Self.heldRuntime()
+        defer { runtime.stop(); try? FileManager.default.removeItem(at: folder) }
+        let moved = expectation(description: "the page is told to go")
+        runtime.onPagePortMoved = { moved.fulfill() }
+        let page = folder.appendingPathComponent("Phone/index.html")
+        let held = try Data(contentsOf: page)
+        try FileManager.default.removeItem(at: page)
+        XCTAssertEqual(runtime.pageSites(), [], "a game with no phone page holds nothing")
+        try held.write(to: page)   // Lamp hands it one while it's open
+        XCTAssertEqual(runtime.pageSites().count, 1)
+        wait(for: [moved], timeout: 5)
+    }
+
+    private static func heldRuntime() throws -> (ControllerRuntime, URL) {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("held-relay-\(UUID().uuidString)")
+        let phone = folder.appendingPathComponent("Phone")
+        try FileManager.default.createDirectory(at: phone, withIntermediateDirectories: true)
+        try Data("<title>Pad</title>".utf8).write(to: phone.appendingPathComponent("index.html"))
+        let runtime = ControllerRuntime(app: "padgame", page: phone, holdingPagePort: true)
+        runtime.hosts = { ["127.0.0.1", "localhost"] }
+        runtime.linkHost = { "127.0.0.1" }
+        return (runtime, folder)
+    }
+
+    private static func quoted(_ value: [String: Any]) -> String {
+        let json = (try? JSONSerialization.data(withJSONObject: value)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return "'" + json.replacingOccurrences(of: "'", with: "\\'") + "'"
+    }
+
+    /// A socket listening on 127.0.0.1 at `port` as any other service on this Mac would, or -1 when the port's taken.
+    /// Reusing the address, so what only keeps it is a listener, never a closed connection still winding down.
+    private static func listen(on port: Int) -> Int32 {
+        let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        var yes: Int32 = 1
+        setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(port).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        guard bound == 0, Darwin.listen(socket, 1) == 0 else { close(socket); return -1 }
+        return socket
+    }
+
+    private static func isTaken(_ port: Int) -> Bool {
+        let socket = listen(on: port)
+        if socket >= 0 { close(socket) }
+        return socket < 0
+    }
+
     /// Every way out the page has: fetch, XMLHttpRequest, a picture, a script, a style, a WebSocket, a beacon, a frame, a
     /// form, a worker, a prefetch, a preconnect (a name spelled for the site), WebRTC's TURN server, and last its own
     /// address.
@@ -201,7 +370,7 @@ final class SharedNetworkTests: XCTestCase {
 
     /// Serves `page` from a staged folder as Lamp's preview of a shared page does (`StagedFiles`), and gives it a few
     /// seconds to try.
-    @MainActor static func serve(_ page: String, policy: NetworkPolicy?) async throws -> WKWebView {
+    @MainActor static func serve(_ page: String, policy: NetworkPolicy?, connect: [String] = [], scheme: String = "lamp-guard") async throws -> WKWebView {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-guard-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try page.write(to: folder.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
@@ -209,15 +378,16 @@ final class SharedNetworkTests: XCTestCase {
         let files = StagedFiles()
         files.folder = folder
         files.policy = policy
-        files.own = "lamp-guard://app"
+        files.own = "\(scheme)://app"
+        files.connect = connect
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        configuration.setURLSchemeHandler(files, forURLScheme: "lamp-guard")
+        configuration.setURLSchemeHandler(files, forURLScheme: scheme)
         if policy != nil { XCTAssertEqual(NetworkPolicy.holdBack(configuration.preferences).count, 5, "WebKit has every switch the guard turns off") }
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: configuration)
         let watcher = Watcher(policy: policy, own: files.own)
         view.navigationDelegate = watcher
-        view.load(URLRequest(url: URL(string: "lamp-guard://app/index.html")!))
+        view.load(URLRequest(url: URL(string: "\(scheme)://app/index.html")!))
         try await Task.sleep(for: .seconds(4))
         withExtendedLifetime((files, watcher)) {}
         return view

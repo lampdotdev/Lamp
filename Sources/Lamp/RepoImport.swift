@@ -6,7 +6,9 @@ import Foundation
 /// read as a shared file's contents are (`Sharing.open(unpacked:)`: the same review, the same checks, Lamp's own files
 /// written afresh), or the shared file in it is opened when the tree holds only that. The repository's address and the
 /// commit fetched go on the credits' chain, on the link for the wish opened, so a remix of a remix links each
-/// repository and an update from there is merged from that commit (`Upstream`).
+/// repository and an update from there is merged from that commit (`Upstream`). On a Mac with no git yet the tree comes
+/// from GitHub's archive of the commit instead (`RepoArchive`), which leaves no git records in it: what was fetched is
+/// then handed along with the tree (`Fetched`), never worked out from the tree's own files.
 enum RepoImport {
     /// A repository on GitHub, with a branch, tag or commit when the address names one.
     struct Source: Equatable {
@@ -94,6 +96,7 @@ enum RepoImport {
         }, onLine: { said.add($0) })
         guard status == 0 else {
             try? fm.removeItem(at: folder)
+            if status == Versions.noGit { throw Sharing.ImportError("Lamp needs Apple's tools for this.", detail: "Updating a wish from GitHub uses git, which comes with them.") }
             let detail = said.lines.last.map { String($0.suffix(200)) }
             if status == Versions.unconfined { throw Sharing.ImportError("Lamp couldn't fetch \(source.owner)/\(source.name).", detail: "Its sandbox couldn't be set up.") }
             throw Sharing.ImportError("Lamp couldn't get \(source.owner)/\(source.name) from GitHub.",
@@ -117,9 +120,9 @@ enum RepoImport {
     /// (`lamp-app.json` and the code), read as a shared file is once copied into a folder of Lamp's own, with Lamp's
     /// own files, the repository's README and license and the shared file beside them left where they are. A folder
     /// holding only a shared file opens that file. The folder itself is never changed: it may be the person's.
-    static func open(folder: URL) throws -> Sharing.Package {
+    static func open(folder: URL, fetched: RepoArchive.Fetched? = nil) throws -> Sharing.Package {
         let fm = FileManager.default
-        let repository = repository(of: folder)
+        let repository = fetched.map { (url: $0.url, commit: Optional($0.commit)) } ?? repository(of: folder)
         if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) {
             let copy = Sharing.workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
             var opened = false

@@ -512,6 +512,8 @@ extension TVTemplate {
 
             return {
               send: send,
+              // Whether a file is on its way, either way.
+              busy: function () { for (var k in outgoing) return true; for (k in incoming) return true; return false; },
               // A file message: true when it was one.
               text: function (route, m) {
                 var k = key(route, m.id);
@@ -630,7 +632,9 @@ extension TVTemplate {
          * Lamp.controllers.onLink(fn(url))             the address phones open: draw it with LampQR.draw (its comment
          *                                              says how); it changes every few minutes, and fn is called each time
          * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
-         * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go
+         * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go, heard as it
+         *                                              arrives, between a game's frames: a game on lamp-game.js reads
+         *                                              buttons each frame from f.phones
          * Lamp.controllers.onAxis(fn(player, name, x, y))               a stick, or the phone's tilt ('tilt'), -1 to 1
          * Lamp.controllers.onMessage(fn(player, data))                  anything else a phone sent (JSON, 16 KB at most)
          * Lamp.controllers.onFile(fn(player, file))                     a phone is sending a file (up to 64 MB):
@@ -650,8 +654,16 @@ extension TVTemplate {
          * A phone that leaves, or whose link drops, has every button it held let go (onButton with down false) before
          * onLeave, and its files end. Movement that arrives late is dropped rather than acted on. A message over
          * messageLimit isn't sent, from the TV or from a phone, and the console here says so.
+         *
+         * A game's code run again in place keeps the session: the phones stay joined with their numbers, and the new
+         * run needs no stop() or start() of its own. Where lamp-game.js does that, what the old run asked to hear ends
+         * with it, and before its first frame the new run's onLeave and onJoin hear who left and who is here (a join
+         * it has seen in its snapshot included). Presses and messages from in between aren't replayed; isHeld says
+         * what's held now.
          */
-        (function () {
+        // The session is the page's: its timers are taken from the browser here, as the page loads, so a game's runtime
+        // that takes away the timers its code left running (lamp-game.js) never takes these.
+        (function (setTimeout, clearTimeout, setInterval, clearInterval) {
           'use strict';
           var LATE = 300;          // ms after which a stick or tilt reading is dropped as stale
           var MESSAGE = 16384;     // bytes of JSON in one message, the most the relay passes on (ControllerWire.message)
@@ -846,6 +858,9 @@ extension TVTemplate {
             var mine = run;
             askTimer = setTimeout(function () {
               if (!started || mine !== run) return;
+              // Lamp's hidden preview of a game has no host for phones and asks for none: its one phone, when it has
+              // one, comes by `_attach`, and the join card is drawn from an address of a real one's length.
+              if (window.lampPreview) { link = 'http://192.168.0.2:47860/#' + new Array(151).join('0'); emit('link', [link]); return; }
               if (host === 'game' && lgService) return askService();
               if (host === 'game' && pipe) return askPipe(mine);
               // The host asked for goes with the question, so whoever answers says when it isn't that host rather than
@@ -959,7 +974,7 @@ extension TVTemplate {
               // The session the chosen host runs, and only it, ends.
               if (lgBridge) { try { lgBridge.cancel(); } catch (e) {} lgBridge = null; }
               else if (started && host === 'game' && pipe) pipeCall('stop', null);
-              else if (started && window.LampAI && LampAI._post) LampAI._post('/app/controller', host ? { stop: true, host: host } : { stop: true }, 20000).then(function () {}, function () {});
+              else if (started && !window.lampPreview && window.LampAI && LampAI._post) LampAI._post('/app/controller', host ? { stop: true, host: host } : { stop: true }, 20000).then(function () {}, function () {});
               started = false;
               host = null;
               run++;
@@ -1005,7 +1020,7 @@ extension TVTemplate {
             _attach: function (source) { others.push(source); if (started) source.start(hooks()); }
           };
           if (window.Lamp) window.Lamp.controllers = api;
-        })();
+        })(window.setTimeout, window.clearTimeout, window.setInterval, window.clearInterval);
 
         """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS).replacingOccurrences(of: "/*LAMP_LINKS*/", with: linksJS)
 
@@ -3588,7 +3603,12 @@ extension TVTemplate {
          *     onMessage: function (data) { ... },   // what the TV app sent this phone (or every phone)
          *     onFile: function (file) { ... },      // the TV app is sending a file: file.name, .type, .size,
          *                                           // .onProgress(fn(received, size)), .cancel(), .done.then(fn(arrayBuffer))
-         *     onState: function (state) { ... }     // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
+         *     onState: function (state) { ... },    // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
+         *     busy: function () { return false; },  // true while reloading the page would lose something (a drawing, a form):
+         *                                           // a newer page waits until this says false
+         *     onUpdate: function (apply) { ... }    // a newer page is ready: show a button that calls apply(), for a page
+         *                                           // that opens again only when the person says. Without it a newer page
+         *                                           // opens by itself at the first safe moment, keeping this player
          *   });
          *   pad.button('a', true); pad.button('a', false);   // a button held, then let go
          *   pad.axis('stick', x, y);                          // a stick or slider, each from -1 to 1
@@ -3744,15 +3764,61 @@ extension TVTemplate {
               if (Date.now() - lastHeard > 12000) { socket.close(); return; }
               socket.send(JSON.stringify({ t: 'beat' }));
             }, 5000);
+
+            // A newer page, published while this one is open: read from the host, which marks the page it serves with its
+            // version (a host that doesn't has nothing to compare, and the page stays as it is). It opens again at a
+            // moment nothing would be lost: no button or stick held, no file on its way, nothing being typed, and the
+            // page's own `busy` says so. The credential is kept first, so it comes back as the same player. Once for each
+            // version, so a page that can't become that version doesn't open again for ever.
+            var LOADED = (function () {
+              for (var n = typeof document !== 'undefined' && document.firstChild; n; n = n.nextSibling) {
+                var m = n.nodeType === 8 && /^lamp-phone (\S+)$/.exec(n.nodeValue);
+                if (m) return m[1];
+              }
+              return null;
+            })();
+            var pressed = {}, newer = null, told = null, updateKey = 'lamp-controller-updated:' + base;
+            function typing() {
+              var el = document.activeElement, tag = el && el.tagName;
+              return !!el && (el.isContentEditable || tag === 'TEXTAREA' || (tag === 'INPUT' && !/^(button|checkbox|radio|range|submit)$/i.test(el.type)));
+            }
+            function settled() {
+              for (var name in pressed) if (pressed[name]) return false;
+              return !files.busy() && !typing() && !(handlers.busy && handlers.busy());
+            }
+            function apply() {
+              var credential = join || sessionStorage.getItem(keyName);
+              if (!newer || !credential) return;
+              sessionStorage.setItem(keyName, credential);
+              sessionStorage.setItem(updateKey, newer);
+              closedForGood = true;
+              location.reload();
+            }
+            function consider() {
+              if (!newer || newer === LOADED || sessionStorage.getItem(updateKey) === newer) return;
+              if (handlers.onUpdate) { if (told !== newer) { told = newer; handlers.onUpdate(apply); } return; }
+              if (settled()) apply();
+            }
+            var checking = false;
+            function check() {
+              if (!LOADED || closedForGood || checking || document.hidden) return;
+              checking = true;
+              fetch(base + 'lamp-phone.json', { cache: 'no-store' }).then(function (answer) { return answer.ok ? answer.json() : null; }).then(function (said) {
+                checking = false;
+                if (said && typeof said.version === 'string') { newer = said.version; consider(); }
+              }, function () { checking = false; });
+            }
+            var watch = LOADED ? setInterval(check, 3000) : null;
+            if (LOADED) document.addEventListener('visibilitychange', check);
             open();
 
             return {
               get player() { return player; },
-              button: function (name, down) { return post({ t: 'button', name: name, down: !!down }); },
-              axis: function (name, x, y) { return post({ t: 'axis', name: name, x: x, y: y }); },
+              button: function (name, down) { pressed[name] = !!down; return post({ t: 'button', name: name, down: !!down }); },
+              axis: function (name, x, y) { pressed['axis:' + name] = !!(x || y); return post({ t: 'axis', name: name, x: x, y: y }); },
               send: function (data) { return post({ t: 'message', data: data }); },
               sendFile: function (data, info) { return files.send(route, data, info); },
-              close: function () { closedForGood = true; clearInterval(beat); clearTimeout(again); again = null; if (socket) socket.close(); }
+              close: function () { closedForGood = true; clearInterval(beat); clearInterval(watch); clearTimeout(again); again = null; if (socket) socket.close(); }
             };
           }
 

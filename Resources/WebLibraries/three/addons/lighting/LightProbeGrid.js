@@ -370,14 +370,16 @@ class LightProbeGrid extends Light {
 	/**
 	 * Constructs a new irradiance probe grid.
 	 *
-	 * The volume is centered at the object's position.
+	 * The volume is centered at the object's position. It is split into one cell
+	 * per probe, with each probe at the center of its cell, so the probes sit half
+	 * a cell inside the volume.
 	 *
 	 * @param {number} [width=1] - Full width of the volume along X.
 	 * @param {number} [height=1] - Full height of the volume along Y.
 	 * @param {number} [depth=1] - Full depth of the volume along Z.
-	 * @param {number} [widthProbes] - Number of probes along X. Defaults to `Math.max( 2, Math.round( width ) + 1 )`.
-	 * @param {number} [heightProbes] - Number of probes along Y. Defaults to `Math.max( 2, Math.round( height ) + 1 )`.
-	 * @param {number} [depthProbes] - Number of probes along Z. Defaults to `Math.max( 2, Math.round( depth ) + 1 )`.
+	 * @param {number} [widthProbes] - Number of probes along X. Defaults to `Math.max( 1, Math.round( width ) )`.
+	 * @param {number} [heightProbes] - Number of probes along Y. Defaults to `Math.max( 1, Math.round( height ) )`.
+	 * @param {number} [depthProbes] - Number of probes along Z. Defaults to `Math.max( 1, Math.round( depth ) )`.
 	 */
 	constructor( width = 1, height = 1, depth = 1, widthProbes, heightProbes, depthProbes ) {
 
@@ -421,13 +423,14 @@ class LightProbeGrid extends Light {
 		 * @type {Vector3}
 		 */
 		this.resolution = new Vector3(
-			widthProbes !== undefined ? widthProbes : Math.max( 2, Math.round( width ) + 1 ),
-			heightProbes !== undefined ? heightProbes : Math.max( 2, Math.round( height ) + 1 ),
-			depthProbes !== undefined ? depthProbes : Math.max( 2, Math.round( depth ) + 1 )
+			widthProbes !== undefined ? widthProbes : Math.max( 1, Math.round( width ) ),
+			heightProbes !== undefined ? heightProbes : Math.max( 1, Math.round( height ) ),
+			depthProbes !== undefined ? depthProbes : Math.max( 1, Math.round( depth ) )
 		);
 
 		/**
-		 * The world-space bounding box for the grid. Updated automatically
+		 * The world-space bounding box for the grid. This is the volume the grid
+		 * lights, with the probes half a cell inside it. Updated automatically
 		 * by {@link LightProbeGrid#bake}.
 		 *
 		 * @type {Box3}
@@ -435,22 +438,19 @@ class LightProbeGrid extends Light {
 		this.boundingBox = new Box3();
 
 		/**
-		 * Distance in world units over which the grid contribution fades out
-		 * past the volume boundary. `0` applies the contribution everywhere
-		 * (clamped), which matches a single-volume setup. Use a small positive
-		 * value to blend multiple overlapping grids.
+		 * Where grids overlap, the grid with the highest priority lights the
+		 * fragment. On ties, the most recently created grid wins.
 		 *
 		 * @type {number}
 		 * @default 0
 		 */
-		this.falloff = 0;
+		this.priority = 0;
 
 		/**
 		 * The single RGBA atlas 3D texture storing all seven packed SH
 		 * sub-volumes stacked along Z.
 		 *
 		 * @type {?Data3DTexture}
-		 * @default null
 		 */
 		this.texture = null;
 
@@ -468,6 +468,7 @@ class LightProbeGrid extends Light {
 		this._bouncePass = - 1;
 
 		this.updateBoundingBox();
+		this._ensureTextures();
 
 	}
 
@@ -487,9 +488,9 @@ class LightProbeGrid extends Light {
 		const w = this.width, h = this.height, d = this.depth;
 
 		target.set(
-			res.x > 1 ? pos.x - w / 2 + ix * w / ( res.x - 1 ) : pos.x,
-			res.y > 1 ? pos.y - h / 2 + iy * h / ( res.y - 1 ) : pos.y,
-			res.z > 1 ? pos.z - d / 2 + iz * d / ( res.z - 1 ) : pos.z
+			pos.x - w / 2 + ( ix + 0.5 ) * w / res.x,
+			pos.y - h / 2 + ( iy + 0.5 ) * h / res.y,
+			pos.z - d / 2 + ( iz + 0.5 ) * d / res.z
 		);
 
 		return target;
@@ -692,8 +693,6 @@ class LightProbeGrid extends Light {
 
 			const res = this.resolution;
 			this._bounceGrid = new LightProbeGrid( this.width, this.height, this.depth, res.x, res.y, res.z );
-			this._bounceGrid._ensureTextures();
-			renderer.initRenderTarget( this._bounceGrid._renderTarget );
 
 		}
 
@@ -704,8 +703,6 @@ class LightProbeGrid extends Light {
 		} else if ( start === 0 ) {
 
 			const renderTarget = this._renderTarget;
-
-			renderer.initRenderTarget( renderTarget );
 			_copyRegion.min.set( 0, 0, 0 );
 			_copyRegion.max.set( renderTarget.width, renderTarget.height, renderTarget.depth );
 			renderer.copyTextureToTexture( renderTarget.texture, this._bounceGrid.texture, _copyRegion );
@@ -717,7 +714,7 @@ class LightProbeGrid extends Light {
 		bounceGrid.boundingBox.copy( this.boundingBox );
 		// The direct pass adds the grid unlit, so all passes share the lights and their shaders.
 		bounceGrid.intensity = pass === 0 ? 0 : this.intensity;
-		bounceGrid.falloff = this.falloff;
+		bounceGrid.priority = this.priority;
 		scene.add( bounceGrid );
 
 	}

@@ -138,10 +138,15 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
 /// would leave phones holding buttons on a game that can't hear them, so leaving ends the session (every phone let go,
 /// both listeners closed) and coming back opens a new one at the page's next ask, which phones join by scanning its
 /// code again. A moment away that isn't leaving (a permission's alert, the app switcher pulled half up) ends nothing.
+///
+/// A page held to its sites keeps the port it reaches the relay at through all of that, on this device alone, since its
+/// rules name that port for as long as it's open (`ControllerRuntime`'s `holdingPagePort`).
 enum LampControllers {
     private static let runtime: ControllerRuntime = {
         let runtime = ControllerRuntime(app: LampInstall.slug.isEmpty ? (Bundle.main.bundleIdentifier ?? "game") : LampInstall.slug,
-                                        page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"))
+                                        page: Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent"),
+                                        holdingPagePort: LampPageGuard.current != nil)
+        runtime.onPagePortMoved = { DispatchQueue.main.async { MainActor.assumeIsolated { LampPageGuard.retirePages() } } }
         #if os(iOS)
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
             runtime.stop {}
@@ -149,6 +154,15 @@ enum LampControllers {
         #endif
         return runtime
     }()
+
+    /// What a held page's rules let it connect to for its phones.
+    static var pageSites: [String] { runtime.pageSites() }
+
+    /// Serves this phone page from now on, under the session that's open (`LampPageLive`). Nil: the bundle's, by its own
+    /// version.
+    static func use(page: URL, version: String?) {
+        runtime.use(page: page, version: version ?? (try? ControllerSnapshot.read(page))?.version ?? "")
+    }
 
     static func answer(stop: Bool, _ done: @escaping @Sendable (Int, [String: Any]) -> Void) {
         // Both on the runtime's own queue, in the order the page asked: a stop then a start for the next round opens a
@@ -698,7 +712,9 @@ enum LampPageGuard {
 
     /// The headers every file of the page is served with.
     static func headers(scheme: String) -> [String: String] {
-        guard let csp = current?.contentSecurityPolicy(own: own(scheme)) else { return [:] }
+        // The game's own relay is its host's to name, for this launch only: it's never one of the page's sites, kept with
+        // the ones the person allowed, or anything the page says.
+        guard let held = current, let csp = held.contentSecurityPolicy(own: own(scheme), connect: LampControllers.pageSites) else { return [:] }
         // A name looked up ahead is a request too: a page could spell what it has in one.
         return ["Content-Security-Policy": csp, "X-DNS-Prefetch-Control": "off"]
     }
@@ -707,6 +723,7 @@ enum LampPageGuard {
     /// of Lamp's own the page can't reach (it hears only refusals WebKit made, never ones the page made up).
     @MainActor static func attach(to configuration: WKWebViewConfiguration, scheme: String) {
         guard policy != nil else { return }
+        forgetOldRelays()
         let world = WKContentWorld.world(name: "LampGuard")
         configuration.userContentController.add(LampPageRefused(scheme: scheme), contentWorld: world, name: "lampRefused")
         configuration.userContentController.addUserScript(WKUserScript(source: """
@@ -719,6 +736,16 @@ enum LampPageGuard {
         NetworkPolicy.holdBack(configuration.preferences)
     }
 
+    /// A game's relay was once refused here, and the port the person allowed for it was that launch's alone: what's left
+    /// of those is a port on this device nothing should be able to reach, so it goes, once, for a game that takes phones.
+    private static func forgetOldRelays() {
+        let done = "LampRelayAllowancesForgotten"
+        guard !UserDefaults.standard.bool(forKey: done),
+              let phone = Bundle.main.resourceURL?.appendingPathComponent("Phone/index.html"), FileManager.default.fileExists(atPath: phone.path) else { return }
+        UserDefaults.standard.set(allowed.filter { !$0.hasPrefix("ws://127.0.0.1:") }, forKey: allowedKey)
+        UserDefaults.standard.set(true, forKey: done)
+    }
+
     private static let watchers = NSMapTable<WKWebView, LampPageWatcher>.weakToStrongObjects()
 
     /// Where the page may go, decided for every navigation of its window and frames.
@@ -728,6 +755,11 @@ enum LampPageGuard {
         watchers.setObject(watcher, forKey: view)
         view.navigationDelegate = watcher
         view.uiDelegate = watcher
+    }
+
+    /// Every page opened again, for rules that have changed under them: what it runs goes with it, its workers too.
+    @MainActor static func retirePages() {
+        for case let view as WKWebView in watchers.keyEnumerator().allObjects { view.reload() }
     }
 
     /// Lets the page reach `site` from now on, on this device, and opens the page again with it.
@@ -828,7 +860,8 @@ enum LampPageGuard {
               let view = message.webView, let policy = LampPageGuard.current else { return }
         let site = NetworkPolicy.origin(address)
         FileHandle.standardError.write(Data("Lamp blocked this shared app's request to \(site ?? String(address.prefix(200))) (\(said["what"] as? String ?? ""))\n".utf8))
-        guard policy.mayConnect, let site, !shown.contains(site) else { return }
+        // The game's own relay is never offered: an allowance is kept, and that port is this launch's.
+        guard policy.mayConnect, let site, !shown.contains(site), !LampControllers.pageSites.contains(site) else { return }
         shown.insert(site)
         waiting.append(site)
         showNext(over: view)
@@ -1139,6 +1172,8 @@ final class LampPageBlockedHost: NSObject {
     private var epoch = "", gen = 0
     private var have: [String: String] = [:]
     private var served: Set<String> = []
+    /// The phone page Lamp last handed this copy, nil for the one in its bundle.
+    private var phone: (version: String, files: [String: String])?
     /// Under the app's own name: an app that isn't sandboxed shares the caches folder with every other.
     private static let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent(Bundle.main.bundleIdentifier ?? "LampPage").appendingPathComponent("LampPage")
@@ -1174,8 +1209,16 @@ final class LampPageBlockedHost: NSObject {
                 served = gone
                 files.take(changed: hashes.mapValues { Self.cache.appendingPathComponent($0) }, gone: gone)
             }
+            if let version = kept["phone"] as? String, let hashes = kept["phoneFiles"] as? [String: String],
+               FileManager.default.fileExists(atPath: Self.phoneFolder(version).path) {
+                phone = (version, hashes)
+                LampControllers.use(page: Self.phoneFolder(version), version: version)
+            }
         }
     }
+
+    /// Where a phone page Lamp handed over is kept, one folder to a version: written whole, then served.
+    private static func phoneFolder(_ version: String) -> URL { cache.appendingPathComponent("phone-" + version) }
 
     func start(_ view: WKWebView) {
         page = view
@@ -1187,7 +1230,7 @@ final class LampPageBlockedHost: NSObject {
         var pause: UInt64 = 2
         while page != nil {
             do {
-                let answer = try await call("/app/page/live", ["after": gen, "epoch": epoch, "place": Self.place, "bundle": Self.bundle], timeout: 60)
+                let answer = try await call("/app/page/live", ["after": gen, "epoch": epoch, "place": Self.place, "bundle": Self.bundle, "phone": true], timeout: 60)
                 pause = 2
                 if let e = answer["epoch"] as? String, e != epoch { epoch = e; gen = 0 }
                 if answer["send"] as? String == "saved" { await sendSaved(); continue }
@@ -1205,8 +1248,13 @@ final class LampPageBlockedHost: NSObject {
         let hashes = answer["files"] as? [String: String] ?? [:]
         let gone = Set(answer["gone"] as? [String] ?? [])
         let now = answer["now"] as? Bool ?? false
+        let newPhone = (answer["phone"] as? [String: Any]).flatMap { said -> (version: String, files: [String: String])? in
+            guard let version = said["version"] as? String, let files = said["files"] as? [String: String] else { return nil }
+            return (version, files)
+        }
+        let phoneChanged = newPhone?.version != phone?.version
         // What this copy already serves (Lamp asked again after its own restart): nothing for the page to do.
-        if hashes == have, gone == served, !now { gen = next; return }
+        if hashes == have, gone == served, !now, !phoneChanged { gen = next; return }
         try FileManager.default.createDirectory(at: Self.cache, withIntermediateDirectories: true)
         for (_, hash) in hashes where !FileManager.default.fileExists(atPath: Self.cache.appendingPathComponent(hash).path) {
             let file = try await call("/app/page/file", ["place": Self.place, "hash": hash], timeout: 60)
@@ -1216,17 +1264,21 @@ final class LampPageBlockedHost: NSObject {
             }
             try data.write(to: Self.cache.appendingPathComponent(hash), options: .atomic)
         }
+        if phoneChanged { try await takePhone(newPhone) }
         files.take(changed: hashes.mapValues { Self.cache.appendingPathComponent($0) }, gone: gone)
         // Files no copy names any more go.
         let kept = Set(hashes.values)
         for old in Set(have.values).subtracting(kept) { try? FileManager.default.removeItem(at: Self.cache.appendingPathComponent(old)) }
         have = hashes
         served = gone
-        if let data = try? JSONSerialization.data(withJSONObject: ["bundle": Self.bundle, "files": hashes, "gone": Array(gone)]) {
-            try? data.write(to: Self.manifest, options: .atomic)
-        }
+        var manifest: [String: Any] = ["bundle": Self.bundle, "files": hashes, "gone": Array(gone)]
+        if let phone { manifest["phone"] = phone.version; manifest["phoneFiles"] = phone.files }
+        if let data = try? JSONSerialization.data(withJSONObject: manifest) { try? data.write(to: Self.manifest, options: .atomic) }
         gen = next
-        let change: [String: Any] = ["gen": next, "changed": answer["changed"] as? [String] ?? [], "now": now, "pill": Self.place != "mac"]
+        let pageChanged = answer["changed"] as? [String] ?? []
+        // Only the phone page: the game's own page has nothing to do.
+        if pageChanged.isEmpty, !now { tell(next, "phone"); return }
+        let change: [String: Any] = ["gen": next, "changed": pageChanged, "now": now, "pill": Self.place != "mac"]
         guard let page, let json = try? JSONSerialization.data(withJSONObject: change) else { return }
         let taken = try? await page.evaluateJavaScript("window.__lampLive ? window.__lampLive(\(String(decoding: json, as: UTF8.self))) : false", in: nil, contentWorld: .page)
         // A page without Lamp's game runtime is opened again as it is.
@@ -1234,6 +1286,35 @@ final class LampPageBlockedHost: NSObject {
             page.reload()
             tell(next, "reloading")
         }
+    }
+
+    /// Serves the phone page Lamp handed over, whole: its files fetched and checked, written to a folder of its own and
+    /// only then swapped in, so a phone reads the old page or the new one and never a mix. Nil: back to the bundle's.
+    private func takePhone(_ new: (version: String, files: [String: String])?) async throws {
+        let bundled = Bundle.main.resourceURL?.appendingPathComponent("Phone") ?? URL(fileURLWithPath: "/nonexistent")
+        guard let new else {
+            LampControllers.use(page: bundled, version: nil)
+            if let old = phone { try? FileManager.default.removeItem(at: Self.phoneFolder(old.version)) }
+            phone = nil
+            return
+        }
+        let folder = Self.phoneFolder(new.version)
+        if !FileManager.default.fileExists(atPath: folder.path) {
+            let partial = Self.cache.appendingPathComponent("partial-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: partial) }
+            for (path, hash) in new.files {
+                let file = try await call("/app/page/file", ["place": Self.place, "hash": hash], timeout: 60)
+                guard let text = file["data"] as? String, let data = Data(base64Encoded: text), Self.name(of: data) == hash,
+                      !path.split(separator: "/").contains(where: { $0 == ".." || $0.hasPrefix(".") }) else { throw URLError(.cannotDecodeContentData) }
+                let target = partial.appendingPathComponent(path)
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: target)
+            }
+            try FileManager.default.moveItem(at: partial, to: folder)
+        }
+        LampControllers.use(page: folder, version: new.version)
+        if let old = phone, old.version != new.version { try? FileManager.default.removeItem(at: Self.phoneFolder(old.version)) }
+        phone = new
     }
 
     /// What the page has saved (its localStorage, where LampStore keeps it), for Lamp's preview of the app to start from:
@@ -1256,10 +1337,10 @@ final class LampPageBlockedHost: NSObject {
         tell(said["gen"] as? Int ?? gen, state, why: said["why"] as? String)
     }
 
-    /// `why` is the page's reason for opening again or holding a change: code it couldn't swap in.
+    /// `why` is the page's reason for opening again or holding a change (code it couldn't swap in), or what came through.
     private func tell(_ gen: Int, _ state: String, why: String? = nil) {
         var body: [String: Any] = ["gen": gen, "state": state, "epoch": epoch, "place": Self.place]
-        if let why { body["why"] = String(why.prefix(300)) }
+        if let why { body["why"] = String(why.prefix(600)) }
         Task { _ = try? await call("/app/page/state", body, timeout: 10) }
     }
 

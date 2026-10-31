@@ -4,9 +4,9 @@ import LampSidebarKit
 
 /// The first-launch welcome: what Lamp is, then the desk, where the wishes Lamp comes with (`Starters`) are waiting
 /// to be used before anything is set up; the first change asked for asks for setup (`Store.askForSetup`). A starter
-/// brought from the site opens at once, and a wish brought from the site, which has to be made, goes on to setup and
-/// is made once that's done. It lives in the main window, dressed up without the usual window chrome, and the
-/// window grows into Lamp itself at the end.
+/// brought from the site or a shared app opened meanwhile goes straight to the desk and opens, and a wish brought from
+/// the site, which has to be made, goes on to setup and is made once that's done. It lives in the main window, dressed
+/// up without the usual window chrome, and the window grows into Lamp itself at the end.
 enum Onboarding {
     static let key = "onboarded"
     /// A wish from the site and how far the welcome got. Saved, so that quitting during setup, or losing the
@@ -118,6 +118,7 @@ struct OnboardingView: View {
         }
         .onChange(of: store.arrivedWish) { arrive(animated: true) }
         .onChange(of: store.arrivedRemix) { arrive(animated: true) }
+        .onChange(of: store.arrivedImport) { arrive(animated: true) }
         // Menus can be rebuilt at any moment, so Settings is set again at each update while the welcome is up: off
         // until it's finished. The welcome stays on screen a moment after that, fading out, and an update then must
         // leave Settings on, or ⌘, stays dead until Lamp is opened again.
@@ -138,7 +139,8 @@ struct OnboardingView: View {
     /// Takes a wish from the site: one its link brought or, the first time the welcome is ever shown, one its
     /// Download button left on the clipboard. That one look is all Lamp takes by itself.
     /// A remix (a starter's, with a request) is there to be tried, so it goes straight to the desk and opens; one of a
-    /// repository goes to the store, which keeps it for after the welcome as any repository opened then.
+    /// repository goes to the store, which keeps it for after the welcome as any repository opened then. So does a shared
+    /// app (`Store.importApp`): the hello gives way to its review, and only setup under way for a wish keeps it waiting.
     private func arrive(animated: Bool) {
         var found = store.arrivedWish
         if found != nil { store.arrivedWish = nil }
@@ -167,6 +169,11 @@ struct OnboardingView: View {
         } else if let found {
             Onboarding.keptRemix = nil
             receive(found, animated: animated)
+        } else if store.hasWaitingImport, step == .hello, prompt.trimmed.isEmpty {
+            Task {
+                try? await Task.sleep(for: .seconds(0.1))
+                finish()
+            }
         }
     }
 
@@ -212,8 +219,7 @@ struct OnboardingView: View {
             // Once Lamp's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
-            // A shared app opened during the welcome waits for setup, which nothing else asks for now.
-            if !store.openWaitingImport(), store.hasWaitingImport { store.askForWhatsMissing() }
+            store.openWaitingImport()
             // A remix from the site: the desk's own copy of its starter, just put there, opened with the request in
             // its box for them to send.
             if let remix = Onboarding.keptRemix {
@@ -657,7 +663,12 @@ private struct LampAgentOptions: View {
         case .openRouter:
             if KeyStore.key(for: "openrouter") != nil { use(provider: "openrouter", model: nil) }
         case .onThisMac:
-            if localChoice.hasPrefix("installed:") { use(provider: Builder.localProvider, model: String(localChoice.dropFirst(10))) }
+            if localChoice.hasPrefix("installed:") {
+                let id = String(localChoice.dropFirst(10))
+                use(provider: Builder.localProvider, model: id)
+                // Picked to run here: what runs it comes now, rather than with the first request.
+                if LocalModels.model(id)?.format == .gguf { local.getServer() }
+            }
         default:
             break
         }
@@ -771,6 +782,18 @@ private struct LampAgentOptions: View {
             }
             if let error = local.errors[spec.id] {
                 Text(error).font(.system(size: 12)).foregroundStyle(.orange)
+            }
+        } else if let progress = local.progress[LocalModels.serverID] {
+            HStack(spacing: 10) {
+                Text("Downloading what runs it on this Mac.").font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+                ProgressView(value: progress).frame(width: 100)
+            }
+        } else if let error = local.errors[LocalModels.serverID] {
+            HStack(spacing: 10) {
+                Text(error).font(.system(size: 12)).foregroundStyle(.orange)
+                Spacer()
+                Button("Try Again") { local.getServer() }.buttonStyle(PaperButtonStyle(.outline))
             }
         } else if isUsing(.onThisMac) {
             ready("\(local.installed.first { "installed:" + $0.id == localChoice }?.name ?? "This model") will make your apps.")

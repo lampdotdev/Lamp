@@ -6,7 +6,7 @@ export async function github(path, accept = "application/vnd.github+json", redir
   const token = process.env.GITHUB_TOKEN;
   if (!token) throw new Error("GITHUB_TOKEN isn't set");
   return fetch(`https://api.github.com${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "forge-updates" },
+    headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "lamp-updates" },
     redirect,
   });
 }
@@ -47,6 +47,16 @@ export function dmgAsset(release) {
 /** Whether a name is one a DMG asset may have: what a download may ask for by name. */
 export function isDmgName(name) {
   return /^(Lamp|Lamp-Nightly|Forge)-[0-9][0-9A-Za-z.+-]*\.dmg$/.test(name);
+}
+
+/**
+ * Whether a name is one of the files a Lamp fetches from its own release when it needs them, rather than carrying them:
+ * a starter's prebuilt app (Lamp-Starter-<starter>-<version>.zip, Lamp-Nightly-Starter-… for the nightly) and llama.cpp
+ * (Lamp-llama-<build>-<version>.zip). Lamp's bundle pins each by size and hash, so this only says which files the
+ * release may hand out.
+ */
+export function isFetchedName(name) {
+  return /^(Lamp|Lamp-Nightly)-(Starter-[a-z0-9-]+|llama-b[0-9]+)-[0-9][0-9A-Za-z.+-]*\.zip$/.test(name);
 }
 
 /** The release's sparkle.json (version, signature, length), written by the release workflow. */
