@@ -10307,6 +10307,15 @@ final class Store: ObservableObject {
     /// again from the start with the code as it is now.
     private func useOnGame(_ project: LampProject, actions: [[String: Any]]) async -> (Int, [String: Any]) {
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        // Only waiting presses nothing: it's a look, so it's answered as one, from the game open on the person's Mac where it
+        // can be (`lookAtOpenGame`), in seconds, rather than by playing the whole game again from its start out of sight.
+        if !actions.isEmpty, actions.allSatisfy({ ($0["action"] as? String) == "wait" }),
+           var answer = await lookAtOpenGame(project, turn: owner, motion: false) {
+            if let text = answer.1["text"] as? String {
+                answer.1["text"] = "Only waiting presses nothing, so Lamp looked instead (call look_at_app for a look). " + text
+            }
+            return answer
+        }
         guard let play = GameKit.plays[project.id] else { return (200, ["text": "Call look_at_app first: it builds the preview and starts a play there."]) }
         let shots = play.filter { $0.hasPrefix("shot ") }.count
         let moves = GameKit.script(for: actions, startingAt: shots)

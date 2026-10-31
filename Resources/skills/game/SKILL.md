@@ -316,6 +316,8 @@ plays the game from a script of the controller's moves (`use_app` with `stick`, 
 random numbers each time, so the same moves after a change show exactly what it changed. Play a whole round: start,
 learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there always something
 to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and play it again.
+Playing is for pressing and steering: each `use_app` plays the game again from its start, which takes a minute or more
+for a big world. To see a change, look (`look_at_app`), which shows the game open on the person's Mac in seconds.
 
 ## A game and the wish's other apps
 
