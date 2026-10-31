@@ -299,6 +299,7 @@ final class PhonePagePublishingTests: XCTestCase {
 
         XCTAssertTrue(PageLive.shared.putInNow(game), "Reload")
         XCTAssertTrue(PageLive.shared.holds(of: game).isEmpty)
+        XCTAssertTrue(try XCTUnwrap(Store.shared.untoldHolds(game)).contains("nothing waits"), "what the agent was told stops being true")
         XCTAssertNil(Store.shared.untoldHolds(game), "nothing left to say")
     }
 }

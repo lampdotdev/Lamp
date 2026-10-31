@@ -1247,7 +1247,7 @@ async function unusedFiles(change, paths) {
         const sources = [html];
         for (const path of [...imports.keys(), ...styles]) {
             if (path == null || lampOwn(path) || removed.includes(path)) continue;
-            sources.push(texts.get(path) ?? inline.get(path) ?? (modules.get(path) || {}).text ?? await readText(path));
+            sources.push(texts.get(path) ?? inline.get(path) ?? await readText(path));
         }
         return asked.filter(p => !sources.some(text => names(text, p)));
     } catch (e) { return []; }

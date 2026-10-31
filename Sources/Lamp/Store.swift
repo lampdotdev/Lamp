@@ -5498,13 +5498,14 @@ final class Store: ObservableObject {
     /// once it's resolved: a change that goes in by itself reaches the agent only through something it calls after that,
     /// so every tool's answer carries this (`agentRequest`, `mcp`), whichever engine asks, and a request carries what
     /// no tool's answer got to. An agent with no call left ends the turn without it, and the chat's Reload line under its
-    /// answer says what waits.
+    /// answer says what waits. What it was told stays true to it until it hears otherwise, so the end of a hold is told too.
     func untoldHolds(_ project: LampProject) -> String? {
         let wish = wish(of: project)
         let holds = apps(of: wish).flatMap { app in PageLive.shared.holds(of: app).map { (hold: $0, name: app.name) } }
         let told = toldHolds[wish.id] ?? []
         toldHolds[wish.id] = Set(holds.map(\.hold.id))
-        let notes = holds.filter { !told.contains($0.hold.id) }.map { Self.holdNote($0.hold, name: $0.name) }
+        var notes = holds.filter { !told.contains($0.hold.id) }.map { Self.holdNote($0.hold, name: $0.name) }
+        if !told.isEmpty, holds.isEmpty { notes.append("Note from Lamp: the change that was waiting has gone in, so nothing waits for Reload now; don't tell the person to press it.") }
         return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
     }
 
@@ -5529,8 +5530,7 @@ final class Store: ObservableObject {
     /// `progress` says what's saved is whole, which is what lets the open game take it (`autoApply`), and the agent's next
     /// words may be its last: so its answer waits for how that went, ten seconds at most, and carries it (`untoldHolds`).
     private func awaitStep(_ project: LampProject) async {
-        guard let turn = turns[project.id] ?? turns[wish(of: project).id] else { return }
-        var mac = current(project) ?? project
+        guard let turn = turns[project.id] ?? turns[wish(of: project).id], var mac = stepped(project) else { return }
         mac.chosen = .mac
         guard stepsPage(mac) else { return }
         var waited = 0
@@ -9324,7 +9324,7 @@ final class Store: ObservableObject {
             owner?.reloadWhy = owner?.pageReopened == true || owner?.pageRanAgain == true ? PageLive.shared.reason(project) : nil
             if outcome != .unchanged { owner?.shown.append(Date()) }
             if !partial { pageWentIn(project, saying: false) }
-            if inFront { log(project, .status, "\(project.name) is updated") }
+            if inFront, !partial { log(project, .status, "\(project.name) is updated") }
         }
         // The copy installed on this Mac is the older one now: the build goes in when the app closes.
         if place == .mac {

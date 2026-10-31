@@ -571,7 +571,7 @@ Lamp holds what the page said it holds as `PageLive.Hold`: part of the change in
 of it waiting for Reload, worked out from the page's words each time, so a later change or Reload ends it. A step can
 land after the agent's last call, so `progress` waits up to ten seconds for the step it lets go in (`Store.awaitStep`),
 and every tool's answer on every engine carries a hold the agent hasn't heard of, once, with what waits by name
-(`Store.untoldHolds`, `holdNote`); so does its next request, for one no answer got to. An agent with no call left can
+(`Store.untoldHolds`, `holdNote`), and of the end of one it heard of; so does its next request, for one no answer got to. An agent with no call left can
 end its turn without it, and the chat's Reload line under its answer says what waits, in plain words (`ReloadLine`). A look
 in the hidden copy, which builds every part afresh, tells the agent which parts the open game built again and that one
 it kept doesn't show a change built into it (`GameKit.openGameNote`), so it never says the person sees what they don't. New York keeps its renderer, the

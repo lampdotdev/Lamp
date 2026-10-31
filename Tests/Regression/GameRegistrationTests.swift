@@ -497,6 +497,16 @@ final class GameRegistrationTests: XCTestCase {
         XCTAssertNotEqual(said, "swapped", "Lamp can't tell a comment from a use, so it doesn't call this one unused")
     }
 
+    /// A name added by a change that ran the code again counts: the code as it's served, not as it first loaded.
+    func testANameAddedByAnEarlierChangeHolds() async throws {
+        try await open(also: ["spare.json": "[]"])
+        try await wander()
+        files.text["game.js"] = "// spare.json is spare.\n" + Self.game()
+        try await change("game.js")
+        let said = try await removal(["spare.json"], gen: 9)
+        XCTAssertNotEqual(said, "swapped", "the code running now names it")
+    }
+
     /// An edit and an unused file taken away together: the edit goes in, and the file doesn't hold anything back.
     func testAnEditAndAnUnusedFileTakenAwayTogether() async throws {
         try await open(Self.game(body: "import('./world.js');"), also: ["world.js": "export const world = 1;", "orld.js": ""])
