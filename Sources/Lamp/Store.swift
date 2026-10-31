@@ -5045,6 +5045,9 @@ final class Store: ObservableObject {
         // theirs is only a backstop.
         let stepLimit = engine == .pi && Builder.piProvider == Builder.localProvider ? 150 : 500
         var lastTool = ""
+        // Set when Lamp itself stopped the model (either guard): its reason stands through what the process still
+        // prints and through its exit, and is told whatever its words.
+        var stoppedByLamp = false, stoppedRepeating = false
         var repeats = 0
         var toolCalls = 0
         // The tool call the model is writing at the moment, for the activity shown to the user.
@@ -5134,7 +5137,7 @@ final class Store: ObservableObject {
                 // extension drops the pictures of a request that was too big: lamp-tools.ts), so that attempt is
                 // no longer the turn's failure. Lamp's own reasons for stopping the model stand: the process is
                 // being ended, and what it had already printed can still arrive.
-                if let text = failure, !text.hasPrefix("The model ") {
+                if failure != nil, !stoppedByLamp {
                     switch event {
                     case .text, .textPiece, .tool, .step: failure = nil
                     default: break
@@ -5205,8 +5208,10 @@ final class Store: ObservableObject {
                     // Compared in full: six different searches of one file all read "grep cache.json".
                     repeats = fullCall == lastTool ? repeats + 1 : 1
                     lastTool = fullCall
-                    if repeats >= 6 || toolCalls > stepLimit, failure == nil {
-                        failure = repeats >= 6
+                    if repeats >= 6 || toolCalls > stepLimit, !stoppedByLamp {
+                        stoppedByLamp = true
+                        stoppedRepeating = repeats >= 6
+                        failure = stoppedRepeating
                             ? "The model got stuck repeating the same step, so Lamp stopped it."
                             : "This took over \(stepLimit) steps, so Lamp paused it. Say “keep going” to carry on."
                         if let process = turn.agent { Subprocess.terminateTree(process) }
@@ -5283,7 +5288,7 @@ final class Store: ObservableObject {
             turn.codexStarted = false
             turn.codexActing = []
             // Codex exits with an error on a turn it was asked to end; that's not this turn's failure.
-            if failure?.hasPrefix("The model ") != true { (status, failure) = (0, nil) }
+            if !stoppedByLamp { (status, failure) = (0, nil) }
             // Not when the engine was changed in Settings meanwhile: this conversation is Codex's.
             guard !turn.stopped, !turn.endedOnQuestions, failure == nil, Builder.engine == engine,
                   let id = Self.savedSession(sessionFile), exists(project) else { break }
@@ -5322,13 +5327,10 @@ final class Store: ObservableObject {
         }
         // Ended by Lamp on the agent's own questions: the engine's exit says nothing went wrong.
         if turn.endedOnQuestions { return true }
-        if let failure, failure.hasPrefix("The model ") {
-            log(project, .error, failure + " Try again, or pick a stronger model in Settings.")
-            return false
-        }
-        // Paused at the step limit: the work so far is kept, and the person's "keep going" carries it on.
-        if let failure, failure.hasPrefix("This took over ") {
-            log(project, .error, failure)
+        // Stopped by Lamp: stuck repeating a step (a stronger model may not be), or paused at the step limit, where the work
+        // so far is kept and the person's "keep going" carries it on.
+        if stoppedByLamp, let failure {
+            log(project, .error, stoppedRepeating ? failure + " Try again, or pick a stronger model in Settings." : failure)
             return false
         }
         if status != 0 && failure == nil { failure = "\(engine.title) exited with status \(status)" }
