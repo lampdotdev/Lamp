@@ -10,7 +10,7 @@ public struct ContributeCard: View {
         /// Finding GitHub's tool and the sign-in, and checking what would go.
         case preparing
         /// What's needed before anything can go, with the one thing that fixes it.
-        case needsGitHub(PublishCard.Need)
+        case needsGitHub(RepoCard.Need)
         /// It can't go, and why (a license, a key in the code, the person's own repository).
         case refused(String)
         case ready

@@ -4,13 +4,15 @@ import LampFileLook
 import LampSidebarKit
 
 /// Putting a wish on GitHub: its code as a repository on the person's own account, made with GitHub's command-line tool
-/// (`gh`) and their sign-in there, as Publish puts a game's page up. Nothing goes through Lamp's servers.
+/// (`gh`) and their sign-in there. Nothing goes through Lamp's servers.
 ///
 /// What goes up is what a shared file carries (`Sharing.export`: the code, APP.md, the icon, the app's own files,
 /// credits.json and the licenses it names; never the chat, the app's data or a key), unpacked so the code reads on
 /// GitHub, with Lamp's own files beside it (build.sh, Package.swift, LampSupport.swift and the rest, so `zsh build.sh`
 /// makes the app on any Mac with Apple's tools and no Lamp), the shared file itself (what Lamp opens today), a README
 /// that says what it is, how to remix it with Lamp and what it's based on, and an MIT license when the person wants one.
+/// A web game in a public repository also gets its page, to play in any browser, on the repository's `gh-pages` branch,
+/// served by GitHub Pages (`Publish`), which the README's Play in your browser links.
 /// The wish's own git history stays on the Mac: it holds every version and the chat's attachments, so each Put on
 /// GitHub is one commit of the wish as it is now, on top of the last.
 enum GitHubRepo {
@@ -24,6 +26,7 @@ enum GitHubRepo {
     /// pushed, which a later share names on the chain (`Sharing.export`); nil from a Lamp before it was kept.
     /// `isPublic` is what GitHub said after the last push, and `version` the wish's own version that push carried: a
     /// remix starts from the repository only while both hold (`remixOrigin`). Nil from a Lamp before they were kept.
+    /// `page` is the game's page's address, once GitHub has put it up.
     struct Repo: Codable, Equatable {
         var repo: String   // "owner/name"
         var url: String
@@ -31,6 +34,7 @@ enum GitHubRepo {
         var commit: String? = nil
         var isPublic: Bool? = nil
         var version: String? = nil
+        var page: String? = nil
     }
 
     static func url(_ repo: String) -> String { "https://github.com/\(repo)" }
@@ -78,6 +82,22 @@ enum GitHubRepo {
         /// Where the README's Open in Lamp goes, in a public repository (`remixLink`): what the card names as its remix
         /// link, in place of the Share Link a private one's README uses.
         var remix: String? = nil
+        /// A web game's page, for the page branch, in a public repository.
+        var page: Page? = nil
+
+        /// The page as staged beside the tree: its folder, its index.html before the credit bar (which goes over it as
+        /// it's pushed, naming the commit pushed with it, `upload`), what the bar says, and where it plays.
+        struct Page {
+            let folder: URL
+            let html: String
+            let credits: Credits
+            /// credits.json's chain, whose last link names the commit pushed with the page, written then.
+            let chain: Credits
+            let link: URL?
+            let suggestions: [RemixIdea]
+            let about: String?
+            let url: String
+        }
     }
 
     /// Stages the repository for `repo`, its README's remix link going to `link` (the wish's Share Link, which works
@@ -85,8 +105,9 @@ enum GitHubRepo {
     /// Without a repository it's staged as it would be for one not yet made (a check of what it would hold,
     /// `GitHubProjects.check`): the chain ends with the wish as its shared file does, and the README names no address.
     /// `isPublic` is whether anyone will be able to read the repository: its README then offers it by a link of Lamp's
-    /// site (`Showcase.remix`), which Lamp fetches without a sign-in.
-    static func stage(_ project: LampProject, repo: String?, link: URL?, isPublic: Bool = true) throws -> Staged {
+    /// site (`Showcase.remix`), which Lamp fetches without a sign-in, and a web game gets its page (`withPage`; a starter's
+    /// repository stages its own, `StarterRepos.stagePage`).
+    static func stage(_ project: LampProject, repo: String?, link: URL?, isPublic: Bool = true, withPage: Bool = true) throws -> Staged {
         let fm = FileManager.default
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
@@ -135,6 +156,24 @@ enum GitHubRepo {
         let ideas = (RemixSuggestions.load(project) ?? []).map(\.text)
         var showcase = Showcase(icon: icon, ideas: ideas)
         if isPublic, repo != nil { try writeButtons(in: tree); showcase.remix = true }
+        // A web game plays as a page too, staged here so it's checked and shown before anything goes up: only in a public
+        // repository, since GitHub serves a private one's page only on a paid plan.
+        var page: Staged.Page?
+        if withPage, isPublic, let repo, Publish.hasPage(project) {
+            let site = work.appendingPathComponent("page")
+            let html = try Publish.copyPage(of: project, into: site)
+            try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, usesRapier: GameKit.usesRapier(project)).utf8)
+                .write(to: site.appendingPathComponent("README.md"))
+            let leaks = ShareCheck.secrets(in: site, known: Sharing.knownSecrets(project))
+            if let first = leaks.first {
+                throw Sharing.ImportError("\(project.name)'s page can't go on GitHub: it holds a key or a password.",
+                                          detail: "It's in \(first). Ask Lamp to take it out and keep it out of the code.")
+            }
+            page = Staged.Page(folder: site, html: html, credits: credits, chain: chain, link: link,
+                               suggestions: RemixSuggestions.load(project) ?? RemixOffer.fallback,
+                               about: AppDescription.description(of: project), url: Publish.pageURL(repo))
+            showcase.play = page?.url
+        }
         try Data(readme(for: project, credits: credits, open: open, build: build, repo: repo, showcase: showcase).utf8)
             .write(to: tree.appendingPathComponent("README.md"))
 
@@ -143,13 +182,16 @@ enum GitHubRepo {
             throw Sharing.ImportError("\(project.name) can't go on GitHub: it holds a key or a password.",
                                       detail: "It's in \(first). Ask Lamp to take it out and keep it out of the code.")
         }
-        let all = fm.enumerator(at: tree, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
+        // Everything that goes up: the tree, and the page beside it.
+        let all = ([tree] + (page.map { [$0.folder] } ?? [])).flatMap { folder in
+            fm.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
+        }
         let bytes = all.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
-        // GitHub refuses a file over 100 MB and a repository is meant to stay well under 1 GB.
+        // GitHub refuses a file over 100 MB and a repository (and a Pages site) is meant to stay well under 1 GB.
         guard bytes < 900_000_000 else { throw Failure(message: "\(project.name) is too big to put on GitHub.") }
         done = true
         return Staged(folder: tree, files: all.filter { !$0.hasDirectoryPath }.count, bytes: bytes, credits: chain, open: open,
-                      version: version, remix: showcase.remix ? repo.map { remixLink($0) } : nil)
+                      version: version, remix: showcase.remix ? repo.map { remixLink($0) } : nil, page: page)
     }
 
     /// The files in the wish's folder that are Lamp's (the ones the builder can't delete, `Store`'s list), by their
@@ -326,8 +368,7 @@ enum GitHubRepo {
     }
 
     /// The MIT license, in the person's name.
-    static func mitLicense(holder: String) -> String {
-        let year = Calendar(identifier: .gregorian).component(.year, from: Date())
+    static func mitLicense(holder: String, year: Int = Calendar(identifier: .gregorian).component(.year, from: Date())) -> String {
         return """
         MIT License
 
@@ -384,8 +425,9 @@ enum GitHubRepo {
     // MARK: Putting it up
 
     /// Puts the staged tree in `repo` (made, if it's new, public or private as asked) as one commit on top of what's
-    /// there; `step` hears what it's doing. `changed` is false when the repository already had the wish as it is. The
-    /// record returned names the commit up there now.
+    /// there, then a web game's page on the page branch, with Pages turned on for it; `step` hears what it's doing.
+    /// `changed` is false when the repository already had the wish (and its page) as it is. The record returned names
+    /// the commit up there now. Once the code is up it's kept, so a page that fails to go up is tried again on top of it.
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool,
                        isPrivate: Bool, license: Bool, step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
         let fm = FileManager.default
@@ -411,6 +453,7 @@ enum GitHubRepo {
         let remote = "https://github.com/\(repo).git"
 
         let work: URL
+        var changed = true
         if isNew {
             step("Preparing…")
             // A try after a failed one finds the tree committed already, and pushes that commit again.
@@ -449,19 +492,38 @@ enum GitHubRepo {
                 if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("lamp-app.json")),
                    manifestsMatch(Data(before.output.utf8), after),
                    creditsMatch(credits.ok ? Data(credits.output.utf8) : nil, try? Data(contentsOf: clone.appendingPathComponent(Credits.file))) {
-                    return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: clone),
-                                 isPublic: await isPublic(repo, gh: gh), version: staged.version), false)
+                    changed = false
                 }
             }
-            let committed = await Subprocess.run(git, identity + ["commit", "-q", "-m", "Update \(project.name) from Lamp"], cwd: clone, timeout: 120)
-            guard committed.ok else { throw Failure(message: "Couldn't prepare the repository: \(committed.output.trimmed.suffix(200))") }
+            if changed {
+                let committed = await Subprocess.run(git, identity + ["commit", "-q", "-m", "Update \(project.name) from Lamp"], cwd: clone, timeout: 120)
+                guard committed.ok else { throw Failure(message: "Couldn't prepare the repository: \(committed.output.trimmed.suffix(200))") }
+            }
             work = clone
         }
-        step("Uploading…")
-        let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:main"], cwd: work, timeout: 600)
-        guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
-        return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
-                     isPublic: await isPublic(repo, gh: gh), version: staged.version), true)
+        if changed {
+            step("Uploading…")
+            let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:main"], cwd: work, timeout: 600)
+            guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
+        }
+        var record = Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
+                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page)
+        guard let page = staged.page, record.isPublic == true, let commit = record.commit else { return (record, changed) }
+        keep(record, for: project)
+        // The page's Open in Lamp and Remix… start from the code just pushed with it, which is the game it plays.
+        step("Putting up its page…")
+        let open = Publish.OpenInLamp(link: page.link, file: nil, origin: .repository(url: url, commit: commit))
+        try Data(Publish.withCreditBar(page.html, credits: page.credits, open: open, suggestions: page.suggestions,
+                                       name: project.name, about: page.about).utf8)
+            .write(to: page.folder.appendingPathComponent("index.html"))
+        // The chain names the code it was put up with, as the commit up there now, so an unchanged wish is an unchanged page.
+        var chain = page.chain
+        if let last = chain.remixOf.indices.last, chain.remixOf[last].url == url { chain.remixOf[last].commit = commit }
+        try chain.encoded().write(to: page.folder.appendingPathComponent(Credits.file))
+        let pushed = try await Publish.pushPage(page.folder, to: repo, gh: gh, login: login, message: "\(project.name)'s page, from Lamp")
+        try await Publish.servePage(repo, commit: pushed.commit, changed: pushed.changed, gh: gh, step: step)
+        record.page = page.url
+        return (record, changed || pushed.changed || kept(for: project)?.page != page.url)
     }
 
     /// The git that talks to GitHub for the person, with their own settings: Homebrew's when they have it, else Apple's.
@@ -480,12 +542,17 @@ enum GitHubRepo {
     }
 
     /// The commit a work folder is at, as the credits take one.
-    /// A public repository with no website of its own gets the remix link as one, which GitHub shows beside its
-    /// description. One the person set is never changed.
-    static func offerRemixAsWebsite(_ repo: String, gh: String) async {
+    /// A public repository with no website of its own gets one, which GitHub shows beside its description: a game's page
+    /// once it's up (in place of the remix link Lamp set before it had one), else the remix link. One the person set is
+    /// never changed.
+    static func offerWebsite(_ repo: String, page: String?, gh: String) async {
         let now = await Subprocess.run(gh, ["repo", "view", repo, "--json", "homepageUrl", "--jq", ".homepageUrl"], mergeErrors: false, timeout: 30)
-        guard now.ok, now.output.trimmed.isEmpty else { return }
-        _ = await Subprocess.run(gh, ["repo", "edit", repo, "--homepage", remixLink(repo, from: "github")], timeout: 30)
+        let remix = remixLink(repo, from: "github")
+        let current = now.output.trimmed
+        guard now.ok, current.isEmpty || (page != nil && current == remix) else { return }
+        let website = page ?? remix
+        guard website != current else { return }
+        _ = await Subprocess.run(gh, ["repo", "edit", repo, "--homepage", website], timeout: 30)
     }
 
     /// Whether anyone can read the repository, as GitHub says now; nil when it can't be asked.
@@ -604,6 +671,7 @@ enum GitHubRepo {
         // A first try that made the repository before failing kept it (`upload`): this goes on with it.
         let isNew = (card.kept ?? GitHubRepo.kept(for: project))?.repo != repo
         set(project, .working("Starting…"))
+        let before = GitHubRepo.kept(for: project)
         Task {
             do {
                 let id = project.id
@@ -611,10 +679,9 @@ enum GitHubRepo {
                                                                   isPrivate: card.isPrivate, license: card.license) { step in
                     Task { @MainActor in GitHubRepoCards.shared.cards[id]?.stage = .working(step) }
                 }
-                let before = GitHubRepo.kept(for: project)
                 GitHubRepo.keep(kept, for: project)
                 // The chat beside the installed app names the repository and commit for a remix (`Sidebar.install`).
-                if kept.isPublic == true { await GitHubRepo.offerRemixAsWebsite(kept.repo, gh: gh) }
+                if kept.isPublic == true { await GitHubRepo.offerWebsite(kept.repo, page: kept.page, gh: gh) }
                 if before?.repo != kept.repo || before?.commit != kept.commit || before?.isPublic != kept.isPublic || before?.version != kept.version {
                     for app in Store.shared.apps(of: project) { Store.shared.refreshInstalled(app) }
                 }
@@ -648,8 +715,13 @@ enum GitHubRepo {
         if let url = cards[project.id]?.kept?.url ?? GitHubRepo.kept(for: project)?.url, let page = URL(string: url) { NSWorkspace.shared.open(page) }
     }
 
+    func play(_ project: LampProject) {
+        if let url = cards[project.id]?.kept?.page, let page = URL(string: url) { NSWorkspace.shared.open(page) }
+    }
+
+    /// The page's address once it's up, since that's what's played; else the repository's.
     func copy(_ project: LampProject) {
-        guard let url = cards[project.id]?.kept?.url else { return }
+        guard let url = cards[project.id]?.kept.flatMap({ $0.page ?? $0.url }) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
         cards[project.id]?.copied = true
@@ -675,10 +747,16 @@ enum GitHubRepo {
             URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "repo" }?.value
                 .map { "lamp.dev, from " + $0.replacingOccurrences(of: "https://", with: "") }
         }
+        // A game's page: where it will play, or plays; none in a private repository, which the card says.
+        let isPublic = card.isPublic ?? !card.isPrivate
+        let page = (card.staged?.page?.url ?? (isPublic ? card.kept?.page : nil)).map { $0.replacingOccurrences(of: "https://", with: "") }
+        var pageUp = false
+        if case .done = card.stage { pageUp = card.kept?.page != nil }
         return SidebarRepo(name: project.name, icon: card.icon, stage: card.stage, repo: card.repo, url: card.kept?.url,
                            credit: credits.basedOn, openInLamp: remix ?? link.map { url in url.host.map { $0 + url.path } ?? url.absoluteString },
                            notes: notes, size: size, copied: card.copied,
                            update: card.kept != nil, canPut: card.canPut, isPrivate: card.isPrivate, license: card.license,
-                           canChooseLicense: card.staged.map { GitHubRepo.canOfferLicense($0.credits) } ?? true)
+                           canChooseLicense: card.staged.map { GitHubRepo.canOfferLicense($0.credits) } ?? true,
+                           page: page, pageUp: pageUp, privateGame: !isPublic && Publish.hasPage(project))
     }
 }

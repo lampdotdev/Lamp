@@ -284,7 +284,7 @@ goes, credited and named; with no license it goes too, once the person has been 
 Share…, Copy Wish File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
 is kept for the wish until it takes in more such work (`ShareCheck.accepted`, in Lamp's settings rather than the wish's
 folder, where the agent writes); an app's File ▸ Share… gets the same question from `/app/share` and asks again with
-`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Publish as Web Page…, Send Changes Back… and Put on GitHub… to a public repository say it
+`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Send Changes Back… and Put on GitHub… to a public repository (a game's page with it) say it
 as a line among their facts, and a private repository says nothing, since nothing is passed on. A license file the
 credits name must still be in the wish. And nothing of the person's goes: what's staged is searched for the person's
 provider keys, the app's secrets and its token for Lamp's gateway (`ShareCheck.keptSecrets`, the values themselves) and
@@ -294,39 +294,43 @@ never ship.
 
 ### Publishing a game as a page
 
-A wish whose one app is a web game can be published as a page anyone plays in a browser (`Publish`,
-an experiment: Settings → Experimental, Lamp Dev only, since the page carries Lamp's own runtime, which needs a
-license that lets anyone pass it on before every Lamp can publish). Its share menu has Publish as Web Page…, which puts
-the Publish card in the chat's place (`PublishCard`, `PublishCards`, `SidebarPublish`). It goes on GitHub Pages under the
-person's own account, through GitHub's `gh` and their sign-in there, never through Lamp's servers: the page costs Lamp
-nothing however often it's played, and it's the person's under GitHub's terms. Without `gh` the card's one button gets
-it; signed out, Sign In to GitHub… runs `gh auth login --web` in Terminal and the card checks again once that's done.
-Before anything goes up the card shows what will: the repository (the wish's name, made public; a name the account
-already has gets a number), the credit, the license notes, the AI pictures and the size, all worked out by staging the
-page with its checks (`Publish.stage`). What goes up is Web/ as the app plays it with Lamp's credit bar over it ("Based on Slop New York by Mr.doob · Open in
-Lamp", settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding its link on a
-narrow screen). Open in Lamp is the wish's Share Link (`Publish.OpenInLamp`), once the person has made one: Publish never sends
-the wish's words or picture itself, and a wish with none has Make Share Link… on the card, which opens Share Link's own
-card where they see and change what it shows, and can tick Include the wish itself so the link's page offers this
-exact wish to anyone with Lamp (site/SHARED_WISHES.md) (with none, the bar links Lamp's site). That page is the one that works for
-someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with it ("Open it with this
-wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file goes beside
-the page too (a web game's as its page, `GameFiles`), offered in the README, and made by
-`Sharing.export`, so held to its checks. With them go credits.json with this wish at the end of the
-chain, a README with the credits and licenses, and `.nojekyll`; the staged page is searched for secrets again. The push
-signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits until GitHub says it built
-that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten minutes.
-A repository is kept as soon as it's made, and a failed try keeps the page staged, so Publish tries again into the same
-repository instead of leaving one behind and making another. Where a
-wish's page went is kept in Lamp's folder (`Published Pages.json`), so Update Page puts the wish as it is now in its
-place.
+A wish whose one app is a web game (`Publish.hasPage`) gets a page anyone plays in a browser when it's Put on GitHub
+to a public repository ("Generated apps"): the same repository, on its `gh-pages` branch (`Publish.pageBranch`), served by
+GitHub Pages at `https://<owner>.github.io/<repository>/`, which the README's Play in your browser links and the
+repository's website points to (`GitHubRepo.offerWebsite`, over the remix link Lamp set there before, never over one the
+person set). It's the person's under GitHub's terms, through `gh` and their sign-in there, never Lamp's servers, so it
+costs Lamp nothing however often it's played. A private repository gets none, since GitHub serves a private
+repository's page only on a paid plan: the card says so in one line under Public. Before anything goes up the Put on
+GitHub card shows where the page plays beside where the code goes, and the page is staged with the tree
+(`GitHubRepo.stage`, `Staged.Page`) so it's held to the same checks: what `ShareCheck` refuses or warns of is the
+tree's, and the staged page is searched for secrets again. What goes up is Web/ as the app plays it (`Publish.copyPage`):
+its files and Lamp's runtime, with lamp-device.js and lamp-build.js as any copy of a game's page has them (`GamePage`,
+told it's in no one device, `GamePage.anyBrowser`), Lamp's MIT license beside its runtime (`Publish.runtimeLicense`),
+credits.json with this wish at the end of the chain, a README with the credits and licenses (`Publish.pageReadme`) and
+`.nojekyll`; and over the page Lamp's credit bar ("Based on Slop New York by Mr.doob · Open in Lamp · Remix…",
+`Publish.withCreditBar`, settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding
+its link on a narrow screen). Its Open in Lamp is the wish's Share Link when the person has made one (`Publish.OpenInLamp`:
+that page works for someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with
+it), else lamp.dev's remix of the repository; both it and Remix… name the repository at the commit pushed with the page,
+so they start from the game that's played. The bar is written as the page is pushed, once that commit is known
+(`GitHubRepo.upload`). The page goes up after the code, as one commit on top of what's on its branch, or none when it's
+the same (`Publish.pushPage`); Pages is turned on for that branch, or asked to build, and the card waits until GitHub says
+it built that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten
+minutes (`Publish.servePage`). Pages the person set to serve another branch are left alone, and the card says so. The code
+is kept as soon as it's up, so a page that fails is tried again by Put on GitHub on top of it. Where the page plays is
+kept with the repository (`GitHubRepo.Repo.page`), and the card's done state offers Play and Copy Page Link.
+
+Publish as Web Page…, which made a repository of its own holding only the page, was an experiment in Lamp Dev while
+Lamp's runtime had no license that let anyone pass it on; Lamp is MIT now, and Put on GitHub with its page does what it
+did and keeps the game's code and its page in one place, so it's gone.
 
 #### Remixing a published page
 
 The credit bar's Remix… opens a panel over the page (the one beside an app on a Mac without Lamp, `RemixPanel`, drawn in
 the page's own HTML by `Publish.withCreditBar`): three things to change and a box. Continue with Lamp names what the
 page is a copy of when Lamp can copy it again (`OpenInLamp.origin`): a starter's own page names the starter's id
-(`StarterRepos.stagePage`), and a wish that's been Put on GitHub names its repository and the commit last pushed
+(`StarterRepos.stagePage`), a game's page put up with its code names that repository at the commit pushed with it
+(`GitHubRepo.upload`), and an app whose wish has been Put on GitHub names its repository and the commit last pushed
 while that repository is public (as GitHub said at the push) and holds the wish as it is now (the wish's own version
 the push carried, with nothing unsaved then or now, `Versions.savedVersion`, `GitHubRepo.remixOrigin`): a private repository can't be fetched without a sign-in, and an older
 push would remix an older game than the one played. The request goes to `https://lamp.dev/?starter=newyork&ask=…` (or `?repo=…&commit=…&ask=…`),

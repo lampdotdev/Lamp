@@ -172,9 +172,10 @@ private struct Chat: View {
                     RepoCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo, url: card.url,
                              credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, size: card.size, copied: card.copied, update: card.update,
                              canPut: card.canPut, isPrivate: card.isPrivate, license: card.license, canChooseLicense: card.canChooseLicense,
+                             page: card.page, pageUp: card.pageUp ?? false, privateGame: card.privateGame ?? false,
                              put: { link.send(.repo(.put)) }, fix: { link.send(.repo(.fix)) }, makeLink: { link.send(.repo(.makeLink)) },
                              setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },
-                             openRepo: { link.send(.repo(.openRepo)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
+                             openRepo: { link.send(.repo(.openRepo)) }, play: { link.send(.repo(.play)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
                 }
             } else if let card = state.contribute {
                 ScrollView {
@@ -183,15 +184,6 @@ private struct Chat: View {
                                    send: { link.send(.contribute(.send)) }, fix: { link.send(.contribute(.fix)) },
                                    openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
                                    close: { link.send(.contribute(.close)) }, width: nil)
-                }
-            } else if let card = state.publish {
-                ScrollView {
-                    PublishCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo,
-                                page: card.page, credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, size: card.size, copied: card.copied,
-                                republish: card.republish, canPublish: card.canPublish, publish: { link.send(.publish(.publish)) }, fix: { link.send(.publish(.fix)) },
-                                makeLink: { link.send(.publish(.makeLink)) },
-                                openPage: { link.send(.publish(.openPage)) }, copy: { link.send(.publish(.copy)) },
-                                close: { link.send(.publish(.close)) }, width: nil)
                 }
             } else if let card = state.wishLink {
                 WishLinkPanel(card: card)
@@ -861,7 +853,6 @@ struct ChatBar: View {
             Button("Share Link…") { link.send(.wishLink(.open)) }
             Button("Put on GitHub…") { link.send(.repo(.open)) }
             if toolbar.canContribute == true { Button("Send Changes Back…") { link.send(.contribute(.open)) } }
-            if toolbar.canPublish == true { Button("Publish as Web Page…") { link.send(.publish(.open)) } }
             Divider()
             Button("Copy Wish File") { link.send(.copyWishFile) }
             Button("Share…") { link.send(.share) }

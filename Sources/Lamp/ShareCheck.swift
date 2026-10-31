@@ -165,7 +165,7 @@ enum ShareCheck {
         for source in credits.upstream {
             switch licence(source.license) {
             case .shareAlike where isDataLicence(source.license):
-                notes.append("\(source.name) is \(source.license ?? ""): it stays under that licence, credited, in this remix.")
+                notes.append("\(source.name) is \(source.license ?? ""): it stays under that license, credited, in this remix.")
             case .shareAlike: notes.append("\(source.name) is \(source.license ?? ""), so this remix is too: anyone may share it on under the same license.")
             case .ownTerms: notes.append("\(source.name) is used under its own terms (\(source.license ?? "")).")
             case .open, .none: break

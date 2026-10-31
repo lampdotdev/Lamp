@@ -2,15 +2,15 @@ import SwiftUI
 import AppKit
 
 /// Put on GitHub: what will go up and where, laid out to be read before anything leaves the Mac (the account and
-/// repository, the credit it carries, what its licenses ask, how much, and the two choices made the first time), then
-/// the repository and what can be done with it. Drawn from plain values, so the chat (in its place) and the gallery
+/// repository, a web game's page to play, the credit it carries, what its licenses ask, how much, and the two choices
+/// made the first time), then the repository and its page and what can be done with them. Drawn from plain values, so the chat (in its place) and the gallery
 /// show the same card.
 public struct RepoCard: View {
     public enum Stage: Codable, Equatable {
         /// Finding GitHub's tool and the sign-in, and checking what would go up.
         case preparing
         /// What's needed before anything can go up, with the one thing that fixes it.
-        case needsGitHub(PublishCard.Need)
+        case needsGitHub(Need)
         /// It can't go up, and why (a license, a key in the code).
         case refused(String)
         case ready
@@ -19,6 +19,11 @@ public struct RepoCard: View {
         /// Up; `unchanged` when GitHub already had the wish as it is.
         case done(unchanged: Bool)
         case failed(String)
+    }
+
+    /// What's missing before anything goes to GitHub: its command-line tool, or a sign-in to it.
+    public enum Need: String, Codable, Equatable {
+        case install, signIn
     }
 
     let icon: NSImage?
@@ -42,6 +47,11 @@ public struct RepoCard: View {
     let license: Bool
     /// An MIT license can be offered: nothing in it is share-alike.
     let canChooseLicense: Bool
+    /// A web game's page: where it plays ("someone.github.io/new-york"), and whether it's up now. Nil for any other
+    /// wish, and for a private repository, which gets none (`privateGame`).
+    let page: String?
+    let pageUp: Bool
+    let privateGame: Bool
     let put: () -> Void
     let fix: () -> Void
     /// Opens Share Link's card, to make the link Remix it with Lamp goes to.
@@ -49,14 +59,16 @@ public struct RepoCard: View {
     let setPrivate: (Bool) -> Void
     let setLicense: (Bool) -> Void
     let openRepo: () -> Void
+    /// Opens the page in the browser.
+    let play: () -> Void
     let copy: () -> Void
     let close: () -> Void
     let width: CGFloat?
 
     public init(icon: NSImage?, name: String, stage: Stage, repo: String?, url: String?, credit: String?, openInLamp: String?, notes: [String], size: String?,
                 copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
-                put: @escaping () -> Void, fix: @escaping () -> Void, makeLink: @escaping () -> Void = {}, setPrivate: @escaping (Bool) -> Void, setLicense: @escaping (Bool) -> Void,
-                openRepo: @escaping () -> Void, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
+                page: String? = nil, pageUp: Bool = false, privateGame: Bool = false, put: @escaping () -> Void, fix: @escaping () -> Void, makeLink: @escaping () -> Void = {}, setPrivate: @escaping (Bool) -> Void, setLicense: @escaping (Bool) -> Void,
+                openRepo: @escaping () -> Void, play: @escaping () -> Void = {}, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
         self.icon = icon
         self.name = name
         self.stage = stage
@@ -72,12 +84,16 @@ public struct RepoCard: View {
         self.isPrivate = isPrivate
         self.license = license
         self.canChooseLicense = canChooseLicense
+        self.page = page
+        self.pageUp = pageUp
+        self.privateGame = privateGame
         self.put = put
         self.fix = fix
         self.makeLink = makeLink
         self.setPrivate = setPrivate
         self.setLicense = setLicense
         self.openRepo = openRepo
+        self.play = play
         self.copy = copy
         self.close = close
         self.width = width
@@ -111,7 +127,8 @@ public struct RepoCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Put \(name) on GitHub").font(.title3.bold())
                     // What the person accepts: what goes, and where.
-                    Text("Its code goes up as a repository on your GitHub account: what a shared wish file holds, with the files that build it. Never your chat or the app's data.")
+                    Text("Its code goes up as a repository on your GitHub account: what a shared wish file holds, with the files that build it."
+                         + (page == nil ? "" : " Its page goes up too, for anyone to play in a browser.") + " Never your chat or the app's data.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -119,6 +136,7 @@ public struct RepoCard: View {
             if stage != .preparing, !isBlocked {
                 VStack(alignment: .leading, spacing: 8) {
                     if let repo { row("Goes to", "github.com/" + repo) }
+                    if let page { row("Play at", page) }
                     if let credit { row("Credit", credit) }
                     if let openInLamp {
                         row("Remix link", openInLamp)
@@ -141,6 +159,8 @@ public struct RepoCard: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Toggle("Public, so anyone can see it and remix it", isOn: Binding(get: { !isPrivate }, set: { setPrivate(!$0) }))
                             .toggleStyle(.checkbox)
+                        // GitHub serves a private repository's page only on a paid plan.
+                        if privateGame { Text("A private repository gets no page to play.").foregroundStyle(.secondary).padding(.leading, 20) }
                         if canChooseLicense {
                             Toggle("MIT license, so anyone may use the code", isOn: Binding(get: { license }, set: setLicense))
                                 .toggleStyle(.checkbox)
@@ -181,7 +201,8 @@ public struct RepoCard: View {
         case .refused(let why), .failed(let why):
             problem(why)
         case .done(let unchanged):
-            Label(unchanged ? "It's up, unchanged since last time." : copied ? "It's up. Link copied." : "It's up.", systemImage: "checkmark.circle.fill")
+            Label(unchanged ? "It's up, unchanged since last time." : copied ? (pageUp ? "It's up. Page link copied." : "It's up. Link copied.") : "It's up.",
+                  systemImage: "checkmark.circle.fill")
                 .font(.callout).foregroundStyle(.secondary)
         case .ready:
             EmptyView()
@@ -208,8 +229,9 @@ public struct RepoCard: View {
         Spacer(minLength: 0)
         switch stage {
         case .done:
-            Button("Copy Link", action: copy)
+            Button(pageUp ? "Copy Page Link" : "Copy Link", action: copy)
             Button("Open on GitHub", action: openRepo)
+            if pageUp { Button("Play", action: play) }
             Button("Done", action: close).keyboardShortcut(.defaultAction)
         case .needsGitHub(let need):
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction)

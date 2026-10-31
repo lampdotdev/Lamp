@@ -2,55 +2,26 @@ import AppKit
 import Foundation
 import LampSidebarKit
 
-/// Publishing a web game as a page anyone can play in a browser: a public repository on the person's own
-/// GitHub account, served by GitHub Pages, made with GitHub's own command-line tool (`gh`) and their sign-in there.
-/// Nothing goes through Lamp's servers: the person's account holds the page, under GitHub's terms, and Lamp pays nothing
-/// for its plays.
+/// A web game's page, to play in any browser: Web/ as the app plays it, with Lamp's credit bar over it ("Based on Slop
+/// New York by Mr.doob", Open in Lamp, Remix…), put on GitHub Pages from the person's own GitHub account through GitHub's
+/// own command-line tool (`gh`) and their sign-in there. Nothing goes through Lamp's servers: the person's account holds
+/// the page, under GitHub's terms, and Lamp pays nothing for its plays.
 ///
-/// What goes up is the game's page (Web/) as the app plays it, with a credit bar over it ("Based on Slop New York by
-/// Mr.doob", and Open in Lamp, the wish's Share Link), the wish's credits.json, a README saying what
-/// it is, what it's based on and under which licenses, and the shared file itself, made by `Sharing.export` and so held
-/// to the same checks (`ShareCheck`). The page is searched for keys and secrets the same way before anything leaves.
-/// The person sees all of it on the card (`PublishCard`) and confirms before anything goes up.
-///
-/// An experiment for now (Settings → Experimental, Lamp Dev only): the page carries Lamp's own runtime (lamp-game.js,
-/// lamp.js), which needs a license that lets anyone pass it on before it can be published from every Lamp.
+/// Put on GitHub puts it up beside the wish's code, on the same repository's `gh-pages` branch (`GitHubRepo.stage`,
+/// `GitHubRepo.upload`), and a starter's repository gets its page the same way (`StarterRepos.stagePage`). The page
+/// carries Lamp's game runtime (lamp-game.js, lamp.js), which is MIT-licensed, so its license goes beside it. What's
+/// staged is held to the checks every share is (`ShareCheck`), and searched for keys and secrets before anything leaves.
+/// This enum holds what both share: the page, its credit bar, its README, the sign-in and turning Pages on.
 enum Publish {
-    nonisolated static let switchKey = "experimentPublishPages"
-    nonisolated static var enabled: Bool { Edition.isDev && UserDefaults.standard.bool(forKey: switchKey) }
-
-    /// A wish whose one app is a web game: its page is the whole game.
-    static func canPublish(_ project: LampProject) -> Bool {
-        enabled && project.holdsApp && GameKit.isGame(project) && GameKit.engine(project) == .web
+    /// A wish whose one app is a web game: its page is the whole game, so it can be played as a page.
+    static func hasPage(_ project: LampProject) -> Bool {
+        project.holdsApp && GameKit.isGame(project) && GameKit.engine(project) == .web
             && Parts.folders(in: project.dir).isEmpty
     }
 
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
-    }
-
-    // MARK: Where it went
-
-    /// A page that's up: the repository and its address.
-    struct Page: Codable, Equatable {
-        var repo: String   // "owner/name"
-        var url: String
-    }
-
-    private static var keptURL: URL { Edition.supportFolder.appendingPathComponent("Published Pages.json") }
-    private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
-
-    static func kept(for project: LampProject) -> Page? { readKept()[key(project)] }
-
-    static func keep(_ page: Page, for project: LampProject) {
-        var all = readKept()
-        all[key(project)] = page
-        if let data = try? JSONEncoder().encode(all) { try? data.write(to: keptURL, options: .atomic) }
-    }
-
-    private static func readKept() -> [String: Page] {
-        (try? Data(contentsOf: keptURL)).flatMap { try? JSONDecoder().decode([String: Page].self, from: $0) } ?? [:]
     }
 
     // MARK: GitHub
@@ -82,41 +53,31 @@ enum Publish {
 
     /// Where the page's Open in Lamp goes. Its Share Link first (`WishLink`), once the person has made one (the card offers
     /// to, through Share Link's own card, where they see and change what it shows): that page works for someone without
-    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"). With no link, the
-    /// wish as a shared file, which goes beside the page either way, for the README's download: the exact game.
-    /// `origin` is what the page is a copy of, when that's somewhere Lamp can copy it from again: the starter a
-    /// starter's own page is (`StarterRepos.stagePage`), or the repository the wish was put on, while it's public and up to date (`GitHubRepo.remixOrigin`).
-    /// The Remix panel's request goes with it (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version.
+    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"). Else `file`, the wish
+    /// as a shared file beside the page, when there is one. `origin` is what the page is a copy of, when that's somewhere
+    /// Lamp can copy it from again: the starter a starter's own page is (`StarterRepos.stagePage`), or the repository the
+    /// page was put up with, at the commit pushed with it (`GitHubRepo.upload`). The Remix panel's request goes with it
+    /// (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version, and with no Share Link, Open in Lamp
+    /// goes there too.
     struct OpenInLamp: Equatable {
         var link: URL?
         var file: String?
         var origin: RemixLink.Origin? = nil
     }
 
-    /// What will go up, staged in a folder of its own, checked.
-    struct Staged {
-        let folder: URL          // its parent is removed with it
-        let files: Int
-        let bytes: Int
-        let credits: Credits
-        let open: OpenInLamp
-    }
+    /// The license Lamp's runtime in the page is under, beside it, as MIT asks of a copy.
+    static let runtimeLicense = "LAMP-LICENSE.txt"
 
-    /// Stages the page for `repo` at `url`: refused, with why, when the wish can't leave this Mac.
-    static func stage(_ project: LampProject, url: String, link: URL?) throws -> Staged {
+    /// Copies the game's page as the app plays it into `site` (Web/: its own files and Lamp's runtime beside them, never
+    /// a hidden file or a link), told it's in no one device (`GamePage.anyBrowser`), with what lamp-game.js needs beside
+    /// it (lamp-device.js, lamp-build.js) and Lamp's license. Returns its index.html as it is, for the credit bar
+    /// (`withCreditBar`) to go over.
+    static func copyPage(of project: LampProject, into site: URL) throws -> String {
         let fm = FileManager.default
-        let credits = Credits.load(project)
-        if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
-        let work = Sharing.workFolder.appendingPathComponent("lamp-publish-\(UUID().uuidString)")
-        let site = work.appendingPathComponent("site")
-        var done = false
-        defer { if !done { try? fm.removeItem(at: work) } }
         try fm.createDirectory(at: site, withIntermediateDirectories: true)
-
-        // The page as the app plays it: Web/, its own files and Lamp's runtime beside them, never a hidden file or a link.
         let web = project.dir.appendingPathComponent(GameKit.webFolder)
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
-        guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { throw Failure(message: "\(project.name) has no page to publish.") }
+        guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { throw Failure(message: "\(project.name) has no page to play.") }
         for case let file as URL in items {
             if file.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
             let values = try? file.resourceValues(forKeys: Set(keys))
@@ -125,40 +86,29 @@ enum Publish {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
-        // Played in whatever browser opens it, so it's told no one device's facts (`GamePage.anyBrowser`).
         let anyBrowser = GamePage.anyBrowser
         try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
-        let index = site.appendingPathComponent("index.html")
-        guard let html = try? String(contentsOf: index, encoding: .utf8) else { throw Failure(message: "\(project.name) has no page to publish.") }
-
-        // The wish itself, as a file Lamp opens, beside the page, made as any shared file is, so it's held to the same
-        // checks and carries the credits with this wish at the end of the chain.
-        let fileName = slug(project.name) + ".lampapp"
-        let shared = try Sharing.export(project)
-        defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
-        try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
-        // A wish on GitHub is remixed from there, while its repository is public and holds the wish as it is now.
-        let open = OpenInLamp(link: link, file: fileName, origin: GitHubRepo.remixOrigin(for: project))
-        let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
-        try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
-
-        try Data(withCreditBar(html, credits: credits, open: open, suggestions: RemixSuggestions.load(project) ?? RemixOffer.fallback,
-                               name: project.name, about: AppDescription.description(of: project)).utf8).write(to: index)
-        try Data(readme(for: project, credits: chain, url: url, open: open).utf8).write(to: site.appendingPathComponent("README.md"))
+        guard let html = try? String(contentsOf: site.appendingPathComponent("index.html"), encoding: .utf8) else {
+            throw Failure(message: "\(project.name) has no page to play.")
+        }
+        try Data(GitHubRepo.mitLicense(holder: "Roo Code, Inc.", year: 2026).utf8).write(to: site.appendingPathComponent(runtimeLicense))
         // Served as files are, with nothing taken out for Jekyll (folders that start with _ included).
         try Data().write(to: site.appendingPathComponent(".nojekyll"))
+        return html
+    }
 
-        let leaks = ShareCheck.secrets(in: site, known: Sharing.knownSecrets(project))
-        if let first = leaks.first {
-            throw Sharing.ImportError("\(project.name) can't be published: it holds a key or a password.",
-                                      detail: "It's in \(first). Ask Lamp to take it out and keep it out of the code.")
-        }
-        let all = fm.enumerator(at: site, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
-        let bytes = all.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
-        // GitHub refuses a file over 100 MB, and a Pages site over 1 GB.
-        guard bytes < 900_000_000 else { throw Failure(message: "\(project.name) is too big to publish as a page.") }
-        done = true
-        return Staged(folder: site, files: all.filter { !$0.hasDirectoryPath }.count, bytes: bytes, credits: chain, open: open)
+    /// The page's README, on its branch: where it plays, where the wish is, what it's based on, and whose its runtime is.
+    static func pageReadme(for project: LampProject, credits: Credits, repo: String, usesRapier: Bool) -> String {
+        var text = "# \(project.name), to play\n\n"
+        if let line = AppDescription.description(of: project) { text += line + "\n\n" }
+        text += "**Play it:** \(pageURL(repo))\n\n"
+        text += "The wish itself, to open in [Lamp](https://lamp.dev) and change, is on the [main branch](\(GitHubRepo.url(repo))).\n\n"
+        text += creditsSection(credits)
+        text += "`lamp-game.js`, `lamp-phaser.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp-build.js` and `lamp.js` are the game's runtime, "
+            + "written by Lamp under the MIT license (`\(runtimeLicense)`). three.js is MIT (`three/LICENSE`), and so are Phaser (`phaser/LICENSE.md`) "
+            + "and the QR code encoder inside `lamp.js` (its license is there)."
+        text += usesRapier ? " `rapier/` is Rapier, its physics, under the Apache License 2.0 (`rapier/LICENSE`).\n" : "\n"
+        return text
     }
 
     static func escaped(_ text: String) -> String {
@@ -184,6 +134,9 @@ enum Publish {
             // The file means nothing without Lamp, so Lamp's site is beside it.
             parts.append("<a href=\"\(escaped(file))\" download>Open in Lamp</a>")
             parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Get Lamp</a>")
+        } else if let origin = open.origin {
+            // Lamp's site opens Lamp on a fresh copy of what the page is.
+            parts.append("<a href=\"\(escaped(RemixLink.site(for: origin, from: "page").absoluteString))\" target=\"_blank\" rel=\"noopener\">Open in Lamp</a>")
         } else {
             parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Made with Lamp</a>")
         }
@@ -196,7 +149,8 @@ enum Publish {
         let offer = RemixOffer(name: name, about: about, suggestions: suggestions, shareLink: open.link, origin: open.origin)
         let target: [String: Any] = ["link": open.link?.absoluteString as Any, "origin": open.origin?.json as Any,
                                      "request": RemixLink.request(for: offer, ask: "{ask}")]
-        let targetJSON = (try? JSONSerialization.data(withJSONObject: target)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        // Keys sorted, so the same page is the same file and an unchanged page makes no new commit.
+        let targetJSON = (try? JSONSerialization.data(withJSONObject: target, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let buttons = offer.suggestions.map { "<button type=\"button\" class=\"lamp-remix-pick\">\(escaped($0.text))</button>" }.joined()
         let panel = """
             <div id="lamp-remix" hidden>
@@ -255,21 +209,6 @@ enum Publish {
         return html + bar
     }
 
-    /// The repository's README: what the page is, where to play it, what it's based on and under which licenses.
-    static func readme(for project: LampProject, credits: Credits, url: String, open: OpenInLamp) -> String {
-        var text = "# \(project.name)\n\n"
-        if let line = AppDescription.description(of: project) { text += line + "\n\n" }
-        text += "**Play it:** \(url)\n\n"
-        text += creditsSection(credits)
-        text += "## Open in Lamp\n\nMade with [Lamp](https://lamp.dev)."
-        if let link = open.link { text += " [Make your own](\(link.absoluteString)) from the same wish, with Lamp or by downloading it." }
-        if let file = open.file { text += " Or download [\(file)](\(file)) and open it with Lamp: it's this exact wish, yours to remix, with the credits above kept." }
-        text += "\n\n"
-        text += "`lamp-game.js`, `lamp-phaser.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js`, `three/` and `phaser/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`), and so are Phaser (`phaser/LICENSE.md`) and the QR code encoder inside `lamp.js` (its license is there)."
-        text += GameKit.usesRapier(project) ? " `rapier/` is Rapier, its physics, under the Apache License 2.0 (`rapier/LICENSE`).\n" : "\n"
-        return text
-    }
-
     /// What a README says of the wish's credits: what it's based on and under which licenses, what else it uses, the
     /// pictures made with AI and the wishes it was remixed from. Empty for a wish with none.
     static func creditsSection(_ credits: Credits) -> String {
@@ -312,7 +251,7 @@ enum Publish {
     /// Gets what a card needs from GitHub: gh's site to install it from, or a sign-in. gh signs in on github.com in the
     /// browser, from a terminal it asks a question in, so Terminal comes to the front with it; once the sign-in is seen
     /// (checked every few seconds for up to five minutes, while `stillNeeded`), `signedIn` is called.
-    @MainActor static func obtain(_ need: PublishCard.Need, stillNeeded: @escaping @MainActor () -> Bool, signedIn: @escaping @MainActor () -> Void) {
+    @MainActor static func obtain(_ need: RepoCard.Need, stillNeeded: @escaping @MainActor () -> Bool, signedIn: @escaping @MainActor () -> Void) {
         switch need {
         case .install: NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
         case .signIn:
@@ -330,53 +269,63 @@ enum Publish {
         }
     }
 
-    // MARK: Putting it up
+    // MARK: GitHub Pages
 
-    /// Puts the staged page in `repo` (made, public, if it's new) and turns on Pages; `step` hears what it's doing.
-    static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool,
-                       step: @escaping @Sendable (String) -> Void) async throws -> Page {
-        let url = pageURL(repo)
-        if isNew {
-            step("Making \(repo)…")
-            let made = await Subprocess.run(gh, ["repo", "create", repo, "--public", "--homepage", url,
-                                                 "--description", AppDescription.description(of: project) ?? "\(project.name), made with Lamp"],
-                                            timeout: 60)
-            guard made.ok else { throw Failure(message: "GitHub didn't make \(repo): \(made.output.trimmed.suffix(200))") }
-            // Kept as soon as it's made, so a publish that fails after this tries the same repository again rather than
-            // leaving this one behind and making another.
-            keep(Page(repo: repo, url: url), for: project)
-        }
-        step("Uploading…")
-        let git = FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/git") ? "/opt/homebrew/bin/git" : "/usr/bin/git"
-        let site = staged.folder
-        let identity = ["-c", "user.name=\(login)", "-c", "user.email=\(login)@users.noreply.github.com"]
-        // A try after a failed one finds the page committed already, and pushes that commit again.
-        var committed = false
-        if FileManager.default.fileExists(atPath: site.appendingPathComponent(".git").path) {
-            committed = await Subprocess.run(git, ["rev-parse", "--verify", "-q", "HEAD"], cwd: site, timeout: 10).ok
-        }
-        for arguments in committed ? [] : [["init", "-q", "-b", "main"], ["add", "-A"], identity + ["commit", "-q", "-m", "Publish \(project.name)"]] {
-            let ran = await Subprocess.run(git, arguments, cwd: site, timeout: 120)
+    /// The branch GitHub Pages serves the page from, beside the wish's code on main.
+    static let pageBranch = "gh-pages"
+
+    /// Puts `site` on `repo`'s page branch as one commit of the difference on top of what's there, or none when it's the
+    /// same, signed in through gh for these commands alone. Returns the branch's commit, which Pages builds, and whether
+    /// it's a new one.
+    static func pushPage(_ site: URL, to repo: String, gh: String, login: String, message: String) async throws -> (commit: String, changed: Bool) {
+        let git = GitHubRepo.git
+        let signedIn = GitHubRepo.signedIn(gh: gh)
+        let remote = "https://github.com/\(repo).git"
+        // A try after a failed one starts afresh: the page's files are what's staged, whatever was committed then.
+        try? FileManager.default.removeItem(at: site.appendingPathComponent(".git"))
+        func run(_ arguments: [String]) async throws -> String {
+            let ran = await Subprocess.run(git, arguments, cwd: site, mergeErrors: false, timeout: 120)
             guard ran.ok else { throw Failure(message: "Couldn't prepare the page: \(ran.output.trimmed.suffix(200))") }
+            return ran.output.trimmed
         }
-        // Signed in through gh, for this push alone: nothing is kept in a git configuration.
-        let pushed = await Subprocess.run(git, ["-c", "credential.helper=", "-c", "credential.helper=!\(gh) auth git-credential",
-                                               "push", "-q", "--force", "https://github.com/\(repo).git", "HEAD:main"],
-                                          cwd: site, timeout: 600)
+        _ = try await run(["init", "-q", "-b", pageBranch])
+        _ = try await run(["add", "-A"])
+        let tree = try await run(["write-tree"])
+        var parent: String?
+        if await Subprocess.run(git, signedIn + ["fetch", "-q", "--depth", "1", remote, pageBranch], cwd: site, timeout: 600).ok {
+            let head = try await run(["rev-parse", "FETCH_HEAD"])
+            if try await run(["rev-parse", "FETCH_HEAD^{tree}"]) == tree { return (head, false) }
+            parent = head
+        }
+        let commit = try await run(GitHubRepo.identity(login: login) + ["commit-tree", tree] + (parent.map { ["-p", $0] } ?? []) + ["-m", message])
+        let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "\(commit):refs/heads/\(pageBranch)"], cwd: site, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take the page: \(pushed.output.trimmed.suffix(200))") }
-        let commit = (await Subprocess.run(git, ["rev-parse", "HEAD"], cwd: site, timeout: 10)).output.trimmed
+        return (commit, true)
+    }
 
+    /// Turns GitHub Pages on for `repo`'s page branch, or asks for a build when it's on, unless the page didn't change and
+    /// that commit is built or building already (a failed build is asked for again, so trying again can mend it); then
+    /// waits until GitHub says it built `commit`: an earlier build's "built" is the page as it was. Pages set by the
+    /// person to serve another branch are left as they are, and said so.
+    static func servePage(_ repo: String, commit: String, changed: Bool, gh: String, step: @escaping @Sendable (String) -> Void) async throws {
+        let url = pageURL(repo)
         step("Turning on GitHub Pages…")
-        let existing = await Subprocess.run(gh, ["api", "repos/\(repo)/pages"], timeout: 30)
+        let existing = await Subprocess.run(gh, ["api", "repos/\(repo)/pages", "--jq", ".source.branch"], mergeErrors: false, timeout: 30)
+        let branch = existing.output.trimmed
         if !existing.ok {
-            let on = await Subprocess.run(gh, ["api", "-X", "POST", "repos/\(repo)/pages", "-f", "source[branch]=main", "-f", "source[path]=/"],
+            let on = await Subprocess.run(gh, ["api", "-X", "POST", "repos/\(repo)/pages", "-f", "source[branch]=\(pageBranch)", "-f", "source[path]=/"],
                                           timeout: 30)
             guard on.ok else { throw Failure(message: "GitHub Pages couldn't be turned on: \(on.output.trimmed.suffix(200))") }
+        } else if branch != pageBranch {
+            throw Failure(message: "GitHub Pages for \(repo) shows its \(branch.isEmpty ? "own" : branch) branch, not the page. Choose \(pageBranch) in its Pages settings to play it.")
         } else {
-            _ = await Subprocess.run(gh, ["api", "-X", "POST", "repos/\(repo)/pages/builds"], timeout: 30)
+            let latest = await Subprocess.run(gh, ["api", "repos/\(repo)/pages/builds/latest", "--jq", ".commit + \" \" + .status"],
+                                              mergeErrors: false, timeout: 30)
+            let parts = latest.output.trimmed.split(separator: " ").map(String.init)
+            let underway = !changed && parts.count == 2 && parts[0] == commit && parts[1] != "errored"
+            if !underway { _ = await Subprocess.run(gh, ["api", "-X", "POST", "repos/\(repo)/pages/builds"], timeout: 30) }
         }
-        // Up only once GitHub says it built this very commit: an earlier build's "built" is the page as it was.
-        step("Waiting for GitHub to put it up…")
+        step("Waiting for GitHub to put the page up…")
         let deadline = Date().addingTimeInterval(600)
         while Date() < deadline {
             try await Task.sleep(for: .seconds(5))
@@ -385,154 +334,16 @@ enum Publish {
             let parts = build.output.trimmed.split(separator: " ").map(String.init)
             guard parts.count == 2, parts[0] == commit else { continue }
             switch parts[1] {
-            case "built": return Page(repo: repo, url: url)
+            case "built": return
             case "errored": throw Failure(message: "GitHub couldn't put the page up. Try again in a moment.")
             default: continue
             }
         }
-        throw Failure(message: "GitHub is still putting the page up. It should be at \(url) in a few minutes; Publish again if it isn't.")
+        throw Failure(message: "GitHub is still putting the page up. It should be at \(url) in a few minutes; Put on GitHub again if it isn't.")
     }
 
     static func pageURL(_ repo: String) -> String {
         let parts = repo.split(separator: "/")
         return "https://\(parts[0].lowercased()).github.io/\(parts[1])/"
-    }
-}
-
-/// The Publish card of each wish while it's open, in the chat's place. Preparing it finds `gh` and the person's sign-in
-/// and stages the page with its checks, so the card shows exactly what will go up before the person confirms.
-@MainActor final class PublishCards: ObservableObject {
-    static let shared = PublishCards()
-
-    struct Card {
-        var stage: PublishCard.Stage = .preparing
-        var repo: String?
-        var login: String?
-        var gh: String?
-        var staged: Publish.Staged?
-        var page: Publish.Page?
-        var copied = false
-        var icon: Data?
-
-        /// Ready, or failed with the page still staged, so Publish tries again.
-        var canPublish: Bool {
-            switch stage {
-            case .ready: true
-            case .failed: staged != nil
-            default: false
-            }
-        }
-    }
-
-    @Published private(set) var cards: [String: Card] = [:]
-
-    func card(for project: LampProject) -> Card? { cards[project.id] }
-
-    func open(_ project: LampProject) {
-        guard cards[project.id] == nil else { return }
-        cards[project.id] = Card(page: Publish.kept(for: project))
-        Task { cards[project.id]?.icon = await Sharing.sharedIcon(of: project) }
-        prepare(project)
-    }
-
-    /// Finds gh and the sign-in, and stages what will go up.
-    func prepare(_ project: LampProject) {
-        guard cards[project.id] != nil else { return }
-        cards[project.id]?.stage = .preparing
-        if let old = cards[project.id]?.staged { try? FileManager.default.removeItem(at: old.folder.deletingLastPathComponent()) }
-        cards[project.id]?.staged = nil
-        Task {
-            guard let gh = await Publish.gh() else { return set(project, .needsGitHub(.install)) }
-            guard let login = await Publish.login(gh: gh) else { return set(project, .needsGitHub(.signIn)) }
-            let kept = Publish.kept(for: project)
-            let repo: String
-            if let known = kept?.repo { repo = known } else { repo = await Publish.freeName(for: project, login: login, gh: gh) }
-            do {
-                let staged = try await Task.detached(priority: .userInitiated) { try Publish.stage(project, url: Publish.pageURL(repo), link: WishLink.kept(for: project)?.url) }.value
-                guard cards[project.id] != nil else {
-                    try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
-                    return
-                }
-                cards[project.id]?.gh = gh
-                cards[project.id]?.login = login
-                cards[project.id]?.repo = repo
-                cards[project.id]?.staged = staged
-                cards[project.id]?.stage = .ready
-            } catch {
-                set(project, .refused(((error as? LocalizedError)?.recoverySuggestion).map { "\(error.localizedDescription) \($0)" } ?? error.localizedDescription))
-            }
-        }
-    }
-
-    private func set(_ project: LampProject, _ stage: PublishCard.Stage) { cards[project.id]?.stage = stage }
-
-    func publish(_ project: LampProject) {
-        guard let card = cards[project.id], card.canPublish, let staged = card.staged, let repo = card.repo,
-              let gh = card.gh, let login = card.login else { return }
-        // A first try that made the repository before failing kept it (`upload`): this goes on with it.
-        let isNew = (card.page ?? Publish.kept(for: project))?.repo != repo
-        set(project, .publishing("Starting…"))
-        Task {
-            do {
-                let id = project.id
-                let page = try await Publish.upload(staged, of: project, to: repo, gh: gh, login: login, isNew: isNew) { step in
-                    Task { @MainActor in PublishCards.shared.cards[id]?.stage = .publishing(step) }
-                }
-                Publish.keep(page, for: project)
-                try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
-                cards[project.id]?.staged = nil
-                cards[project.id]?.page = page
-                set(project, .published)
-            } catch {
-                // The page stays staged, so Publish can try again; a repository made on the way is kept (`upload`).
-                cards[project.id]?.page = Publish.kept(for: project) ?? cards[project.id]?.page
-                set(project, .failed(error.localizedDescription))
-            }
-        }
-    }
-
-    /// Share Link's card in the Publish card's place, for the person to see and change what the link shows before it's
-    /// made: Publish never sends the wish's words or picture itself. Publish is opened again once the link is out.
-    func makeLink(_ project: LampProject) {
-        close(project)
-        WishLinkCards.shared.open(project, inSidebar: true)
-    }
-
-    func fix(_ project: LampProject) {
-        guard case .needsGitHub(let need) = cards[project.id]?.stage else { return }
-        Publish.obtain(need, stillNeeded: { [weak self] in
-            if case .needsGitHub = self?.cards[project.id]?.stage { return true } else { return false }
-        }, signedIn: { [weak self] in self?.prepare(project) })
-    }
-
-    func openPage(_ project: LampProject) {
-        if let url = cards[project.id]?.page?.url ?? Publish.kept(for: project)?.url, let page = URL(string: url) { NSWorkspace.shared.open(page) }
-    }
-
-    func copy(_ project: LampProject) {
-        guard let url = cards[project.id]?.page?.url else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url, forType: .string)
-        cards[project.id]?.copied = true
-    }
-
-    func close(_ project: LampProject) {
-        if let staged = cards[project.id]?.staged { try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent()) }
-        cards[project.id] = nil
-    }
-
-    /// The card as the chat draws it.
-    func wire(_ card: Card, of project: LampProject) -> SidebarPublish {
-        let credits = card.staged?.credits ?? Credits.load(project)
-        var notes = ShareCheck.notes(for: credits)
-        if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
-        if let line = ShareCheck.warningLine(credits) { notes.append(line) }
-        let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
-        // Where its Open in Lamp goes: the Share Link the person made, or nothing yet, with a button to make one.
-        let link = card.staged?.open.link ?? WishLink.kept(for: project)?.url
-        let openInLamp = link.map { url in url.host.map { $0 + url.path } ?? url.absoluteString }
-        return SidebarPublish(name: project.name, icon: card.icon, stage: card.stage, repo: card.repo,
-                              page: card.page?.url, credit: credits.basedOn, openInLamp: openInLamp, notes: notes, size: size, copied: card.copied,
-                              republish: card.page != nil, canPublish: card.canPublish)
     }
 }

@@ -90,8 +90,6 @@ public struct SidebarState: Codable, Equatable {
     public var sharing: SidebarSharing?
     /// The Share Link card, while it's open in this chat (`SidebarCommand.wishLink`): shown in the chat's place.
     public var wishLink: SidebarWishLink?
-    /// The Publish card, while it's open in this chat (`SidebarCommand.publish`): shown in the chat's place.
-    public var publish: SidebarPublish?
     /// The Put on GitHub card, while it's open in this chat (`SidebarCommand.repo`): shown in the chat's place.
     public var repo: SidebarRepo?
     /// The Send Changes Back card, while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
@@ -228,8 +226,6 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canUndo: Bool
     /// The wish has been made: there's a file to share.
     public var canShare: Bool
-    /// Its page can be published (a game drawn with three.js, while the experiment is on): the share menu offers it.
-    public var canPublish: Bool?
     /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
     public var canContribute: Bool?
     /// It has versions to look back at.
@@ -635,8 +631,6 @@ public enum SidebarCommand: Codable, Equatable {
     case infoAction(String)
     /// The Share Link card: open it, or what was done on it.
     case wishLink(SidebarWishLinkCommand)
-    /// The Publish card: open it, or what was done on it.
-    case publish(SidebarPublishCommand)
     /// The Put on GitHub card: open it, or what was done on it.
     case repo(SidebarRepoCommand)
     /// The Send Changes Back card: open it, or what was done on it.
@@ -836,46 +830,6 @@ public enum SidebarWishLinkCommand: Codable, Equatable {
     case close
 }
 
-/// The Publish card as Lamp has it (`PublishCard`): everything on it is Lamp's, worked out before the person confirms.
-public struct SidebarPublish: Codable, Equatable {
-    public var name: String
-    public var icon: Data?
-    public var stage: PublishCard.Stage
-    public var repo: String?
-    public var page: String?
-    public var credit: String?
-    /// Where the page's Open in Lamp goes: the wish's Share Link, or nil when it has none yet (the card offers to make one).
-    public var openInLamp: String?
-    public var notes: [String]
-    public var size: String?
-    public var copied: Bool
-    public var republish: Bool
-    /// Publish can be pressed: it's ready, or a try failed and can be made again.
-    public var canPublish: Bool
-
-    public init(name: String, icon: Data?, stage: PublishCard.Stage, repo: String?, page: String?, credit: String?, openInLamp: String?,
-                notes: [String], size: String?, copied: Bool, republish: Bool, canPublish: Bool) {
-        self.name = name
-        self.icon = icon
-        self.stage = stage
-        self.repo = repo
-        self.page = page
-        self.credit = credit
-        self.openInLamp = openInLamp
-        self.notes = notes
-        self.size = size
-        self.copied = copied
-        self.republish = republish
-        self.canPublish = canPublish
-    }
-}
-
-public enum SidebarPublishCommand: Codable, Equatable {
-    case open, publish, fix, openPage, copy, close
-    /// Make a Share Link first, through its own card.
-    case makeLink
-}
-
 /// The Put on GitHub card as Lamp has it (`RepoCard`): everything on it is Lamp's, worked out before the person confirms.
 public struct SidebarRepo: Codable, Equatable {
     public var name: String
@@ -898,9 +852,15 @@ public struct SidebarRepo: Codable, Equatable {
     public var isPrivate: Bool
     public var license: Bool
     public var canChooseLicense: Bool
+    /// A web game's page: where it plays ("someone.github.io/new-york"), going up with the code or up already, and whether
+    /// it's up now. Nil for a wish that isn't one, or a private repository, which gets none (`privateGame`).
+    public var page: String?
+    public var pageUp: Bool?
+    public var privateGame: Bool?
 
     public init(name: String, icon: Data?, stage: RepoCard.Stage, repo: String?, url: String?, credit: String?, openInLamp: String?,
-                notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool) {
+                notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
+                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil) {
         self.name = name
         self.icon = icon
         self.stage = stage
@@ -916,6 +876,9 @@ public struct SidebarRepo: Codable, Equatable {
         self.isPrivate = isPrivate
         self.license = license
         self.canChooseLicense = canChooseLicense
+        self.page = page
+        self.pageUp = pageUp
+        self.privateGame = privateGame
     }
 }
 
@@ -957,6 +920,8 @@ public enum SidebarContributeCommand: Codable, Equatable {
 
 public enum SidebarRepoCommand: Codable, Equatable {
     case open, put, fix, openRepo, copy, close
+    /// Open the game's page in the browser.
+    case play
     /// Make a Share Link first, through its own card.
     case makeLink
     case setPrivate(Bool)

@@ -186,7 +186,7 @@ What a starter's repository shows is the starter's own: the GitHub description i
 (`GitHubRepo.readme` with a `Showcase`) opens with the icon from `.github/`, the description, the buttons (Play in your browser for a game, Open
 in Lamp, "Generated apps"), its reel's loop where it has one and its preview otherwise, and "Ideas to try" titled with starter.md's `offer` and listing its tweaks, each a link
 that opens Lamp on a copy with that request. A game whose page is the whole game also gets a page
-anyone plays in a browser (`StarterRepos.stagePage`: Publish's page with the credit bar and the tweaks in its Remix
+anyone plays in a browser (`StarterRepos.stagePage`: the page Put on GitHub puts up for a game, `Publish.copyPage`, with the credit bar and the tweaks in its Remix
 panel, which names the starter so a remix starts from a fresh copy of it, "Remixing a published page" in the
 wishes guide, on the repository's `gh-pages` branch for GitHub Pages, at lampdotdev.github.io/<folder>), which the README
 links and the repository's website points to; any other starter's website is its remix link on lamp.dev. `scripts/publish-starters.sh` refreshes all of that: it clones each
