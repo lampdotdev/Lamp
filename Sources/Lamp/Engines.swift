@@ -809,25 +809,41 @@ enum EngineSignIn {
     /// copy first if there isn't one yet. Nil when the person cancelled it (`cancelSignIn`), whether that was
     /// while the copy was still downloading or while the browser was open.
     static func signIn(_ engine: Engine) async -> Bool? {
-        lock.withLock { signIns[engine] = (nil, false) }
-        defer { lock.withLock { _ = signIns.removeValue(forKey: engine) } }
-        func cancelled() -> Bool { lock.withLock { signIns[engine]?.cancelled ?? false } }
-        let ready = await EngineDownloads.shared.ensure(engine)
+        await signIn(engine, ready: {
+            await EngineDownloads.shared.ensure(engine) && EngineInstall.path(for: engine) != nil
+        }, login: { started in
+            guard let tool = EngineInstall.path(for: engine) else { return 1 }
+            let arguments = engine == .claude ? ["auth", "login"] : ["login"]
+            return await run(engine, tool, arguments, timeout: 600, started: started).status
+        }, settle: {
+            _ = await isSignedIn(engine)
+            // Setup counts the sign-in (`SetupCheck.run`), so requests waiting for it start wherever it was made from.
+            await Store.shared.recheckSetup()
+        })
+    }
+
+    /// One attempt, kept under an id of its own: one cancelled and still settling can be followed at once by the
+    /// next, and each must answer for itself and leave the other's process within reach of `cancelSignIn`.
+    static func signIn(_ engine: Engine, ready: () async -> Bool,
+                       login: (@escaping @Sendable (Process) -> Void) async -> Int32,
+                       settle: () async -> Void) async -> Bool? {
+        let id = UUID()
+        lock.withLock { signIns[engine, default: [:]][id] = (nil, false) }
+        defer { lock.withLock { signIns[engine]?[id] = nil } }
+        func cancelled() -> Bool { lock.withLock { signIns[engine]?[id]?.cancelled ?? false } }
+        let isReady = await ready()
         if cancelled() { return nil }
-        guard ready, let tool = EngineInstall.path(for: engine) else { return false }
-        let arguments = engine == .claude ? ["auth", "login"] : ["login"]
-        let status = await run(engine, tool, arguments, timeout: 600) { process in
+        guard isReady else { return false }
+        let status = await login { process in
             // Cancelled in the moment between the check above and the login starting: it ends at once.
             let stop = lock.withLock { () -> Bool in
-                signIns[engine] = (process, signIns[engine]?.cancelled ?? false)
-                return signIns[engine]?.cancelled ?? false
+                signIns[engine]?[id]?.process = process
+                return signIns[engine]?[id]?.cancelled ?? false
             }
             if stop { Subprocess.terminateTree(process) }
-        }.status
+        }
         let wasCancelled = cancelled()
-        _ = await isSignedIn(engine)
-        // Setup counts the sign-in (`SetupCheck.run`), so requests waiting for it start wherever it was made from.
-        await Store.shared.recheckSetup()
+        await settle()
         return wasCancelled ? nil : status == 0
     }
 
@@ -835,16 +851,16 @@ enum EngineSignIn {
     /// the wrong account), or for Lamp's copy to finish downloading, in which case the browser never opens.
     /// Sign In… can start again at once.
     static func cancelSignIn(_ engine: Engine) {
-        let process = lock.withLock { () -> Process? in
-            guard let running = signIns[engine] else { return nil }
-            signIns[engine] = (running.process, true)
-            return running.process
+        let processes = lock.withLock { () -> [Process] in
+            guard let attempts = signIns[engine] else { return [] }
+            for id in attempts.keys { signIns[engine]?[id]?.cancelled = true }
+            return attempts.values.compactMap(\.process)
         }
-        if let process { Subprocess.terminateTree(process) }
+        for process in processes { Subprocess.terminateTree(process) }
     }
 
-    /// The sign-in under way for each engine: its login process once it has started, and whether it was cancelled.
-    nonisolated(unsafe) private static var signIns: [Engine: (process: Process?, cancelled: Bool)] = [:]
+    /// The sign-ins under way for each engine: each one's login process while it runs, and whether it was cancelled.
+    nonisolated(unsafe) private static var signIns: [Engine: [UUID: (process: Process?, cancelled: Bool)]] = [:]
     private static let lock = NSLock()
 
     private static func run(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval,
