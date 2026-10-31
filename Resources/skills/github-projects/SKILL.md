@@ -54,6 +54,6 @@ its credit and licenses in place, and the rest of what a Lamp app has.
 6. Look at it with `look_at_app` until it works.
 7. Call `lampify` again with the same address and commit, and fix whatever it says is still missing, until it says
    nothing is.
-8. Tell the person what it's based on, its license, and when it came with none, that it can be used on this Mac but
-   not shared or published. When the address named a tag or a branch, say its updates will come from the project's
+8. Tell the person what it's based on, its license, and when it came with none, that whether to share or publish it
+   is their call, and Lamp will remind them when they do. When the address named a tag or a branch, say its updates will come from the project's
    default branch. Putting it on GitHub is theirs to choose, with Put on GitHub…; never do it for them.

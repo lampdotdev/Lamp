@@ -109,6 +109,11 @@ window), since a panel closes at any click elsewhere; a change that reopens the 
 again, only just after such a quit (`chatQuitKey`). A Mac widget has it in its top right corner (`.lampWand()` in
 Lamp's own widget file, which the mac-widgets skill asks for): a link the app takes as Customize with Lamp…
 (`LampWidgetLinks`, which passes every other link to SwiftUI, or for a widget-only app to whatever opens it).
+A Mac app's File ▸ Share… (`LampShareApp`) asks Lamp for the wish's file (`/app/share`, `Store.appShare`), the same
+one Lamp's own Share… makes, and shows the system's share picker from its window. Whatever Lamp would ask or say first is
+said in the app, as Lamp says it: work that came with no license is asked about with Share Anyway, which asks again
+with `anyway`, and a share Lamp refuses shows its headline and what to do. "Open Lamp and try again" is only for a Lamp
+that doesn't answer.
 This is how a new app is changed from its first build on:
 as soon as a new Mac app's scaffold is built and opened at the start of its first turn (`Store.showEarly`, then
 `Store.present`; else at the agent's first look, or at the end of that turn), Lamp's panel, where its chat was until then, closes and the app opens the chat beside its content, so the rest of the turn's passes go

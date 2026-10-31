@@ -3388,7 +3388,7 @@ final class Store: ObservableObject {
     func canShare(_ project: LampProject) -> Bool { project.scaffolded }
 
     func copyAppFile(_ project: LampProject) {
-        guard canShare(project) else { return }
+        guard canShare(project), Sharing.askToShare(project) else { return }
         Task { await copyAppFile(project, icon: Sharing.sharedIcon(of: project)) }
     }
 
@@ -3450,6 +3450,7 @@ final class Store: ObservableObject {
     }
 
     func chooseExport(_ project: LampProject) {
+        guard Sharing.askToShare(project) else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.lampApp]
         panel.nameFieldStringValue = "\(project.name).lampapp"
@@ -12886,10 +12887,19 @@ final class Store: ObservableObject {
     /// makes, with its picture. Lamp writes them and the app shows the system's share picker from its own window,
     /// which Lamp can't open over another app's. Only the app itself is answered, as for its secrets, and it can ask
     /// only for itself: the file is made from the app's folder here, never from anything the app sends.
+    /// A wish using work with no license is answered with what Lamp's own Share… asks (`warning`, `detail`), which the
+    /// app shows with Share Anyway; it asks again with `anyway`, and the answer is kept as Lamp keeps its own. What
+    /// stops the share is answered with its headline in `error` and what to do in `detail`.
     private func appShare(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         guard !request.fromNetwork, let port = request.peerPort,
               PeerProcess.isApp(at: project.installedURL, connectedFrom: port, to: Gateway.port) else {
             return (403, ["error": "Only the app itself, as Lamp installed it, can do that."])
+        }
+        let credits = Credits.load(project)
+        if let warning = ShareCheck.warning(of: project, credits: credits), !ShareCheck.accepted(project, credits: credits) {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            guard body["anyway"] as? Bool == true else { return (200, ["warning": warning.message, "detail": warning.detail ?? ""]) }
+            ShareCheck.accept(project, credits: credits)
         }
         do {
             let icon = await Sharing.sharedIcon(of: project)
@@ -12902,7 +12912,11 @@ final class Store: ObservableObject {
             if let picture { answer["picture"] = picture.path }
             return (200, answer)
         } catch {
-            return (500, ["error": "\(project.name) couldn't be made into a file to share: \(error.localizedDescription)"])
+            // Sharing's own refusals say what's wrong and what to do; anything else is said under the share's headline.
+            guard let refusal = error as? Sharing.ImportError else {
+                return (500, ["error": "\(project.name) couldn't be made into a file to share.", "detail": error.localizedDescription])
+            }
+            return (500, ["error": refusal.message, "detail": refusal.detail ?? ""])
         }
     }
 

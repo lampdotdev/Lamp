@@ -917,8 +917,8 @@ enum Agent {
         by `lampify`, which writes its entry at the commit it pinned and its license files itself, and marks the project \
         the app is made from (`"adapted": true`): Lamp brings the person its updates from there. Never take anything out of \
         \(Credits.file), never remove or change a license or a notice of someone else's, and never take an author's \
-        name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license can be used here but \
-        not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \
+        name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license may still be shared, \
+        but whether to is the person's call: say so when you bring it in, and that Lamp will remind them when they share. Lamp shows the credit in the app's About \
         window and its info.
         """
 

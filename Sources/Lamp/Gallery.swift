@@ -847,6 +847,8 @@ enum Gallery {
         wishLink("Beside the app", link: true, copied: true, width: nil),
         wishLink("Beside the app, new link", width: nil),
         wishLink("With the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true), canIncludeFile: true),
+        wishLink("With the wish itself, no license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
+                 canIncludeFile: true, noLicense: "Found Code by Someone came with no license. Make sure you're comfortable sharing it."),
         wishLink("Beside the app, with the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
                  canIncludeFile: true, width: nil),
     ]
@@ -856,7 +858,7 @@ enum Gallery {
 
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
-                                 changed: Bool = false, canIncludeFile: Bool = false, width: CGFloat? = 480) -> Entry {
+                                 changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, width: CGFloat? = 480) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -864,7 +866,7 @@ enum Gallery {
                 picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
-                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile,
+                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)
@@ -884,7 +886,7 @@ enum Gallery {
         publish("Checking", stage: .preparing),
         publish("Needs GitHub's tool", stage: .needsGitHub(.install)),
         publish("Needs a sign-in", stage: .needsGitHub(.signIn)),
-        publish("No license", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no license. It can still be used on this Mac.")),
+        publish("No license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."]),
         publish("Ready", stage: .ready),
         publish("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license.",
                                                              "2 pictures made with AI, marked as such."]),
@@ -921,7 +923,8 @@ enum Gallery {
         repo("Checking", stage: .preparing),
         repo("Needs GitHub's tool", stage: .needsGitHub(.install)),
         repo("Needs a sign-in", stage: .needsGitHub(.signIn)),
-        repo("No license", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no license. It can still be used on this Mac.")),
+        repo("No license, public", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."], remix: true),
+        repo("No license, private", stage: .ready, isPrivate: true),
         repo("Ready, first time", stage: .ready),
         repo("Ready, public", stage: .ready, remix: true),
         repo("Ready, with a share link", stage: .ready, link: true),
@@ -974,7 +977,7 @@ enum Gallery {
     }
 
     private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
-                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false) -> Entry {
+                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false, isPrivate: Bool = false) -> Entry {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
@@ -983,7 +986,7 @@ enum Gallery {
                                 credit: "Based on Slop New York by Mr.doob",
                                 openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
-                                canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: false, license: canChooseLicense,
+                                canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: isPrivate, license: canChooseLicense,
                                 canChooseLicense: canChooseLicense, put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
                                 openRepo: {}, copy: {}, close: {}, width: width)
             return AnyView(card

@@ -51,8 +51,8 @@ final class CreditsTests: XCTestCase {
         XCTAssertEqual(again.credits?.remixOf.map(\.name), ["New York", "City", "Copy"])
     }
 
-    /// Work with no licence, a missing license file or a key in the code keeps a wish from being shared; a share-alike
-    /// license doesn't, and is named.
+    /// A missing license file or a key in the code keeps a wish from being shared; work with no license and a
+    /// share-alike license don't, and are named.
     func testWhatKeepsAWishFromBeingShared() throws {
         let saved = Sharing.knownSecrets
         defer { Sharing.knownSecrets = saved }
@@ -64,7 +64,10 @@ final class CreditsTests: XCTestCase {
         XCTAssertNil(share())
 
         try Credits.arrive(Credits(upstream: [Credits.Source(name: "Found Code", author: "Someone")]), in: project)
-        XCTAssertEqual(share(), "It uses Found Code by Someone, which came with no license. It can still be used on this Mac.")
+        // Shared, once the person has been told what came with no license.
+        XCTAssertNil(share())
+        XCTAssertEqual(ShareCheck.warning(of: project, credits: Credits.load(project))?.detail,
+                       "Found Code by Someone came with no license. Make sure you're comfortable sharing it.")
 
         try Credits.arrive(Credits(upstream: [Credits.Source(name: "Engine", license: "GPL-3.0-or-later", licenseFile: "LICENSE-engine")]), in: project)
         XCTAssertNotNil(share(), "its license file is missing")

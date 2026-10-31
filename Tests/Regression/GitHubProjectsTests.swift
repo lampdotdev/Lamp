@@ -305,14 +305,6 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertNil(GitHubRepo.kept(for: wish), "nothing was put on GitHub")
     }
 
-    func testWhatSharingRefusesIsSaidAsMissingNotThrown() async throws {
-        let (store, wish) = try makeApp()
-        GitHubProjects.fetcher = fake(["index.html": "<canvas></canvas>\n"])
-        let answer = try await call(store, ["url": "https://github.com/someone/unlicensed-game"], on: wish)
-        XCTAssertTrue(answer.contains("It came with no license of its own"), answer)
-        XCTAssertTrue(answer.contains("can't be shared. It uses unlicensed-game"), answer)
-    }
-
     func testALampWishOnGitHubIsSentToOpenFromGitHub() async throws {
         let (store, wish) = try makeWish()
         GitHubProjects.fetcher = fake(["lamp-app.json": "{\"name\": \"Hot Shelf\", \"format\": 1}\n", "Sources/App.swift": "// app\n"])

@@ -526,6 +526,7 @@ enum Publish {
         let credits = card.staged?.credits ?? Credits.load(project)
         var notes = ShareCheck.notes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
+        if let line = ShareCheck.warningLine(credits) { notes.append(line) }
         let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
         // Where its Open in Lamp goes: the Share Link the person made, or nothing yet, with a button to make one.
         let link = card.staged?.open.link ?? WishLink.kept(for: project)?.url

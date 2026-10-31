@@ -280,7 +280,12 @@ Before a wish leaves the Mac (a shared file now, a published page too), `ShareCh
 an open license goes with its license and credit; under a share-alike one (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) it goes
 and the remix stays under it, which a shared file satisfies by carrying the code and a published page says
 (`ShareCheck.notes`); under its own terms (`LicenseRef-`, an id Lamp doesn't know, non-commercial or no-derivatives) it
-goes, credited and named; with no license it can be used here but the share is refused, naming it. A license file the
+goes, credited and named; with no license it goes too, once the person has been told, naming it (`ShareCheck.warning`):
+Share…, Copy Wish File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
+is kept for the wish until it takes in more such work (`ShareCheck.accepted`, in Lamp's settings rather than the wish's
+folder, where the agent writes); an app's File ▸ Share… gets the same question from `/app/share` and asks again with
+`anyway`; Share Link (with the wish itself ticked), Publish as Web Page… and Put on GitHub… to a public repository say it
+as a line among their facts, and a private repository says nothing, since nothing is passed on. A license file the
 credits name must still be in the wish. And nothing of the person's goes: what's staged is searched for the person's
 provider keys, the app's secrets and its token for Lamp's gateway (`ShareCheck.keptSecrets`, the values themselves) and
 for anything shaped like a key (a private key, the prefixes services give their keys), and a hit refuses the share,

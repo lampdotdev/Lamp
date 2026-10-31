@@ -294,7 +294,7 @@ extension GitHubProjects {
         if let file = credited.licenseFile {
             lines.append("Credited in credits.json with license \(credited.license ?? "?"), kept in " + ([file] + (credited.noticeFiles ?? [])).joined(separator: ", ") + ". Keep these files and the author's credit on screen; never change them.")
         } else {
-            lines.append("Credited in credits.json. It came with no license of its own: it can be used on this Mac but not shared or published. Tell the person.")
+            lines.append("Credited in credits.json. It came with no license of its own: the person decides whether to share or publish it, and Lamp reminds them when they do. Tell the person.")
         }
         if let manifest = shape.manifest { lines.append("lamp-app.json, as Lamp makes it:\n" + manifest) }
         switch shape.route {
