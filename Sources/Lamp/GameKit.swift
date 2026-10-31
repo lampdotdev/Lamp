@@ -757,7 +757,18 @@ enum GameKit {
     /// Goes with a look in the preview, a hidden copy that shows a change whether or not the person's open game took it.
     @MainActor static func openGameNote(_ project: LampProject) -> String {
         let left = unregistered(project)
-        let came = PageLive.shared.report(project, at: .mac).map { " What came through the open game's last change: \($0). Anything reset or not registered is the person's place lost: register it now, so the next change keeps it." } ?? ""
+        let report = PageLive.shared.lastReport(project, at: .mac)
+        var came = report?.words.map { " What came through the open game's last change: \($0). Anything reset or not registered is the person's place lost: register it now, so the next change keeps it." } ?? ""
+        // The hidden copy builds every part afresh; the open game builds again only the parts a change is known to touch.
+        if let report, report.words != nil {
+            came += " The open game built again " + (report.built.isEmpty ? "no part of the world" : report.built.map(\.part).joined(separator: ", "))
+                + " and kept every other part as it was. If what you changed is built in a part it kept, the person doesn't see it yet, whatever this look shows:"
+                + " name the file it's built from in that part's keep (`from`, the game skill, \"Changes while it's played\"), so the change builds it again, and don't say it's in until a look at the open game shows it."
+        }
+        if let waits = report?.waits, !waits.isEmpty {
+            return came + " The person's open game doesn't show all of this: it ran the new code in place, but nothing in it read \(waits.joined(separator: ", ")) again, so that shows only after Reload."
+                + " Don't say they can see it: say what shows after Reload, or declare the file in the `from` of the part built from it, so the next change builds that part again in place."
+        }
         if PageLive.shared.holds(project) {
             let why = PageLive.shared.reason(project).map { " (\($0))" } ?? ""
             return " The person's open game doesn't show this: the change waits for Reload\(why). Don't say it's in."
@@ -1476,7 +1487,7 @@ extension Agent.Rules {
     lens and target; `live.state(id, { version, start })` for everything that says where the game is, as one plain \
     object the game changes and never replaces (the mode, which menu or overlay is open, the level, the player's \
     position, heading and speed, what they ride or hold, the score, lives, time, the time of day…); and \
-    `live.keep(key, build, { inputs })` for each part of the world. All of it is back before init reads it and before \
+    `live.keep(key, build, { inputs, from })` for each part of the world, with the data it's built from as its `from`. All of it is back before init reads it and before \
     the first frame, so the one start reads the state and builds that place, with that menu or overlay open and nothing \
     a fresh start would show (no title, intro or tutorial). Raise `version` with a `migrate` when a field changes its \
     meaning; a field you add takes its start value. Only what's registered is kept: a renderer, camera or variable of \

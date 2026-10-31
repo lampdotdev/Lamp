@@ -54,7 +54,8 @@ lamp-game.js once. A `WebGPURenderer` is made and given its `await r.init()` in 
 - game.js only puts the parts together, and keeps the scene, the lights and the world's parts with
   `hot(import.meta).keep` (the game skill, "Changes while it's played", has the recipe). The world is built in parts (the ground, the
   buildings, the trees and street details, the props, the traffic), each in a module of its own and into a group of
-  its own, so a change to one part builds only that part again; each thing that moves or changes in play (the player,
+  its own, kept with the data it's built from as its `from`, so a change to one part or its data builds only that
+  part again; each thing that moves or changes in play (the player,
   a vehicle, the camera, enemies, the HUD's code) is a class in a module that ends with `hot(import.meta).accept()`,
   so a change to its methods goes into the running scene with nothing built again. A uniform's value or a material's
   color set in an `update` swaps; a material made anew compiles its shader again as it's first drawn.

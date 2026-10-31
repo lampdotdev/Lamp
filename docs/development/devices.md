@@ -548,10 +548,20 @@ of the game runs again in order, loaded from its source with its imports pointed
 that starts the game calls game() again, whose init starts from what it registered and the snapshot taken before
 (`pendingRestore()`, as after a reload). What stays is what a reload loses: the WebGL or WebGPU context and its compiled shaders, the files the
 runtime loaded, the sound, the controllers, and the parts the game kept with `hot(import.meta).keep(key, build, {
-inputs })`. A kept part is built again when the module that kept it or one it imports changed, its build function's
-code changed, or one of its `inputs` isn't the same object (a part built again builds again the parts made from it);
+inputs, from })`. A kept part is built again when the module that kept it or one it imports changed, its build function's
+code changed, one of its `inputs` isn't the same object (a part built again builds again the parts made from it), or a
+file it read as it was built (through the runtime, or fetched) changed;
 for the module that starts the game, which imports everything, it goes by the modules whose imports the build function
-names, and a game bundled from TypeScript, one file, builds again everything it kept. New York keeps its renderer, the
+names, and a game bundled from TypeScript, one file, builds again everything it kept. `from` is what the game declares
+a part is built from beyond that (its generated map data, a folder of levels): a change to one builds the part again in
+place even where the module it's read through would take the change by a swap (`builtFrom`), since a swap leaves what
+was built as it was. The page's report after a run (`PageLive.Report`) names each part built again with how long it took
+and why, and the changed files nothing in the running game read again (`waitsFor`: a file the game uses whose part was
+kept, or that its code read once at the start); those wait for Reload as a held change does (the page keeps them and
+opens again for them at Reload, `Store.pageWaitsInPart`), and the chat's line for that step says the rest shows after
+Reload, never "Put into" (`stepPage`); the rebuild and its time are in the step's detail, for Agent Details. A look
+in the hidden copy, which builds every part afresh, tells the agent which parts the open game built again and that one
+it kept doesn't show a change built into it (`GameKit.openGameNote`), so it never says the person sees what they don't. New York keeps its renderer, the
 ground's heights and each part of the city, so a change to its HUD runs again in about 2 s instead of a 16 s start,
 and a change to its trees builds only the street details, traffic and road paint again. What a game registers lasts
 beyond that (lamp-game.js, "What the game registers"; the scaffold and the game skill start every new game with it):

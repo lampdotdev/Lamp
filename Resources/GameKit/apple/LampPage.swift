@@ -1334,13 +1334,17 @@ final class LampPageBlockedHost: NSObject {
     /// What the page did with a change (lamp-game.js): put in, reopened, waiting for a pause, back where it was.
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, let said = message.body as? [String: Any], let state = said["state"] as? String else { return }
-        tell(said["gen"] as? Int ?? gen, state, why: said["why"] as? String)
+        // A report also says what was built again and what waits for Reload, and a held change whether it goes in at
+        // the game's next pause by itself: passed on as the page gave them.
+        let more = said.filter { ["built", "kept", "waits", "pause"].contains($0.key) }
+        tell(said["gen"] as? Int ?? gen, state, why: said["why"] as? String, more: more)
     }
 
     /// `why` is the page's reason for opening again or holding a change (code it couldn't swap in), or what came through.
-    private func tell(_ gen: Int, _ state: String, why: String? = nil) {
+    private func tell(_ gen: Int, _ state: String, why: String? = nil, more: [String: Any] = [:]) {
         var body: [String: Any] = ["gen": gen, "state": state, "epoch": epoch, "place": Self.place]
         if let why { body["why"] = String(why.prefix(600)) }
+        for (key, value) in more where JSONSerialization.isValidJSONObject([key: value]) { body[key] = value }
         Task { _ = try? await call("/app/page/state", body, timeout: 10) }
     }
 

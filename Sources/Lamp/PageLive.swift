@@ -36,6 +36,54 @@ import Foundation
 
     private struct Key: Hashable { let id: String; let place: Place }
 
+    /// What came through the page's last run of its code (lamp-game.js, `cameThrough`): in its words, the parts of the
+    /// world built again (each with how long it took and why), and the changed files nothing in the running game read
+    /// again, which wait for Reload.
+    struct Report: Equatable {
+        struct Built: Equatable { var part: String; var ms: Int?; var cause: String? }
+        var words: String?
+        var built: [Built] = []
+        var waits: [String] = []
+
+        init(words: String?, built: [Built] = [], waits: [String] = []) {
+            self.words = words
+            self.built = built
+            self.waits = waits
+        }
+
+        init(_ body: [String: Any]) {
+            words = (body["why"] as? String).map { String($0.prefix(600)) }
+            built = (body["built"] as? [[String: Any]] ?? []).prefix(40).compactMap { item in
+                (item["part"] as? String).map { Built(part: String($0.prefix(80)), ms: item["ms"] as? Int, cause: (item["cause"] as? String).map { String($0.prefix(160)) }) }
+            }
+            waits = (body["waits"] as? [String] ?? []).prefix(20).map { String($0.prefix(200)) }
+        }
+
+        /// The parts built again in the person's words ("the road paint"), and how long they took together.
+        var rebuilt: String? {
+            guard !built.isEmpty else { return nil }
+            let names = built.map { "the " + Self.words(of: $0.part) }
+            let list = names.count <= 3 ? ListFormatter.localizedString(byJoining: names) : "\(names.count) parts of the world"
+            let ms = built.compactMap(\.ms).reduce(0, +)
+            return ms > 0 ? "\(list) in \(Self.seconds(ms))" : list
+        }
+
+        /// A part's key as words: `roadPaint` → "road paint", `street_details` → "street details".
+        static func words(of key: String) -> String {
+            var out = ""
+            for c in key {
+                if c == "_" || c == "-" { out += " "; continue }
+                if c.isUppercase, let last = out.last, last.isLowercase || last.isNumber { out += " " }
+                out += String(c).lowercased()
+            }
+            return out.trimmingCharacters(in: .whitespaces)
+        }
+
+        static func seconds(_ ms: Int) -> String {
+            ms < 100 ? "less than 0.1 s" : ms < 10_000 ? String(format: "%.1f s", Double(ms) / 1000) : "\(Int((Double(ms) / 1000).rounded())) s"
+        }
+    }
+
     /// What a copy was installed with: the page's files by their hashes, and the rest of the app's (`native`).
     private struct Installed: Codable {
         var files: [String: String]
@@ -77,6 +125,8 @@ import Foundation
     private var listening: [Key: [(id: UUID, waiter: CheckedContinuation<Void, Never>)]] = [:]
     private var deciding: [Key: (gen: Int, answer: CheckedContinuation<String?, Never>)] = [:]
     private var held: Set<Key> = []
+    /// Copies holding a change only until the game's next pause (`busy()`), which then goes in by itself.
+    private var pausing: Set<Key> = []
     private var putting: Set<Key> = []
     /// Copies that said they serve a phone page Lamp hands them (`LampPageLive`, as it asks): one built by an earlier
     /// Lamp gets the game installed again for a change of it, as before.
@@ -86,7 +136,7 @@ import Foundation
     private var reasons: [String: String] = [:]
     /// What came through the page's last run of its code, in its words (lamp-game.js, `cameThrough`), by copy: for the
     /// agent's look, so anything lost is put right in the same turn.
-    private var reports: [Key: String] = [:]
+    private var reports: [Key: Report] = [:]
     /// Asked of the copy on the Mac: what its page has saved, for a preview to start from (`saved(of:)`).
     private var asking: [String: CheckedContinuation<[String: String]?, Never>] = [:]
     /// What each app's copy on the Mac last said it had saved, by app, kept only while Lamp runs.
@@ -255,10 +305,16 @@ import Foundation
     func reason(_ project: LampProject) -> String? { reasons[project.id] }
 
     /// What the copy at `place` last said came through a run of its code; nil after a swap, or when it hasn't said.
-    func report(_ project: LampProject, at place: Place) -> String? { reports[Key(id: project.id, place: place)] }
+    func report(_ project: LampProject, at place: Place) -> String? { reports[Key(id: project.id, place: place)]?.words }
+
+    /// The copy's last report whole: what was built again, and what waits for Reload.
+    func lastReport(_ project: LampProject, at place: Place) -> Report? { reports[Key(id: project.id, place: place)] }
 
     /// Whether a copy is holding a change for a pause.
     func holds(_ project: LampProject) -> Bool { held.contains { $0.id == project.id } }
+
+    /// Whether what a copy holds goes in by itself at the game's next pause, rather than only at Reload.
+    func holdsForPause(_ project: LampProject) -> Bool { held.contains { $0.id == project.id && pausing.contains($0) } }
 
     private func answer(_ key: Key, gen: Int) async -> String? {
         deciding[key]?.answer.resume(returning: nil)
@@ -371,14 +427,27 @@ import Foundation
             return (200, [:])
         }
         if state == "report" {
-            reports[key] = (body["why"] as? String).map { String($0.prefix(600)) }
+            let report = Report(body)
+            reports[key] = report
+            // Part of the change didn't reach the running game: the page holds it for Reload, and so does the chat.
+            if !report.waits.isEmpty {
+                held.insert(key)
+                if var change = lastGiven(project, key), change.waits != true {
+                    change.waits = true
+                    give(change, to: key, in: project)
+                }
+                Store.shared.pageWaitsInPart(project)
+            }
             return (200, [:])
         }
         if ["held", "reloading", "rerun", "swapped"].contains(state) {
             reasons[project.id] = (body["why"] as? String).map { String($0.prefix(600)) }
             reports[key] = nil
         }
-        if state == "held" { held.insert(key) }
+        if state == "held" {
+            held.insert(key)
+            if body["pause"] as? Bool == true { pausing.insert(key) } else { pausing.remove(key) }
+        } else if ["swapped", "rerun", "reloading"].contains(state) { pausing.remove(key) }
         if let change = lastGiven(project, key), ["held", "swapped", "rerun", "reloading"].contains(state) {
             var marked = change
             marked.waits = state == "held"

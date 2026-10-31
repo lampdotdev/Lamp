@@ -105,12 +105,15 @@ const clean = path => String(path).replace(/^\.?\//, '').split(/[?#]/)[0];
 // Asked again after a change, a file is asked for by a new address, so nothing on the way keeps the old one.
 let changes = 0;
 const fresh = path => changes ? `${path}${String(path).includes('?') ? '&' : '?'}lamp=${changes}` : path;
-// So is a file of the page's that the game's own code fetches (a city's building data), once anything has changed.
+// So is a file of the page's that the game's own code fetches (a city's building data), once anything has changed. What
+// a part kept with keep() fetches as it's built is what it's built from (`read`), as a file loaded through the runtime is.
 if (window.fetch) {
     const fetchFile = window.fetch;
     window.fetch = function (input, init) {
         const url = typeof input === 'string' || input instanceof URL ? String(input) : input && input.url;
-        if (changes && !(init && init.cache) && url && pathOf(url) != null) init = { ...init, cache: 'no-store' };
+        const path = url ? pathOf(url) : null;
+        if (path != null) read(clean(path));
+        if (changes && !(init && init.cache) && path != null) init = { ...init, cache: 'no-store' };
         return fetchFile.call(this, input, init);
     };
 }
@@ -915,7 +918,7 @@ let hooks = {}, started = false, waiting = null, pill = null;
 // the state didn't take.
 let pending = null, reopened = false, taken = false, guarding = false;
 const host = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampLive;
-const tellHost = (gen, state, why) => { try { const h = host(); h && h.postMessage(why ? { gen, state, why } : { gen, state }); } catch (e) {} };
+const tellHost = (gen, state, why, more) => { try { const h = host(); h && h.postMessage({ gen, state, ...(why ? { why } : {}), ...more }); } catch (e) {} };
 // What a change of these is, is code: swapped in, or the page is opened again for it.
 const CODE = /\.(m?js|html?|css)$/i;
 // Each copy of the page names its build (lamp-build.js, written with lamp-device.js), so a snapshot is restored only by a
@@ -948,6 +951,8 @@ window.__lampLive = change => {
     if (preview) return false;
     changes = Math.max(changes + 1, change.gen || 0);
     queue = queue.then(() => {
+        // What the code run again couldn't take in goes in as the page opens again, at Reload.
+        if (waiting && waiting.reopens && change.now) { waiting = null; return reopen(change); }
         if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])] };
         waiting = null;
         return apply(change);
@@ -963,7 +968,14 @@ async function apply(change) {
     const before = takeSnapshot(), roster = phonesHere(), began = performance.now();
     const said = [];
     let why = paths.length ? null : 'nothing to put in', touched = false;
-    for (const path of paths.filter(p => !CODE.test(p))) {
+    // A part declared as built from a changed file is built again, with everything else kept: a swap would leave it as
+    // it was built.
+    if (paths.some(p => /\.m?js$/i.test(p)) && [...kept.values()].some(k => k.from.length)) {
+        try { await readModules(paths.filter(p => /\.m?js$/i.test(p))); } catch (e) {}
+    }
+    const own = builtFrom(paths);
+    if (own) why = `${own.path} changed, which ${own.key} is built from`;
+    for (const path of why ? [] : paths.filter(p => !CODE.test(p))) {
         let done = false;
         for (const swap of swaps.get(path) || []) { try { await swap(); done = true; } catch (e) { log(`Lamp: couldn't put in the new ${path} (${e && e.message || e}).`); } }
         if (hooks.assetChanged) { try { if (await hooks.assetChanged(path)) done = true; } catch (e) { log(`Error: assetChanged('${path}'): ${e && e.message || e}`); } }
@@ -982,7 +994,7 @@ async function apply(change) {
         tellHost(change.gen, 'swapped');
         return;
     }
-    change = { ...change, why };
+    change = { ...change, why, put: said };
     // A run that would start the game over waits for the person: only they can say the place is worth losing.
     if (!keepsPlace() && !change.now && !touched) {
         const unkept = unregistered();
@@ -993,7 +1005,7 @@ async function apply(change) {
     if (isBusy() && !change.now && !touched) {
         waiting = change;
         log(`Lamp: a change that needs the game's code run again (${why}) waits for a pause in the game.`);
-        tellHost(change.gen, 'held', why);
+        tellHost(change.gen, 'held', why, { pause: true });
         if (change.pill) showPill();
         return;
     }
@@ -1073,7 +1085,7 @@ const bare = text => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').replace(/\
 
 // A module's handle on its changes while the game is played (see "Changes while it's played" above): `accept()` takes
 // them, `dispose(fn)` takes away what this version made as it goes, `data` is what the last version's disposers kept,
-// `keep(key, build)` a part of the game kept when its code runs again (see "Running the game's code again"), and
+// `keep(key, build, { inputs, from })` a part of the game kept when its code runs again (see "Running the game's code again"), and
 // `renderer(build)`, `camera(id, build)` and `state(id, { version, start })` what the runtime keeps for the game (see
 // "What the game registers").
 export function hot(meta) {
@@ -1437,18 +1449,27 @@ function putClass(C, N) {
 // shaders compiled for it, the files the runtime loaded, the sound, the controllers, the phones that joined, and every
 // part the game kept.
 //
-// A part is kept with `hot(import.meta).keep(key, build, { inputs, dispose })`: the first time it calls build() and
-// returns what that made (or its promise), and when the code runs again it returns the same thing without building it,
-// unless the module that kept it, or one it imports, changed since, the build function's own code changed, or one of
-// `inputs` isn't the same as before (another part's result it's built from, as a dependency list goes), or a file it
-// loaded through the runtime (asset(), texture(), model(), sound.load()) changed. The module that
-// starts the game imports everything and changes often, so what it keeps goes by the modules whose imports the build
-// function names, and theirs: a change of its own code outside the build function keeps what it kept. A part that's
-// built again, or not asked for any more, goes: `dispose(value)` when given, else a three.js object is taken out of its
-// scene and its geometry and materials let go, and anything with dispose() or destroy() has it called.
+// A part is kept with `hot(import.meta).keep(key, build, { inputs, from, dispose })`: the first time it calls build()
+// and returns what that made (or its promise), and when the code runs again it returns the same thing without building
+// it, unless the module that kept it, or one it imports, changed since, the build function's own code changed, or one
+// of `inputs` isn't the same as before (another part's result it's built from, as a dependency list goes), or a file
+// it read as it was built (loaded through the runtime, asset(), texture(), model(), sound.load(), or fetched) changed.
+// The module that starts the game imports everything and changes often, so what it keeps goes by the modules whose
+// imports the build function names, and theirs: a change of its own code outside the build function keeps what it kept.
+// `from` declares what the part is built from beyond that: files beside the page, a module meaning it and what it
+// imports, a path ending in / a folder (`from: ['js/map-data.js', 'data/streets/']`). A change to one builds the part
+// again in place even where its module would take the change by a swap, since a swap leaves what was built as it was,
+// and the parts made from it (their `inputs`) with it; everything else stays, and so does the player's place. A part
+// that's built again, or not asked for any more, goes: `dispose(value)` when given, else a three.js object is taken out
+// of its scene and its geometry and materials let go, and anything with dispose() or destroy() has it called.
 //
 //   const renderer = await hot(import.meta).keep('renderer', async () => { const r = new THREE.WebGPURenderer(); await r.init(); return r; });
 //   const blocks = live.keep('blocks', () => buildBlocks(landmarks.colliders), { inputs: [landmarks] });
+//   const paint = live.keep('roadPaint', () => buildRoadPaint(streets.network), { inputs: [streets], from: ['js/map-data.js'] });
+//
+// After a run, Lamp is told what was built again (each part, how long it took and why) and what of the change nothing
+// read again (a file the game uses whose part was kept, or that its code read once at the start): that waits for the
+// person's Reload, which opens the page again, and Lamp's chat says so rather than that it's in.
 //
 // What the game's code leaves running is watched from the start: listeners it adds (to the window, the document or
 // anything else), timers, sound contexts it makes itself and workers. Each is taken away when the code runs again,
@@ -1466,13 +1487,15 @@ const kept = new Map();
 let keeping = 0;
 
 function keep(path, key, build, options = {}) {
-    const { dispose, inputs = [], lasting = false } = typeof options === 'function' ? { dispose: options } : options;
+    const { dispose, inputs = [], lasting = false, from = [] } = typeof options === 'function' ? { dispose: options } : options;
     const id = `${path} ${key}`, text = lasting ? bare(source(build)) : source(build), had = kept.get(id), again = runningAgain;
     if (lasting && had && had.text !== text && redeclare(key)) return had.value;
     const same = had && had.inputs.length === inputs.length && inputs.every((v, i) => Object.is(v, had.inputs[i]));
+    const sources = [from].flat().filter(f => typeof f === 'string' && f).map(f => f.endsWith('/') ? clean(f) + '/' : clean(f));
+    const sameSources = had && had.from.join('\n') === sources.join('\n');
     // In the preview a part whose async build drew random numbers while it waited is built again: how many were its
     // own can't be told, and a play must give the numbers a cold one does.
-    if (had && !had.stale && had.text === text && same && !(preview && had.draws == null)) {
+    if (had && !had.stale && had.text === text && same && sameSources && !(preview && had.draws == null)) {
         had.used = true;
         if (again) tally.kept.push(key);
         // The random numbers its build drew are drawn past, so what comes after gets the numbers it got then.
@@ -1480,8 +1503,12 @@ function keep(path, key, build, options = {}) {
         return had.value;
     }
     if (had) letGo(had);
-    const entry = { path, key, text, inputs, lasting, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false,
-                    value: undefined, made: undefined, assets: new Set(), draws: 0 };
+    // Why it's built again, for the agent: the file that changed, its own code, or a part it's built from.
+    const cause = !had ? null : typeof had.stale === 'string' ? had.stale : had.text !== text ? 'its build changed'
+        : !same ? 'a part it\'s built from was built again' : !sameSources ? 'what it\'s built from changed' : null;
+    const entry = { path, key, text, inputs, lasting, from: sources, dispose: typeof dispose === 'function' ? dispose : null, used: true,
+                    stale: false, value: undefined, made: undefined, assets: new Set(), draws: 0, cause, ms: null };
+    const began = performance.now();
     // What the build starts as it runs belongs to the part. An async build's later work can't be told from other code
     // that runs while it waits, so of what's started meanwhile only what's the part's own stays with it: listeners on
     // the part (its object, its canvas, an element inside it) and a worker or sound context that is the part or one of
@@ -1498,13 +1525,26 @@ function keep(path, key, build, options = {}) {
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
         const drawnBefore = draws;
-        value.then(v => { entry.made = v; entry.timers = waiting.timers; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
+        value.then(v => { entry.made = v; entry.timers = waiting.timers; entry.ms = performance.now() - began; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
             () => { if (kept.get(id) === entry) kept.delete(id); });
-    } else entry.made = value;
+    } else { entry.made = value; entry.ms = performance.now() - began; }
     entry.value = value;
     kept.set(id, entry);
-    if (again && had) tally.built.push(key);
+    if (again && had) tally.built.push(entry);
     return value;
+}
+
+// The kept parts built from one of `paths`, as the game declared them (`from`: a file, a module and what it imports, or
+// a folder ending in /): a change to one is the part's own, so it's built again in place rather than swapped around it.
+function builtFrom(paths) {
+    for (const k of kept.values()) {
+        if (k.lasting || !k.from.length) continue;
+        const deps = new Set();
+        for (const f of k.from) if (!f.endsWith('/')) { deps.add(f); for (const dep of below(f)) deps.add(dep); }
+        const hit = paths.find(p => deps.has(p) || k.from.some(f => f.endsWith('/') && p.startsWith(f)));
+        if (hit) return { key: k.key, path: hit };
+    }
+    return null;
 }
 
 const isKept = v => [...kept.values()].some(k => k.made === v);
@@ -1516,6 +1556,13 @@ const keepsWaiting = new Set();
 const building = [];
 function took(path) {
     loaded.add(path);
+    read(path);
+}
+// A file of the page's read, through the runtime or fetched: by the parts being built, and since the code last ran again
+// (`readSince`, for what of a change nothing read again: `waitsFor`).
+let readSince = new Set();
+function read(path) {
+    readSince.add(path);
     for (const entry of building) entry.assets.add(path);
     for (const waiting of keepsWaiting) waiting.assets.add(path);
 }
@@ -1608,7 +1655,7 @@ function camera(id, build, { target } = {}) {
     }
     // A new play of the preview starts from what build() sets, as a cold one does.
     if (!entry || entry.text !== text || (preview && again)) {
-        if (entry && again) tally.built.push(`camera ${id}`);
+        if (entry && again) tally.built.push({ key: `camera ${id}`, ms: null, cause: 'its build changed' });
         cameras.set(id, entry = { id, text, value: build() });
     } else if (again) tally.kept.push(`camera ${id}`);
     entry.target = target;
@@ -1706,10 +1753,13 @@ function unregistered() {
 
 // What came through a change, for the log and for the agent: kept, built again, reset, and what started again unasked
 // because it isn't registered.
-function cameThrough() {
+function cameThrough(waits = []) {
     const left = unregistered();
-    return [tally.kept.length ? `kept ${tally.kept.join(', ')}` : '', tally.built.length ? `built again ${tally.built.join(', ')}` : '',
-            tally.reset.length ? `reset ${tally.reset.join(', ')}` : '', left.length ? `not registered, so started again: ${left.join(', ')}` : ''].filter(Boolean).join('; ');
+    const why = k => !k.cause ? '' : /^[^\s]+[./][^\s]+$/.test(k.cause) ? `, ${k.cause} changed` : `, ${k.cause}`;
+    const built = tally.built.map(k => k.ms == null && !k.cause ? k.key : `${k.key} (${k.ms == null ? '' : `${Math.round(k.ms)} ms`}${k.ms == null ? why(k).slice(2) : why(k)})`);
+    return [tally.kept.length ? `kept ${tally.kept.join(', ')}` : '', built.length ? `built again ${built.join(', ')}` : '',
+            tally.reset.length ? `reset ${tally.reset.join(', ')}` : '', left.length ? `not registered, so started again: ${left.join(', ')}` : '',
+            waits.length ? `waits for Reload: ${waits.join(', ')}, which nothing read again` : ''].filter(Boolean).join('; ');
 }
 
 // Everything registered, as plain JSON: for the new run, or for a page that opens again.
@@ -1747,7 +1797,9 @@ function markStale(paths) {
                 for (const dep of below(from)) deps.add(dep);
             }
         } else { deps = below(k.path); deps.add(k.path); }
-        if (paths.some(p => deps.has(p) || k.assets.has(p))) k.stale = true;
+        for (const f of k.from) if (!f.endsWith('/')) { deps.add(f); for (const dep of below(f)) deps.add(dep); }
+        const hit = paths.find(p => deps.has(p) || k.assets.has(p) || k.from.some(f => f.endsWith('/') && p.startsWith(f)));
+        if (hit) k.stale = hit;
     }
 }
 
@@ -1774,16 +1826,28 @@ function canRunAgain(change) {
 // The game's modules that name a changed data file the runtime didn't load (one a module fetches itself, as a city's
 // building data is), read as changed themselves: a part kept from what they made is built again from the new file
 // rather than kept from the old one.
-async function namingData(paths, order) {
+// `named` gets each changed file outside the modules (data, or a script nothing imports, as a worker's) that the game's
+// code names, for what of a change nothing read again (`waitsFor`).
+async function namingData(paths, order, named = new Set()) {
+    const outside = paths.filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p));
     const data = paths.filter(p => !CODE.test(p) && !loaded.has(p)).map(p => p.split('/').pop());
-    if (!data.length) return [];
+    if (!outside.length) return [];
     const naming = [];
     for (const path of order) {
         if (lampOwn(path) || paths.includes(path)) continue;
         const text = texts.get(path) ?? inline.get(path) ?? await readText(path).catch(() => '');
+        for (const p of outside) if (text.includes(p.split('/').pop())) named.add(p);
         if (data.some(name => text.includes(name))) naming.push(path);
     }
     return naming;
+}
+
+// What of a change the code run again didn't take in: a file the game uses (one it loaded through the runtime, or that
+// its code names) that nothing read again, nor put in as it was (`put`), so a part kept from it, or code that read it
+// once, shows the old one until the page opens again. That waits for Reload.
+function waitsFor(change, named) {
+    return (change.changed || []).map(clean).filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p) && !readSince.has(p)
+        && !(change.put || []).includes(p) && (loaded.has(p) || named.has(p)));
 }
 
 async function runAgain(change, state, roster) {
@@ -1813,13 +1877,15 @@ async function runAgain(change, state, roster) {
         };
         for (const root of roots) visit(root);
     } catch (e) { return cannot(e.message); }
-    markStale([...paths, ...await namingData(paths, order)]);
+    const named = new Set();
+    markStale([...paths, ...await namingData(paths, order, named)]);
 
     tellHost(change.gen, 'rerun', why);
     log(`Lamp: running the game's code again in place for a change (${why}), keeping where the player was.`);
     // The frame on screen now, held there until the new code draws its first.
     const still = preview ? null : await new Promise(done => { shooting = done; after(250, () => { if (shooting === done) { shooting = null; done(null); } }); });
-    const again = runningAgain = { change, state, began, called: false, done: null };
+    const again = runningAgain = { change, state, began, called: false, done: null, named };
+    readSince = new Set();
     const done = new Promise(resolve => { again.done = resolve; });
     // The old code stops: its frame loop, what it asked to have taken away, and what it left running.
     loops++;
@@ -1841,7 +1907,7 @@ async function runAgain(change, state, roster) {
         m.disposers = [];
     }
     // A part whose async build started a timer still running loses it now, so it's built again.
-    for (const k of kept.values()) if ((k.timers || []).some(t => intervals.has(t) || timeouts.has(t))) k.stale = true;
+    for (const k of kept.values()) if ((k.timers || []).some(t => intervals.has(t) || timeouts.has(t))) k.stale = 'a timer it started';
     takeAwayLeft();
     if (phonesWaiting) phonesWaiting.leaving = false;
     listeners.clear();
@@ -1981,9 +2047,20 @@ function ranAgain(again) {
     for (const [id, k] of kept) if (!k.used) { letGo(k); kept.delete(id); }
     for (const list of [cameras, states]) for (const [id, entry] of list) if (!entry.used) list.delete(id);
     restoring = null;
-    const said = cameThrough();
+    const waits = waitsFor(again.change, again.named);
+    const said = cameThrough(waits);
     log(`Lamp: the game's code ran again in place${said ? ` (${said})` : ''} in ${Math.round(performance.now() - again.began)} ms.`);
-    tellHost(again.change.gen, 'report', said);
+    // What was built again, each with how long it took and why, and what waits for Reload: Lamp's chat and the agent's
+    // next look say it, so neither says the person sees what they don't.
+    tellHost(again.change.gen, 'report', said, {
+        built: tally.built.map(k => ({ part: k.key, ...(k.ms == null ? {} : { ms: Math.round(k.ms) }), ...(k.cause ? { cause: k.cause } : {}) })),
+        kept: tally.kept.length, waits });
+    if (waits.length) {
+        // The rest of the change goes in when the page opens again, at the person's Reload.
+        waiting = { ...again.change, changed: waits, why: `nothing in the running game read ${waits.join(', ')} again`, hard: true, reopens: true };
+        log(`Lamp: ${waits.join(', ')} changed, and nothing in the running game read ${waits.length === 1 ? 'it' : 'them'} again: that waits for Reload.`);
+        if (again.change.pill) showPill();
+    }
     swapGuard = { until: time + 1, change: again.change, state: again.state };
     again.done();
 }
@@ -2219,7 +2296,7 @@ async function putBack() {
     } else if (reopened && said && !said.fresh) tellHost(said.gen, 'started');
     if (reopened && said && !said.fresh && !runningAgain) {
         for (const entry of cameras.values()) if (said.held && said.held.cameras[entry.id]) tally.kept.push(`camera ${entry.id}`);
-        tally.built.push(...[...kept.values()].map(k => k.key));
+        tally.built.push(...[...kept.values()].map(k => ({ key: k.key, ms: k.ms, cause: null })));
         tellHost(said.gen, 'report', cameThrough());
     }
     pending = null;

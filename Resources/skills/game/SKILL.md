@@ -218,7 +218,7 @@ game is written to keep the player's place through one:
     fields, an exported function, a new module): the page is put back as the new HTML has it, every module of the game
     runs again, and the game starts straight from what it registered, as a reload would but without one. What's
     registered stays: the renderer and its compiled shaders, the cameras, the state, and each part kept with
-    `hot(import.meta).keep(key, build, { inputs })`, and so do the files the runtime loaded, so the change costs only
+    `hot(import.meta).keep(key, build, { inputs, from })`, and so do the files the runtime loaded, so the change costs only
     what's built again. The listeners,
     timers, sound contexts and workers the old code started are taken away by Lamp, and so are its `Lamp.controllers`
     callbacks, which the new code sets again as it starts; `dispose` in game() is for anything else it must let go of,
@@ -238,12 +238,24 @@ game is written to keep the player's place through one:
     scene.add(ground.group, trees.group);
     ```
 
-    A kept part is built again only when its own module (or one it imports) changed, its build function changed, or
-    one of its `inputs` (the parts it's built from) was built again. So build each part of the world (the ground, the
-    buildings, the trees and street details, the props, the traffic) in a module of its own, into a group of its own
-    that's added to the scene at each start, and do everything to it (setting it on the ground, cutting it for
-    culling) inside its build, never to a kept part afterwards. The build function in the starting module names the
-    module it builds from (`buildTrees`), since that's how Lamp tells which change is its own.
+    A kept part is built again only when its own module (or one it imports) changed, its build function changed, one
+    of its `inputs` (the parts it's built from) was built again, or a file it read as it was built changed. So build
+    each part of the world (the ground, the buildings, the trees and street details, the props, the traffic) in a
+    module of its own, into a group of its own that's added to the scene at each start, and do everything to it
+    (setting it on the ground, cutting it for culling) inside its build, never to a kept part afterwards. The build
+    function in the starting module names the module it builds from (`buildTrees`), since that's how Lamp tells which
+    change is its own. Declare the data each part is built from in its `from` (files beside the page, a module of
+    generated data, or a folder ending in /), so a change to that data builds the part again in place, with the rest
+    of the world and the player's place kept:
+
+    ```js
+    const streets = live.keep('streets', () => buildStreets(), { from: ['js/map-data.js'] });
+    const paint = live.keep('roadPaint', () => buildRoadPaint(streets.network), { inputs: [streets], from: ['js/map-data.js'] });
+    ```
+
+    After a run, the look says which parts were built again, how long each took, and what of the change nothing read
+    again, which shows only after Reload. A look in the hidden copy builds every part afresh, so it shows a change the
+    open game may not: what you see there is in the person's game only when the part it's built into was built again.
 
     A big 3D world on three.js's `WebGPURenderer` keeps its scene and lights the same way, as its camera is. For a new one of
     them it works out how to draw every object again, which holds a big world still for a second at each change. Empty

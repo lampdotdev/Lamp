@@ -390,4 +390,40 @@ final class GameRegistrationTests: XCTestCase {
         let level = try await number("play.level")
         XCTAssertEqual(level, 7, "what the failed swap did to it doesn't come through")
     }
+
+    /// A part declared as built from a file is built again in place when it changes, even where the module it's read
+    /// through would take the change by a swap; and a file the game uses that nothing read again waits for Reload.
+    func testAPartBuiltFromAChangedFileIsBuiltAgainAndWhatNothingReadWaits() async throws {
+        let paint = """
+            import { LANES } from './map.js';
+            import { hot } from './lamp-game.js';
+            export class Painter { lanes() { return LANES; } }
+            hot(import.meta).accept();
+            """
+        let body = """
+            import { Painter } from './paint.js';
+            window.paint = live.keep('roadPaint', () => ({ lanes: new Painter().lanes() }), { from: ['map.js'] });
+            window.readStreets = () => fetch('streets.json');
+            """
+        try await open(Self.game(body: body), also: ["paint.js": paint, "map.js": "export const LANES = 2;", "streets.json": "[1]"])
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try await wander()
+        files.text["map.js"] = "export const LANES = 3;"
+        try await js("window.__lampLive({ changed: ['map.js'], gen: 1, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 2 }
+        let lanes = try await number("window.paint.lanes")
+        XCTAssertEqual(lanes, 3, "the part was built again from the new file, not swapped around")
+        let report = try XCTUnwrap(live.told.last { $0["state"] as? String == "report" })
+        XCTAssertEqual((report["built"] as? [[String: Any]])?.compactMap { $0["part"] as? String }, ["roadPaint"])
+        let level = try await number("play.level")
+        XCTAssertEqual(level, 7, "the player's place is kept")
+
+        try await js("window.readStreets()")
+        files.text["streets.json"] = "[2]"
+        try await js("window.__lampLive({ changed: ['streets.json'], gen: 2, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 3 }
+        try await until("the report came") { self.live.told.last { $0["state"] as? String == "report" }?["gen"] as? Int == 2 }
+        let waits = live.told.last { $0["state"] as? String == "report" }?["waits"] as? [String]
+        XCTAssertEqual(waits, ["streets.json"], "the game uses it, and nothing read it again")
+    }
 }
