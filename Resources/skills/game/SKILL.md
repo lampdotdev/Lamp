@@ -8,7 +8,8 @@ description: Games, 2D or 3D, made either way - what makes one fun and playtesti
 A game is something played in real time, rather than used. What follows holds for every game, whichever way it's
 made; each part then names the tools for each make. For a game in 2D, open the 2d-game skill too (Phaser or SpriteKit,
 and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityKit in Swift). Before designing its
-title, menus, level select, HUD, pause or results, read the game-ui skill.
+opening, title, menus, level select, HUD, pause or results, read the game-ui skill: a new game picks its screen flow
+there before any screen is drawn, however it's made.
 
 The tools Lamp has for games:
 
@@ -159,7 +160,7 @@ game is written to keep the player's place through one:
   }, { target: () => controls.target });
   const play = live.state('play', {
       version: 1,
-      start: () => ({ mode: 'title', menu: null, level: 1, score: 0, lives: 3, player: { x: 0, z: 0, heading: 0, speed: 0 } }),
+      start: () => ({ mode: 'opening', menu: null, level: 1, score: 0, lives: 3, player: { x: 0, z: 0, heading: 0, speed: 0 } }),
   });
   ```
 
@@ -184,7 +185,7 @@ game is written to keep the player's place through one:
   it's `start()`, and the same object stays the whole time. So `init` (in a 2D game, the first scene's `init` or
   `create`) reads the state and builds exactly that screen: that mode, that menu or overlay open, and nothing a fresh
   start shows (a title card, an intro, a tutorial prompt, a fade in) built or shown at all. Never start fresh and then
-  put the place back, which leaves the title over the game and input in the title's mode. A later restart (a new
+  put the place back, which leaves the opening over the game and input in the opening's mode. A later restart (a new
   round, a death) sets the state's fields back itself. A 2D game registers its state; Phaser's game and cameras are made
   again from it.
 - **A game from before this**, or one brought in, may use `snapshot()` in game() (or phaser()), plain JSON of where it
@@ -315,8 +316,8 @@ to time. When frames are late, draw less.
 Sprites, characters and backgrounds are art from `make_art` or one ready-made pack (the assets skill), all in one
 style, on a transparent background where they move. Shapes and colors made in code, well lit, look better than
 mismatched models. Score, pause and menus are large and easy to read, over the game (SwiftUI over a SpriteView; HTML
-over the canvas in a page), and made for its world: the game-ui skill says which screens a game needs and how to give
-them its theme.
+over the canvas in a page), and made for its world: the game-ui skill says how to choose the screens a game needs and
+give them its theme.
 
 After changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches flicker a
 single picture hides.

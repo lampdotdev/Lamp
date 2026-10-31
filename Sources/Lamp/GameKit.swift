@@ -1321,7 +1321,7 @@ extension Agent {
         let web = GameKit.engine(project) == .web, ownLoop = GameKit.ownsLoop(project)
         // A page made for the Xbox before Lamp's game runtime keeps its own loop, and its own way of being tried.
         let kit = ownLoop ? [Rules.gameOwnLoop] : [web ? Rules.gameWebKit : Rules.gameKit, web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.gameWebLive] : [])
-        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
+        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, Rules.gameFlow] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
                      web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : Rules.gameTry, Rules.appMd, Rules.audience,
                      Skills.index(Skills.offered(.game)), Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
@@ -1333,7 +1333,7 @@ extension Agent {
     /// The rules for a game that's one of a wish's apps, in a folder of its own: the game's own, for the files there,
     /// without those about the wish as a whole. A game made beside other apps is a page, as every new game is.
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
-        let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.gameWebLive, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
+        let rules = [Rules.gameWebEdit, Rules.gameFlow, Rules.gameWebKit, Rules.gameWebSound, Rules.gameWebLive, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
         return (Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
@@ -1405,10 +1405,22 @@ extension Agent.Rules {
     it's played and what that allows: never say it's on a device it isn't on. Read APP.md first for context.
     """
 
+    /// Said to every game, however it's made: a skill read once and left behind didn't hold agents to this.
+    static let gameFlow = """
+    - For a new game or a requested change to how its screens go: before drawing any screen, pick the screen flow that \
+    fits this game with the game-ui skill (how it opens, where it teaches, how a restart and a return go; with phones, \
+    what the shared display and each player's phone show in each phase) and keep it in a `Flow:` line in APP.md. The \
+    opening never shows controls or key bindings, whatever the flow and however many players share the keyboard: they \
+    come after the start press, on a short screen of their own or as the match begins. After your last edit to any \
+    screen, before you say it's done, run that skill's check of the real opening again: any key name or control label \
+    on the opening fails and is removed, and you name what else there doesn't serve the flow.
+
+    """
+
     /// What `make_app_for` answers with when an app becomes a game.
     static func gameChange(_ project: LampProject) -> String {
-        GameKit.engine(project) == .web ? gameWebEdit + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry
-            : gameEdit + gameKit + gameSound + gameBudget + gameTry
+        GameKit.engine(project) == .web ? gameWebEdit + gameFlow + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry
+            : gameEdit + gameFlow + gameKit + gameSound + gameBudget + gameTry
     }
 
     static var gameWebEdit: String { """
@@ -1466,7 +1478,7 @@ extension Agent.Rules {
     The player may hold an Xbox, PlayStation or Switch controller, the keyboard or the touch screen, and switches as \
     they play, so never write a key's or a button's name: write the controls once, as actions mapped to the pad \
     (`const CONTROLS = { jump: BUTTON.A, pause: BUTTON.MENU, move: STICK.LEFT, gas: TRIGGER.RT }`), read the pad \
-    through them, and show how to play (the controls as play starts, and a help screen on the title or pause menu) \
+    through them, and show how to play (the controls after the start press, where the game's flow teaches them, and a help screen reachable from pause) \
     and every prompt from them with lamp-game.js's `label(CONTROLS.jump)` \
     (the words: "A", "✕", "Space") and `glyph(CONTROLS.jump)` (that button's badge as the player's input draws it, an \
     element to put in the text), inside `onInput(draw)`, which draws now and again whenever the player takes up \

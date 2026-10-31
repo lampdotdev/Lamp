@@ -383,7 +383,8 @@ A game is drawn with three.js, or with Phaser when it's 2D (`GameKit.Engine.web`
 model writes both best and every place has a web view, and on the Xbox a game installed as a game gets enough of the
 console. Which of the two is the agent's choice as it writes the game, from what the person asked for: `Rules.gameWebKit`
 has it choose 2D or 3D and read the `game` and `game-ui` skills with the `2d-game` or `3d-game` skill, which are the only guidance that
-names the library and its recipe (entry point, renderer, frame callback, where setup goes). The kind and the scaffold are
+names the library and its recipe (entry point, renderer, frame callback, where setup goes). How a new game opens, teaches, restarts and returns is chosen
+for that game in the `game-ui` skill and kept in a `Flow:` line in APP.md; `Rules.gameFlow`, in every game's prompt, only points there. The kind and the scaffold are
 the same, and the placeholder card is three.js's either way. A web game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
