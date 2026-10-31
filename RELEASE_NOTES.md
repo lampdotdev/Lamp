@@ -15,6 +15,8 @@ plain "Lamp x.y.z" line.
 - Games keep your place through a change: every new game is made that way, and a change that would start play over
   waits for Reload instead.
 - Phone controllers respond more reliably to each button press.
+- On the desk, Open is the first thing a wish offers, with Remix below it, and a spinner shows while a starter app is
+  getting ready.
 - You can turn off the usage counts Lamp sends, in Settings → Memory.
 
 ## 0.29.0
