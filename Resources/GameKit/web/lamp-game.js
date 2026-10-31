@@ -955,6 +955,18 @@ window.__lampLive = change => {
     return true;
 };
 
+// The app menu's Reload with no change waiting: the game opens again from its files, every part of it built afresh, with
+// the player where they were.
+// After any change being put in (one at a time, `queue`), with the place a rerun under way kept for itself, never one
+// taken from a game it has half started again.
+window.__lampReloadNow = () => {
+    if (preview) return false;
+    const held = runningAgain && runningAgain.state;
+    queue = queue.then(() => reopen({ gen: changes, why: 'Reload' }, held || takeSnapshot()))
+        .catch(e => log(`Lamp: ${e && e.message || e}`));
+    return true;
+};
+
 async function apply(change) {
     const paths = (change.changed || []).map(clean);
     // Not started yet: nothing to keep.

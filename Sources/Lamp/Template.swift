@@ -3891,6 +3891,8 @@ enum Template {
                     LampSidebar.openFromMenu()
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("Reload") { LampReload.reload() }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
             }
             CommandGroup(after: .saveItem) {
                 Button("Share…") { LampShareApp.share() }
@@ -3930,6 +3932,35 @@ enum Template {
                   let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
             guard let page = answer["page"] as? String else { return NSAttributedString() }
             return NSAttributedString(html: Data(page.utf8), documentAttributes: nil)
+        }
+    }
+
+    /// Reload (⌥⌘R) in the app's menu, always there: for when what's on screen isn't the app as last changed (a part of
+    /// a game's world built once, which a change ran past). A change Lamp has waiting goes in as the Reload button puts
+    /// it in; otherwise, or with Lamp not running, the app starts afresh by itself: a page opens again with the player's
+    /// place kept (`page`, set by the page's host, LampPage.swift), and any other app quits and opens again.
+    @MainActor enum LampReload {
+        static var page: (() -> Void)?
+
+        static func reload() {
+            Task {
+                if await lampPutsInAChange() { return }
+                if let page { page() } else { LampWindows.relaunch() }
+            }
+        }
+
+        /// Whether Lamp had a change of this app's waiting, which it now puts in. Briefly: the command is a click.
+        private static func lampPutsInAChange() async -> Bool {
+            guard let url = URL(string: lampGateway + "/app/reload") else { return false }
+            var request = URLRequest(url: url, timeoutInterval: 2)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+            return answer["waiting"] as? Bool == true
         }
     }
 
@@ -20447,6 +20478,7 @@ enum Template {
                     Button { LampMenuBar.customize() } label: { Label { Text("Customize with Lamp…") } icon: { Image(nsImage: LampGlyph.image(pointSize: 13, weight: .regular)) } }
                 }
                 if settings { Button("Settings…") { LampMenuBar.openSettings() }.keyboardShortcut(",") }
+                Button("Reload") { LampReload.reload() }.keyboardShortcut("r", modifiers: [.command, .option])
                 Button("Quit \(LampMenuBar.appName)") { NSApp.terminate(nil) }.keyboardShortcut("q")
             }
         }
