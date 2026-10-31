@@ -68,7 +68,7 @@ public struct AskCardView: View {
                     AskSteps(ask: ask, progress: $progress, send: send)
                 }
             }
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+            .background(Paper.card, in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Paper.rule))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
             .frame(maxWidth: 620, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -91,7 +91,7 @@ public struct AskCardView: View {
             }
             Divider()
             HStack {
-                if progress.answers.isEmpty {
+                if progress.answers.isEmpty, ask.questions.allSatisfy(TalkCard.decides) {
                     Button(TalkCard.youDecide) { send(progress.all(ask.questions.count)) }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
@@ -152,7 +152,7 @@ private struct Answered: View {
                 }
             }
         }
-        // Set in, sized and coloured as the turn's steps are, since it now reads as one.
+        // Set in, sized and colored as the turn's steps are, since it now reads as one.
         .font(ChatLook.stepFont)
         .foregroundStyle(.secondary)
         .padding(.leading, ChatLook.stepIndent)
@@ -221,7 +221,7 @@ struct AskSteps: View {
                 TextField("Something else…", text: Binding(get: { progress.own[step] ?? "" }, set: { progress.own[step] = $0 }))
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 12).padding(.vertical, 9)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                    .background(Paper.card, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
                     .onSubmit { if !typed.isEmpty { pick(typed) } }
                 if !typed.isEmpty {
@@ -233,9 +233,9 @@ struct AskSteps: View {
             .allowsHitTesting(armed)
             // The links under it, where any question of the card has one. Back keeps its place on the first
             // question, so the card is the same height on each.
-            if count > 1 || ask.questions.contains(where: { !TalkCard.decidesAsTile($0) }) {
+            if count > 1 || ask.questions.contains(where: { TalkCard.decides($0) && !TalkCard.decidesAsTile($0) }) {
                 HStack(spacing: 16) {
-                    if !TalkCard.decidesAsTile(ask.questions[step]) {
+                    if TalkCard.decides(ask.questions[step]), !TalkCard.decidesAsTile(ask.questions[step]) {
                         Button(TalkCard.youDecide) { pick(TalkCard.youDecide) }
                     }
                     if count > 1 {
@@ -267,7 +267,7 @@ struct AskSteps: View {
 
     /// A question's answers, and "Decide for me" as one more where it fits as a tile (`TalkCard.decidesAsTile`).
     static func tiles(for question: TalkCard.Question) -> [TalkCard.Option] {
-        guard TalkCard.decidesAsTile(question) else { return question.options }
+        guard TalkCard.decides(question), TalkCard.decidesAsTile(question) else { return question.options }
         return question.options + [TalkCard.Option(title: TalkCard.youDecide, symbol: "wand.and.sparkles")]
     }
 }
@@ -368,7 +368,7 @@ private struct OptionTile: View {
             HStack(alignment: .firstTextBaseline, spacing: Self.symbolSpacing) {
                 if let symbol = option.symbol {
                     Image(systemName: symbol)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Paper.ink)
                         .frame(width: Self.symbolWidth)
                 }
                 VStack(alignment: .leading, spacing: 1) {
@@ -382,9 +382,9 @@ private struct OptionTile: View {
             }
             .padding(.horizontal, Self.padding).padding(.vertical, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background(Paper.card, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(chosen ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary), lineWidth: chosen ? 2 : 1))
+                .strokeBorder(chosen ? AnyShapeStyle(Paper.ink) : AnyShapeStyle(.quaternary), lineWidth: chosen ? 2 : 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -429,8 +429,8 @@ struct ChipRow: View {
                 // As wide as the row has left, and asking for the same whatever is typed: a field that
                 // asked for the width of its words would push the chips onto lines of their own mid-answer.
                 .frame(minWidth: 140, idealWidth: 140, maxWidth: .infinity)
-                .background(Color(nsColor: .textBackgroundColor), in: shape)
-                .overlay(shape.strokeBorder(typed ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary), lineWidth: typed ? 2 : 1))
+                .background(Paper.card, in: shape)
+                .overlay(shape.strokeBorder(typed ? AnyShapeStyle(Paper.ink) : AnyShapeStyle(.quaternary), lineWidth: typed ? 2 : 1))
         }
     }
 
@@ -440,13 +440,13 @@ struct ChipRow: View {
             Button { pick(option.title) } label: {
                 HStack(spacing: 6) {
                     if let symbol = option.symbol {
-                        Image(systemName: symbol).foregroundStyle(on ? Color.white : Color.accentColor)
+                        Image(systemName: symbol).foregroundStyle(on ? Paper.onInk : Paper.ink)
                     }
                     Text(option.title).lineLimit(1)
                 }
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .foregroundStyle(on ? Color.white : Color.primary)
-                    .background(on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color(nsColor: .textBackgroundColor)), in: Capsule())
+                    .foregroundStyle(on ? Paper.onInk : Paper.ink)
+                    .background(on ? AnyShapeStyle(Paper.ink) : AnyShapeStyle(Paper.card), in: Capsule())
                     .overlay(Capsule().strokeBorder(.quaternary))
                     .contentShape(Capsule())
             }

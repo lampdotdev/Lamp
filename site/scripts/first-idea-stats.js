@@ -1,4 +1,4 @@
-// Prints what the homepage's first-idea section counted, a column per day (newest first).
+// Prints what the first-idea section counted, a column per day (newest first).
 // Needs the site's Upstash variables: `vercel env pull .env.local` in site/, then
 //   node --env-file=.env.local scripts/first-idea-stats.js [days] [preview]
 import { EVENTS } from "../lib/idea-events.js";

@@ -444,10 +444,12 @@ enum Memory {
 
 /// Settings → Memory: whether Lamp keeps notes, and under that the notes it holds, about the person and about
 /// each app, to open, change and clear. Only notes that hold something are listed: a row for everything Lamp
-/// could have notes on was a column of "Nothing yet" for anyone with a few apps.
+/// could have notes on was a column of "Nothing yet" for anyone with a few apps. Last, whether usage counts go to
+/// the Lamp team (`Analytics`): the one other thing Lamp keeps or tells about how the person uses it.
 struct MemorySettings: View {
     @EnvironmentObject private var store: Store
     @AppStorage(Memory.switchKey) private var memory = Memory.onByDefault
+    @AppStorage(Analytics.switchKey) private var usageCounts = Analytics.onByDefault
     @State private var revision = 0   // bumps when notes change, so the list re-reads them
     @State private var editing: Row?
 
@@ -524,7 +526,7 @@ struct MemorySettings: View {
                 }
             }
             // The notes depend on the checkbox: off, nothing reads them, so they aren't read or listed.
-            if let listing = Self.listing(on: memory, apps: store.projects, read: notes) {
+            if let listing = Self.listing(on: memory, apps: store.wishes, read: notes) {
                 Section {
                     if listing.saved.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
@@ -571,6 +573,12 @@ struct MemorySettings: View {
                         .controlSize(.small)
                         .fixedSize()
                     }
+                }
+            }
+            Section {
+                SettingsCheckboxes {
+                    Toggle("Send usage counts to the Lamp team", isOn: $usageCounts)
+                        .checkboxNote("How far the welcome gets and whether new apps build the first time, under a random number made on this Mac. Never what you type, your apps' names or code, your files or your keys.")
                 }
             }
         }

@@ -87,7 +87,7 @@ enum AndroidFiles {
     }
 
     /// Kotlin and Java sit in folders named after their package: app/src/main/kotlin/a/b/X.kt.
-    private static func movedPath(_ relative: String, from old: String, to new: String) -> String {
+    static func movedPath(_ relative: String, from old: String, to new: String) -> String {
         let oldPath = old.replacingOccurrences(of: ".", with: "/"), newPath = new.replacingOccurrences(of: ".", with: "/")
         for root in ["/kotlin/", "/java/"] where relative.contains(root + oldPath + "/") {
             return relative.replacingOccurrences(of: root + oldPath + "/", with: root + newPath + "/")
@@ -98,7 +98,7 @@ enum AndroidFiles {
     /// The id Android installs the app under is this Mac's for the app, whatever the sender's said and however
     /// they said it. Set by a block of its own at the end of the file, which Gradle runs after the sender's, so
     /// nothing of theirs is rewritten (a one-line `defaultConfig { … }` keeps its other settings and its braces).
-    private static func settingApplicationID(in text: String, to id: String) -> String {
+    static func settingApplicationID(in text: String, to id: String) -> String {
         text + (text.hasSuffix("\n") ? "" : "\n")
             + "\n// Set by Lamp when the app was opened from a shared file: the id Lamp installs and opens it by.\n"
             + "android { defaultConfig { applicationId = \"\(id)\" } }\n"
@@ -108,7 +108,7 @@ enum AndroidFiles {
 
     /// Where an Android app's code reaches beyond itself, in the words the review uses for a Mac app's: what its
     /// manifests ask Android for, what its Kotlin and Java do that the build file and manifest can't show, and the
-    /// libraries its build files bring in beyond the ones Lamp's catalogue offers.
+    /// libraries its build files bring in beyond the ones Lamp's catalog offers.
     static func detected(in package: Sharing.Package) -> [Sharing.Capability] {
         var manifests: [String] = [], kotlin = "", gradle = ""
         for file in package.sources {
@@ -228,8 +228,8 @@ enum AndroidFiles {
                            patterns: ["DexClassLoader", "PathClassLoader", "URLClassLoader", "System.loadLibrary", "System.load(", "Class.forName"]),
     ]
 
-    /// Libraries and build plugins the build files name that Lamp's catalogue doesn't offer, by their short name
-    /// ("retrofit"). A library from the catalogue is named through it (`libs.…`), or spelt out with its group.
+    /// Libraries and build plugins the build files name that Lamp's catalog doesn't offer, by their short name
+    /// ("retrofit"). A library from the catalog is named through it (`libs.…`), or spelt out with its group.
     static func libraries(in gradle: String) -> [String] {
         let catalogue = Template.androidVersionsCatalogue
         var known = Set(catalogue.matches(of: #/module\s*=\s*"([^"]+)"/#).map { String($0.1) })

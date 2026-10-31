@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 9
+    public static let version = 11
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -77,8 +77,6 @@ public struct SidebarState: Codable, Equatable {
     /// What was pointed at in the app, on its own pill in the message box. Its picture counts as the attachment
     /// after the last of `attachments`, for `SidebarCommand.preview` and `removeAttachment`.
     public var pointed: SidebarPointed?
-    /// The version the latest change made, when Undo Last Change is offered under it (`SidebarCommand.undoChange`).
-    public var undoChange: String?
     /// The buttons above the chat, as Lamp's window has them in its toolbar.
     public var toolbar: SidebarToolbar?
     /// The panel open in place of the chat, as the sidebar asked for it (`SidebarCommand.panel`), with what it shows.
@@ -90,6 +88,24 @@ public struct SidebarState: Codable, Equatable {
     /// The wish's file after Share…, for the sidebar's own share menu: sent once, since only the sidebar can show
     /// that menu where the button is, and it can't read Lamp's files.
     public var sharing: SidebarSharing?
+    /// The Share Link card, while it's open in this chat (`SidebarCommand.wishLink`): shown in the chat's place.
+    public var wishLink: SidebarWishLink?
+    /// The Publish card, while it's open in this chat (`SidebarCommand.publish`): shown in the chat's place.
+    public var publish: SidebarPublish?
+    /// The Put on GitHub card, while it's open in this chat (`SidebarCommand.repo`): shown in the chat's place.
+    public var repo: SidebarRepo?
+    /// The Send Changes Back card, while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
+    public var contribute: SidebarContribute?
+    /// Try On's choices, for a wish that opens anywhere but this Mac alone (an iPhone app, a TV app, a game, a screen):
+    /// the bar's device button opens them, and a click is `SidebarCommand.tryOn`. Nil for a Mac app, which has none.
+    public var tryOn: SidebarTryOn?
+    /// A wish nothing has been asked of yet: what its empty chat shows (`ChatLook.Intro`).
+    public var intro: SidebarIntro?
+    /// Something every chat waits on, above the chat (Apple's tools installing), and its button.
+    public var banner: SidebarBanner?
+    /// Where the person was reading when this chat was last drawn anywhere: the first line in view, or nil at the end.
+    /// A chat drawn again elsewhere (beside the app, in Lamp's panel) opens there (`SidebarCommand.scrolled`).
+    public var readingAt: UUID?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -106,7 +122,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools, work }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools, work, build, detail }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -149,8 +165,12 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var status: String?
     public var done: Bool?
     public var button: String?
+    /// A card's other answer, drawn before its button (Keep Old Copy beside Remove Old Copy), sent as `decline`.
+    public var declineButton: String?
+    /// A card's ways to answer it, drawn before its button (Use Claude), each sent as `choose` with its id.
+    public var choices: [SidebarChoice]?
     public var disabled: Bool?
-    /// An action line's button is the one thing to do next (Reload): drawn in the accent colour.
+    /// An action line's button is the one thing to do next (Reload): drawn in the accent color.
     public var prominent: Bool?
     /// A request's buttons: going back to how the app was around it, and taking it back to change it.
     public var canGoBack: Bool?
@@ -162,6 +182,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var calls: [SidebarToolCall]?
     /// A finished turn's steps (`work`, its line "Worked for 2 min 3 s" is `text`): status lines and runs of tool calls.
     public var steps: [SidebarLine]?
+    /// A new app's first build, drawn as its plan's parts (`build`).
+    public var build: SidebarBuild?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil) {
@@ -173,6 +195,17 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
         self.attachments = attachments
         self.growing = growing
         self.questions = questions
+    }
+}
+
+/// A way to answer an offer's card: what its button says, and what Lamp knows it by.
+public struct SidebarChoice: Codable, Equatable, Identifiable {
+    public let id: String
+    public let title: String
+
+    public init(id: String, title: String) {
+        self.id = id
+        self.title = title
     }
 }
 
@@ -195,11 +228,17 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canUndo: Bool
     /// The wish has been made: there's a file to share.
     public var canShare: Bool
+    /// Its page can be published (a game drawn with three.js, while the experiment is on): the share menu offers it.
+    public var canPublish: Bool?
+    /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
+    public var canContribute: Bool?
     /// It has versions to look back at.
     public var hasVersions: Bool
     public var details: Bool
     /// What the app's AI has cost ("AI: 3 calls · $0.02"), when it has used any.
     public var usage: String?
+    /// Play and Stop, for a wish that doesn't run as a Mac window beside this chat: nil beside a Mac app, which is open.
+    public var play: SidebarPlay?
 
     public init(canUndo: Bool, canShare: Bool, hasVersions: Bool, details: Bool, usage: String?) {
         self.canUndo = canUndo
@@ -211,6 +250,166 @@ public struct SidebarToolbar: Codable, Equatable {
 }
 
 public enum SidebarPanel: String, Codable { case versions, info }
+
+/// The bar's Play, or its Stop while the wish is open where Try On points.
+public struct SidebarPlay: Codable, Equatable {
+    public var open: Bool
+    /// Play can't open it yet: there's nothing made.
+    public var enabled: Bool
+    public var help: String
+
+    public init(open: Bool, enabled: Bool, help: String) {
+        self.open = open
+        self.enabled = enabled
+        self.help = help
+    }
+}
+
+/// A new wish's empty chat: its icon, what to call it (or the question asked of a wish with no name yet), a line on
+/// what to do, and ideas to start from, each put in the message box when clicked (`SidebarCommand.idea`).
+public struct SidebarIntro: Codable, Equatable {
+    public var icon: Data?
+    /// The wish's name, to change in place (`SidebarCommand.rename`); nil for a wish not named yet, which is asked
+    /// what would make the person's day easier instead.
+    public var name: String?
+    /// What the name field shows while it's empty.
+    public var namePrompt: String
+    public var line: String
+    public var ideas: [SidebarIdea]
+    /// The name can be changed now (not while a turn is going).
+    public var canRename: Bool
+
+    public init(icon: Data?, name: String?, namePrompt: String, line: String, ideas: [SidebarIdea], canRename: Bool) {
+        self.icon = icon
+        self.name = name
+        self.namePrompt = namePrompt
+        self.line = line
+        self.ideas = ideas
+        self.canRename = canRename
+    }
+}
+
+public struct SidebarIdea: Codable, Equatable, Identifiable {
+    public var id: String
+    public var symbol: String
+    public var hue: Double
+    public var text: String
+
+    public init(id: String, symbol: String, hue: Double, text: String) {
+        self.id = id
+        self.symbol = symbol
+        self.hue = hue
+        self.text = text
+    }
+}
+
+public struct SidebarBanner: Codable, Equatable {
+    public var text: String
+    public var button: String?
+
+    public init(text: String, button: String?) {
+        self.text = text
+        self.button = button
+    }
+}
+
+/// A new app's first build, as its plan's parts: each a heading with its mark and how long it took, with what was said
+/// and done in it under it, the part going on with the turn's live line at its foot, the parts to come grayed, and
+/// Lamp's own last part (building and opening it). Once the app is made each part folds to a line of its own, with the answer under them.
+public struct SidebarBuild: Codable, Equatable {
+    public enum State: String, Codable { case done, now, later }
+
+    public struct Part: Codable, Equatable {
+        /// Nil for what came before the agent gave a plan.
+        public var title: String?
+        public var state: State
+        public var time: String?
+        public var lines: [SidebarLine]
+        /// The part being built now: the live line goes at its foot, with these steps under it.
+        public var live: Bool
+        public var steps: [SidebarLine]?
+
+        public init(title: String?, state: State, time: String?, lines: [SidebarLine], live: Bool, steps: [SidebarLine]?) {
+            self.title = title
+            self.state = state
+            self.time = time
+            self.lines = lines
+            self.live = live
+            self.steps = steps
+        }
+    }
+
+    public var parts: [Part]
+    /// Lamp's guess at the parts to come, before the agent has given its plan.
+    public var sketch: [String]
+    /// Lamp's own last part while the build is live: still to come, or going on (with what it's doing).
+    public var finishing: State?
+    public var finishingActivity: String?
+    public var finishingSince: Date?
+    /// Made: each part as one line that opens to it, and the agent's answer under them. `foldTitle` ("Built it in 3 parts")
+    /// names the build as a whole.
+    public var folded: Bool
+    public var foldTitle: String
+    public var time: String?
+    public var answer: String?
+
+    public init(parts: [Part], sketch: [String], finishing: State?, finishingActivity: String?, finishingSince: Date?, folded: Bool,
+                foldTitle: String, time: String?, answer: String?) {
+        self.parts = parts
+        self.sketch = sketch
+        self.finishing = finishing
+        self.finishingActivity = finishingActivity
+        self.finishingSince = finishingSince
+        self.folded = folded
+        self.foldTitle = foldTitle
+        self.time = time
+        self.answer = answer
+    }
+}
+
+/// Try On's choices as Lamp's window has them (`TryOnMenu` in Lamp): sections of places, a tick on where Play puts the
+/// wish, and the symbol of that place for the button.
+public struct SidebarTryOn: Codable, Equatable {
+    public struct Item: Codable, Equatable, Identifiable {
+        public var id: String
+        public var title: String
+        public var symbol: String
+        public var checked: Bool
+        public var disabled: Bool
+
+        public init(id: String, title: String, symbol: String, checked: Bool, disabled: Bool) {
+            self.id = id
+            self.title = title
+            self.symbol = symbol
+            self.checked = checked
+            self.disabled = disabled
+        }
+    }
+
+    public struct Section: Codable, Equatable {
+        public var title: String?
+        public var items: [Item]
+        /// Drawn as a submenu under its title.
+        public var submenu: Bool?
+
+        public init(title: String?, items: [Item], submenu: Bool? = nil) {
+            self.title = title
+            self.items = items
+            self.submenu = submenu
+        }
+    }
+
+    public var sections: [Section]
+    public var symbol: String
+    /// Where Play puts it now, for the button's help ("Playing on My Mac").
+    public var current: String?
+
+    public init(sections: [Section], symbol: String, current: String?) {
+        self.sections = sections
+        self.symbol = symbol
+        self.current = current
+    }
+}
 
 /// A saved version, as the Versions panel lists it: newest first, with a small picture of how the app looked.
 public struct SidebarVersion: Codable, Equatable, Identifiable {
@@ -270,10 +469,14 @@ public struct SidebarInfoButton: Codable, Equatable {
 public struct SidebarSharing: Codable, Equatable {
     public var id: UUID
     public var file: SidebarFile
+    /// The wish it's from (its folder's name), so each wish's chat keeps its shared file apart from every other's:
+    /// Lamp's own process draws the chats of many wishes. Missing from a Lamp before it.
+    public var wish: String?
 
-    public init(id: UUID, file: SidebarFile) {
+    public init(id: UUID, file: SidebarFile, wish: String? = nil) {
         self.id = id
         self.file = file
+        self.wish = wish
     }
 }
 
@@ -360,7 +563,8 @@ public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
     /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers;
     /// one before 5, from before what was pointed at had a pill of its own; one before 6, from before the agent's
-    /// steps (`SidebarLine.Kind.tools`) could be shown.
+    /// steps (`SidebarLine.Kind.tools`) could be shown; one before 11, from before a first build's parts (`build`) and
+    /// Agent Details' output (`detail`).
     case hello(Int)
     /// The message box's words, and how many of the box's messages Lamp had taken when it last said
     /// (`SidebarState.sends`): a Return pressed again before the sidebar hears that they were sent is for words Lamp
@@ -375,10 +579,13 @@ public enum SidebarCommand: Codable, Equatable {
     case askProgress(UUID, AskProgress)
     /// Takes back the save of Lamp's notes this receipt is for.
     case undoNote(UUID)
-    /// Undo Last Change, under the change that made this version.
-    case undoChange(String)
     /// The button on an offer's card or line: what it does is Lamp's to know, by the line.
     case offer(UUID)
+    /// The other answer on an offer's card (`SidebarLine.declineButton`).
+    case decline(UUID)
+    /// One of an offer's card's ways to answer it (`SidebarLine.choices`), by its id: what's on the button the person
+    /// clicked, whatever the card has come to offer meanwhile.
+    case choose(UUID, String)
     /// Back to how the app was after the request with this id, or before it.
     case goBack(UUID, before: Bool)
     /// The request with this id into the message box, to change and send again; and back out of it.
@@ -426,6 +633,30 @@ public enum SidebarCommand: Codable, Equatable {
     case nameVersion(String, String)
     /// A button in the info panel.
     case infoAction(String)
+    /// The Share Link card: open it, or what was done on it.
+    case wishLink(SidebarWishLinkCommand)
+    /// The Publish card: open it, or what was done on it.
+    case publish(SidebarPublishCommand)
+    /// The Put on GitHub card: open it, or what was done on it.
+    case repo(SidebarRepoCommand)
+    /// The Send Changes Back card: open it, or what was done on it.
+    case contribute(SidebarContributeCommand)
+    /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
+    case tryOn(String)
+    /// Try On's menu opened: Lamp looks for devices, as when Lamp's own Try On opens, so the list is the one now.
+    case tryOnOpened
+    /// Play, and Stop.
+    case play
+    case quit
+    /// The new wish's name, typed on its intro.
+    case rename(String)
+    /// An idea on the intro, into the message box; and other ideas.
+    case idea(String)
+    case moreIdeas
+    /// The banner's button.
+    case banner
+    /// Where the person is reading: the first line in view, or nil at the end (`SidebarState.readingAt`).
+    case scrolled(UUID?)
 }
 
 public struct SidebarFile: Codable, Equatable {
@@ -524,4 +755,206 @@ public struct SidebarProblem: Codable, Equatable {
         self.message = message
         self.settingsButton = settingsButton
     }
+}
+
+/// The Share Link card as Lamp has it (`WishLinkCard`): what's typed on it is the sidebar's while it's open, and goes to
+/// Lamp with Copy Link or Update Link. Lamp's own changes to it (a new picture) come with a new `revision`.
+public struct SidebarWishLink: Codable, Equatable {
+    public var name: String
+    public var line: String
+    public var words: String
+    public var includePicture: Bool
+    public var includeFile: Bool?
+    public var canIncludeFile: Bool?
+    public var revision: Int
+    /// The picture, small enough to send with the chat, and the icon.
+    public var picture: Data?
+    public var icon: Data?
+    /// The link that's out, what it shows, and whether the picture on the card is another than the one it shows.
+    public var link: String?
+    public var shown: SidebarWishLinkValues?
+    public var newPicture: Bool
+    public var sending: Bool
+    public var problem: String?
+    public var copied: Bool
+    public var canRetake: Bool
+    public var retaking: Bool
+    public var limits: [Int]
+
+    public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool = false, canIncludeFile: Bool = false,
+                revision: Int, picture: Data?, icon: Data?,
+                link: String?, shown: SidebarWishLinkValues?, newPicture: Bool, sending: Bool, problem: String?, copied: Bool,
+                canRetake: Bool, retaking: Bool, limits: [Int]) {
+        self.name = name
+        self.line = line
+        self.words = words
+        self.includePicture = includePicture
+        self.includeFile = includeFile
+        self.canIncludeFile = canIncludeFile
+        self.revision = revision
+        self.picture = picture
+        self.icon = icon
+        self.link = link
+        self.shown = shown
+        self.newPicture = newPicture
+        self.sending = sending
+        self.problem = problem
+        self.copied = copied
+        self.canRetake = canRetake
+        self.retaking = retaking
+        self.limits = limits
+    }
+}
+
+public struct SidebarWishLinkValues: Codable, Equatable {
+    public var name: String
+    public var line: String
+    public var words: String
+    public var includePicture: Bool
+    public var includeFile: Bool?
+
+    public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool? = nil) {
+        self.name = name
+        self.line = line
+        self.words = words
+        self.includePicture = includePicture
+        self.includeFile = includeFile
+    }
+}
+
+public enum SidebarWishLinkCommand: Codable, Equatable {
+    case open
+    /// Copy Link or Update Link, with what's on the card.
+    case share(SidebarWishLinkValues)
+    case copy
+    case stop
+    case retake
+    case close
+}
+
+/// The Publish card as Lamp has it (`PublishCard`): everything on it is Lamp's, worked out before the person confirms.
+public struct SidebarPublish: Codable, Equatable {
+    public var name: String
+    public var icon: Data?
+    public var stage: PublishCard.Stage
+    public var repo: String?
+    public var page: String?
+    public var credit: String?
+    /// Where the page's Open in Lamp goes: the wish's Share Link, or nil when it has none yet (the card offers to make one).
+    public var openInLamp: String?
+    public var notes: [String]
+    public var size: String?
+    public var copied: Bool
+    public var republish: Bool
+    /// Publish can be pressed: it's ready, or a try failed and can be made again.
+    public var canPublish: Bool
+
+    public init(name: String, icon: Data?, stage: PublishCard.Stage, repo: String?, page: String?, credit: String?, openInLamp: String?,
+                notes: [String], size: String?, copied: Bool, republish: Bool, canPublish: Bool) {
+        self.name = name
+        self.icon = icon
+        self.stage = stage
+        self.repo = repo
+        self.page = page
+        self.credit = credit
+        self.openInLamp = openInLamp
+        self.notes = notes
+        self.size = size
+        self.copied = copied
+        self.republish = republish
+        self.canPublish = canPublish
+    }
+}
+
+public enum SidebarPublishCommand: Codable, Equatable {
+    case open, publish, fix, openPage, copy, close
+    /// Make a Share Link first, through its own card.
+    case makeLink
+}
+
+/// The Put on GitHub card as Lamp has it (`RepoCard`): everything on it is Lamp's, worked out before the person confirms.
+public struct SidebarRepo: Codable, Equatable {
+    public var name: String
+    public var icon: Data?
+    public var stage: RepoCard.Stage
+    public var repo: String?
+    /// The repository's address, once it's up.
+    public var url: String?
+    public var credit: String?
+    /// Where the README's Remix it with Lamp goes: the wish's Share Link, or nil when it has none yet (the card offers to make one).
+    public var openInLamp: String?
+    public var notes: [String]
+    public var size: String?
+    public var copied: Bool
+    /// It's up already: Put on GitHub adds the wish as it is now as a new commit.
+    public var update: Bool
+    /// Put on GitHub can be pressed: it's ready, or a try failed and can be made again.
+    public var canPut: Bool
+    /// The choices made before the repository is made.
+    public var isPrivate: Bool
+    public var license: Bool
+    public var canChooseLicense: Bool
+
+    public init(name: String, icon: Data?, stage: RepoCard.Stage, repo: String?, url: String?, credit: String?, openInLamp: String?,
+                notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool) {
+        self.name = name
+        self.icon = icon
+        self.stage = stage
+        self.repo = repo
+        self.url = url
+        self.credit = credit
+        self.openInLamp = openInLamp
+        self.notes = notes
+        self.size = size
+        self.copied = copied
+        self.update = update
+        self.canPut = canPut
+        self.isPrivate = isPrivate
+        self.license = license
+        self.canChooseLicense = canChooseLicense
+    }
+}
+
+/// The Send Changes Back card as Lamp has it (`ContributeCard`): everything on it is Lamp's, worked out before the
+/// person confirms.
+public struct SidebarContribute: Codable, Equatable {
+    public var name: String
+    public var icon: Data?
+    public var stage: ContributeCard.Stage
+    /// "owner/name", where the changes go.
+    public var upstream: String?
+    /// "login/name", the person's fork they go through, once known.
+    public var fork: String?
+    public var credit: String?
+    public var notes: [String]
+    public var size: String?
+    public var copied: Bool
+    /// Send Changes Back can be pressed: it's ready, or a try failed and can be made again.
+    public var canSend: Bool
+
+    public init(name: String, icon: Data?, stage: ContributeCard.Stage, upstream: String?, fork: String?, credit: String?,
+                notes: [String], size: String?, copied: Bool, canSend: Bool) {
+        self.name = name
+        self.icon = icon
+        self.stage = stage
+        self.upstream = upstream
+        self.fork = fork
+        self.credit = credit
+        self.notes = notes
+        self.size = size
+        self.copied = copied
+        self.canSend = canSend
+    }
+}
+
+public enum SidebarContributeCommand: Codable, Equatable {
+    case open, send, fix, openRequest, copy, close
+}
+
+public enum SidebarRepoCommand: Codable, Equatable {
+    case open, put, fix, openRepo, copy, close
+    /// Make a Share Link first, through its own card.
+    case makeLink
+    case setPrivate(Bool)
+    case setLicense(Bool)
 }

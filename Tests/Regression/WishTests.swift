@@ -28,7 +28,40 @@ final class WishTests: XCTestCase {
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp://edit?app=tally")), scheme: "lamp"))
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp-dev://wish?text=hello")), scheme: "lamp"))
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp://wish")), scheme: "lamp"))
+        // The exact wish a link names, with its request: an https address only.
+        let exact = Wish.exact(from: try XCTUnwrap(URL(string: "lamp://wish?file=https%3A%2F%2Ffiles.example%2Fw%2Fabc.lampapp&text=Add%20a%20map")), scheme: "lamp")
+        XCTAssertEqual(exact, Wish.Exact(file: try XCTUnwrap(URL(string: "https://files.example/w/abc.lampapp")), text: "Add a map"))
+        XCTAssertNil(Wish.exact(from: try XCTUnwrap(URL(string: "lamp://wish?file=http%3A%2F%2Ffiles.example%2Fabc.lampapp&text=x")), scheme: "lamp"))
+        XCTAssertNil(Wish.exact(from: try XCTUnwrap(URL(string: "lamp://wish?file=file%3A%2F%2F%2Fetc%2Fpasswd")), scheme: "lamp"))
+        XCTAssertNil(Wish.exact(from: try XCTUnwrap(URL(string: "lamp://wish?text=hello")), scheme: "lamp"))
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp://wish?text=%20%20")), scheme: "lamp"))
+    }
+
+    func testARemixLinkNamesOnlyAStarterOrAGitHubRepository() throws {
+        func remix(_ link: String) throws -> Wish.Remix? { Wish.remix(from: try XCTUnwrap(URL(string: link)), scheme: "lamp") }
+        XCTAssertEqual(try remix("lamp://wish?starter=newyork&text=Make%20it%20snow"), Wish.Remix(from: .starter("newyork"), text: "Make it snow"))
+        // A browser's form writes a space as "+", and "+" itself as "%2B".
+        XCTAssertEqual(try remix("lamp://wish?starter=newyork&text=Snow+%2B+ice"), Wish.Remix(from: .starter("newyork"), text: "Snow + ice"))
+        let repo = try XCTUnwrap(try remix("lamp://wish?repo=https%3A%2F%2Fgithub.com%2Flampdotdev%2Fnewyork&commit=B95D5012397FA3FA345505F428F1189271218753&text=x"))
+        XCTAssertEqual(repo.from, .repository(url: "https://github.com/lampdotdev/newyork", commit: "b95d5012397fa3fa345505f428f1189271218753"))
+        XCTAssertEqual(repo.source, RepoImport.Source(owner: "lampdotdev", name: "newyork", ref: "b95d5012397fa3fa345505f428f1189271218753"))
+        // Anything else that names an origin is refused, never taken for a plain wish.
+        for bad in ["lamp://wish?starter=..%2Fetc&text=x", "lamp://wish?starter=New%20York", "lamp://wish?starter=a&repo=https%3A%2F%2Fgithub.com%2Fa%2Fb",
+                    "lamp://wish?repo=http%3A%2F%2Fgithub.com%2Fa%2Fb", "lamp://wish?repo=https%3A%2F%2Fgitlab.com%2Fa%2Fb",
+                    "lamp://wish?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb%2Ftree%2Fmain", "lamp://wish?repo=github.com%2Fa%2Fb",
+                    "lamp://wish?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=--upload-pack%3Devil", "lamp://wish?starter=newyork&commit=abc1234",
+                    "lamp://wish?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=abc1234"] {
+            let url = try XCTUnwrap(URL(string: bad))
+            XCTAssertTrue(Wish.isRemix(url, scheme: "lamp"), bad)
+            XCTAssertNil(Wish.remix(from: url, scheme: "lamp"), bad)
+        }
+        XCTAssertFalse(Wish.isRemix(try XCTUnwrap(URL(string: "lamp://wish?text=hello")), scheme: "lamp"))
+        XCTAssertNil(try remix("lamp-dev://wish?starter=newyork"))
+        // The site's Download copies the same in its mark's value.
+        XCTAssertEqual(Wish.markedRemix(html: #"<span data-lamp-wish="starter=newyork" style="x">Make it snow</span>"#, plain: "Make it snow"),
+                       Wish.Remix(from: .starter("newyork"), text: "Make it snow"))
+        XCTAssertNil(Wish.markedRemix(html: #"<span data-lamp-wish="1">Make it snow</span>"#, plain: "Make it snow"))
+        XCTAssertNil(Wish.markedRemix(html: #"<span data-lamp-wish="repo=https%3A%2F%2Fevil.example%2Fa%2Fb">x</span>"#, plain: "x"))
     }
 
     func testALinksWordsAreTidiedAndCut() throws {

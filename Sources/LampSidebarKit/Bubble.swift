@@ -37,13 +37,9 @@ extension ChatLook {
         }
     }
 
-    /// The colour of what the agent says, Messages' grey for the other person, a touch warm to sit on the chat's
-    /// paper. Opaque, so where the tail overlaps the bubble it isn't darker.
-    public static let agentBubble = Color(nsColor: NSColor(name: "LampAgentBubble") { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x36 / 255, green: 0x35 / 255, blue: 0x33 / 255, alpha: 1)
-            : NSColor(srgbRed: 0xE9 / 255, green: 0xE8 / 255, blue: 0xE5 / 255, alpha: 1)
-    })
+    /// The color of what the agent says: the paper a shade deeper, as Messages grays the other person's. Opaque, so
+    /// where the tail overlaps the bubble it isn't darker.
+    public static let agentBubble = Paper.bubble
 
     /// How far a bubble's tail reaches past its side: rows keep this much room so it isn't clipped.
     public static let tailRoom: CGFloat = 6

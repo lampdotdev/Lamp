@@ -1,8 +1,8 @@
 import Foundation
 
-/// Shared apps opened before setup finished. Lamp keeps a copy of each and remembers them on disk, like the
-/// requests waiting for setup, so their reviews open by themselves once the person is through setup, in this
-/// run or the next.
+/// Shared apps opened during the welcome, or before Lamp has had its first look at setup. Lamp keeps a copy of each and
+/// remembers them on disk, like the requests waiting for setup, so their reviews open by themselves as soon as they can,
+/// in this run or the next.
 struct WaitingImport {
     /// The kept copies' paths, in the order the apps were opened.
     static let key = "waitingSharedApps"
@@ -12,11 +12,12 @@ struct WaitingImport {
     /// Where files waiting for setup are kept, each in a folder of its own.
     let folder: URL
 
-    /// When a shared app's review may open: setup really in place (Apple's tools and an AI agent, so the AI
-    /// check can read the app before it runs) and the welcome over. Never while the welcome is still up, even
-    /// with everything in place: the review would land in the middle of setup, the moment an agent is chosen.
-    /// It waits for "Start building", or a launch that needs no welcome.
-    static func reviewsCanOpen(setupReady: Bool, welcomeOver: Bool) -> Bool { setupReady && welcomeOver }
+    /// When a shared app's review may open: once Lamp has looked at setup (`look`, nil before that), with the saved keys
+    /// in, so the same file on the same Mac is reviewed the same way, and the welcome is over. What the look found doesn't
+    /// count: with no AI the review says the app wasn't checked and takes a click (`ImportReview.opening`), and a build
+    /// that needs Apple's tools asks for them after that click. Never while the welcome is still up: the review would land
+    /// in the middle of its setup.
+    static func reviewsCanOpen(after look: SetupCheck?, welcomeOver: Bool) -> Bool { look != nil && welcomeOver }
 
     private var paths: [String] {
         if let saved = defaults.stringArray(forKey: Self.key) { return saved }
@@ -31,20 +32,71 @@ struct WaitingImport {
     /// How many shared apps are waiting.
     var count: Int { paths.count }
 
+    /// The request a link brought with a fetched file, kept beside it (`Store.fetchedRequest`): it goes with the copy.
+    static let requestFile = "request.txt"
+
+    /// The wish a repository was fetched to update, kept beside it (`target(beside:)`).
+    static let targetFile = "update-target.txt"
+
+    /// What Lamp fetched for a kept repository with no git (`RepoArchive`), which it writes itself in the kept copy's own
+    /// folder, above the tree and where nothing in the repository reaches. The name can't be a repository's.
+    static let fetchedFile = ".fetched.json"
+
+    /// What `keep` saved of a repository's fetch, for the copy kept: nil for anything but a folder kept here, and for a
+    /// record that doesn't name a repository and a commit plainly.
+    static func fetched(beside file: URL) -> RepoArchive.Fetched? {
+        let home = file.deletingLastPathComponent()
+        guard home.deletingLastPathComponent().lastPathComponent == "Waiting",
+              let data = try? Data(contentsOf: home.appendingPathComponent(fetchedFile)),
+              let saved = try? JSONDecoder().decode(RepoArchive.Fetched.self, from: data),
+              RepoImport.source(from: saved.url)?.url == saved.url, Credits.validCommit(saved.commit) == saved.commit else { return nil }
+        return RepoArchive.Fetched(tree: file, url: saved.url, commit: saved.commit)
+    }
+
+    /// The wish a kept repository was fetched to update (`Store.copy(of:among:updating:)`), kept beside it so that
+    /// after the wait, or a relaunch, the review offers that wish and not another copy of the same repository.
+    /// Only in a folder kept for setup, never beside a file opened from anywhere else.
+    static func target(beside file: URL) -> String? {
+        let home = file.deletingLastPathComponent()
+        guard home.deletingLastPathComponent().lastPathComponent == "Waiting" else { return nil }
+        return (try? String(contentsOf: home.appendingPathComponent(targetFile), encoding: .utf8))?.trimmed.nilIfEmpty
+    }
+
     /// Keeps a copy, since the file may be a temporary one (opened straight from Mail or Messages), behind
     /// any already kept: each gets its review, none pushes another out. The same file opened again is kept
     /// once. False when no copy could be made (a full disk, say): nothing is remembered then, so Lamp never
-    /// promises a file it may not have.
-    func keep(_ file: URL) -> Bool {
+    /// promises a file it may not have. A request kept beside a fetched file is copied with it.
+    func keep(_ file: URL, updating target: String? = nil, fetched: RepoArchive.Fetched? = nil) -> Bool {
         let fm = FileManager.default
         let kept = paths
-        if kept.contains(where: { URL(fileURLWithPath: $0).lastPathComponent == file.lastPathComponent
-            && fm.contentsEqual(atPath: $0, andPath: file.path) }) { return true }
+        // The same file again counts as the same only when it's for the same wish: two copies (Keep Both) updated from
+        // one repository fetch the same thing, and each still gets its own review. And only as the same fetch: a fork
+        // with the same files is another repository, to be credited as that.
+        if let same = kept.first(where: { URL(fileURLWithPath: $0).lastPathComponent == file.lastPathComponent
+            && Self.target(beside: URL(fileURLWithPath: $0)) == target
+            && Self.fetched(beside: URL(fileURLWithPath: $0))?.url == fetched?.url
+            && Self.fetched(beside: URL(fileURLWithPath: $0))?.commit == fetched?.commit
+            && fm.contentsEqual(atPath: $0, andPath: file.path) }) {
+            // The same file again, with a request: the newer request is the one meant, so it replaces the kept one.
+            let request = file.deletingLastPathComponent().appendingPathComponent(Self.requestFile)
+            if Store.fetchedRequest(beside: file) != nil, fm.fileExists(atPath: request.path) {
+                let keptRequest = URL(fileURLWithPath: same).deletingLastPathComponent().appendingPathComponent(Self.requestFile)
+                try? fm.removeItem(at: keptRequest)
+                try? fm.copyItem(at: request, to: keptRequest)
+            }
+            return true
+        }
         let home = folder.appendingPathComponent(UUID().uuidString)
         let copy = home.appendingPathComponent(file.lastPathComponent)
         do {
             try fm.createDirectory(at: home, withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: copy)
+            let request = file.deletingLastPathComponent().appendingPathComponent(Self.requestFile)
+            if Store.fetchedRequest(beside: file) != nil, fm.fileExists(atPath: request.path) {
+                try fm.copyItem(at: request, to: home.appendingPathComponent(Self.requestFile))
+            }
+            if let target { try target.write(to: home.appendingPathComponent(Self.targetFile), atomically: true, encoding: .utf8) }
+            if let fetched { try JSONEncoder().encode(fetched).write(to: home.appendingPathComponent(Self.fetchedFile), options: .atomic) }
         } catch {
             try? fm.removeItem(at: home)
             return false
@@ -55,8 +107,8 @@ struct WaitingImport {
 
     /// Hands over the kept file that has waited longest, once: it leaves the list, so its review can't open
     /// twice. Nothing until reviews may open (`reviewsCanOpen`).
-    func take(setupReady: Bool, welcomeOver: Bool) -> URL? {
-        guard Self.reviewsCanOpen(setupReady: setupReady, welcomeOver: welcomeOver) else { return nil }
+    func take(after look: SetupCheck?, welcomeOver: Bool) -> URL? {
+        guard Self.reviewsCanOpen(after: look, welcomeOver: welcomeOver) else { return nil }
         var waiting = paths
         defer { save(waiting) }
         while !waiting.isEmpty {
@@ -78,7 +130,7 @@ struct WaitingImport {
 
 /// Something Lamp finds out once, a moment after launch, that others may have to wait for: here, its first
 /// real look at setup. A shared app that launched Lamp arrives before that look, and waits for it rather than
-/// being decided on a guess, so the same file on the same Mac always goes the same way.
+/// being reviewed without the saved keys, so the same file on the same Mac always goes the same way.
 @MainActor
 final class FirstLook {
     private(set) var isDone = false

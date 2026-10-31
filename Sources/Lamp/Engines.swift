@@ -274,9 +274,13 @@ extension Agent {
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Skills.brief(for: project, engine: Builder.engine, session: session)
             + DeviceNote.brief(for: project, engine: Builder.engine, session: session)
+            + WishNote.brief(for: project, engine: Builder.engine, session: session)
+            + Parts.brief(for: project, engine: Builder.engine, session: session)
             + Agent.undescribed(project)
             + Agent.newApp(project)
+            + GitHubProjects.note(for: prompt)
             + (LiveReload.eligible(project) ? Agent.liveNote : "")
+            + GameKit.unregisteredNote(project)
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
@@ -291,10 +295,15 @@ extension Agent {
             env["LAMP_MEMORY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/memory"
             env["LAMP_SETUP_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/setup"
             env["LAMP_KIND_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/kind"
+            env["LAMP_REMOVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/remove"
+            env["LAMP_RENAME_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/rename"
             env["LAMP_CONNECTORS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/connectors"
+            env["LAMP_LAMPIFY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/lampify"
+            env["LAMP_NETWORK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/network"
             env["LAMP_INTEGRATION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/integration"
             env["LAMP_TALK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/talk"
             env["LAMP_ART_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/art"
+            env["LAMP_ASSETS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/assets"
             env["LAMP_SKILL_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/skill"
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
             env["LAMP_STEER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/steer"
@@ -313,6 +322,13 @@ extension Agent {
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
             env["LAMP_TOKEN"] = token
             env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + Self.claudeNote + sandboxNote
+            // No background commands, as pi has none: after answering, Claude Code waits for one it started (a
+            // server the agent ran to try something) and takes another turn once it ends, so a server kept the turn
+            // going with nobody to answer to. A command that runs long stops at its time limit instead.
+            env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
+            // Compacts at Lamp's size, not near the model's window: with a million tokens it would wait until the
+            // pictures resent with every request had long passed what one request can carry (`Conversation`).
+            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = String(Conversation.compactAt)
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
@@ -336,7 +352,7 @@ extension Agent {
                         "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__device_integration,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__assets,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__remove_app,mcp__lamp__rename_app,mcp__lamp__connectors,mcp__lamp__lampify,mcp__lamp__network_devices,mcp__lamp__device_integration,mcp__lamp__device_permission,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
             if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
@@ -377,7 +393,8 @@ extension Agent {
                 // What the classifier refused is the classifier's to refuse (the agent is told why), and the chat says so.
                 env["LAMP_REFUSED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-refused"
                 hooks["PermissionDenied"] = [["matcher": "Bash", "hooks": [hook("LAMP_REFUSED_URL", event: "PermissionDenied")]]]
-                autoMode = ["classifyAllShell": true]
+                // Lamp's rule for the person's devices beside the classifier's own (`$defaults` keeps them).
+                autoMode = ["classifyAllShell": true, "soft_deny": ["$defaults", "Device Control: " + DevicePermissions.commandRule]]
                 env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
                 hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]
             case .always:
@@ -434,9 +451,11 @@ extension Agent {
             // as a command does.
             let approval = CommandApproval.current
             env["LAMP_TOKEN"] = token
-            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
+            // Under "Only when risky" the hook asks only whether a command would change one of the person's devices
+            // (`DevicePermissions.mayChangeADevice`): Codex's reviewer never sees what runs inside its sandbox.
+            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=" + (approval == .risky ? "codex-devices" : "codex")
             let hook = Bundle.main.resourceURL?.appendingPathComponent("lamp-approve.sh").path ?? "lamp-approve.sh"
-            env["LAMP_CODEX_HOOKS"] = approval != .always ? "hooks={}"
+            env["LAMP_CODEX_HOOKS"] = approval == .never ? "hooks={}"
                 : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
             env["LAMP_CODEX_PERMISSIONS"] = Sandbox.codexPermissions(for: project)
             env["LAMP_CODEX_POLICY"] = "auto_review.policy=" + Self.tomlString(CodexReview.policy)
@@ -450,10 +469,12 @@ extension Agent {
             // in OpenAI's published reference; a Codex that drops it ignores the setting and offers its own skills.
             // Codex sends no summaries of the model's thinking unless asked; their headings name its steps in the
             // chat (`AgentEvent.naming`), where the shell commands alone said nothing a person could follow.
+            // It compacts at Lamp's size, as the other engines do (`Conversation.compactAt`).
             let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               -c "$LAMP_CODEX_PERMISSIONS" -c default_permissions="lamp" \(review) \\
               -c web_search="live" -c model_reasoning_summary="detailed" -c skills.bundled.enabled=false -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
+              -c model_auto_compact_token_limit=\(Conversation.compactAt) \\
               -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp?files=1" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """
@@ -487,6 +508,11 @@ extension Agent {
     - (Claude Code) A shell command's description is what the person sees for that step, never the command: \
     write it for them, a few plain words on what you're doing ("Reading how the shelf works", "Checking it \
     builds"), with no file names, paths or commands.
+    - (Claude Code) A command may be refused by Claude Code's own check, which the person never sees and which \
+    never asks them. Then it didn't run, and nothing will ask them about it: don't try another way, and never say \
+    that Lamp will ask them or that they can approve it. Say in a sentence, in their words, what you couldn't do \
+    and why ("I couldn't leave a helper running in the background: it would stay on after the app closes."), never the \
+    command or the check itself.
     """
 
     /// Which tools the "file tools" of the rules above are, for Codex: its own are the shell and apply_patch.
@@ -582,6 +608,9 @@ extension Agent {
             if obj["subtype"] as? String == "init", let id = obj["session_id"] as? String { return [.session(id)] }
             if obj["subtype"] as? String == "compact_boundary" { return [.compacted] }
         case "assistant":
+            // A request that failed: Claude Code words its error as a message from the model, then says the same on
+            // the `result` line, which is what puts the error card in the chat (or what Lamp recovers from).
+            if obj["error"] is String || obj["isApiErrorMessage"] as? Bool == true { return [] }
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             return content.flatMap { block -> [AgentEvent] in
                 switch block["type"] as? String {
@@ -589,7 +618,8 @@ extension Agent {
                 case "tool_use":
                     let name = block["name"] as? String ?? "Tool", input = block["input"] as? [String: Any] ?? [:]
                     let said = ((input["doing"] as? String) ?? (name == "Bash" ? input["description"] as? String : nil))?.trimmed.nilIfEmpty
-                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input), said: said)
+                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input), said: said, id: block["id"] as? String,
+                                               command: name == "Bash" ? input["command"] as? String : nil)
                     // Claude Code has the model say what each command is for, in a few words of its own.
                     guard name == "Bash" else { return [call] }
                     return [.naming((input["description"] as? String)?.trimmed ?? ""), call]
@@ -620,10 +650,16 @@ extension Agent {
             if obj["isReplay"] as? Bool == true { return [.received] }
             // A tool result: the tool has finished and the model is thinking about what's next.
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-            if content.contains(where: { $0["type"] as? String == "tool_result" }) { return [.step("")] }
+            let results = content.filter { $0["type"] as? String == "tool_result" }
+            if !results.isEmpty {
+                return [.step("")] + results.compactMap { result in
+                    (result["tool_use_id"] as? String).map { AgentEvent.ended($0, failed: result["is_error"] as? Bool == true) }
+                }
+            }
         case "result":
             var events: [AgentEvent] = []
-            if let cost = obj["total_cost_usd"] as? Double, cost > 0 { events.append(.cost(cost)) }
+            // No cost from Claude Code: Lamp runs it with the person's Claude sign-in, so its `total_cost_usd` is what the
+            // run would have cost at API prices, not money spent. What Lamp shows as spent is what was: OpenRouter's.
             if obj["is_error"] as? Bool == true { events.append(.failed(obj["result"] as? String ?? "Claude failed.")) }
             return events + [.finished]
         default: break
@@ -690,15 +726,18 @@ extension Agent {
             guard let message = item["message"] as? String, !message.contains("--dangerously-bypass-hook-trust") else { return [] }
             return [.raw(message)]
         case ("item.completed", "command_execution"):
-            // "declined": Codex's reviewer refused it, and it never ran.
+            // "declined": Codex's reviewer refused it, and it never ran. "failed": it ran and exited with an error.
             let command = item["command"] as? String ?? ""
-            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined")])
+            let failed = item["status"] as? String == "failed" || (item["exit_code"] as? Int).map { $0 != 0 } == true
+            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined",
+                                                               failed: failed, id: item["id"] as? String)])
         case ("item.completed", "mcp_tool_call"):
-            return [.step("")]
+            return [.step("")] + ((item["id"] as? String).map { [.ended($0, failed: item["status"] as? String == "failed")] } ?? [])
         case ("item.started", "mcp_tool_call"):
             let name = item["tool"] as? String ?? "tool"
             let arguments = item["arguments"] as? [String: Any] ?? [:]
-            return [.tool(tool(name, arguments), call: callKey(name, arguments), said: (arguments["doing"] as? String)?.trimmed.nilIfEmpty)]
+            return [.tool(tool(name, arguments), call: callKey(name, arguments), said: (arguments["doing"] as? String)?.trimmed.nilIfEmpty,
+                          id: item["id"] as? String)]
         case ("item.started", "command_execution"):
             let command = "Run: \(item["command"] as? String ?? "")"
             return [.tool(command, call: command)]
@@ -706,8 +745,9 @@ extension Agent {
             let paths = (item["changes"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String }
             // Codex doesn't say what an edit changed, so two edits to one file can't be told apart:
             // each counts as its own step.
-            return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))",
-                          call: item["id"] as? String ?? UUID().uuidString)]
+            let id = item["id"] as? String ?? UUID().uuidString
+            return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))", call: id, id: id),
+                    .ended(id, failed: item["status"] as? String == "failed")]
         case ("error", _), ("turn.failed", _):
             let raw = obj["message"] as? String ?? ((obj["error"] as? [String: Any])?["message"] as? String) ?? "ChatGPT failed."
             // Codex nests the API error as JSON text; surface its message.
@@ -786,6 +826,8 @@ enum EngineSignIn {
         }.status
         let wasCancelled = cancelled()
         _ = await isSignedIn(engine)
+        // Setup counts the sign-in (`SetupCheck.run`), so requests waiting for it start wherever it was made from.
+        await Store.shared.recheckSetup()
         return wasCancelled ? nil : status == 0
     }
 

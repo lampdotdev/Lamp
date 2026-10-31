@@ -19,6 +19,27 @@ struct Integration: Codable, Hashable {
     var steps: [Step]
     var bridge: Bridge?
     var app: AppKind?
+    /// More kinds of app the device takes beside `app`, by a name of the integration's ("game"): each is named to the
+    /// naming call as "<id>:<name>" with its `purpose`, and an app made as one keeps that in `LampProject.integration`.
+    /// Only Lamp's own kinds, in the integrations Lamp ships: the Xbox's native games (`GameKit`).
+    var kinds: [String: AppKind]?
+    /// What the device can run, of "web" (a page in a host) and "native" (the device's own code): its row in the table of
+    /// devices (`Places`). Unsaid, it's what `app` declares. Each one named must be one its `app` or `kinds` has files for.
+    var supports: [String]?
+    /// What the device runs, in a plain sentence the person would follow ("Roku channels written in BrightScript…"),
+    /// which Lamp gives as the reason when something it can't run is asked of it (`Places.row`), in place of its own.
+    var runs: String?
+    /// Lamp's skills for designing what the device shows, offered to every app on it as a built-in row offers its own
+    /// (`Place.skills`): ["tv-design"] for a device watched from across a room.
+    var skills: [String]?
+    /// What a game's page on the device is told about its input, as a built-in row says it (`Place.Input`): its
+    /// keyboard's names for keys, the controller that comes with it, the one layout its controllers have. `{}` is a web
+    /// view with a PC keyboard and no controller of its own; left out, Lamp can't put a game's page there.
+    var input: Place.Input?
+    /// Where a device that serves its own HTTPS certificate serves the root that signs it ("/config/rootcertificate"
+    /// for Xbox's Device Portal, which makes itself a new certificate each time it starts): Lamp reads it once, over
+    /// the connection it keeps the device's first certificate on, and from then on takes any certificate it signed.
+    var certificateRoot: String?
     /// Where what this says was read: the vendor's documentation, a guide.
     var sources: [String]?
 
@@ -57,10 +78,17 @@ struct Integration: Codable, Hashable {
 
     /// A value read from one of the device's answers: a request and a path into it.
     struct Read: Codable, Hashable {
-        var http: Request
+        /// A request to the device; or, with `description`, the description its SSDP answer points at.
+        var http: Request?
+        /// The device's own UPnP description, wherever its SSDP answer says it is now: a description's address can
+        /// change with the device's mode (an Xbox's does), which a fixed path would lose.
+        var description: Bool?
         /// A JSON path ("device.modelName", "items.0.id") or an XML element ("model-name", "device-info/model-name").
         var json: String?
         var xml: String?
+        /// What the value must hold for the device to be this one ("Xbox"): a search answered by other devices too
+        /// (a Windows PC sharing media) doesn't make them this kind.
+        var contains: String?
     }
 
     // MARK: Setting it up
@@ -88,6 +116,9 @@ struct Integration: Codable, Hashable {
         var wait: Bool?
         /// How Lamp knows the step is done. Every step has one.
         var check: [Condition]
+        /// What the check reads is the device's model, finer than what it says of itself before it's set up (an Xbox's
+        /// description says Xbox One on every console; Device Portal names the console).
+        var model: Bool?
         /// How the step is known. The model may only say it was read (with where); Lamp marks the rest.
         var known: Known?
     }
@@ -145,18 +176,46 @@ struct Integration: Codable, Hashable {
         var launch: [IntegrationAction]?
         /// Ends in a request whose answer is kept as the picture (`keep: "picture"`).
         var look: [IntegrationAction]?
+        /// Ends in a request whose answer is the app's screen as text (`keep: "screen"`): the tree of what it shows, as
+        /// the device describes it (a Roku's `/query/app-ui`), which `look_at_app` and `use_app` give beside the picture.
+        var screen: [IntegrationAction]?
         /// Run once per key, with `{key}` the device's name for it from `keys`.
         var use: [IntegrationAction]?
         var logs: [IntegrationAction]?
+        /// Whether the app just launched is running, its last request's `expect` asking (with `until`, for a few
+        /// seconds): Lamp launches again while it isn't, for a device that answers a launch before it can open the app
+        /// (an Xbox just done installing shows its own "not ready yet" instead).
+        var running: [IntegrationAction]?
+        /// Ends the app on the device, run before an update replaces it (a device can fail to open a package installed
+        /// over its running copy): with the values of the copy that's there.
+        var stop: [IntegrationAction]?
+        /// Reads the log the app keeps on the device: ends in a request whose answer is kept as the log (`keep: "log"`).
+        var log: [IntegrationAction]?
+        /// Takes the app off the device when its wish is deleted, with the values of the copy that's there.
+        var remove: [IntegrationAction]?
+        /// Types text, run once per character with `{text}` that character (a Roku's `/keypress/Lit_{text}`), for a
+        /// keyboard on the device's screen.
+        var type: [IntegrationAction]?
         /// Lamp's names for a remote's keys ("home", "up", "select", "back") to the device's own.
         var keys: [String: String]?
+        /// What the device has no way to do, of `stop`, `remove` and `type`, said outright: an app kind's bridge has each
+        /// or lacks it, so a forgotten one is told apart from one the device can't do (`IntegrationCheck.lifecycle`).
+        var lacks: [String]?
+        /// How Lamp knows the bridge works: set by Lamp alone, once a test run passed on a device (`IntegrationProbe`),
+        /// with that device's model and version; kept while the bridge is unchanged.
+        var known: Known?
+
+        /// The bridge without Lamp's mark, to tell whether it changed.
+        var unmarked: Bridge { var bridge = self; bridge.known = nil; return bridge }
     }
 
     /// What's built for it: a kind Lamp owns, or one the integration declares.
     struct AppKind: Codable, Hashable {
-        /// "tv-web": the TVs' web app. Lamp's own kinds only.
+        /// "tv-web": the TVs' web app; "native-game": a 3D game in C++ on the Xbox (`GameKit`). Lamp's own kinds only.
         var lamp: String?
         var declared: Declared?
+        /// What it's for, as the naming call reads it beside the device's name: "a 3D game played with the controller".
+        var purpose: String?
 
         struct Declared: Codable, Hashable {
             /// The scaffold, by path in the app's folder.
@@ -167,6 +226,25 @@ struct Integration: Codable, Hashable {
             var package: String
             /// Where the package step leaves the package, in the app's folder: what `{package}` names.
             var output: String
+            /// A package Lamp makes of the package step's output: "msix", a Windows app package Lamp writes the manifest
+            /// for and signs itself (`MSIX`), from a zip of the app's files. `{certificate}`, `{packageFullName}` and
+            /// `{appUserModelID}` are then Lamp's values.
+            var wrap: String?
+            /// The file the app starts at, in a wrapped package: "index.html" unless said.
+            var start: String?
+            /// What shows a wrapped web app's pages: "webview2", Lamp's own WebView2 host (`WebHost`), or, unsaid, the
+            /// system's own host for a package that names a start page (EdgeHTML on the Xbox).
+            var host: String?
+            /// Lamp's building blocks the app takes, by library ("web", "brightscript") to where they go in its folder:
+            /// Lamp's own files there, written afresh before every turn and build (`DeviceSupport`).
+            var support: [String: String]?
+            /// A web app's folder, whose index.html Lamp opens at 1920×1080 in a preview on this Mac for the agent's looks and
+            /// use (`TVPreview`, as a TV app's), so the builder sees and plays what it makes; Play still puts it on the device.
+            var preview: String?
+            /// The app's icon on the device, by path in the app's folder to its size in pixels ("images/icon_hd.png":
+            /// "336x210"): Lamp draws the icon it made for the app at each, before every turn and build (`DeviceSupport`),
+            /// for the files the device's manifest names. The agent never draws one.
+            var icons: [String: String]?
         }
     }
 }
@@ -221,15 +299,39 @@ struct Request: Codable, Hashable {
     var path: String
     var headers: [String: String]?
     var body: String?
-    /// A form, sent as multipart; a value "@{package}" is the package's file.
+    /// A form, sent as multipart; a value "@{package}" is the package's file, "@{certificate}" Lamp's certificate for
+    /// a wrapped package.
     var form: [String: String]?
     var auth: Auth?
     /// Over HTTPS, to a device that serves its own certificate (Xbox's Device Portal): Lamp trusts the certificate the
     /// first time and holds the device to it after (`DeviceTLS`).
     var https: Bool?
-    /// "picture": the answer is the screen's picture (in a bridge's `look`). "key": the answer is a key the device
-    /// gives this Mac to sign in to it over SSH, kept in Lamp's folder (in a setup step's `run`).
+    /// "picture": the answer is the screen's picture (in a bridge's `look`). "screen": the answer is the screen as text
+    /// (in a bridge's `screen`). "log": the answer is the app's log (in a bridge's `log`). "key": the answer is a key the device gives this Mac to sign in to it over SSH, kept in Lamp's
+    /// folder (in a setup step's `run`).
     var keep: String?
+    /// Asks again every two seconds, up to this many seconds, while the device answers 204 (still working): for a
+    /// device that takes an install and says later how it went.
+    var poll: Int?
+    /// What the answer must say for the step to count as done; otherwise the step fails with the answer's words.
+    var expect: Expect?
+    /// Asks again every two seconds, up to this many seconds, until the answer says what `expect` asks: for a device
+    /// that's done with an install before the app is really there (an Xbox lists a package a while after saying so).
+    var until: Int?
+    /// A setting changed only for its sequence: the name of the JSON field holding the setting's value in the device's
+    /// answer to a GET of the same path. Lamp reads it before sending, and once the sequence is over (for a bridge's
+    /// install, once the app has been launched after it), whether it went through or not, sends back
+    /// `{"<field>": "<what it was>"}` the same way (Xbox's "treat apps as games" while a game is installed).
+    var restore: String?
+
+    /// A `json` path may have `*` for every element of a list ("InstalledPackages.*.PackageFullName"): the answer then
+    /// says what's asked when any of them does. `equals` and `contains` may hold Lamp's values (`{packageFullName}`).
+    struct Expect: Codable, Hashable {
+        var json: String?
+        var xml: String?
+        var equals: String?
+        var contains: String?
+    }
 
     struct Auth: Codable, Hashable {
         var digest: Bool?
@@ -246,7 +348,8 @@ struct Request: Codable, Hashable {
 /// request or command does: a sign-in, a form's value, a header, a body.
 enum Placeholders {
     /// Lamp's own names. `field:<key>` and `read:<step>` are the others.
-    static let lamp: Set<String> = ["address", "mac", "package", "appID", "key", "text", "callback", "signIn", "deviceID", "sshKey"]
+    static let lamp: Set<String> = ["address", "mac", "package", "appID", "key", "text", "callback", "signIn", "deviceID", "sshKey",
+                                    "packageFullName", "appUserModelID", "isGame"]
 
     /// Where a placeholder sits, which decides what may go there and how it's written.
     enum Place { case path, command, header, body, auth, form, shown, argument }
@@ -287,8 +390,22 @@ enum Placeholders {
             }
         }
         if name.hasPrefix("read:") { return nil }
+        // A cookie the device set earlier in the same sequence (a CSRF token), sent back only as a header.
+        if name.hasPrefix("cookie:") {
+            return place == .header ? nil : "{\(name)} goes only in a header: it's a cookie the device set, sent back to it"
+        }
+        // One of Lamp's values in base64, as some devices take an id in a query.
+        if name.hasPrefix("base64:") {
+            let inner = String(name.dropFirst("base64:".count))
+            // Only of a value that's not secret: encoding one mustn't carry it past where it may go.
+            return lamp.subtracting(["signIn"]).contains(inner) ? nil : "{\(name)} must be base64 of one of Lamp's values that isn't secret, such as {base64:packageFullName}"
+        }
         guard lamp.contains(name) else {
             return "{\(name)} isn't a value Lamp fills (they are \(lamp.sorted().map { "{\($0)}" }.joined(separator: ", ")), {field:<key>} and {read:<step>})"
+        }
+        // Text the builder types: any character, so never where a line break could start a header or a command.
+        if name == "text", place != .path, place != .form, place != .body {
+            return "{text} goes only in a path, a form or a body"
         }
         if name == "signIn", place != .auth, place != .header, place != .form, place != .body {
             return "{signIn} goes only in a sign-in, a header, a form or a body"
@@ -307,13 +424,20 @@ enum Placeholders {
         var out = ""
         for piece in pieces(template) {
             guard let name = piece.name else { out += piece.text; continue }
-            guard let value = values[name] else { throw Unsafe(name: name) }
-            // What the person typed, a sign-in and Lamp's public key (which has spaces) aren't held to the alphabet.
+            let found = name.hasPrefix("base64:") ? values[String(name.dropFirst("base64:".count))].map { Data($0.utf8).base64EncodedString() } : values[name]
+            guard let value = found else { throw Unsafe(name: name) }
+            // What the person typed, a sign-in and Lamp's public key (which has spaces) aren't held to the alphabet, nor
+            // is text being typed, which in a path is encoded down to letters and digits so it can't change the path.
             let secret = name.hasPrefix("field:") || name == "signIn" || name == "sshKey"
-            if !secret, value.unicodeScalars.contains(where: { !safe.contains($0) }) || value.count > 512 { throw Unsafe(name: name) }
+            let typed = name == "text" && [.path, .form, .body].contains(place)
+            if !secret, !typed, value.unicodeScalars.contains(where: { !safe.contains($0) }) || value.count > 512 { throw Unsafe(name: name) }
+            if name == "text", place == .path {
+                out += value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")) ?? ""
+                continue
+            }
             switch place {
             case .command: out += "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-            case .path: out += value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "?#"))) ?? ""
+            case .path: out += value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "?#+&="))) ?? ""
             default: out += value
             }
         }
@@ -326,10 +450,10 @@ enum Placeholders {
 /// What's wrong with an integration, in plain reasons the model can act on. Empty means Lamp takes it.
 enum IntegrationCheck {
     /// `submitted`: from the builder, which may only say a step was read. A file Lamp kept is read with its own marks.
-    static func problems(_ data: Data, submitted: Bool = true) -> [String] {
+    static func problems(_ data: Data, submitted: Bool = true, skills: [String: Skills.Skill] = Skills.all) -> [String] {
         do {
             let integration = try JSONDecoder().decode(Integration.self, from: data)
-            return problems(integration, submitted: submitted)
+            return problems(integration, submitted: submitted, skills: skills)
         } catch let DecodingError.keyNotFound(key, context) {
             return ["\(path(context.codingPath + [key])) is missing."]
         } catch let DecodingError.typeMismatch(_, context) {
@@ -368,14 +492,16 @@ enum IntegrationCheck {
     indirect enum Shape {
         case object([String: Shape]), array(Shape), map, leaf
         static let request: Shape = .object(["method": .leaf, "https": .leaf, "port": .leaf, "path": .leaf, "headers": .map, "body": .leaf, "form": .map,
-                                             "auth": .object(["digest": .leaf, "user": .leaf, "password": .leaf]), "keep": .leaf])
+                                             "auth": .object(["digest": .leaf, "user": .leaf, "password": .leaf]), "keep": .leaf,
+                                             "poll": .leaf, "until": .leaf, "restore": .leaf, "expect": .object(["json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf])])
         static let action: Shape = .object([
             "http": request, "probe": .leaf, "stream": .object(["port": .leaf]),
             "ssh": .object(["port": .leaf, "user": .leaf, "command": .leaf, "explanation": .leaf]),
             "tool": .object(["name": .leaf, "download": .leaf, "sha256": .leaf, "arguments": .array(.leaf), "explanation": .leaf]),
             "vendorSignIn": .object(["page": .leaf]), "wait": .leaf, "bridge": .leaf,
         ])
-        static let read: Shape = .object(["http": request, "json": .leaf, "xml": .leaf])
+        static let appKind: Shape = .object(["lamp": .leaf, "purpose": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "host": .leaf, "support": .map, "icons": .map, "preview": .leaf])])
+        static let read: Shape = .object(["http": request, "description": .leaf, "json": .leaf, "xml": .leaf, "contains": .leaf])
         static let integration: Shape = .object([
             "id": .leaf, "name": .leaf, "maker": .leaf, "kind": .leaf, "sources": .array(.leaf),
             "find": .array(.object(["ssdp": .leaf, "bonjour": .leaf, "contains": .leaf,
@@ -387,12 +513,14 @@ enum IntegrationCheck {
                 "qr": .leaf, "field": .object(["key": .leaf, "label": .leaf, "secret": .leaf]), "link": .leaf,
                 "accepts": .array(.leaf), "run": .array(action), "wait": .leaf,
                 "check": .array(.object(["http": request, "json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf,
-                                         "tcp": .leaf, "field": .leaf, "signedIn": .leaf])),
+                                         "tcp": .leaf, "field": .leaf, "signedIn": .leaf])), "model": .leaf,
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
-            "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
-                               "use": .array(action), "logs": .array(action), "keys": .map]),
-            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf])]),
+            "bridge": .object(["install": .array(action), "launch": .array(action), "running": .array(action), "look": .array(action), "screen": .array(action),
+                               "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map,
+                               "lacks": .array(.leaf), "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf])]),
+            "app": appKind,
+            "kinds": .map, "supports": .array(.leaf), "runs": .leaf, "skills": .array(.leaf), "input": .object(["keys": .map, "controller": .leaf, "layout": .leaf]), "certificateRoot": .leaf,
         ])
     }
 
@@ -408,7 +536,9 @@ enum IntegrationCheck {
     /// The bridges Lamp ships, which an action may name.
     static let bridges: Set<String> = ["devicectl", "adb", "sdb"]
 
-    static func problems(_ integration: Integration, submitted: Bool = true) -> [String] {
+    /// `skills` is what a skill the integration names must be one of: Lamp's own, from its bundle, unless the caller
+    /// has them from elsewhere (a test, from the source tree).
+    static func problems(_ integration: Integration, submitted: Bool = true, skills: [String: Skills.Skill] = Skills.all) -> [String] {
         var problems: [String] = []
         func say(_ text: String) { problems.append(text) }
 
@@ -444,8 +574,15 @@ enum IntegrationCheck {
         for (name, read) in [("id", identity.id), ("model", identity.model)] + [("name", identity.name), ("modelID", identity.modelID), ("osVersion", identity.osVersion)].compactMap({ pair in pair.1.map { (pair.0, $0) } }) {
             let at = "identity.\(name)"
             if (read.json == nil) == (read.xml == nil) { say("\(at) must read the value with exactly one of json or xml.") }
-            problems += requestProblems(read.http, at: "\(at).http", fields: [], steps: [])
-            if read.http.method.map({ $0.uppercased() != "GET" }) ?? false { say("\(at).http must be a GET: reading who a device is changes nothing on it.") }
+            if (read.http == nil) == (read.description != true) { say("\(at) must read from exactly one of http or description.") }
+            if read.description == true, read.xml == nil { say("\(at).description is XML: read it with xml.") }
+            if read.description == true, !integration.find.contains(where: { $0.ssdp != nil }) {
+                say("\(at).description is the one an SSDP answer points at, so find needs an ssdp entry.")
+            }
+            if let http = read.http {
+                problems += requestProblems(http, at: "\(at).http", fields: [], steps: [])
+                if http.method.map({ $0.uppercased() != "GET" }) ?? false { say("\(at).http must be a GET: reading who a device is changes nothing on it.") }
+            }
         }
 
         // Steps
@@ -480,6 +617,9 @@ enum IntegrationCheck {
             for (n, condition) in step.check.enumerated() {
                 problems += conditionProblems(condition, at: "\(at).check[\(n)]", fields: fields, steps: steps)
             }
+            if step.model == true, !step.check.contains(where: { $0.json != nil || $0.xml != nil }) {
+                say("\(at).model says its check reads the device's model, so a check must read a value with json or xml.")
+            }
             if step.wait == true, step.check.allSatisfy({ $0.field != nil }) {
                 say("\(at) waits for hands on the device, so its check must ask the device, not only a field.")
             }
@@ -494,28 +634,47 @@ enum IntegrationCheck {
 
         // Bridge
         if let bridge = integration.bridge {
-            let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("look", bridge.look), ("use", bridge.use), ("logs", bridge.logs)]
+            let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("running", bridge.running), ("look", bridge.look), ("screen", bridge.screen), ("use", bridge.use),
+                                                               ("logs", bridge.logs), ("stop", bridge.stop), ("log", bridge.log), ("remove", bridge.remove),
+                                                               ("type", bridge.type)]
             for (name, sequence) in sequences {
                 for (n, action) in (sequence ?? []).enumerated() {
                     problems += actionProblems(action, at: "bridge.\(name)[\(n)]", fields: fields, steps: steps, inBridge: true)
                     if action.vendorSignIn != nil { say("bridge.\(name)[\(n)]: a sign-in is a setup step, never part of a bridge.") }
-                    if let keep = action.http?.keep, keep != "picture" || name != "look" { say("bridge.\(name)[\(n)].http.keep: only look keeps an answer, as the picture.") }
+                    if let keep = action.http?.keep, !(keep == "picture" && name == "look") && !(keep == "log" && name == "log")
+                        && !(keep == "screen" && name == "screen") {
+                        say("bridge.\(name)[\(n)].http.keep: only look keeps an answer, as the picture, screen, as the screen as text, and log, as the log.")
+                    }
                 }
             }
             if let look = bridge.look, !look.contains(where: { $0.http?.keep == "picture" }) {
                 say("bridge.look must have a request with keep \"picture\": its answer is the picture.")
+            }
+            if let screen = bridge.screen, !screen.contains(where: { $0.http?.keep == "screen" }) {
+                say("bridge.screen must have a request with keep \"screen\": its answer is the screen as text.")
+            }
+            if let log = bridge.log, !log.contains(where: { $0.http?.keep == "log" }) {
+                say("bridge.log must have a request with keep \"log\": its answer is the log.")
+            }
+            if let running = bridge.running {
+                if bridge.launch == nil { say("bridge.running checks the app launch opened, so it needs bridge.launch.") }
+                if running.last?.http?.expect == nil { say("bridge.running must end in a request whose expect says the app is running.") }
             }
             if bridge.use != nil, (bridge.keys ?? [:]).isEmpty { say("bridge.use needs keys: Lamp's names for the remote's keys to the device's.") }
             for (key, name) in bridge.keys ?? [:] where !isID(key) || name.unicodeScalars.contains(where: { !Placeholders.safe.contains($0) }) || name.isEmpty {
                 say("bridge.keys[\(key)] must map a lowercase name to the device's name for the key, in letters and digits.")
             }
             if bridge.logs?.contains(where: { $0.stream == nil }) == true { say("bridge.logs is a stream, and nothing else.") }
+            if let type = bridge.type, !type.contains(where: { $0.http.map { Placeholders.names(in: ([$0.path, $0.body ?? ""] + ($0.form ?? [:]).values).joined()).contains("text") } ?? false }) {
+                say("bridge.type must send {text}, the character it types, in a request's path, form or body.")
+            }
         }
 
         // App kind
         if let app = integration.app {
             if (app.lamp == nil) == (app.declared == nil) { say("app must have exactly one of lamp or declared.") }
             if let lamp = app.lamp, !["tv-web"].contains(lamp) { say("app.lamp must be one of Lamp's kinds: \"tv-web\".") }
+            if let purpose = app.purpose, purpose.trimmed.isEmpty || purpose.count > 120 { say("app.purpose is a few words: what the kind is for.") }
             if let declared = app.declared {
                 if declared.files.isEmpty { say("app.declared.files is empty: the scaffold is at least one file.") }
                 for path in declared.files.keys + [declared.output] where !isAppPath(path) {
@@ -523,10 +682,132 @@ enum IntegrationCheck {
                 }
                 if declared.package.trimmed.isEmpty { say("app.declared.package is empty: the command that makes the package.") }
                 if declared.rules.trimmed.isEmpty { say("app.declared.rules is empty: what the builder needs to know to write for it.") }
+                if let wrap = declared.wrap {
+                    if wrap != "msix" { say("app.declared.wrap must be one Lamp makes: \"msix\".") }
+                    if !declared.output.lowercased().hasSuffix(".zip") { say("app.declared.output must be a .zip of the app's files when Lamp wraps it.") }
+                }
+                if let start = declared.start, !isAppPath(start) { say("app.declared.start must be a plain path inside the package.") }
+                if let host = declared.host {
+                    if host != "webview2" { say("app.declared.host must be one Lamp has: \"webview2\".") }
+                    if declared.wrap != "msix" { say("app.declared.host is for a wrapped package: app.declared.wrap must be \"msix\".") }
+                    if let start = declared.start, start != "index.html" { say("app.declared.start must be index.html when Lamp's web host shows the app.") }
+                }
+                for (library, path) in declared.support ?? [:] {
+                    if DeviceSupport.Library(rawValue: library) == nil {
+                        say("app.declared.support: \"\(library)\" isn't one of Lamp's libraries: \(DeviceSupport.Library.allCases.map { "\"\($0.rawValue)\"" }.joined(separator: ", ")).")
+                    } else if !isAppPath(path) {
+                        say("app.declared.support: \"\(path)\" must be a plain path inside the app's folder, not in .lamp.")
+                    } else if declared.files.keys.contains(where: { $0 == path || $0.hasPrefix(path + "/") }) {
+                        say("app.declared.support: \"\(path)\" is Lamp's, so the scaffold's files can't be there.")
+                    }
+                }
+                if let preview = declared.preview, !isAppPath(preview) {
+                    say("app.declared.preview: \"\(preview)\" must be a plain path to a folder inside the app's folder, not in .lamp.")
+                }
+                for (path, size) in declared.icons ?? [:] {
+                    if !isAppPath(path) || !path.lowercased().hasSuffix(".png") {
+                        say("app.declared.icons: \"\(path)\" must be a plain path to a .png inside the app's folder, not in .lamp.")
+                    } else if declared.files.keys.contains(path) {
+                        say("app.declared.icons: \"\(path)\" is Lamp's, so the scaffold's files can't be there.")
+                    }
+                    if DeviceSupport.iconSize(size) == nil {
+                        say("app.declared.icons: \"\(size)\" must be a size in pixels, \"WIDTHxHEIGHT\", each 16 to 4096.")
+                    }
+                }
             }
             if integration.bridge?.install == nil { say("app is set, so bridge.install must say how it goes on the device.") }
         }
+        for (name, kind) in integration.kinds ?? [:] {
+            if submitted { say("kinds are Lamp's own and only in the integrations Lamp ships; leave it out."); break }
+            if !isID(name) { say("kinds: \"\(name)\" must be lowercase letters, digits and dashes.") }
+            if kind.lamp != "native-game" || kind.declared != nil { say("kinds.\(name) must be one of Lamp's own: {\"lamp\": \"native-game\"}.") }
+            if kind.purpose?.trimmed.isEmpty != false { say("kinds.\(name).purpose says what it's for, beside app's.") }
+            if integration.app?.declared?.wrap != "msix" { say("kinds.\(name): a native game is a Windows package, so app.declared.wrap must be \"msix\" and the bridge must install one.") }
+        }
+        if let supports = integration.supports {
+            // What the device runs is its row in Lamp's table of devices: each make it claims has files to make it.
+            let made = Set([integration.app?.declared.map(Places.declaredMake), integration.app?.lamp == "tv-web" ? .web : nil].compactMap { $0 })
+            for word in supports {
+                if let make = Place.Make(rawValue: word) {
+                    if !made.contains(make) { say("supports: \"\(word)\" needs an app that makes it, and app declares \(made.isEmpty ? "none" : made.map { "a \($0.rawValue) one" }.joined(separator: " and ")).") }
+                } else {
+                    say("supports: \"\(word)\" must be \"web\" or \"native\".")
+                }
+            }
+        }
+        if let runs = integration.runs, runs.trimmed.isEmpty || runs.count > 300 {
+            say("runs says what the device runs in one plain sentence, 300 characters at most.")
+        }
+        for skill in integration.skills ?? [] where skills[skill] == nil {
+            say("skills: \"\(skill)\" isn't one of Lamp's skills (\(skills.keys.sorted().joined(separator: ", "))).")
+        }
+        if let input = integration.input, let problem = Controllers.problem(in: input) { say(problem) }
+        if let root = integration.certificateRoot, !root.hasPrefix("/") || root.contains("{") || root.contains("..") {
+            say("certificateRoot is the path the device serves its root certificate at, over HTTPS on the port the bridge uses: \"/config/rootcertificate\".")
+        }
         for source in integration.sources ?? [] where !isWebPage(source) { say("sources: \"\(source)\" isn't an https page.") }
+        if submitted {
+            if integration.bridge?.known != nil { say("bridge.known is Lamp's: it marks the bridge once a test run passes on a device. Leave it out.") }
+            problems += lifecycle(integration)
+        }
+        return problems
+    }
+
+    static let lackable: Set<String> = ["stop", "remove", "type"]
+
+    /// What an integration that makes apps must have for its apps to live on the device as people expect: ended by
+    /// Stop, taken off when their wish is deleted, typed into, with the pictures its scaffold names drawn and its
+    /// building blocks named in its rules. Asked of every integration the builder hands Lamp, and of the ones Lamp
+    /// ships (their test); not of one kept before this was asked, which would otherwise vanish from the person's Lamp.
+    static func lifecycle(_ integration: Integration) -> [String] {
+        guard let declared = integration.app?.declared else { return [] }
+        var problems: [String] = []
+        func say(_ text: String) { problems.append(text) }
+        let bridge = integration.bridge
+        let lacks = Set(bridge?.lacks ?? [])
+        for name in lacks.subtracting(lackable).sorted() { say("bridge.lacks: \"\(name)\" isn't one Lamp asks about; it's for \"stop\", \"remove\" and \"type\".") }
+        let has: [String: Bool] = ["stop": bridge?.stop?.isEmpty == false, "remove": bridge?.remove?.isEmpty == false, "type": bridge?.type?.isEmpty == false]
+        for name in lacks.intersection(lackable).sorted() where has[name] == true { say("bridge.lacks says the device can't \(name), but bridge.\(name) is there: keep one.") }
+        if has["stop"] == false, !lacks.contains("stop") {
+            say("bridge.stop ends the app when the person presses Stop (an exit request, or the device's own way to close it). Write it, or put \"stop\" in bridge.lacks if the device has none; Lamp then presses home.")
+        }
+        if has["remove"] == false, !lacks.contains("remove") {
+            say("bridge.remove takes the app off the device when its wish is deleted. Write it, or put \"remove\" in bridge.lacks if the device has no way.")
+        }
+        if has["type"] == false, !lacks.contains("type"), !(bridge?.keys ?? [:]).isEmpty {
+            say("bridge.type types into the device's on-screen keyboard, a character at a time with {text}. Write it, or put \"type\" in bridge.lacks if the device can't take typed text.")
+        }
+        // Every picture the scaffold names is in it or drawn by Lamp: one named and never written leaves the device
+        // showing nothing in its place, as a Roku's tile was.
+        let drawn = Set((declared.icons ?? [:]).keys), written = Set(declared.files.keys)
+        let pattern = try! NSRegularExpression(pattern: #"[A-Za-z0-9_./-]+\.(?:png|jpg|jpeg)\b"#)
+        var missing: Set<String> = []
+        for (file, text) in declared.files {
+            let folder = (file as NSString).deletingLastPathComponent
+            for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard let range = Range(match.range, in: text) else { continue }
+                var path = String(text[range])
+                // A package path ("pkg:/images/a.png") or one from the root is the app folder's; any other is the
+                // naming file's own, as a page's <img src> is, or the folder's when the file's folder doesn't have it.
+                var rooted = false
+                for prefix in ["pkg:/", "/"] where path.hasPrefix(prefix) { path.removeFirst(prefix.count); rooted = true }
+                if path.hasPrefix("./") { path.removeFirst(2) }
+                let candidates = rooted || folder.isEmpty ? [path] : [(folder as NSString).appendingPathComponent(path), path]
+                let valid = candidates.filter(isAppPath)
+                if !valid.isEmpty, !valid.contains(where: { drawn.contains($0) || written.contains($0) }) { missing.insert(valid[0]) }
+            }
+        }
+        for path in missing.sorted() {
+            say("app.declared.files names \(path), which nothing writes: list it in app.declared.icons with its size so Lamp draws the app's icon there, or don't name it.")
+        }
+        // The rules are the builder's only guide: Lamp's blocks they don't mention go unused, and the device's own
+        // way gets written instead (a Roku app saving with roRegistrySection beside LampStore).
+        for (library, path) in (declared.support ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let last = (path as NSString).lastPathComponent
+            if !declared.rules.contains(path), !declared.rules.contains(last) {
+                say("app.declared.rules don't mention \(path), Lamp's \(library) library: say where it is and that the app uses it.")
+            }
+        }
         return problems
     }
 
@@ -595,6 +876,8 @@ enum IntegrationCheck {
         if kinds != 1 { problems.append("\(at) must have exactly one of http, tcp, field or signedIn.") }
         if let request = condition.http {
             problems += requestProblems(request, at: "\(at).http", fields: fields, steps: steps)
+            // A check asks; it changes nothing it would have to put back, and runs again and again while it waits.
+            if request.restore != nil { problems.append("\(at).http.restore is for a bridge's or a step's sequence: a check only asks.") }
             if (condition.equals != nil || condition.contains != nil), condition.json == nil, condition.xml == nil {
                 problems.append("\(at) compares a value, so it must read it with json or xml.")
             }
@@ -626,7 +909,9 @@ enum IntegrationCheck {
         }
         if let body = request.body { problems += placeholderProblems(body, at: "\(at).body", place: .body, fields: fields, steps: steps) }
         for (name, value) in request.form ?? [:] {
-            if value.hasPrefix("@"), value != "@{package}" { problems.append("\(at).form.\(name): the only file a form sends is \"@{package}\".") }
+            if value.hasPrefix("@"), value != "@{package}", value != "@{certificate}" {
+                problems.append("\(at).form.\(name): the only files a form sends are \"@{package}\" and, for a wrapped package, \"@{certificate}\".")
+            }
             if !value.hasPrefix("@") { problems += placeholderProblems(value, at: "\(at).form.\(name)", place: .form, fields: fields, steps: steps) }
         }
         if let auth = request.auth {
@@ -638,7 +923,25 @@ enum IntegrationCheck {
                 problems += placeholderProblems(auth.password, at: "\(at).auth.password", place: .auth, fields: fields, steps: steps)
             }
         }
-        if let keep = request.keep, keep != "picture", keep != "key" { problems.append("\(at).keep can only be \"picture\" or \"key\".") }
+        if let keep = request.keep, !["picture", "screen", "log", "key"].contains(keep) { problems.append("\(at).keep can only be \"picture\", \"screen\", \"log\" or \"key\".") }
+        if let restore = request.restore {
+            if restore.range(of: #"^[A-Za-z0-9_]{1,64}$"#, options: .regularExpression) == nil { problems.append("\(at).restore must be the name of a JSON field.") }
+            if !["PUT", "POST"].contains(request.method?.uppercased() ?? "GET") || request.body == nil {
+                problems.append("\(at).restore is for a PUT or POST with a body that changes a setting.")
+            }
+            if request.keep != nil || request.poll != nil || request.until != nil { problems.append("\(at).restore changes a setting: it neither keeps nor polls.") }
+        }
+        if let poll = request.poll, !(2...600).contains(poll) { problems.append("\(at).poll is seconds, 2 to 600.") }
+        if let expect = request.expect {
+            if (expect.json == nil) == (expect.xml == nil) { problems.append("\(at).expect reads the answer with exactly one of json or xml.") }
+            if (expect.equals == nil) == (expect.contains == nil) { problems.append("\(at).expect needs exactly one of equals or contains.") }
+            if expect.xml?.contains("*") == true { problems.append("\(at).expect: * for every element of a list is for a json path.") }
+            problems += placeholderProblems(expect.equals ?? expect.contains ?? "", at: "\(at).expect", place: .shown, fields: fields, steps: steps)
+        }
+        if let until = request.until {
+            if !(2...600).contains(until) { problems.append("\(at).until is seconds, 2 to 600.") }
+            if request.expect == nil { problems.append("\(at).until asks again until the answer says what expect asks, so it needs expect.") }
+        }
         return problems
     }
 

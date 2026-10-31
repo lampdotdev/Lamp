@@ -1,0 +1,34 @@
+{
+  "window": {
+    "width": 1280,
+    "height": 720
+  },
+  "steps": [
+    {
+      "wait": 2.5
+    },
+    {
+      "action": "scroll",
+      "x": 800,
+      "y": 500,
+      "amount": 380
+    },
+    {
+      "wait": 2
+    },
+    {
+      "action": "click",
+      "target": "Amazing Grace"
+    },
+    {
+      "wait": 5
+    },
+    {
+      "action": "click",
+      "target": "Back to Folder"
+    },
+    {
+      "wait": 2.5
+    }
+  ]
+}

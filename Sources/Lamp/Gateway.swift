@@ -16,15 +16,96 @@ final class Gateway: @unchecked Sendable {
         var fromNetwork = false
         /// The port the request came from (host order), which tells Lamp which program on this Mac sent it.
         var peerPort: UInt16?
+        /// The address it came from: for a request from the network, the device that sent it.
+        var peerAddress: String?
+        /// Asked by the app's page in the TV preview, through its bridge (`TVPreview`), never over a connection.
+        var fromPreview = false
+    }
+
+    /// A file the gateway hands out as it is, not JSON: a TV app's phone page (`Store.phonePage`).
+    struct Page {
+        var status: Int
+        var type = "text/plain; charset=utf-8"
+        var body = Data()
+        var location: String?
+        /// What a phone's browser holds a phone page to (`PhonePagePolicy`).
+        var policy: String?
     }
 
     private var listener: NWListener?
     private var networkListener: NWListener?
     private let queue = DispatchQueue(label: "dev.lamp.gateway")
     private let handler: @Sendable (Request) async -> (Int, [String: Any])
+    private let pages: @Sendable (Request) async -> Page
+    /// The port it answers on: Lamp's gateway's, or one app's phone page's (`PhoneSites`).
+    let port: UInt16
+    /// A site answers only pages, on every interface, each request marked by where it came from.
+    private let isSite: Bool
 
-    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any])) {
+    /// One app's phone page on a port of its own (`PhoneSites`): every request is a page, whatever its path. A phone's
+    /// socket goes to the controllers' relay instead (`ControllerRelay`), never to Lamp.
+    init(site port: UInt16, pages: @escaping @Sendable (Request) async -> Page) {
+        self.port = port
+        self.isSite = true
+        self.handler = { _ in (404, ["error": "Not found"]) }
+        self.pages = pages
+    }
+
+    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any]), pages: @escaping @Sendable (Request) async -> Page) {
+        self.port = Self.port
+        self.isSite = false
         self.handler = handler
+        self.pages = pages
+    }
+
+    /// A site's one listener, on every interface: a request from this Mac's own loopback is told from one from the network.
+    /// True once it's listening; false when it couldn't take its port, which `NWListener` says only after it starts.
+    /// The port is never shared: another program listening there keeps it, and the site goes elsewhere.
+    func startSite(onFailure: @escaping @Sendable () -> Void = {}) async -> Bool {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = false
+        guard let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!) else { return false }
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: self?.queue ?? .main)
+            var loopback = false
+            if case .hostPort(let host, _) = connection.endpoint {
+                switch host {
+                case .ipv4(let address): loopback = address.isLoopback
+                case .ipv6(let address): loopback = address.isLoopback || address.asIPv4?.isLoopback == true
+                default: break
+                }
+            }
+            self?.receive(connection, buffer: Data(), fromNetwork: !loopback)
+        }
+        self.listener = listener
+        return await withCheckedContinuation { continuation in
+            var answered = false
+            // The listener keeps this handler, so it holds the listener weakly, and lets go of both handlers (and the
+            // callback with them) once the listener is done: a failed try or a closed site leaves nothing behind.
+            listener.stateUpdateHandler = { [weak listener] state in
+                switch state {
+                case .ready:
+                    if !answered { answered = true; continuation.resume(returning: true) }
+                case .failed, .cancelled:
+                    if !answered { answered = true; continuation.resume(returning: false) } else { onFailure() }
+                    listener?.stateUpdateHandler = nil
+                    listener?.newConnectionHandler = nil
+                    listener?.cancel()
+                default:
+                    break
+                }
+            }
+            listener.start(queue: queue)
+        }
+    }
+
+    func stop() {
+        queue.async { [self] in
+            listener?.cancel()
+            networkListener?.cancel()
+            listener = nil
+            networkListener = nil
+        }
     }
 
     func start() throws {
@@ -71,10 +152,31 @@ final class Gateway: @unchecked Sendable {
             if var request = Self.parse(buffer) {
                 if request.method == "BAD" { self.respond(connection, status: 400, json: ["error": "Bad request"]); return }
                 request.fromNetwork = fromNetwork
-                if case .hostPort(_, let port) = connection.endpoint { request.peerPort = port.rawValue }
+                if case .hostPort(let host, let port) = connection.endpoint {
+                    request.peerPort = port.rawValue
+                    switch host {
+                    case .ipv4(let address): request.peerAddress = "\(address)"
+                    case .ipv6(let address): request.peerAddress = address.asIPv4.map { "\($0)" } ?? "\(address)"
+                    default: break
+                    }
+                }
+                // A web app on a TV or a console asks before it sends a request with a token, as browsers do across
+                // origins. Only over the network: nothing on this Mac is answered across origins.
+                if fromNetwork, request.method == "OPTIONS" {
+                    self.respond(connection, status: 204, json: [:], crossOrigin: true)
+                    return
+                }
+                // A phone opening a TV app's page: plain files, read by a browser that came by following a link.
+                if request.method == "GET" || request.method == "HEAD", self.isSite {
+                    Task {
+                        let page = await self.pages(request)
+                        self.respond(connection, page: page, head: request.method == "HEAD")
+                    }
+                    return
+                }
                 Task {
                     let (status, json) = await self.handler(request)
-                    self.respond(connection, status: status, json: json)
+                    self.respond(connection, status: status, json: json, crossOrigin: fromNetwork)
                 }
             } else if done || error != nil || buffer.count > 40_000_000 {
                 connection.cancel()
@@ -84,12 +186,27 @@ final class Gateway: @unchecked Sendable {
         }
     }
 
-    private func respond(_ connection: NWConnection, status: Int, json: [String: Any]) {
-        // 202 is how the MCP endpoint acknowledges a notification: no body.
-        let body = status == 202 ? Data() : (try? JSONSerialization.data(withJSONObject: json)) ?? Data("{}".utf8)
+    /// `crossOrigin` lets a web app on a device read the answer: the app's token is what's checked, never where its page
+    /// came from, which is the device's own package.
+    private func respond(_ connection: NWConnection, status: Int, json: [String: Any], crossOrigin: Bool = false) {
+        // 202 is how the MCP endpoint acknowledges a notification, and 204 a preflight: no body.
+        let body = status == 202 || status == 204 ? Data() : (try? JSONSerialization.data(withJSONObject: json)) ?? Data("{}".utf8)
         let reason = HTTPURLResponse.localizedString(forStatusCode: status).capitalized
-        var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+        let cors = crossOrigin ? "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Max-Age: 600\r\n" : ""
+        var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\n\(cors)Connection: close\r\n\r\n".utf8)
         response.append(body)
+        connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+    }
+
+    /// A page as it is. Never cached, since the app's files change with every build, and never read as another type
+    /// than the one given.
+    private func respond(_ connection: NWConnection, page: Page, head: Bool) {
+        let reason = HTTPURLResponse.localizedString(forStatusCode: page.status).capitalized
+        let location = page.location.map { "Location: \($0)\r\n" } ?? ""
+        let policy = page.policy.map { "Content-Security-Policy: \($0)\r\n" } ?? ""
+        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)\(policy)"
+            + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n").utf8)
+        if !head { response.append(page.body) }
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
     }
 
@@ -261,7 +378,11 @@ enum AppAI {
         case .codex: if let route = route(canonicalRoute("engine:codex")) { return route }
         case .pi: break
         }
-        return routes.first(where: \.available) ?? routes.first { $0.id == "sonnet" }!
+        // Never a model on this Mac by default: it's for those who choose it (here, or pi building with it, above).
+        return routes.first { route in
+            if case .localModel = route.kind { return false }
+            return route.available
+        } ?? routes.first { $0.id == "sonnet" }!
     }
 
     /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
@@ -334,7 +455,7 @@ enum AppAI {
     }
 
     /// The OpenRouter model for those tasks when a key is all there is. Chosen by running one task in TextEdit
-    /// (a new document, a sentence, its font and colour) through Lamp's own loop: this one did it in 38
+    /// (a new document, a sentence, its font and color) through Lamp's own loop: this one did it in 38
     /// seconds for 5 cents, Opus in 93 seconds for 96 cents, Gemini Flash in 156 seconds for 22 cents, and
     /// Sonnet, the text default, not at all. It isn't one of the models offered for apps' text.
     static let computerOpenRouterModel = (id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol")
@@ -387,14 +508,17 @@ enum AppAI {
     /// can't, so a caller that depends on the shape still checks the reply.
     /// `via` is a route the caller has already settled on, for one that must know what answered: the call
     /// goes that way or fails, and nothing is looked up again.
+    /// `timeLimit` ends a call through Claude Code or Codex that hasn't answered by then, for a caller that would
+    /// rather have no answer than wait on a stuck one: their runs have no limit of their own, where the routes over
+    /// the network give up by themselves.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
                          model: String? = nil, appModel: String? = nil, engineModel: String? = nil,
-                         schema: [String: Any]? = nil, via: TextRoute? = nil) async throws -> (String, Double) {
+                         schema: [String: Any]? = nil, via: TextRoute? = nil, timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
         let chosen: TextRoute
         if let via { chosen = via } else { chosen = await route(for: appModel) }
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: timeLimit)
         guard json else { return (text, cost) }
         // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
         // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
@@ -403,7 +527,7 @@ enum AppAI {
         if !isJSON(reply) {
             let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
             do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: timeLimit)
                 cost += more
                 reply = stripFences(retry)
             } catch let failure as Failure {
@@ -422,7 +546,8 @@ enum AppAI {
     /// Lamp's own calls (the icon judge, suggestions) when there's a key; `engineModel` likewise names the
     /// model for Claude Code or Codex (the fast one for decisions by text).
     private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
-                                 chosen: TextRoute, engineModel: String? = nil, schema: [String: Any]? = nil) async throws -> (String, Double) {
+                                 chosen: TextRoute, engineModel: String? = nil, schema: [String: Any]? = nil,
+                                 timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
         if let model, Provider.hasKey {
             return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema)
         }
@@ -433,11 +558,12 @@ enum AppAI {
         case .engine(.pi, _):
             throw Failure(message: noTextRoute, needs: .text)
         case .engine(let engine, let model):
-            return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model)
+            return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model,
+                                       schema: json ? schema : nil, timeLimit: timeLimit)
         case .localModel(_, let model):
             let base = try await LocalModels.shared.ensureServer(for: model)
-            return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
-                                                 prompt: prompt, images: images, system: system, model: model)
+            return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: LocalModels.apiKey,
+                                                 prompt: prompt, images: images, system: system, model: model, schema: json ? schema : nil)
         }
     }
 
@@ -450,8 +576,12 @@ enum AppAI {
 
     /// One-shot answer from an external coding agent, using the user's own sign-in (and so their subscription).
     /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
-    private static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
-                                  system: String, model: String) async throws -> (String, Double) {
+    /// `sealed` takes Codex's own tools away too (commands, web search, connectors, sub-agents) and refuses any
+    /// approval, for a caller whose answer decides what an app does next (`AppAct`): Claude Code's `--restricted`
+    /// with no tools already leaves it nothing to run.
+    static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
+                          system: String, model: String, schema: [String: Any]? = nil,
+                          timeLimit: TimeInterval? = nil, sealed: Bool = false) async throws -> (String, Double) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -467,6 +597,13 @@ enum AppAI {
                                      "LAMP_PROMPT": prompt]
         env.merge(EngineInstall.environment(for: engine)) { $1 }
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
+        // A JSON schema the answer must fit: Claude Code takes it as text, Codex as a file.
+        var schemaArg = ""
+        if let schema, let data = try? JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]) {
+            env["LAMP_SCHEMA"] = String(decoding: data, as: UTF8.self)
+            if engine == .codex { try data.write(to: folder.appendingPathComponent("schema.json")) }
+            schemaArg = engine == .codex ? "--output-schema schema.json " : "--json-schema \"$LAMP_SCHEMA\" "
+        }
         let command: String
         switch engine {
         case .claude:
@@ -476,7 +613,7 @@ enum AppAI {
             command = """
             "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
               --restricted --strict-mcp-config --disable-slash-commands \\
-              --tools \(files.isEmpty ? "''" : "Read --allowedTools Read") --model "$LAMP_MODEL" --system-prompt "$LAMP_SYSTEM"
+              --tools \(files.isEmpty ? "''" : "Read --allowedTools Read") --model "$LAMP_MODEL" \(schemaArg)--system-prompt "$LAMP_SYSTEM"
             """
         case .codex:
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions="
@@ -489,9 +626,12 @@ enum AppAI {
                 env["LAMP_MODEL"] = model
                 modelArg = "-m \"$LAMP_MODEL\" "
             }
+            // Every key here is one of Codex's documented settings; --ignore-user-config already leaves out the
+            // person's MCP servers.
+            let seal = sealed ? #"-c approval_policy="never" -c features.shell_tool=false -c features.unified_exec=false -c web_search="disabled" -c features.apps=false -c features.multi_agent=false -c tools.view_image=false "# : ""
             command = """
             "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-              -s read-only -c hooks={} -c model_reasoning_effort="low" \(modelArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
+              -s read-only -c hooks={} -c model_reasoning_effort="low" \(seal)\(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
             """
         case .pi:
             throw Failure(message: noTextRoute, needs: .text)
@@ -499,7 +639,26 @@ enum AppAI {
         var text = ""
         var cost = 0.0
         var failure: String?
-        let status = await Shell.run(command, cwd: folder, env: env) { line in
+        final class Deadline { var passed = false }
+        let deadline = Deadline()
+        let status = await Shell.run(command, cwd: folder, env: env, started: { process in
+            guard let timeLimit else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(timeLimit))
+                guard process.isRunning else { return }
+                deadline.passed = true
+                // The whole tree, killed if it won't stop: a child left holding the output, or an engine that
+                // ignores the signal, would keep the call waiting past its limit all the same.
+                Subprocess.terminateTree(process)
+            }
+        }) { line in
+            // With a schema, Claude Code gives the answer in its result, not as a message.
+            if schema != nil, engine == .claude, line.contains("\"structured_output\""),
+               let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], obj["type"] as? String == "result",
+               let answer = obj["structured_output"], let data = try? JSONSerialization.data(withJSONObject: answer) {
+                text = String(decoding: data, as: UTF8.self)
+                return
+            }
             for event in Agent.parse(line, engine: engine) {
                 switch event {
                 case .text(let chunk): text = chunk   // the last message is the answer
@@ -509,6 +668,7 @@ enum AppAI {
                 }
             }
         }
+        if deadline.passed { throw Failure(message: "\(engine.title) took too long to answer.") }
         if let failure { throw Failure(message: Provider.friendlyError(failure, from: engine.title)) }
         guard !text.isEmpty else {
             throw Failure(message: status == 0 ? "The AI didn't answer." : "\(engine.title) didn't answer. Check it's signed in.")
@@ -517,11 +677,14 @@ enum AppAI {
     }
 
     /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.
-    private static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
-                                            system: String, model: String) async throws -> (String, Double) {
+    /// `timeout` is for a caller with a deadline of its own; otherwise a model has time to load first.
+    /// `templateArgs` go to the model's chat template (llama.cpp's `chat_template_kwargs`).
+    static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
+                                    system: String, model: String, schema: [String: Any]? = nil,
+                                    timeout: TimeInterval = 600, templateArgs: [String: Any]? = nil) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 600   // local models may need to load first
+        request.timeoutInterval = timeout
         if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var messages: [[String: Any]] = []
@@ -530,7 +693,10 @@ enum AppAI {
             ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
         }
         messages.append(["role": "user", "content": content])
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "messages": messages] as [String: Any])
+        var body: [String: Any] = ["model": model, "messages": messages]
+        if let schema { body["response_format"] = ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": schema]] }
+        if let templateArgs { body["chat_template_kwargs"] = templateArgs }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard (response as? HTTPURLResponse)?.statusCode == 200,
@@ -583,7 +749,8 @@ enum AppAI {
     @MainActor static func decisionRoute(for appChoice: String?, appText: String? = nil) -> (id: String, label: String, provider: String, model: String)? {
         let wanted = decisionModels.first { $0.id == appChoice } ?? decisionModel
         if canDecide(with: wanted, appText: appText) { return wanted }
-        return decisionModels.first { $0.provider != "text" && canDecide(with: $0, appText: appText) }
+        // Not the model on this Mac unless it's the one chosen: it's for those who choose it.
+        return decisionModels.first { $0.provider == "openrouter" && canDecide(with: $0, appText: appText) }
             ?? decisionModels.first { $0.provider == "text" && canDecide(with: $0, appText: appText) }
     }
 
@@ -682,6 +849,7 @@ enum AppAI {
             let prompt = "<|im_start|>system\nYou are a decision engine. You read a record and answer one question about it by choosing exactly one option. Reply with a single letter.<|im_end|>\n"
                 + "<|im_start|>user\n\(user)<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nAnswer:"
             var request = URLRequest(url: URL(string: "\(base)/v1/completions")!)
+            request.setValue("Bearer \(LocalModels.apiKey)", forHTTPHeaderField: "Authorization")
             request.httpMethod = "POST"
             request.timeoutInterval = 600
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -757,6 +925,38 @@ enum AppAI {
         }
     }
 
+    /// The answers' shape as a JSON schema, which the routes that take one hold the model to: every question's key,
+    /// and for a choice only its own options, written exactly. Without it a small model sometimes left the
+    /// question's key off its answer.
+    static func decisionSchema(_ questions: [String: Any]) -> [String: Any] {
+        func object(_ properties: [String: Any]) -> [String: Any] {
+            ["type": "object", "properties": properties, "required": properties.keys.sorted(), "additionalProperties": false]
+        }
+        let number: [String: Any] = ["type": "number"]
+        var answers: [String: Any] = [:]
+        for (id, value) in questions {
+            guard let question = value as? [String: Any], let type = question["type"] as? String else { continue }
+            switch type {
+            case "noul":
+                answers[id] = object(["noul": number])
+            case "choice":
+                // Each option once: an app may list one twice, and the schema's properties can't hold it twice.
+                let options = Set((question["criteria"] as? [String: Any]).map { Array($0.keys) } ?? (question["criteria"] as? [String] ?? [])).sorted()
+                answers[id] = object(["choice": ["type": "string", "enum": options] as [String: Any],
+                                      "probabilities": object(Dictionary(uniqueKeysWithValues: options.map { ($0, number as Any) })),
+                                      "confidence": number])
+            case "score":
+                let levels = (question["criteria"] as? [Any])?.count ?? 0
+                answers[id] = object(["score": number,
+                                      "probabilities": object(Dictionary(uniqueKeysWithValues: (0..<levels).map { (String($0), number as Any) })),
+                                      "confidence": number])
+            default:
+                continue
+            }
+        }
+        return object(answers)
+    }
+
     /// Decisions without a decision model: the questions go to a small text model as JSON, and its answers
     /// come back in the same shape Jev's would (`noul`, `choice`/`score` with `probabilities` and
     /// `confidence`), checked against each question so an app can't be handed a made-up option.
@@ -786,7 +986,8 @@ enum AppAI {
         """
         let prompt = "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)"
         let fast = await fastModel(for: route(for: appText))
-        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: appText, engineModel: fast)
+        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: appText, engineModel: fast,
+                                              schema: decisionSchema(questions))
         guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
             throw Failure(message: "The model's decision wasn't valid JSON.", cost: cost)
         }
@@ -1041,7 +1242,7 @@ enum AppAI {
         throw Failure(message: "The AI didn't answer.")
     }
 
-    private static func stripFences(_ text: String) -> String {
+    static func stripFences(_ text: String) -> String {
         var t = text.trimmed
         if t.hasPrefix("```") {
             t = String(t.drop(while: { $0 != "\n" }).dropFirst())

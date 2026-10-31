@@ -10,7 +10,7 @@ enum Runtime {
     /// this Mac and in a simulator at once, so its iPhone copy has a folder of its own beside the Mac copy's,
     /// and neither writes over the other.
     static func folder(_ project: LampProject) -> URL {
-        project.platform == .universal && project.onIOS ? macFolder(project).appendingPathComponent("ios") : macFolder(project)
+        project.platform.choosesPlace && project.onIOS ? macFolder(project).appendingPathComponent("ios") : macFolder(project)
     }
     /// The Mac copy's folder, which the app itself writes to (`LampRuntime`): what only a Mac copy has, such as
     /// its answer to being asked to quit or a build held while it stays open, is read here wherever Try On points.
@@ -18,7 +18,14 @@ enum Runtime {
     /// `folder` as the agent names it, from the app's folder.
     static func folderPath(_ project: LampProject) -> String { String(folder(project).path.dropFirst(project.dir.path.count + 1)) }
     static func logURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("log.txt") }
-    private static func builtURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
+    /// What each place's build was made from, kept apart: a game or a screen has a build of its own for every place it
+    /// opens (this Mac, the simulator, Android, a TV, an Xbox), and building for one leaves the others as they were. This
+    /// Mac's and the simulator's are in their copies' folders; every other place's beside this Mac's, named after it.
+    private static func builtURL(_ project: LampProject) -> URL {
+        let place = project.destination
+        guard project.platform.choosesPlace, place != .mac, place != .ios else { return folder(project).appendingPathComponent("built") }
+        return macFolder(project).appendingPathComponent("built-\(place.rawValue)")
+    }
     /// The build no longer stands for the sources (a build after a live change failed): the next look builds again.
     static func forgetBuilt(_ project: LampProject) { AppFolder.remove(builtURL(project), in: project.dir) }
 
@@ -27,6 +34,8 @@ enum Runtime {
     static func markBuilt(_ project: LampProject, from fingerprint: String) {
         // The build has just run in the agent's folder, which may now hold a link where this file goes.
         try? AppFolder.write(fingerprint, to: builtURL(project), in: project.dir)
+        // A page's build says what its files were, so a copy of it open elsewhere is given only what differs (`PageCopies`).
+        PageCopies.record(project, as: fingerprint)
     }
 
     /// A build that hasn't been installed because the person kept the app open when it was asked to quit. The
@@ -52,6 +61,56 @@ enum Runtime {
 
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
+    /// When Play last put a TV app on each of the person's TVs and opened it there, and from which sources: the agent
+    /// is told it (`DeviceNote`), since nothing else Lamp knows says what the TV has.
+    struct OnTV: Codable {
+        var at: Date
+        var fingerprint: String
+    }
+    private static func onTVURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("on-tv.json") }
+    /// `staged` is what the copy that went to the TV was made from, read before it was sent: the sources may have
+    /// changed since (an edit during a slow upload), and the TV doesn't have that. Without it, the last build's.
+    static func putOnTV(_ project: LampProject, tv: String, staged: String? = nil) {
+        guard let made = staged ?? builtFingerprint(project) else { return }
+        var all = onTV(project)
+        all[tv] = OnTV(at: Date(), fingerprint: made)
+        if let data = try? JSONEncoder().encode(all) { try? AppFolder.write(data, to: onTVURL(project), in: project.dir) }
+    }
+    /// Every device of the person's Lamp has put the app on (a TV, the Xbox, a phone, an Android device), by its place
+    /// and its id there, with when and from which sources: Reload puts a change on each again (`Store.reloadEverywhere`),
+    /// since only Try On's place keeps which device it is.
+    struct Placed: Codable, Hashable {
+        var place: Destination
+        var device: String
+        var at: Date
+        var fingerprint: String
+    }
+    private static func placedURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("placed.json") }
+    static func putOn(_ project: LampProject, staged: String? = nil) {
+        guard let device = project.device, let made = staged ?? builtFingerprint(project) else { return }
+        let place = project.destination
+        var all = placed(project).filter { !($0.place == place && $0.device == device) }
+        all.append(Placed(place: place, device: device, at: Date(), fingerprint: made))
+        if let data = try? JSONEncoder().encode(all) { try? AppFolder.write(data, to: placedURL(project), in: project.dir) }
+    }
+    static func placed(_ project: LampProject) -> [Placed] {
+        AppFile.read(placedURL(project), in: project).flatMap { try? JSONDecoder().decode([Placed].self, from: $0) } ?? []
+    }
+
+    /// Read as everything Lamp reads in the app's folder is: the agent may leave a link or a pipe in its place.
+    static func onTV(_ project: LampProject) -> [String: OnTV] {
+        AppFile.read(onTVURL(project), in: project).flatMap { try? JSONDecoder().decode([String: OnTV].self, from: $0) } ?? [:]
+    }
+    /// What the last build was made from (`markBuilt`), the fingerprint taken before its copy was staged.
+    /// When the build `builtFingerprint` names was recorded.
+    static func builtDate(_ project: LampProject) -> Date? {
+        (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    }
+
+    static func builtFingerprint(_ project: LampProject) -> String? {
+        AppFile.text(builtURL(project), in: project).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
     /// and the attached files the app itself uses (they're copied into the bundle, so a new picture for the
     /// app needs a build; a screenshot attached for the agent to look at doesn't). Not file dates, which move
@@ -60,25 +119,22 @@ enum Runtime {
     static func fingerprint(_ project: LampProject) -> String {
         var hasher = SHA256()
         // An app for both is a different build for each place, so moving it under Try On is a change.
-        if project.platform == .universal { hasher.update(data: Data(project.destination.rawValue.utf8)) }
+        if project.platform.choosesPlace { hasher.update(data: Data(project.destination.rawValue.utf8)) }
+        // So is an iOS app built for Apple TV or Vision Pro (build.sh's LAMP_FAMILY).
+        if project.onIOS, project.family.isOtherOS { let family = project.family; hasher.update(data: Data(family.rawValue.utf8)) }
         // A Mac app's App Intents are kept or left out by whether it can be signed for a team, so a new team is a
         // change for an app that has them (Store.intentsCanComeBack).
         // The same for a share extension, which a Mac app keeps only when it's signed for a team (Store.shareCanComeBack).
         if project.platform == .mac, Store.usesAppIntents(project) || Template.hasShare(project) { hasher.update(data: Data(Devices.team.utf8)) }
-        // An Android app's code is its `app` module, whose `build` folder is what the build makes, not what it's made from.
-        let names = project.platform == .android ? [Template.androidAppFolder, "icon.json"]
-            : project.platform == .tv ? [TVTemplate.webFolder, "icon.json"]
-            : project.platform == .device ? DeviceApps.sourceRoots(project).map(\.lastPathComponent)
-            : ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"]
-        let roots = names.map { project.dir.appendingPathComponent($0) }
-        // A device app's package is made from its integration's declared step, so a new step is a change too.
-        if project.platform == .device, let declared = DeviceApps.integration(for: project)?.app?.declared {
-            hasher.update(data: Data((declared.package + "\n" + declared.output).utf8))
-        }
+        // What each kind's build is made from (`Target.sourceRoots`), leaving out what the build makes there (an Android
+        // app's `app/build`), and whatever else it depends on (a device app's declared package step).
+        let target = project.platform.target
+        let roots = target.recipe.sources(project).map { project.dir.appendingPathComponent($0) }
+        if let inputs = target.recipe.inputs(project) { hasher.update(data: Data(inputs.utf8)) }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
-                .filter { project.platform != .android || !$0.path.hasPrefix(root.appendingPathComponent("build").path + "/") }
+                .filter { file in target.recipe.built.map { !file.path.hasPrefix(root.appendingPathComponent($0).path + "/") } ?? true }
             for file in ([root] + files).sorted(by: { $0.path < $1.path }) {
                 guard let data = try? Data(contentsOf: file) else { continue }
                 hasher.update(data: Data(file.path.dropFirst(project.dir.path.count).utf8))
@@ -120,6 +176,8 @@ enum Runtime {
         private(set) var crash: String?
         /// The death was told to the agent: in a look's answer, or as a note with a later one.
         var told = false
+        /// Which app was opened: a wish's apps share its turn's watches.
+        var app = ""
         /// Lamp is closing the app itself (a rebuild, Stop, another app taking the simulator): its going is a death only
         /// when it's surely a crash. Taken back when the app stays open (`resume`).
         private(set) var retired = false
@@ -239,6 +297,17 @@ enum Runtime {
         guard Privacy.sharesPictures, let built = modified(builtURL(project)),
               let taken = modified(folder(project).appendingPathComponent("screenshot.png")), taken > built
         else { return "" }
+        // A TV app's picture is the last look at the TV preview, and the person's TV is never pictured. A page with a window
+        // on this Mac is looked at there too (`Store.pageOnMac`), so it's the generic note's.
+        if project.onTV, !(PageLive.takes(project) && project.hasMac) {
+            return """
+
+
+            Note from Lamp: \(folderPath(project))/screenshot.png is a picture of the TV preview on this Mac (not the \
+            user's TV), taken at \(taken.formatted(date: .omitted, time: .shortened)). If you can view images, look at it \
+            when this request is about how the app looks or behaves.
+            """
+        }
         let more = (2...3).map { "screenshot-\($0).png" }
             .filter { modified(folder(project).appendingPathComponent($0)).map { $0 > built } ?? false }
         return """
@@ -380,9 +449,32 @@ enum Runtime {
     /// Whether the app needs building: its code or bundled files changed after the current build was made,
     /// or there's no build at all.
     static func sourcesChanged(_ project: LampProject) -> Bool {
+        // A wish whose apps are all in folders of their own has nothing of its own to build.
+        guard project.holdsApp else { return false }
         guard FileManager.default.fileExists(atPath: project.builtURL.path),
               let built = try? String(contentsOf: builtURL(project), encoding: .utf8), !built.isEmpty else { return true }
         return built != fingerprint(project)
+    }
+
+    /// An APK built before each place had its own record, for an app on both Android places: which of the two it was built
+    /// for can't be told, so both are given a record that matches no code, once, before either has one of its own (a
+    /// build calls this before it writes its record). Each is then behind, and kept current like any place built before.
+    static func recordAndroidBuiltBefore(_ project: LampProject) {
+        let android = project.openPlaces.filter(\.isAndroid).map(project.at)
+        guard project.platform.choosesPlace, android.count > 1, android.allSatisfy({ builtFingerprint($0) == nil }),
+              FileManager.default.fileExists(atPath: android[0].builtURL.path) else { return }
+        for there in android { markBuilt(there, from: "built before places had records of their own") }
+    }
+
+    /// Whether the build for one of the app's places is older than its code, or there's none: a place Try On doesn't
+    /// point at keeps the build it was last given until it's built again (`Store.updatePlaces`, or opening it there).
+    static func behind(_ project: LampProject, at place: Destination) -> Bool { sourcesChanged(project.at(place)) }
+
+    /// Whether the app's code is still to be built: changed since its last build, and not the code that went into the
+    /// open app with its whole build still running (`Store.reloadBeforeBuilding`). That build writes what it was built
+    /// from only when it's done, a minute later, and the app already runs this code meanwhile.
+    static func needsBuild(_ project: LampProject) -> Bool {
+        sourcesChanged(project) && LiveReload.buildingFrom(project) != fingerprint(project)
     }
 
     // MARK: - Log

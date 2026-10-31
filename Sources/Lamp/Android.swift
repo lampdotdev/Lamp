@@ -21,9 +21,10 @@ enum AndroidTools {
 
     /// ~/Library/Developer/Lamp/Android: one copy of the tools for every Lamp on this Mac, since they're large
     /// and the same for each. The sandbox lets a command read the person's developer folder and never write it.
-    static let folder = Edition.sharedDeveloperFolder.appendingPathComponent("Android")
-    static let jdkFolder = folder.appendingPathComponent("jdk")
-    static let sdkFolder = folder.appendingPathComponent("sdk")
+    /// Settable so a test can point every check at a folder of its own, never at the real tools.
+    nonisolated(unsafe) static var folder = Edition.sharedDeveloperFolder.appendingPathComponent("Android")
+    static var jdkFolder: URL { folder.appendingPathComponent("jdk") }
+    static var sdkFolder: URL { folder.appendingPathComponent("sdk") }
     static var gradleFolder: URL { folder.appendingPathComponent("gradle-\(gradleVersion)") }
     /// Gradle's own cache (its daemons' records, every dependency it fetched): shared by every app's build, in the
     /// caches folder the sandbox opens for writing.
@@ -31,7 +32,7 @@ enum AndroidTools {
     /// What adb and the emulator keep (adb's key, the emulator's settings) and the emulators Lamp made: Lamp's own,
     /// since Lamp runs both as itself.
     static let userHome = Edition.supportFolder.appendingPathComponent("Android/home")
-    static let avdHome = Edition.supportFolder.appendingPathComponent("Android/avd")
+    nonisolated(unsafe) static var avdHome = Edition.supportFolder.appendingPathComponent("Android/avd")
 
     static var javaHome: String { jdkFolder.appendingPathComponent("Contents/Home").path }
     static var java: String { javaHome + "/bin/java" }
@@ -72,10 +73,20 @@ enum AndroidTools {
     static let buildTools = "36.0.0"
     static let platformLevel = 36
     static let systemImage = "system-images;android-\(platformLevel);google_apis;\(isArm ? "arm64-v8a" : "x86_64")"
-    static let packages = ["platform-tools", "build-tools;\(buildTools)", "platforms;android-\(platformLevel)", "emulator", systemImage]
+    /// What a build and adb need, for a device of the person's; and what the emulator needs besides.
+    static let buildPackages = ["platform-tools", "build-tools;\(buildTools)", "platforms;android-\(platformLevel)"]
+    static let emulatorPackages = ["emulator", systemImage]
     /// The emulator Lamp makes: one phone, named so Try On can say which.
     static let avdName = "Lamp Phone"
     static let avdProfile = "pixel_9"
+    /// An Android TV app's emulator: a 1080p TV, made from its own system image the first time one is wanted, since most
+    /// people never make a TV app and the image is about a gigabyte.
+    static let tvAVDName = "Lamp TV"
+    static let tvProfile = "tv_1080p"
+    static let tvSystemImage = "system-images;android-\(platformLevel);android-tv;\(isArm ? "arm64-v8a" : "x86_64")"
+    static var hasTVImage: Bool {
+        FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("system-images/android-\(platformLevel)/android-tv/\(isArm ? "arm64-v8a" : "x86_64")/system.img").path)
+    }
 
     private static var isArm: Bool {
         #if arch(arm64)
@@ -113,15 +124,21 @@ enum AndroidTools {
     static var hasJDK: Bool { FileManager.default.isExecutableFile(atPath: java) }
     static var hasCommandLineTools: Bool { FileManager.default.isExecutableFile(atPath: sdkmanager) }
     static var hasGradle: Bool { FileManager.default.isExecutableFile(atPath: gradle) }
-    static var hasPackages: Bool {
-        FileManager.default.isExecutableFile(atPath: adb) && FileManager.default.isExecutableFile(atPath: emulator)
+    static var hasBuildPackages: Bool {
+        FileManager.default.isExecutableFile(atPath: adb)
             && FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("build-tools/\(buildTools)/aapt2").path)
             && FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("platforms/android-\(platformLevel)/android.jar").path)
+    }
+    static var hasEmulatorPackages: Bool {
+        FileManager.default.isExecutableFile(atPath: emulator)
             && FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("system-images/android-\(platformLevel)/google_apis/\(isArm ? "arm64-v8a" : "x86_64")/system.img").path)
     }
-    static var hasEmulator: Bool { FileManager.default.fileExists(atPath: avdHome.appendingPathComponent("\(avdName.replacingOccurrences(of: " ", with: "_")).avd/config.ini").path) }
-    /// Everything a build and the emulator need is here.
-    static var isReady: Bool { hasJDK && hasCommandLineTools && hasGradle && hasPackages && hasEmulator }
+    static var hasEmulator: Bool { has(.phone) }
+    static func has(_ kind: Emulator.Kind) -> Bool { FileManager.default.fileExists(atPath: avdHome.appendingPathComponent("\(kind.avd).avd/config.ini").path) }
+    /// Everything a build and adb need: all a device of the person's asks of this Mac.
+    static var hasBuildTools: Bool { hasJDK && hasCommandLineTools && hasGradle && hasBuildPackages }
+    /// That, and the emulator.
+    static var isReady: Bool { hasBuildTools && hasEmulatorPackages && hasEmulator }
 
     enum Step: CaseIterable { case tools, emulator, device }
 
@@ -140,35 +157,52 @@ enum AndroidTools {
     }
 
     /// What's missing before an Android app can be built and opened, stopping at the first: the tools (one
-    /// download, which `install` does whole), the emulator Lamp makes from them, and the person's own device when
-    /// one is chosen (`serial`), which must be plugged in or on the network with debugging allowed to this Mac.
-    static func check(device serial: String? = nil) async -> Report {
+    /// download, which `install` does whole), the emulator Lamp makes from them, or instead the person's own device
+    /// when one is chosen (`serial`), which must be plugged in or on the network with debugging allowed to this Mac.
+    /// A device needs no emulator, so neither its download nor its making is asked for.
+    static func check(device serial: String? = nil, confirmed: Set<String> = []) async -> Report {
         var report = Report()
-        guard hasJDK, hasCommandLineTools, hasGradle, hasPackages else {
+        guard hasBuildTools, serial != nil || hasEmulatorPackages else {
             report.issue = Issue(step: .tools, title: "Download Android's tools",
-                                 message: "Lamp makes Android apps with Google's free tools, and they aren't on this Mac yet. Click Download: it's about 2 GB, so it can take a while. Nothing else on your Mac changes.", action: .download)
+                                 message: "Lamp makes Android apps with Google's free tools, and they aren't on this Mac yet. Click Download: "
+                                    + (serial == nil ? "it's about 2 GB, so it can take a while." : "it's under 1 GB, so it can take a few minutes.")
+                                    + " Nothing else on your Mac changes.", action: .download)
             return report
         }
         report.passed.append(.tools)
-        guard hasEmulator else {
-            report.issue = Issue(step: .emulator, title: "Set up the emulator",
-                                 message: "The emulator is an Android phone on your Mac's screen, where Lamp tries your app. Click Download and Lamp will make one.", action: .download)
-            return report
-        }
-        report.passed.append(.emulator)
         if let serial {
             let devices = await Adb.devices()
-            guard let device = devices.first(where: { $0.udid == serial }) else {
-                report.issue = Issue(step: .device, title: "Plug in your Android device",
-                                     message: "Lamp can't see it. Connect it to this Mac with its cable, unlock it, and allow USB debugging when it asks. Then click Check Again.", action: .retry)
+            let device: Device
+            switch AndroidTVs.choice(serial, among: devices, confirmed: confirmed) {
+            case .use(let found), .adopt(let found):
+                device = found
+            case .confirm(let other):
+                // A choice made over Wi‑Fi names a place, not a device: whatever answers there now is the person's to confirm.
+                report.issue = Issue(step: .device, title: "Choose \(other.name) again",
+                                     message: "To be sure it's the device you chose, choose \(other.name) under Try On, then press Play.", action: .retry)
+                return report
+            case .missing:
+                // A choice made over Wi‑Fi names the address and port it had then, which may have changed since.
+                report.issue = serial.contains(":") || AndroidTVs.isMDNS(serial)
+                    ? Issue(step: .device, title: "Choose your device again",
+                            message: "Lamp can't see it at the address it had. Turn its debugging back on, then choose it again under Try On. Then click Check Again.", action: .retry)
+                    : Issue(step: .device, title: "Connect your Android device",
+                            message: "Lamp can't see it. Plug it into this Mac with its cable and unlock it, or for a TV on your Wi‑Fi, turn it on and connect it with Connect Over Wi‑Fi under Try On. Allow debugging when it asks, then click Check Again.", action: .retry)
                 return report
             }
             if case .needs(let step) = device.setup() {
                 report.issue = Issue(step: .device, title: step,
-                                     message: Adb.advice(for: device.name, state: device.adbState) + " Then click Check Again.", action: .retry)
+                                     message: Adb.advice(for: device) + " Then click Check Again.", action: .retry)
                 return report
             }
             report.passed.append(.device)
+        } else {
+            guard hasEmulator else {
+                report.issue = Issue(step: .emulator, title: "Set up the emulator",
+                                     message: "The emulator is an Android phone on your Mac's screen, where Lamp tries your app. Click Download and Lamp will make one.", action: .download)
+                return report
+            }
+            report.passed.append(.emulator)
         }
         return report
     }
@@ -177,8 +211,9 @@ enum AndroidTools {
 
     /// Downloads and puts in place whatever `check` found missing, in order, saying how far it is (0…1) and what
     /// it's doing. A download that doesn't match its published checksum isn't used. Nothing is left half done: each
-    /// piece is unpacked beside its place and moved in whole.
-    static func install(progress: @escaping @Sendable (Double, String) -> Void) async throws {
+    /// piece is unpacked beside its place and moved in whole. `emulator` false: for a device of the person's, which
+    /// needs no emulator, so its download and its making are left for when one is chosen.
+    static func install(emulator: Bool = true, progress: @escaping @Sendable (Double, String) -> Void) async throws {
         let fm = FileManager.default
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         try fm.createDirectory(at: userHome, withIntermediateDirectories: true)
@@ -186,7 +221,9 @@ enum AndroidTools {
         // Weights for the progress, by size: the tools and Gradle are small next to the packages.
         let steps: [(done: Bool, from: Double, to: Double, name: String)] = [
             (hasJDK, 0, 0.1, "Java"), (hasCommandLineTools, 0.1, 0.18, "Google's tools"), (hasGradle, 0.18, 0.26, "Gradle"),
-            (hasPackages, 0.26, 0.96, "the Android platform and emulator"), (hasEmulator, 0.96, 1, "the emulator")]
+            (hasBuildPackages && (!emulator || hasEmulatorPackages), 0.26, 0.96, emulator ? "the Android platform and emulator" : "the Android platform"),
+            (!emulator || hasEmulator, 0.96, 1, "the emulator")]
+        let packages = (hasBuildPackages ? [] : buildPackages) + (emulator && !hasEmulatorPackages ? emulatorPackages : [])
         if !hasJDK {
             try await fetch(jdk, into: jdkFolder, archive: .tar, from: steps[0].from, to: steps[0].to, name: steps[0].name, progress: progress)
             // Temurin's archive holds one folder, jdk-17…/Contents/Home: that folder's contents are what's kept.
@@ -211,7 +248,7 @@ enum AndroidTools {
             try flatten(gradleFolder)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: gradle)
         }
-        if !hasPackages {
+        if !packages.isEmpty {
             progress(steps[3].from, "Downloading \(steps[3].name)…")
             // Google's terms have to be accepted for each package; sdkmanager asks on its input.
             let accept = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --licenses > /dev/null 2>&1; \"$LAMP_SDKMANAGER\" --install " +
@@ -224,11 +261,11 @@ enum AndroidTools {
                     progress(steps[3].from + (steps[3].to - steps[3].from) * Double(percent) / 100, "Downloading \(steps[3].name)…")
                 }
             }
-            guard status == 0, hasPackages else {
+            guard status == 0, hasBuildPackages, !emulator || hasEmulatorPackages else {
                 throw Failure(message: "Google's tools couldn't download the Android platform.\n\n" + output.suffix(6).joined(separator: "\n"))
             }
         }
-        if !hasEmulator {
+        if emulator, !hasEmulator {
             progress(steps[4].from, "Making the emulator…")
             try await Emulator.create()
         }
@@ -314,25 +351,54 @@ enum Adb {
     /// tablets plugged in or on the network, with what each still needs (debugging allowed to this Mac).
     static func devices() async -> [Device] {
         guard FileManager.default.isExecutableFile(atPath: AndroidTools.adb) else { return [] }
-        let listing = await run(["devices", "-l"], timeout: 30).output
-        var found: [Device] = []
-        for line in listing.split(separator: "\n").dropFirst() {
-            let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard parts.count >= 2, !parts[0].isEmpty else { continue }
-            let serial = parts[0], state = parts[1]
-            var properties: [String: String] = [:]
-            if state == "device" { properties = await getprop(on: serial) }
-            found.append(Device.from(adb: serial, state: state, properties: properties))
+        var listing = await run(["devices", "-l"], timeout: 30).output
+        let services = AndroidTVs.services(await run(["mdns", "services"], timeout: 10).output)
+        if await AndroidTVs.reconnect(listed: listed(listing).map(\.serial), services: services, kept: AndroidTVs.kept()) {
+            listing = await run(["devices", "-l"], timeout: 30).output
         }
-        return found.sorted { ($0.kind == .androidEmulator ? 0 : 1, $0.name) < ($1.kind == .androidEmulator ? 0 : 1, $1.name) }
+        var properties: [String: [String: String]] = [:]
+        for (serial, state) in listed(listing) where state == "device" { properties[serial] = await getprop(on: serial) }
+        return sorted(AndroidTVs.resolve(read(listing, properties: properties), services: services))
+    }
+
+    /// Each line of `adb devices -l`: the selector adb takes with `-s`, and its state.
+    static func listed(_ listing: String) -> [(serial: String, state: String)] {
+        listing.split(separator: "\n").dropFirst().compactMap { line in
+            let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard parts.count >= 2, !parts[0].isEmpty else { return nil }
+            return (parts[0], parts[1])
+        }
+    }
+
+    /// The devices in adb's listing, with what each said of itself (`getprop`, by selector) and what adb's own search
+    /// sees on the network (`adb mdns services`).
+    /// Nothing is kept: this is the look alone, as a TV met for the first time.
+    static func devices(listing: String, services: String, properties: [String: [String: String]]) -> [Device] {
+        sorted(AndroidTVs.merge(read(listing, properties: properties), services: AndroidTVs.services(services), kept: []).devices)
+    }
+
+    private static func read(_ listing: String, properties: [String: [String: String]]) -> [Device] {
+        listed(listing).map { Device.from(adb: $0.serial, state: $0.state, properties: properties[$0.serial] ?? [:]) }
+    }
+
+    private static func sorted(_ found: [Device]) -> [Device] {
+        found.sorted { ($0.kind == .androidEmulator ? 0 : 1, $0.name) < ($1.kind == .androidEmulator ? 0 : 1, $1.name) }
+    }
+
+    /// Connects adb to a device listening at "address:port". True only once adb says it's connected; whether this Mac
+    /// is allowed on it is the listing's to say.
+    static func connect(target: String) async -> Bool {
+        let said = (await run(["connect", target], timeout: 10)).output.lowercased()
+        return said.contains("connected to") && !said.contains("failed") && !said.contains("cannot")
     }
 
     /// The device's own description of itself: maker, model, Android version, and its screen.
     static func getprop(on serial: String) async -> [String: String] {
         var properties: [String: String] = [:]
         let keys = ["ro.product.manufacturer", "ro.product.model", "ro.product.device", "ro.build.version.release", "ro.build.version.sdk",
-                    "ro.kernel.qemu", "ro.boot.qemu"]
-        let shell = keys.map { "echo \($0)=$(getprop \($0))" }.joined(separator: ";") + ";wm size;wm density"
+                    "ro.kernel.qemu", "ro.boot.qemu", "ro.serialno"]
+        // A TV says so by its leanback feature: Google TV, Android TV, Fire TV and the Android TV emulator alike.
+        let shell = keys.map { "echo \($0)=$(getprop \($0))" }.joined(separator: ";") + ";echo leanback=$(pm has-feature android.software.leanback);wm size;wm density"
         for line in (await run(["shell", shell], on: serial, timeout: 20)).output.split(separator: "\n") {
             let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if let equals = text.firstIndex(of: "=") {
@@ -347,9 +413,28 @@ enum Adb {
     }
 
     /// What the person does about a device adb lists in a state it can't be used in.
+    static func advice(for device: Device) -> String {
+        let name = device.name
+        if device.features.contains("tv"), device.reach == .network {
+            switch device.adbState {
+            case "away" where device.transport == .legacy:
+                return "Lamp can't reach \(name). On it, turn on ADB debugging (Settings → My Fire TV → Developer options), and check it's on this Mac's Wi‑Fi."
+            case "away":
+                return "Lamp can't reach \(name). On it, turn Wireless debugging back on (Settings → System → Developer options), and check it's on this Mac's Wi‑Fi."
+            case "unsure":
+                return "Lamp sees more than one device answering as \(name). Check Again in a moment, or choose it again under Try On."
+            case "unauthorized":
+                return "On \(name), choose Allow when it asks whether to allow debugging from this Mac (tick Always allow). If it doesn't ask, connect it again from Try On with its pairing code."
+            default:
+                return "\(name) isn't answering. Check it's on and on this Mac's Wi‑Fi."
+            }
+        }
+        return advice(for: name, state: device.adbState)
+    }
+
     static func advice(for name: String, state: String) -> String {
         switch state {
-        case "unauthorized": return "On \(name), tap Allow when it asks whether to allow USB debugging from this Mac (tick Always allow)."
+        case "unauthorized": return "On \(name), choose Allow when it asks whether to allow debugging from this Mac (tick Always allow)."
         case "offline": return "\(name) isn't answering. Unplug it and plug it in again, and unlock it."
         default: return "On \(name), open Settings → About phone and tap Build number seven times to turn on Developer options, then in Settings → System → Developer options turn on USB debugging, and plug it in."
         }
@@ -378,6 +463,13 @@ enum Adb {
         if !result.ok { NSLog("Lamp couldn't tell \(package) where Lamp is: \((result.output + result.errors).trimmed)") }
     }
 
+    /// Asks the running app to save where the person is (`LampState` in LampSupport.kt), so the copy installed next
+    /// opens there. Sent by adb's shell, the only sender the app takes it from; true once the app says it saved.
+    static func saveState(_ package: String, on serial: String) async -> Bool {
+        let result = await run(["shell", "am", "broadcast", "-a", "\(package).LAMP_SAVE_STATE", "-p", package], on: serial, timeout: 10)
+        return result.ok && result.output.contains("data=\"saved\"")
+    }
+
     /// Starts the app's main activity afresh, and gives back its process id once it's running.
     static func launch(_ package: String, on serial: String) async throws -> Int32 {
         _ = await run(["shell", "am", "force-stop", package], on: serial, timeout: 30)
@@ -392,8 +484,43 @@ enum Adb {
         throw AndroidTools.Failure(message: "The app started and quit at once.")
     }
 
+    /// Whether the process launched as `pid` is gone within its first two seconds.
+    static func quitSoon(_ pid: Int32, package: String, on serial: String) async -> Bool {
+        for _ in 0..<8 {
+            try? await Task.sleep(for: .milliseconds(250))
+            if await self.pid(of: package, on: serial) != pid { return true }
+        }
+        return false
+    }
+
     static func pid(of package: String, on serial: String) async -> Int32? {
-        Int32((await run(["shell", "pidof", package], on: serial, timeout: 20)).output.trimmed)
+        if case .running(let pid) = process(of: package, on: serial, said: await run(["shell", "pidof", package], on: serial, timeout: 20)) { return pid }
+        return nil
+    }
+
+    /// What `pidof` said of an app: its process, none, or nothing at all because the device didn't answer.
+    enum AppProcess: Equatable { case running(Int32), gone, unreachable }
+
+    /// adb itself says when it couldn't reach the device ("device '…' not found", "device offline", "no devices"), and a
+    /// command that ran out of time says nothing: neither is the app having quit. A TV's connection goes when its port
+    /// changes, with the app still open on it.
+    static func process(of package: String, on serial: String, said result: Subprocess.Result) -> AppProcess {
+        if let pid = Int32(result.output.trimmed) { return .running(pid) }
+        let said = (result.output + result.errors).lowercased()
+        if result.timedOut || said.contains("not found") || said.contains("offline") || said.contains("no devices")
+            || said.contains("unauthorized") || said.contains("closed") { return .unreachable }
+        return .gone
+    }
+
+    static func process(of package: String, on serial: String) async -> AppProcess {
+        process(of: package, on: serial, said: await run(["shell", "pidof", package], on: serial, timeout: 20))
+    }
+
+    /// The serial a device reads, to check a selector still reaches the device it did.
+    static func serialNumber(on serial: String) async -> String? {
+        let result = await run(["shell", "getprop", "ro.serialno"], on: serial, timeout: 10)
+        let value = result.output.trimmed
+        return result.ok && !value.isEmpty ? value : nil
     }
 
     static func stop(_ package: String, on serial: String) async {
@@ -685,7 +812,9 @@ enum Adb {
             case "key":
                 let keys = ["return": "KEYCODE_ENTER", "enter": "KEYCODE_ENTER", "escape": "KEYCODE_BACK", "back": "KEYCODE_BACK",
                             "home": "KEYCODE_HOME", "delete": "KEYCODE_DEL", "backspace": "KEYCODE_DEL", "tab": "KEYCODE_TAB",
-                            "space": "KEYCODE_SPACE", "up": "KEYCODE_DPAD_UP", "down": "KEYCODE_DPAD_DOWN", "left": "KEYCODE_DPAD_LEFT", "right": "KEYCODE_DPAD_RIGHT"]
+                            "space": "KEYCODE_SPACE", "up": "KEYCODE_DPAD_UP", "down": "KEYCODE_DPAD_DOWN", "left": "KEYCODE_DPAD_LEFT", "right": "KEYCODE_DPAD_RIGHT",
+                            // A TV remote's.
+                            "select": "KEYCODE_DPAD_CENTER", "menu": "KEYCODE_MENU", "play": "KEYCODE_MEDIA_PLAY_PAUSE"]
                 guard let key = action.key?.lowercased(), let code = keys[key] ?? (key.hasPrefix("keycode_") ? key.uppercased() : nil) else {
                     report.append("\(index + 1). Unknown key \"\(action.key ?? "")\"; the keys are \(keys.keys.sorted().joined(separator: ", ")).")
                     continue
@@ -769,26 +898,60 @@ enum Adb {
 /// The Android phone on this Mac's screen: one emulator Lamp makes from the system image it downloaded, started
 /// by Lamp as itself, which adb then lists like a device of the person's.
 enum Emulator {
-    /// Makes Lamp's emulator from the downloaded system image, as a recent Pixel.
-    static func create() async throws {
-        let result = await Subprocess.run("/bin/sh", ["-c", "echo no | \"$LAMP_AVDMANAGER\" create avd -n \"$LAMP_AVD\" -k \"$LAMP_IMAGE\" -d \"$LAMP_PROFILE\" --force 2>&1"],
-                                          env: AndroidTools.environment.merging(["LAMP_AVDMANAGER": AndroidTools.avdmanager, "LAMP_AVD": AndroidTools.avdName.replacingOccurrences(of: " ", with: "_"),
-                                                                                 "LAMP_IMAGE": AndroidTools.systemImage, "LAMP_PROFILE": AndroidTools.avdProfile]) { $1 },
-                                          timeout: 120)
-        guard result.ok, AndroidTools.hasEmulator else { throw AndroidTools.Failure(message: "Lamp couldn't make the emulator.\n\n" + result.output.trimmed) }
+    /// Which of Lamp's emulators: the phone every Android app opens in, or the TV an Android TV app opens in. Each has
+    /// ports of its own (`Edition.androidPorts`), so both can run at once: a screen open on the phone and the TV stays
+    /// open in each.
+    enum Kind: Equatable, CaseIterable {
+        case phone, tv
+        var avd: String { (self == .tv ? AndroidTools.tvAVDName : AndroidTools.avdName).replacingOccurrences(of: " ", with: "_") }
+        var console: Int { self == .tv ? Edition.androidPorts.tvConsole : Edition.androidPorts.console }
+        var bridge: Int { console + 1 }
+        var control: Int { self == .tv ? Edition.androidPorts.tvControl : Edition.androidPorts.control }
+        /// The serial adb gives it, by the console port it was started on.
+        var serial: String { "emulator-\(console)" }
+        var image: String { self == .tv ? AndroidTools.tvSystemImage : AndroidTools.systemImage }
+        var profile: String { self == .tv ? AndroidTools.tvProfile : AndroidTools.avdProfile }
     }
 
-    /// The serial adb gives Lamp's emulator, by the console port it was started on.
-    static var serial: String { "emulator-\(Edition.androidPorts.console)" }
+    /// Makes one of Lamp's emulators from its downloaded system image: a recent Pixel, or a 1080p TV.
+    static func create(_ kind: Kind = .phone) async throws {
+        let result = await Subprocess.run("/bin/sh", ["-c", "echo no | \"$LAMP_AVDMANAGER\" create avd -n \"$LAMP_AVD\" -k \"$LAMP_IMAGE\" -d \"$LAMP_PROFILE\" --force 2>&1"],
+                                          env: AndroidTools.environment.merging(["LAMP_AVDMANAGER": AndroidTools.avdmanager, "LAMP_AVD": kind.avd,
+                                                                                 "LAMP_IMAGE": kind.image, "LAMP_PROFILE": kind.profile]) { $1 },
+                                          timeout: 120)
+        guard result.ok, AndroidTools.has(kind) else { throw AndroidTools.Failure(message: "Lamp couldn't make the emulator.\n\n" + result.output.trimmed) }
+    }
 
-    /// Lamp's running emulator's serial, or nil when it isn't running. Another emulator adb lists isn't Lamp's to use.
-    static func running() async -> String? {
-        let own = ownProcesses()
-        guard own.contains(where: \.onLampsPorts) else { return nil }
+    /// The TV emulator, downloaded and made the first time an Android TV app wants it: Google's terms for its image are
+    /// accepted as the rest of Android's tools' were, in the setup the person went through.
+    static func prepareTV(note: @escaping @MainActor (String) -> Void) async throws {
+        guard !AndroidTools.has(.tv) else { return }
+        if !AndroidTools.hasTVImage {
+            await note("Downloading the Android TV emulator, about a gigabyte, once…")
+            // The TV image has a license of its own, asked for during the install, so the answer goes to the install itself.
+            let install = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --install \"$LAMP_IMAGE\" 2>&1"
+            let result = await Subprocess.run("/bin/sh", ["-c", install], env: AndroidTools.environment.merging(["LAMP_SDKMANAGER": AndroidTools.sdkmanager, "LAMP_IMAGE": Kind.tv.image]) { $1 },
+                                              timeout: 3600)
+            guard AndroidTools.hasTVImage else {
+                throw AndroidTools.Failure(message: "Google's tools couldn't download the Android TV emulator.\n\n" + result.output.split(separator: "\n").suffix(6).joined(separator: "\n"))
+            }
+        }
+        await note("Making the Android TV emulator…")
+        try await create(.tv)
+    }
+
+    /// Which of Lamp's emulators has this serial, or nil for a device of the person's.
+    static func kind(of serial: String) -> Kind? { Kind.allCases.first { $0.serial == serial } }
+
+    /// The serial of Lamp's emulator of that kind when it's running, else nil. Another emulator adb lists isn't Lamp's
+    /// to use.
+    static func running(_ kind: Kind = .phone) async -> String? {
+        let serial = kind.serial
+        guard ownProcesses().contains(where: { $0.kind == kind && $0.onLampsPorts }) else { return nil }
         func listed() async -> Bool { (await Adb.devices()).contains { $0.udid == serial && $0.adbState == "device" } }
         if await listed() { return serial }
         // Started under an earlier server of Lamp's (one that ended as Lamp quit): this one is told where it is.
-        guard register() else { return nil }
+        guard register(kind) else { return nil }
         try? await Task.sleep(for: .milliseconds(500))
         return await listed() ? serial : nil
     }
@@ -796,10 +959,10 @@ enum Emulator {
     /// The emulators this Lamp started. Every Lamp's runs the same tools and the same emulator's name, so they're told
     /// apart by the folder of emulators each was started with (`ANDROID_AVD_HOME`, Lamp's own), read from the
     /// process's environment, as `ps -E` does.
-    private static func ownProcesses() -> [(pid: pid_t, onLampsPorts: Bool)] {
+    /// Each is the kind its emulator's name says, on that kind's ports or (one an earlier Lamp started) elsewhere.
+    private static func ownProcesses() -> [(pid: pid_t, onLampsPorts: Bool, kind: Kind?)] {
         let tools = AndroidTools.sdkFolder.appendingPathComponent("emulator").path + "/"
         let home = "ANDROID_AVD_HOME=" + AndroidTools.avdHome.path
-        let ports = "\(Edition.androidPorts.console),\(Edition.androidPorts.bridge)"
         var pids = [pid_t](repeating: 0, count: 4096)
         let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
         return pids.prefix(max(0, count)).compactMap { pid in
@@ -807,8 +970,12 @@ enum Emulator {
             // (its crash handler, its network simulator), which are never given the emulator's name.
             guard pid > 0, let (path, arguments, environment) = commandLine(of: pid), path.hasPrefix(tools),
                   arguments.contains("-avd"), environment.contains(home) else { return nil }
-            let onLampsPorts = arguments.firstIndex(of: "-ports").map { arguments.index(after: $0) < arguments.endIndex && arguments[arguments.index(after: $0)] == ports } ?? false
-            return (pid, onLampsPorts)
+            func after(_ flag: String) -> String? {
+                arguments.firstIndex(of: flag).flatMap { arguments.index(after: $0) < arguments.endIndex ? arguments[arguments.index(after: $0)] : nil }
+            }
+            let kind = Kind.allCases.first { $0.avd == after("-avd") }
+            let onLampsPorts = kind.map { after("-ports") == "\($0.console),\($0.bridge)" } ?? false
+            return (pid, onLampsPorts, kind)
         }
     }
 
@@ -832,10 +999,10 @@ enum Emulator {
         return (path, Array(strings[1...argc]), Array(strings.dropFirst(argc + 1)))
     }
 
-    /// Tells Lamp's adb server about the emulator on Lamp's ports, in the message an emulator sends it as it boots
+    /// Tells Lamp's adb server about its emulator of that kind on its ports, in the message an emulator sends it as it boots
     /// (adb's `host:emulator:<port>`, its length first in hex). The server connects to it there, if it's running.
     /// False when the server couldn't be reached.
-    private static func register() -> Bool {
+    private static func register(_ kind: Kind) -> Bool {
         let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard socket >= 0 else { return false }
         defer { close(socket) }
@@ -847,23 +1014,25 @@ enum Emulator {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
         }
         guard connected == 0 else { return false }
-        let request = "host:emulator:\(Edition.androidPorts.bridge)"
+        let request = "host:emulator:\(kind.bridge)"
         let message = Array((String(format: "%04x", request.utf8.count) + request).utf8)
         return write(socket, message, message.count) == message.count
     }
 
-    /// Starts Lamp's emulator when it isn't running, waits for Android to boot, and gives back its serial. The
-    /// emulator is a window of its own on the Mac, which `show` says whether to bring forward.
-    static func start(show: Bool) async throws -> String {
-        // One an earlier Lamp started, on adb's usual ports, holds the emulator Lamp made, so another can't start on
-        // Lamp's. Lamp doesn't end it: it doesn't close for a signal while it saves its state, and one started while
-        // the other still held the emulator's files crashed. The person closes its window, as they would any.
-        if ownProcesses().contains(where: { !$0.onLampsPorts }) {
-            await bringForward()
-            throw AndroidTools.Failure(message: "The Android emulator is still open from before Lamp was updated. Close its window, then try again.")
+    /// Starts Lamp's emulator of that kind when it isn't running, waits for Android to boot, and gives back its serial.
+    /// The emulator is a window of its own on the Mac, which `show` says whether to bring forward. The other kind, if
+    /// it's running, is left as it is.
+    static func start(show: Bool, kind: Kind = .phone) async throws -> String {
+        // One an earlier Lamp started on other ports (adb's usual, or the phone's for the TV) holds the emulator Lamp
+        // made, so another can't start on this kind's. Lamp doesn't end it: it doesn't close for a signal while it saves
+        // its state, and one started while the other still held the emulator's files crashed. The person closes its
+        // window, as they would any.
+        if let stale = ownProcesses().first(where: { !$0.onLampsPorts && ($0.kind == kind || $0.kind == nil) }) {
+            NSRunningApplication(processIdentifier: stale.pid)?.activate()
+            throw AndroidTools.Failure(message: "The Android \(kind == .tv ? "TV " : "")emulator is still open from before Lamp was updated. Close its window, then try again.")
         }
-        if let serial = await running() {
-            if show { await bringForward() }
+        if let serial = await running(kind) {
+            if show { await bringForward(kind) }
             return serial
         }
         let process = Process()
@@ -871,8 +1040,7 @@ enum Emulator {
         // On Lamp's own ports (`Edition.androidPorts`), where only Lamp's adb server looks for it and the agent's
         // commands can't reach it. After a crash the emulator would otherwise open with a dialog asking to send
         // Google a report, and start nothing until it's answered.
-        let ports = Edition.androidPorts
-        process.arguments = ["-avd", AndroidTools.avdName.replacingOccurrences(of: " ", with: "_"), "-ports", "\(ports.console),\(ports.bridge)", "-grpc", "\(ports.control)",
+        process.arguments = ["-avd", kind.avd, "-ports", "\(kind.console),\(kind.bridge)", "-grpc", "\(kind.control)",
                              "-crash-report-mode", "never", "-no-boot-anim", "-netdelay", "none", "-netspeed", "full"]
         process.environment = ProcessInfo.processInfo.environment.merging(AndroidTools.environment) { $1 }
         process.standardOutput = FileHandle.nullDevice
@@ -883,10 +1051,10 @@ enum Emulator {
         for _ in 0..<120 {
             try await Task.sleep(for: .seconds(1))
             guard process.isRunning else { throw AndroidTools.Failure(message: "The emulator quit while starting.") }
-            if let serial = await running() {
+            if let serial = await running(kind) {
                 let booted = await Adb.run(["shell", "getprop", "sys.boot_completed"], on: serial, timeout: 10).output.trimmed
                 if booted == "1" {
-                    if !show { await putBehind() }
+                    if !show { await putBehind(kind) }
                     return serial
                 }
             }
@@ -894,14 +1062,16 @@ enum Emulator {
         throw AndroidTools.Failure(message: "The emulator didn't finish starting.")
     }
 
-    /// The window of Lamp's own emulator, not another Lamp's or the person's.
-    private static func app() -> NSRunningApplication? {
-        ownProcesses().lazy.compactMap { NSRunningApplication(processIdentifier: $0.pid) }.first
+    /// The window of Lamp's own emulator of that kind, not another Lamp's or the person's.
+    private static func app(_ kind: Kind) -> NSRunningApplication? {
+        ownProcesses().lazy.filter { $0.kind == kind }.compactMap { NSRunningApplication(processIdentifier: $0.pid) }.first
     }
-    static func bringForward() async { app()?.activate() }
-    static func putBehind() async { app()?.hide() }
+    static func bringForward(_ kind: Kind) async { app(kind)?.activate() }
+    /// The process whose window shows the device, for the chat beside it (`ChatPanel`).
+    static func windowOwner(_ kind: Kind) -> pid_t? { app(kind)?.processIdentifier }
+    static func putBehind(_ kind: Kind) async { app(kind)?.hide() }
     /// Its window back on screen where it was, without taking the keyboard from whatever the person is in.
-    static func unhide() async { app()?.unhide() }
+    static func unhide(_ kind: Kind) async { app(kind)?.unhide() }
     static var isRunning: Bool { !ownProcesses().isEmpty }
 
     /// The window Lamp's emulator draws the device's screen in, for Lamp's fingertip to go where each tap lands. The
@@ -924,18 +1094,18 @@ enum Emulator {
         }
     }
 
-    /// Lamp's emulator's screen on the Mac's, or nil when its window isn't on screen (minimised, or hidden and not
+    /// Lamp's emulator's screen on the Mac's, or nil when its window isn't on screen (minimized, or hidden and not
     /// back within a moment of `unhide`).
-    static func glass(size: CGSize) async -> Glass? {
+    static func glass(_ kind: Kind, size: CGSize) async -> Glass? {
         for _ in 0..<10 {
-            if let found = onScreen(size: size) { return found }
+            if let found = onScreen(kind, size: size) { return found }
             try? await Task.sleep(for: .milliseconds(100))
         }
         return nil
     }
 
-    private static func onScreen(size: CGSize) -> Glass? {
-        let pids = Set(ownProcesses().map(\.pid))
+    private static func onScreen(_ kind: Kind, size: CGSize) -> Glass? {
+        let pids = Set(ownProcesses().filter { $0.kind == kind }.map(\.pid))
         guard !pids.isEmpty else { return nil }
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let largest = windows.compactMap { info -> (CGWindowID, pid_t, Double)? in

@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import SwiftUI
 
@@ -21,10 +22,12 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
     }
     private var active: Request?
     private var pending: [Request] = []
-    private var device: String?
+    /// The person's device the check is for, or nil for the emulator.
+    @Published private(set) var device: String?
     private var presented = false
     private var closingInternally = false
     private var window: NSWindow?
+    private var resizing: AnyCancellable?
 
     /// Shows the window for a look, nothing waiting on it.
     func show(device: String? = nil) {
@@ -55,7 +58,7 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
         if !keepingProblem { problem = nil }
         let device = self.device
         Task {
-            let result = await AndroidTools.check(device: device)
+            let result = await AndroidTools.check(device: device, confirmed: Store.shared.androidConfirmed)
             checking = false
             report = result
             if result.ready, let request = active {
@@ -82,7 +85,7 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
             problem = nil
             Task {
                 do {
-                    try await AndroidTools.install { part, doing in
+                    try await AndroidTools.install(emulator: device == nil) { part, doing in
                         Task { @MainActor in self.installing = (part, doing) }
                     }
                 } catch {
@@ -122,13 +125,10 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
     private func present() {
         presented = true
         if window == nil {
-            let content = NSHostingController(rootView: AndroidSetupView(model: self))
-            content.sizingOptions = [.preferredContentSize]
-            let window = NSWindow(contentViewController: content)
-            window.styleMask = [.titled, .closable]
+            let (window, resizing) = FittedWindow.make(AndroidSetupView(model: self), following: objectWillChange)
+            self.resizing = resizing
             window.delegate = self
             window.title = "Android Setup"
-            window.isReleasedWhenClosed = false
             window.center()
             self.window = window
         }
@@ -137,15 +137,13 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
     }
 }
 
-/// The checks as the person would recognise them, each a row: the tools, the emulator, and their device when one is
-/// chosen.
+/// The checks as the person would recognize them, each a row: the tools, then the emulator, or their device instead
+/// when one is chosen.
 struct AndroidSetupView: View {
     @ObservedObject var model: AndroidSetup
 
     private var steps: [AndroidTools.Step] {
-        AndroidTools.Step.allCases.filter { step in
-            step != .device || model.report?.passed.contains(.device) == true || model.report?.issue?.step == .device
-        }
+        model.device == nil ? [.tools, .emulator] : [.tools, .device]
     }
 
     var body: some View {
@@ -193,7 +191,7 @@ struct AndroidSetupView: View {
         switch step {
         case .tools: return ("Android's tools", "Google's free tools for making Android apps")
         case .emulator: return ("Emulator", "An Android phone on your Mac's screen, where Lamp tries your app")
-        case .device: return ("Your Android device", "Plugged in, with USB debugging allowed to this Mac")
+        case .device: return ("Your Android device", "Plugged in or on your Wi‑Fi, with debugging allowed to this Mac")
         }
     }
 

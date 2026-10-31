@@ -5,7 +5,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 work = os.path.join(here, ".work")
 forms = dict(line.split("|")[1:3] for line in open(os.path.join(work, "forms.txt")).read().splitlines())
 pastel = {"blue": "sky blue", "indigo": "lavender", "purple": "lilac", "pink": "rose", "red": "coral", "orange": "apricot",
-          "yellow": "butter yellow", "green": "mint", "teal": "aqua", "graphite": "cool grey", "white": "pearl grey"}
+          "yellow": "butter yellow", "green": "mint", "teal": "aqua", "graphite": "cool gray", "white": "pearl gray"}
 def slug(n): return re.sub(r"[^a-z0-9]+", "-", n.lower()).strip("-")
 common = ("Landscape 3:2. The picture fills the whole frame. Any words on screen are a few short, correctly spelt labels in English; "
           "no long paragraphs, no lorem ipsum, no real brand names or logos, no watermark.")
@@ -22,7 +22,7 @@ for line in open(os.path.join(here, "briefs.txt")).read().splitlines():
     if form == "Mac":
         thumb = (f"A clean, realistic screenshot of one macOS app window in light mode, floating with a soft shadow in front of a softly "
                  f"blurred {tint} gradient wallpaper. The window shows {screen}. Native macOS design: SF Pro type, a sidebar or toolbar "
-                 f"where it fits, generous white space, calm colours.")
+                 f"where it fits, generous white space, calm colors.")
     elif form == "Menu bar":
         thumb = (f"A clean, realistic close-up of the top right of a macOS desktop in light mode: the translucent menu bar along the top "
                  f"edge with one small app icon highlighted, and a rounded frosted panel open just beneath it, showing {screen}. "
@@ -31,13 +31,13 @@ for line in open(os.path.join(here, "briefs.txt")).read().splitlines():
         thumb = (f"A clean, realistic close-up of a macOS desktop in light mode with a softly blurred {tint} gradient wallpaper, and on it "
                  f"{screen}. Native macOS widget design: rounded corners, SF Pro type.")
     elif form == "iPhone":
-        thumb = (f"A clean, realistic product shot of a modern iPhone standing upright in the centre, front view, on a plain soft {tint} "
+        thumb = (f"A clean, realistic product shot of a modern iPhone standing upright in the center, front view, on a plain soft {tint} "
                  f"background, its screen showing an iOS app: {screen}. Native iOS design, SF Pro type, light mode.")
     elif form == "iPad":
         thumb = (f"A clean, realistic product shot of a modern iPad in landscape, front view, on a plain soft {tint} background, its screen "
                  f"showing an iPadOS app: {screen}. Native iPadOS design, SF Pro type, light mode.")
     else:
-        thumb = f"A polished, charming, colourful picture of a game: {screen}. Soft {tint} tones in the palette."
+        thumb = f"A polished, charming, colorful picture of a game: {screen}. Soft {tint} tones in the palette."
     jobs.append({"slug": s, "kind": "icon", "prompt": icon})
     jobs.append({"slug": s, "kind": "thumb", "prompt": thumb + " " + common})
 # Each category's own picture for the page's row of categories: an object like an icon's, shown off its tile.

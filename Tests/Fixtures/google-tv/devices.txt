@@ -1,0 +1,4 @@
+List of devices attached
+192.168.1.50:33935   device product:jarvis model:onn__Streaming_Device_4K_pro device:SNA transport_id:2
+adb-SERIAL0123456-Ab12Cd._adb-tls-connect._tcp device product:jarvis model:onn__Streaming_Device_4K_pro device:SNA transport_id:1
+

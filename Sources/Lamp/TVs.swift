@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import LampRelayKit
 
 /// The person's TVs: Samsung's (Tizen) and LG's (webOS), found on the network, set up through their own developer
 /// modes, and given a web app Lamp packages, signs and installs itself. A TV app is the same HTML, CSS and JavaScript
@@ -14,7 +15,7 @@ enum TVs {
     }
 
     /// A TV as found on the network and, once one of its setup steps has worked, kept (found is not owned: a
-    /// neighbour's TV may answer a scan, and only hands on the TV's own remote prove it's the person's).
+    /// neighbor's TV may answer a scan, and only hands on the TV's own remote prove it's the person's).
     struct Record: Codable, Hashable {
         var id: String            // "samsung:<udn>", "lg:<udn>"
         var maker: String         // "Samsung", "LG"
@@ -29,6 +30,8 @@ enum TVs {
         var duid: String?
         var developerIP: String?
         var developerMode = false
+        /// Every id the TV answered for, one per service (an LG TV has several); a TV kept under any of them is this one.
+        var udns: [String]? = nil
         var isSamsung: Bool { maker == "Samsung" }
     }
 
@@ -46,15 +49,39 @@ enum TVs {
         try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
     }
 
+    /// Forgets a TV, as the person asks in Settings: found again, it's set up from the start. An LG TV's key goes with
+    /// it, since its setup counts as done while the key is here. Samsung's certificates for it stay: they name the TV's
+    /// own id, and are as good when it's set up again.
+    static func forget(_ id: String) {
+        if let address = kept().first(where: { $0.id == id })?.address { WebOS.forgetHost(address) }
+        let all = kept().filter { $0.id != id }
+        try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
+        try? FileManager.default.removeItem(at: WebOS.keyURL(id))
+        try? FileManager.default.removeItem(at: WebOSSocket.clientKeyURL(id))
+    }
+
+    /// Reconnect: the TV's connection is made again from its setup window, for one reset or whose developer mode was
+    /// turned on again. An LG TV's key is let go, so the window asks for the passphrase its Developer Mode app shows
+    /// now; a Samsung TV's id is read again over a new connection, and its certificates still fit when it's the same.
+    static func reconnect(_ id: String) {
+        try? FileManager.default.removeItem(at: WebOS.keyURL(id))
+        try? FileManager.default.removeItem(at: WebOSSocket.clientKeyURL(id))
+        guard var record = kept().first(where: { $0.id == id }) else { return }
+        guard record.isSamsung else { WebOS.forgetHost(record.address); return }
+        record.duid = nil
+        keep(record)
+    }
+
     static func record(_ id: String) -> Record? { kept().first { $0.id == id } ?? lastFound.first { $0.id == id } }
     nonisolated(unsafe) private(set) static var lastFound: [Record] = []
 
     // MARK: Finding them
 
     /// The TVs on this network now, and the kept ones that aren't, as device records. A Samsung TV answers on its own
-    /// local API; an LG TV describes itself in its UPnP description.
-    static func devices() async -> [Device] {
-        let found = await scan()
+    /// local API; an LG TV describes itself in its UPnP description. `answers` is the look's own SSDP search, which the
+    /// integrations share; without it the TVs are searched for here.
+    static func devices(answers: [DeviceProbe.SSDPAnswer]? = nil) async -> [Device] {
+        let found = await scan(answers: answers)
         lastFound = found
         var records = found
         // A kept TV takes what was found now (its address may have moved); one not found keeps what was known.
@@ -63,6 +90,7 @@ enum TVs {
                 keptOne.address = now.address
                 keptOne.developerMode = now.developerMode
                 keptOne.developerIP = now.developerIP
+                if let udns = now.udns { keptOne.udns = Array(Set(keptOne.udns ?? []).union(udns)).sorted() }
                 if keptOne.osVersion.isEmpty { keptOne.osVersion = now.osVersion }
                 keep(keptOne)
                 records.removeAll { $0.id == keptOne.id }
@@ -76,66 +104,27 @@ enum TVs {
             .sorted { $0.name < $1.name }
     }
 
-    /// One SSDP search of the local network (two seconds), then each answer that's a TV asked who it is.
-    static func scan() async -> [Record] {
-        let answers = await Task.detached { ssdp(seconds: 2) }.value
+    /// One SSDP search of the local network (two seconds, unless the look's is given), then each device that answered
+    /// as a TV asked who it is.
+    static func scan(answers given: [DeviceProbe.SSDPAnswer]? = nil) async -> [Record] {
+        var byAddress: [String: [DeviceProbe.SSDPAnswer]] = [:]
+        let answers: [DeviceProbe.SSDPAnswer]
+        if let given { answers = given } else { answers = await DeviceProbe.ssdp("ssdp:all", seconds: 2) }
+        for answer in answers { byAddress[answer.address, default: []].append(answer) }
+        let earlier = kept() + lastFound
         var records: [Record] = []
         await withTaskGroup(of: Record?.self) { group in
-            for (ip, lines) in answers {
-                let server = lines.joined(separator: "\n").lowercased()
-                if server.contains("samsung") {
+            for (ip, answers) in byAddress {
+                let said = answers.map { "\($0.server)\n\($0.location ?? "")\n\($0.searchTarget)" }.joined(separator: "\n").lowercased()
+                if said.contains("samsung") {
                     group.addTask { await samsung(at: ip) }
-                } else if server.contains("webos") || server.contains("lge") {
-                    let location = lines.first { $0.lowercased().hasPrefix("location:") }
-                        .map { String($0.dropFirst("location:".count)).trimmingCharacters(in: .whitespaces) }
-                    group.addTask { await lg(at: ip, description: location) }
+                } else if said.contains("webos") || said.contains("lge") {
+                    group.addTask { await lg(at: ip, answers: answers, earlier: earlier) }
                 }
             }
             for await record in group { if let record, !records.contains(where: { $0.id == record.id }) { records.append(record) } }
         }
         return records
-    }
-
-    /// The UPnP answers on this network, by address: what each said about itself.
-    private static func ssdp(seconds: Int) -> [String: [String]] {
-        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        guard fd >= 0 else { return [:] }
-        defer { close(fd) }
-        var wait = timeval(tv_sec: 0, tv_usec: 300_000)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
-        var ttl: UInt8 = 2
-        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, socklen_t(1))
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = UInt16(1900).bigEndian
-        address.sin_addr.s_addr = inet_addr("239.255.255.250")
-        let search = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n"
-        for _ in 0..<2 {
-            _ = search.withCString { text in
-                withUnsafePointer(to: &address) {
-                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(fd, text, strlen(text), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-                }
-            }
-        }
-        var answers: [String: [String]] = [:]
-        let end = Date().addingTimeInterval(TimeInterval(seconds))
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while Date() < end {
-            var from = sockaddr_in()
-            var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-            let got = withUnsafeMutablePointer(to: &from) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(fd, &buffer, buffer.count, 0, $0, &length) }
-            }
-            guard got > 0 else { continue }
-            let ip = String(cString: inet_ntoa(from.sin_addr))
-            let text = String(decoding: buffer[0..<got], as: UTF8.self)
-            let lines = text.split(separator: "\r\n").map(String.init).filter {
-                let lower = $0.lowercased()
-                return lower.hasPrefix("server:") || lower.hasPrefix("location:") || lower.hasPrefix("st:")
-            }
-            answers[ip, default: []] += lines
-        }
-        return answers
     }
 
     private static func fetch(_ url: URL, timeout: TimeInterval = 3) async -> Data? {
@@ -165,9 +154,44 @@ enum TVs {
                       duid: nil, developerIP: device["developerIP"] as? String, developerMode: (device["developerMode"] as? String) == "1")
     }
 
+    /// The service an LG TV announces for itself; the description it points at is the TV's own.
+    static let lgTV = "urn:lge:device:tv:1"
+
+    /// An LG TV, from the UPnP descriptions its answers point at. It answers for several services, each with a
+    /// description and an id of its own, and the first to answer is often one that says nothing of the TV (Netflix's,
+    /// a few bytes of "status=ok"), so each is tried until one is an LG TV's: the TV's own service first, which gives
+    /// it the same id at every scan. A TV already kept or seen under another of its services' ids (an earlier Lamp
+    /// kept whichever answered first, and the TV's own may miss a scan) keeps that id, so its setup, its key and the
+    /// apps set to open on it still match: it's the same TV when any id it answers for now is one it had then.
+    /// `fetch` is how a description is read; tests answer with recorded ones.
+    static func lg(at ip: String, answers: [DeviceProbe.SSDPAnswer], earlier: [Record] = [],
+                   fetch: (URL) async -> Data? = { await fetch($0) }) async -> Record? {
+        let own = Set(answers.filter { $0.searchTarget.lowercased() == lgTV }.compactMap(\.location))
+        var locations: [String] = []
+        for location in answers.compactMap(\.location).filter(own.contains) + answers.compactMap(\.location)
+            where !locations.contains(location) && URL(string: location)?.host == ip && URL(string: location)?.scheme == "http" {
+            locations.append(location)
+        }
+        // A USN is "uuid:<udn>" or "uuid:<udn>::<type>".
+        let udns = Set(answers.compactMap { answer -> String? in
+            guard answer.usn.lowercased().hasPrefix("uuid:") else { return nil }
+            let udn = answer.usn.dropFirst(5).components(separatedBy: "::")[0]
+            return udn.isEmpty ? nil : udn
+        })
+        for location in locations {
+            guard let url = URL(string: location), let data = await fetch(url), var record = lg(at: ip, description: data) else { continue }
+            record.udns = Array(udns.union([String(record.id.dropFirst("lg:".count))])).sorted()
+            if let seen = earlier.first(where: { tv in
+                !tv.isSamsung && !udns.isDisjoint(with: [String(tv.id.dropFirst("lg:".count))] + (tv.udns ?? []))
+            }) { record.id = seen.id }
+            record.developerMode = FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path)
+            return record
+        }
+        return nil
+    }
+
     /// An LG TV's UPnP description: its name and model. Its webOS version is read once Lamp can reach it.
-    static func lg(at ip: String, description: String?) async -> Record? {
-        guard let description, let url = URL(string: description), let data = await fetch(url) else { return nil }
+    static func lg(at ip: String, description data: Data) -> Record? {
         let text = String(decoding: data, as: UTF8.self)
         func tag(_ name: String) -> String? {
             guard let open = text.range(of: "<\(name)>"), let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex) else { return nil }
@@ -175,10 +199,8 @@ enum TVs {
         }
         guard (tag("manufacturer") ?? "").uppercased().hasPrefix("LG") else { return nil }
         let udn = (tag("UDN") ?? ip).replacingOccurrences(of: "uuid:", with: "")
-        let id = "lg:\(udn)"
-        return Record(id: id, maker: "LG", name: tag("friendlyName") ?? "LG TV", model: tag("modelName") ?? "webOS TV",
-                      modelID: tag("modelNumber") ?? "", address: ip, os: "webOS", osVersion: "", resolution: "",
-                      developerMode: FileManager.default.fileExists(atPath: WebOS.keyURL(id).path))
+        return Record(id: "lg:\(udn)", maker: "LG", name: tag("friendlyName") ?? "LG TV", model: tag("modelName") ?? "webOS TV",
+                      modelID: tag("modelNumber") ?? "", address: ip, os: "webOS", osVersion: "", resolution: "")
     }
 
     /// This Mac's addresses on the local network, which a Samsung TV in developer mode must name.
@@ -221,7 +243,7 @@ enum TVs {
     }
 
     /// Packages the staged app for the Samsung TV, signs it for that TV, installs it and opens it. `say` hears how far it is.
-    static func installSamsung(_ project: LampProject, staged: URL, on record: Record, say: @escaping @Sendable (String) -> Void) async throws {
+    static func installSamsung(_ project: LampProject, staged: URL, on record: Record, opens: Bool = true, say: @escaping @Sendable (String) -> Void) async throws {
         var duid = record.duid
         if duid == nil { duid = (try? await connectSamsung(record))?.duid }
         guard let duid else { throw Failure(message: "Lamp hasn't connected to \(record.name) yet.") }
@@ -229,8 +251,11 @@ enum TVs {
             throw Failure(message: "\(record.name) needs Samsung's permission for this Mac's apps first: sign in to Samsung in its setup.")
         }
         let ids = TVTemplate.tizenIDs(for: project)
+        let guarded = TVNetworkGuard.policy(for: project)
         say("Packaging \(project.name) for \(record.name)…")
-        let package = try await TVPackage.wgt(for: project, staged: staged, duid: duid)
+        // The policy goes in either way, but only a TV whose browser holds a page to it is said to keep the app to its sites.
+        if guarded != nil, !TVNetworkGuard.holds(on: record) { say("\(record.name) is too old to keep \(project.name) to its own sites.") }
+        let package = try await TVPackage.wgt(for: project, staged: staged, duid: duid, guarded: guarded)
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         let data = try Data(contentsOf: package)
         say("Putting \(project.name) on \(record.name)…")
@@ -252,6 +277,8 @@ enum TVs {
                     .filter { !$0.isEmpty && !$0.hasPrefix("installing") }.suffix(3).joined(separator: " · ")
                 throw Failure(message: "\(record.name) didn't install the app: \(reason)")
             }
+            // Put there to wait for next time, without opening over what the TV shows.
+            guard opens else { return }
             say("Opening \(project.name) on \(record.name)…")
             // The install's stream closes before the TV has finished, so it's asked to open the app until it says it has
             // (launched, or resumed when it was open), for half a minute at most.
@@ -269,15 +296,21 @@ enum TVs {
 
     // MARK: LG
 
-    static func installLG(_ project: LampProject, staged: URL, on record: Record, say: @escaping @Sendable (String) -> Void) async throws {
+    static func installLG(_ project: LampProject, staged: URL, on record: Record, opens: Bool = true, say: @escaping @Sendable (String) -> Void) async throws {
         guard FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path) else {
             throw Failure(message: "\(record.name) hasn't let this Mac in yet: enter its Developer Mode passphrase in its setup.")
         }
+        let guarded = TVNetworkGuard.policy(for: project)
         say("Packaging \(project.name) for \(record.name)…")
-        let package = try await TVPackage.ipk(for: project, staged: staged)
+        // The policy goes in either way, but only a TV whose browser holds a page to it is said to keep the app to its sites.
+        if guarded != nil, !TVNetworkGuard.holds(on: record) { say("\(record.name) is too old to keep \(project.name) to its own sites.") }
+        let package = try await TVPackage.ipk(for: project, staged: staged, phones: try LGPhones.service(for: project, on: record),
+                                              guarded: guarded)
         defer { try? FileManager.default.removeItem(at: package.deletingLastPathComponent()) }
         say("Putting \(project.name) on \(record.name)…")
         try await WebOS.install(package, appID: TVTemplate.webOSID(for: project), on: record)
+        // Put there to wait for next time, without opening over what the TV shows.
+        guard opens else { return }
         say("Opening \(project.name) on \(record.name)…")
         try await WebOS.launch(TVTemplate.webOSID(for: project), on: record)
         await WebOS.extendSession(on: record)
@@ -293,28 +326,163 @@ enum TVs {
 
     /// Copies the app's web files into Lamp's folder, as Devices.stage does for a phone: by a command under the app's
     /// own sandbox, so it reads only the app's folder, links kept as links, then none allowed. What the preview shows and
-    /// what goes on a TV are only the app's own files. Gives back the copy.
-    static func stage(_ project: LampProject) async throws -> URL {
+    /// what goes on a TV are only the app's own files. Its phone page, if it has one, is copied beside them the same way
+    /// and goes in a package only inside an LG game's phone service (`LGPhones`). Gives back the copy of the web files.
+    static func stage(_ project: LampProject, folder: String = TVTemplate.webFolder) async throws -> URL {
         let fm = FileManager.default
         let dir = stagingFolder(for: project)
         let files = dir.appendingPathComponent("web")
+        // The phone page is handed out while the app runs, rebuilds included, so the new copy is made where nothing
+        // serves it and only takes the published one's place once it has passed the same checks (`publishPhone`).
+        let incoming = dir.appendingPathComponent(".phone-" + UUID().uuidString)
         try? fm.removeItem(at: files)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(TVTemplate.webFolder)) \"$LAMP_TO\""
+        // Left by a staging that never finished: never served, so only cleared away.
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where name.hasPrefix(".phone-") {
+            try? fm.removeItem(at: dir.appendingPathComponent(name))
+        }
+        defer { try? fm.removeItem(at: incoming) }
+        let page = Sandbox.quoted(TVTemplate.phoneFolder)
+        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(folder)) \"$LAMP_TO\""
+            + " && if [ -e \(page) ] || [ -L \(page) ]; then /bin/cp -Rp \(page) \"$LAMP_PHONE\"; fi"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the app's files.") }
         var output: [String] = []
-        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": files.path], login: false) { output.append($0) }
-        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files.\n\n" + output.suffix(4).joined(separator: "\n")) }
-        let linked = (fm.enumerator(at: files, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? [])
-            .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
-        if linked {
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": files.path, "LAMP_PHONE": incoming.path],
+                                     login: false) { output.append($0) }
+        guard status == 0 else {
+            try? fm.removeItem(at: files)
+            throw Failure(message: "Lamp couldn't copy the app's files.\n\n" + output.suffix(4).joined(separator: "\n"))
+        }
+        func linked(_ folder: URL) -> Bool {
+            ([folder] + (fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
+                .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        }
+        if linked(files) || linked(incoming) {
             try? fm.removeItem(at: files)
             throw Failure(message: "Some of the app's files are shortcuts to other files. Put the files themselves in their place.")
         }
         guard fm.fileExists(atPath: files.appendingPathComponent("index.html").path) else {
-            throw Failure(message: "The app has no \(TVTemplate.webFolder)/index.html yet.")
+            throw Failure(message: "The app has no \(folder)/index.html yet.")
         }
+        // A game's page is told the device it's on, as every copy of it is (`GamePage`): its runtime imports what's
+        // written, and without it the page never starts.
+        if GameKit.isGame(project) { try GamePage.stage(files, in: dir, for: GamePage.place(for: project, at: .tv)) }
+        let hasPage = fm.fileExists(atPath: incoming.appendingPathComponent("index.html").path)
+        // The TV page learns where its phone page is from Lamp's own script, in the copy only: the address is this
+        // Mac's on the network now, which isn't the app's to keep.
+        let script = files.appendingPathComponent("lamp.js")
+        let address = hasPage ? await phonePage(staging: project) : ""
+        if !address.isEmpty, let text = try? String(contentsOf: script, encoding: .utf8), text.contains(TVTemplate.phoneMarker),
+           let quoted = try? JSONSerialization.data(withJSONObject: [address], options: [.withoutEscapingSlashes]) {
+            let value = String(decoding: quoted, as: UTF8.self).dropFirst().dropLast()
+            try Data(text.replacingOccurrences(of: TVTemplate.phoneMarker, with: "/*LAMP_PHONE*/" + value).utf8).write(to: script)
+        }
+        try publishPhone(hasPage ? incoming : nil, as: phoneFolder(for: project))
         return files
+    }
+
+    /// Copies only the app's phone page where it's served, as `stage` does beside a TV app's files: for a game built for
+    /// the Mac, which is played from its own copy rather than a staged one, and takes phones while it's open. No Phone/
+    /// takes the published page away. `expecting`: the version that was checked; a copy that isn't it stays unpublished,
+    /// and the answer is false.
+    @discardableResult static func stagePhone(_ project: LampProject, expecting: String? = nil) async throws -> Bool {
+        let fm = FileManager.default
+        let dir = stagingFolder(for: project)
+        let incoming = dir.appendingPathComponent(".phone-" + UUID().uuidString)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: incoming) }
+        let page = Sandbox.quoted(TVTemplate.phoneFolder)
+        let copy = "cd \"$LAMP_FROM\" && if [ -e \(page) ] || [ -L \(page) ]; then /bin/cp -Rp \(page) \"$LAMP_PHONE\"; fi"
+        guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the game's phone page.") }
+        var output: [String] = []
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_PHONE": incoming.path], login: false) { output.append($0) }
+        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the game's phone page.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        let linked = ([incoming] + (fm.enumerator(at: incoming, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
+            .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        if linked { throw Failure(message: "Some of the phone page's files are shortcuts to other files. Put the files themselves in their place.") }
+        let hasPage = fm.fileExists(atPath: incoming.appendingPathComponent("index.html").path)
+        if let expecting, (try? ControllerSnapshot.read(incoming))?.version != expecting { return false }
+        try publishPhone(hasPage ? incoming : nil, as: phoneFolder(for: project))
+        return true
+    }
+
+    /// A file of the published phone page by the names in its path, when it's a plain file there of a size to hand out.
+    /// Each step from the published folder down, the folder itself included, must be no link: the copy was checked for
+    /// links, and this keeps a page from ever leading anywhere else whatever is found there.
+    static func phoneFile(_ names: [String], in root: URL) -> URL? {
+        var steps = [root]
+        for name in names { steps.append(steps[steps.count - 1].appendingPathComponent(name)) }
+        guard steps.allSatisfy({ (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == false }) else { return nil }
+        let file = steps[steps.count - 1]
+        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values?.isRegularFile == true, (values?.fileSize ?? 0) <= 64 << 20 else { return nil }
+        return file
+    }
+
+    /// Puts a checked copy of the phone page where it's served, in one step: swapped with the one there, which is then
+    /// removed, so a request reads the old page or the new one whole, never a copy still being made. No page takes the
+    /// published one away.
+    static func publishPhone(_ checked: URL?, as published: URL) throws {
+        let fm = FileManager.default
+        guard let checked else {
+            try? fm.removeItem(at: published)
+            return
+        }
+        if renamex_np(checked.path, published.path, UInt32(RENAME_SWAP)) == 0 { return }
+        guard errno == ENOENT, rename(checked.path, published.path) == 0 else {
+            throw Failure(message: "Lamp couldn't put the app's phone page in place.")
+        }
+    }
+
+    // MARK: The phone page
+
+    /// Where an app's phone page is copied (its Phone/ folder), beside its web files.
+    static func phoneFolder(for project: LampProject) -> URL {
+        stagingFolder(for: project).appendingPathComponent("phone")
+    }
+
+    /// The version of each app's published page, kept by the folder's identity: publishing swaps in another folder
+    /// (`publishPhone`), and every open phone asks every few seconds.
+    @MainActor private static var phoneVersions: [String: (folder: NSObject, version: String)] = [:]
+
+    /// The version of the page published now (`ControllerSnapshot.version`), nil when there's none to serve.
+    @MainActor static func phoneVersion(of project: LampProject) -> String? {
+        let folder = phoneFolder(for: project)
+        guard let identity = (try? folder.resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier as? NSObject else {
+            phoneVersions[project.id] = nil
+            return nil
+        }
+        if let known = phoneVersions[project.id], known.folder.isEqual(identity) { return known.version }
+        guard let version = (try? ControllerSnapshot.read(folder))?.version else { return nil }
+        phoneVersions[project.id] = (identity, version)
+        return version
+    }
+
+    /// Whether the app's last copy has a phone page to hand out.
+    static func hasPhonePage(_ project: LampProject) -> Bool {
+        FileManager.default.fileExists(atPath: phoneFolder(for: project).appendingPathComponent("index.html").path)
+    }
+
+    /// The phone page's address for a phone on the same network as this Mac, by its address there, which a phone
+    /// reaches whether or not it resolves the Mac's Bonjour name, at the app's own port (`PhoneSites`), which gives each
+    /// app's page an origin of its own.
+    @MainActor static func phonePage(for project: LampProject) -> String {
+        let host = Devices.localAddresses.first ?? Devices.macHost
+        guard let port = PhoneSites.port(for: project.id) else { return "" }
+        return "http://\(host):\(port)/"
+    }
+
+    /// The address put into a staged copy: where the site is listening when the app's page is served now, which waits for
+    /// it to open, else the port it will try first. lamp.js asks again as the page opens (`/app/phone-page`), so a site
+    /// that opens elsewhere is still the address it shows.
+    @MainActor static func phonePage(staging project: LampProject) async -> String {
+        if let port = await PhoneSites.ready(project.id) { return phonePage(port: port) }
+        return phonePage(for: project)
+    }
+
+    /// The phone page's address at a port its site is listening on.
+    @MainActor static func phonePage(port: UInt16) -> String {
+        "http://\(Devices.localAddresses.first ?? Devices.macHost):\(port)/"
     }
 }
 
@@ -351,13 +519,22 @@ enum TVPackage {
         return try? Data(contentsOf: out)
     }
 
+    /// What a Samsung package holds before its icon and signatures: the app's files with Lamp's filled in and the
+    /// policy in each page, and Lamp's manifest, never one of the app's.
+    static func wgtFiles(for project: LampProject, staged: URL, guarded: TVNetworkGuard.Policy?) throws -> [(path: String, data: Data)] {
+        var files = try DeviceSupport.fill(self.files(in: staged), for: project).filter { $0.path != "config.xml" && !$0.path.hasSuffix("signature.xml") && $0.path != "signature1.xml" }
+        if let guarded { files = TVNetworkGuard.guarded(files, policy: TVNetworkGuard.tvPage(guarded)) }
+        files.append(("config.xml", Data(TVTemplate.tizenConfig(for: project, guarded: guarded).utf8)))
+        return files
+    }
+
     /// A signed Samsung package (`.wgt`): the app's files, Lamp's config and icon, and the two signatures.
-    static func wgt(for project: LampProject, staged: URL, duid: String) async throws -> URL {
+    /// `guarded`: the shared app's network policy, put in every page and the manifest (`TVNetworkGuard`).
+    static func wgt(for project: LampProject, staged: URL, duid: String, guarded: TVNetworkGuard.Policy?) async throws -> URL {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wgt-\(UUID().uuidString)")
         let tree = work.appendingPathComponent("package")
         try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
-        var files = try self.files(in: staged).filter { $0.path != "config.xml" && !$0.path.hasSuffix("signature.xml") && $0.path != "signature1.xml" }
-        files.append(("config.xml", Data(TVTemplate.tizenConfig(for: project).utf8)))
+        var files = try wgtFiles(for: project, staged: staged, guarded: guarded)
         if let icon = await icon(for: project, size: 512, in: work) { files.removeAll { $0.path == "icon.png" }; files.append(("icon.png", icon)) }
         files.sort { $0.path < $1.path }
         let signatures = try TizenSigning.signatures(for: files, duid: duid)
@@ -374,7 +551,10 @@ enum TVPackage {
     }
 
     /// An LG package (`.ipk`): an ar archive of the package's version, its control file and its data, as LG's packager makes it.
-    static func ipk(for project: LampProject, staged: URL) async throws -> URL {
+    /// `phones`: the game's own phone service (`LGPhones`), in the package beside the app, as LG's packager puts an app's
+    /// services, with the game's lamp.js naming it.
+    /// `guarded`: the shared app's network policy, put in every page (`TVNetworkGuard`).
+    static func ipk(for project: LampProject, staged: URL, phones: LGPhones.Service? = nil, guarded: TVNetworkGuard.Policy? = nil) async throws -> URL {
         let fm = FileManager.default
         let id = TVTemplate.webOSID(for: project)
         let work = fm.temporaryDirectory.appendingPathComponent("lamp-ipk-\(UUID().uuidString)")
@@ -384,16 +564,33 @@ enum TVPackage {
         try fm.createDirectory(at: info, withIntermediateDirectories: true)
         try fm.createDirectory(at: work.appendingPathComponent("control"), withIntermediateDirectories: true)
         var size = 0
-        for (path, data) in try files(in: staged) where path != "appinfo.json" {
+        var filled = DeviceSupport.fill(try files(in: staged), for: project)
+        if let guarded { filled = TVNetworkGuard.guarded(filled, policy: TVNetworkGuard.tvPage(guarded)) }
+        // A game whose lamp.js comes from before the service (built by an earlier Lamp, not built since) asks Lamp for its
+        // phones, so it goes as it always has, without one.
+        let service = filled.first { $0.path == "lamp.js" }.flatMap { LGPhones.names($0.data) ? phones : nil }
+        for (path, data) in filled where path != "appinfo.json" {
             let url = app.appendingPathComponent(path)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: url)
-            size += data.count
+            var written = data
+            if path == "lamp.js", let service { written = try LGPhones.naming(data, service: service.id) }
+            try written.write(to: url)
+            size += written.count
+        }
+        if let service {
+            let folder = work.appendingPathComponent("data/usr/palm/services/\(service.id)")
+            for (path, data) in service.files {
+                let url = folder.appendingPathComponent(path)
+                try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url)
+                size += data.count
+            }
         }
         try Data(TVTemplate.webOSAppInfo(for: project).utf8).write(to: app.appendingPathComponent("appinfo.json"))
         if let icon = await icon(for: project, size: 80, in: work) { try icon.write(to: app.appendingPathComponent("icon.png")) }
         if let large = await icon(for: project, size: 130, in: work) { try large.write(to: app.appendingPathComponent("largeIcon.png")) }
-        let packageInfo = ["app": id, "id": id, "loc_name": project.name, "package_format_version": 2, "vendor": "Lamp", "version": "1.0.0"] as [String: Any]
+        var packageInfo = ["app": id, "id": id, "loc_name": project.name, "package_format_version": 2, "vendor": "Lamp", "version": "1.0.0"] as [String: Any]
+        if let service { packageInfo["services"] = [service.id] }
         try JSONSerialization.data(withJSONObject: packageInfo, options: [.sortedKeys]).write(to: info.appendingPathComponent("packageinfo.json"))
         let control = """
             Package: \(id)
@@ -446,6 +643,16 @@ enum WebOS {
     }
     private static var knownHosts: URL { TVs.folder.appendingPathComponent("LG/known_hosts") }
 
+    /// Lets go of the host key kept for a TV's address, for Reconnect and Forget: a reset TV answers SSH with a new one.
+    static func forgetHost(_ address: String) {
+        guard !address.isEmpty, let text = try? String(contentsOf: knownHosts, encoding: .utf8) else { return }
+        let kept = text.split(separator: "\n", omittingEmptySubsequences: false).filter { line in
+            let hosts = line.split(separator: " ").first.map { $0.split(separator: ",") } ?? []
+            return !hosts.contains { $0 == Substring(address) || $0 == Substring("[\(address)]:9922") }
+        }
+        try? kept.joined(separator: "\n").write(to: knownHosts, atomically: true, encoding: .utf8)
+    }
+
     /// Fetches the TV's key and unlocks it with the passphrase the TV shows; keeps the TV once SSH answers with it.
     static func connect(_ record: TVs.Record, passphrase: String) async throws -> TVs.Record {
         let fm = FileManager.default
@@ -487,21 +694,79 @@ enum WebOS {
     @discardableResult
     static func ssh(_ record: TVs.Record, _ command: String, key: URL? = nil, timeout: TimeInterval = 60) async throws -> String {
         let result = await Subprocess.run("/usr/bin/ssh", sshOptions(record, key: key) + ["prisoner@\(record.address)", command], mergeErrors: false, timeout: timeout)
-        guard result.ok else { throw TVs.Failure(message: "\(record.name) didn't answer: \(result.errors.trimmed.isEmpty ? "it may have left developer mode" : result.errors.trimmed)") }
+        guard result.ok else { throw unanswered(record, result) }
         return result.output
+    }
+
+    private static func unanswered(_ record: TVs.Record, _ result: Subprocess.Result) -> TVs.Failure {
+        TVs.Failure(message: "\(record.name) didn't answer: \(result.errors.trimmed.isEmpty ? "it may have left developer mode" : result.errors.trimmed)")
     }
 
     static func install(_ package: URL, appID: String, on record: TVs.Record) async throws {
         let remote = "/media/developer/temp/\(package.lastPathComponent)"
-        let copy = await Subprocess.run("/usr/bin/scp", ["-O"] + sshOptions(record).map { $0 == "-p" ? "-P" : $0 } + [package.path, "prisoner@\(record.address):\(remote)"], timeout: 300)
-        guard copy.ok else { throw TVs.Failure(message: "Lamp couldn't copy the app to \(record.name): \(copy.output.trimmed)") }
+        try await put(package, to: remote, on: record)
         let payload = "{\"id\":\"\(appID)\",\"ipkUrl\":\"\(remote)\",\"subscribe\":true}"
-        let output = try await ssh(record, "luna-send-pub -w 120000 -i luna://com.webos.appInstallService/dev/install '\(payload)' | grep -m 1 -E 'installed|fail|error'; rm -f \(remote)", timeout: 150)
-        guard output.contains("installed") else { throw TVs.Failure(message: "\(record.name) didn't install the app: \(output.trimmed)") }
+        let reply: String
+        do {
+            reply = try await luna(record, "luna://com.webos.appInstallService/dev/install", payload,
+                                   until: #""state":"installed"|failed|"returnValue":false"#)
+        } catch {
+            try? await ssh(record, "/bin/rm -f '\(remote)'")
+            throw error
+        }
+        try? await ssh(record, "/bin/rm -f '\(remote)'")
+        guard reply.contains(#""state":"installed""#) else {
+            throw TVs.Failure(message: "\(record.name) didn't install the app\(said(reply))")
+        }
+    }
+
+    /// Calls a service on the TV and gives back its replies up to the first that `until` (a pattern) matches.
+    /// `luna-send-pub` gives up as soon as its input closes, before any reply, so its input is kept open until that
+    /// reply comes, as LG's own tools keep it, and `-w` ends a call nothing answers. The service and payload are
+    /// Lamp's own, with no single quotes in them.
+    static func luna(_ record: TVs.Record, _ uri: String, _ payload: String, until: String, seconds: Int = 120) async throws -> String {
+        func answered(_ line: Substring) -> Bool { line.range(of: until, options: [.regularExpression, .caseInsensitive]) != nil }
+        let result = await Subprocess.run("/usr/bin/ssh", sshOptions(record) + ["prisoner@\(record.address)",
+                                          "luna-send-pub -w \(seconds * 1000) -i \(uri) '\(payload)'"],
+                                          mergeErrors: false, timeout: TimeInterval(seconds + 30),
+                                          keepInputOpenUntil: { $0.split(separator: "\n").contains(where: answered) })
+        guard result.ok else { throw unanswered(record, result) }
+        let lines = result.output.split(separator: "\n")
+        return (lines.firstIndex(where: answered).map { lines[...$0] } ?? lines[...]).joined(separator: "\n")
+    }
+
+    /// The TV's reason in a reply, for the person: what it says went wrong, else nothing.
+    private static func said(_ reply: String) -> String {
+        guard let line = reply.split(separator: "\n").last,
+              let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return "." }
+        let details = json["details"] as? [String: Any]
+        let reason = (details?["reason"] as? String) ?? (json["errorText"] as? String) ?? (details?["state"] as? String) ?? ""
+        return reason.isEmpty ? "." : ": \(reason)"
+    }
+
+    /// Copies a file to the TV the way LG's own installer (ares-install) does: into the developer folder over SFTP, which
+    /// the TV's SSH server has built in, and on a TV whose server offers none, streamed into `cat` over SSH. The
+    /// developer-mode shell has no `scp` program, so scp's old protocol (`-O`), which runs one on the TV, can't work.
+    /// The name is the package's own (letters, digits, dots, dashes and underscores), so it needs no quoting beyond this.
+    static func put(_ file: URL, to remote: String, on record: TVs.Record) async throws {
+        try await ssh(record, "/bin/mkdir -p '\((remote as NSString).deletingLastPathComponent)'")
+        let host = "prisoner@\(record.address)"
+        let batch = "put \"\(file.path)\" \"\(remote)\"\n"
+        let sftp = await Subprocess.run("/usr/bin/sftp", ["-b", "-"] + sshOptions(record).map { $0 == "-p" ? "-P" : $0 } + [host],
+                                        timeout: 300, input: Data(batch.utf8))
+        if sftp.ok { return }
+        let stream = await Subprocess.run("/usr/bin/ssh", sshOptions(record) + [host, "/bin/cat > '\(remote)'"], mergeErrors: false,
+                                          timeout: 300, input: try Data(contentsOf: file))
+        guard stream.ok else {
+            throw TVs.Failure(message: "Lamp couldn't copy the app to \(record.name): \((stream.errors.trimmed.isEmpty ? sftp.output : stream.errors).trimmed)")
+        }
     }
 
     static func launch(_ appID: String, on record: TVs.Record) async throws {
-        try await ssh(record, "luna-send-pub -n 1 luna://com.webos.applicationManager/launch '{\"id\":\"\(appID)\"}'")
+        let reply = try await luna(record, "luna://com.webos.applicationManager/launch", "{\"id\":\"\(appID)\"}", until: "returnValue", seconds: 30)
+        guard reply.contains(#""returnValue":true"#) else {
+            throw TVs.Failure(message: "\(record.name) installed the app but didn't open it\(said(reply))")
+        }
     }
 
     /// Developer mode lapses after about 50 hours; asking LG to reset its clock with the TV's own session token keeps it.
@@ -528,6 +793,7 @@ extension Device {
                             features: record.frame ? ["Art Mode"] : [], reach: .network)
         device.connected = onNetwork
         device.paired = kept
+        device.kept = kept
         device.developerMode = record.isSamsung
             ? record.developerMode && TVs.macAddresses().contains(record.developerIP ?? "")
             : FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path)

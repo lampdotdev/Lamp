@@ -26,8 +26,8 @@ extension ChatLook {
         public var body: some View {
             // A pill on one line; where that would cut what it's part of short, the name over it, in a rounded box.
             ViewThatFits(in: .horizontal) {
-                pill(stacked: false).background(Color.accentColor.opacity(0.1), in: Capsule())
-                pill(stacked: true).background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                pill(stacked: false).background(Paper.ink.opacity(0.1), in: Capsule())
+                pill(stacked: true).background(Paper.ink.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(detail.map { "Selected: \(title), \($0)" } ?? "Selected: \(title)")
@@ -57,7 +57,7 @@ extension ChatLook {
 
         private func label(stacked: Bool) -> some View {
             HStack(alignment: stacked ? .firstTextBaseline : .center, spacing: 5) {
-                Image(systemName: "scope").foregroundStyle(Color.accentColor)
+                Image(systemName: "scope").foregroundStyle(Paper.ink)
                 if stacked {
                     VStack(alignment: .leading, spacing: 1) { name; whereItIs }
                         .fixedSize(horizontal: false, vertical: true)

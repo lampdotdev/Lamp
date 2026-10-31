@@ -11,13 +11,13 @@ enum PhoneTools {
     /// Store's synchronous creation guard immediately follows the UI preflight. Reuse that result so it
     /// doesn't run the same Xcode commands again on the main thread. Explicit rechecks never use the cache.
     static func checked(family: DeviceFamily = .iphone, phone: String? = nil, requiresTeam: Bool = false,
-                        requiresPaidTeam: Bool = false, useCache: Bool = false) -> Report {
+                        requiresPaidTeam: Bool = false, paidFor: [String] = [], useCache: Bool = false) -> Report {
         let active = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
         if useCache, phone == nil, !requiresTeam, let previous = cacheLock.withLock({ cached[family] }),
            previous.developer == active, Date().timeIntervalSince(previous.date) < 10 {
             return previous.report
         }
-        let report = check(family: family, phone: phone, requiresTeam: requiresTeam, requiresPaidTeam: requiresPaidTeam)
+        let report = check(family: family, phone: phone, requiresTeam: requiresTeam, requiresPaidTeam: requiresPaidTeam, paidFor: paidFor)
         if phone == nil { cacheLock.withLock { cached[family] = (active, Date(), report) } }
         return report
     }
@@ -70,6 +70,7 @@ enum PhoneTools {
         }
         var hasViewer: (String) -> Bool = { viewer(in: $0) != nil }
         var teams: () -> [(id: String, name: String)] = xcodeTeams
+        var accountsWithoutTeams: () -> Int = { xcodeAccountsWithoutTeams() }
         var freeTeams: () -> Set<String> = { xcodeFreeTeams() }
         var team: () -> String = { (UserDefaults.standard.string(forKey: teamPreference) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
         var chooseTeam: (String) -> Void = { UserDefaults.standard.set($0, forKey: teamPreference) }
@@ -124,6 +125,19 @@ enum PhoneTools {
         }
         return teams.sorted { $0.name < $1.name }
     }
+
+    /// The accounts signed in to Xcode that it lists no team for yet. Xcode writes a newly added free account's team
+    /// (its Personal Team) where `xcodeTeams` reads only once the team has an Apple Development certificate, so until
+    /// then the account is signed in and Lamp can't sign with it.
+    static func xcodeAccountsWithoutTeams(in defaults: UserDefaults? = UserDefaults(suiteName: "com.apple.dt.Xcode")) -> Int {
+        let accounts = (defaults?.dictionary(forKey: "DVTDeveloperAccountManagerAppleIDLists") ?? [:]).values
+            .compactMap { $0 as? [[String: Any]] }.joined().compactMap { $0["identifier"] as? String }
+        let teams = defaults?.dictionary(forKey: "IDEProvisioningTeamByIdentifier") ?? [:]
+        return Set(accounts).filter { ((teams[$0] as? [Any]) ?? []).isEmpty }.count
+    }
+
+    /// The words for an account Xcode lists no team for yet (`xcodeAccountsWithoutTeams`), naming the steps that give it one.
+    static let teamlessAccount = "Xcode is signed in with an Apple Account it hasn't set up a team for yet. Click Open Xcode, choose Xcode → Settings from the menu bar, click Apple Accounts and choose the account's team, then click Manage Certificates, click + and choose Apple Development."
 
     /// Those of Xcode's teams that come with a free Apple Account rather than a membership of the Apple
     /// Developer Program, as Xcode marks them. Apple gives these no iCloud, so an app that keeps data there
@@ -273,7 +287,8 @@ enum PhoneTools {
     /// Stop at the first failed check: later commands often fail only because an earlier step is missing.
     /// A simulator is needed even for a real phone, because that's where Lamp's agent tries the app.
     static func check(family: DeviceFamily = .iphone, phone: String? = nil, requiresTeam: Bool = false,
-                      requiresPaidTeam: Bool = false, probe: Probe = Pretend.isMissing("xcode") ? .pretending : Probe()) -> Report {
+                      requiresPaidTeam: Bool = false, paidFor: [String] = [],
+                      probe: Probe = Pretend.isMissing("xcode") ? .pretending : Probe()) -> Report {
         var report = Report()
         func stop(_ step: Step, _ title: String, _ message: String, _ action: Action) -> Report {
             report.issue = Issue(step: step, title: title, message: message, action: action)
@@ -332,15 +347,18 @@ enum PhoneTools {
             return stop(.runtime, "The simulator isn't responding", "The simulator is the iPhone or iPad that appears on your Mac's screen. Lamp started it again and still got no answer. Restart your Mac, then come back to Lamp and click Check Again.", .retry)
         }
         guard list.contains(where: { runtime in
-            (runtime["identifier"] as? String ?? "").contains("SimRuntime.iOS-")
-                && major(runtime["version"] as? String) >= minimumIOS && runtime["isAvailable"] as? Bool == true
+            (runtime["identifier"] as? String ?? "").contains(family.runtimeKey)
+                && major(runtime["version"] as? String) >= (family.isOtherOS ? family.minimum : minimumIOS) && runtime["isAvailable"] as? Bool == true
         }) else {
+            if family.isOtherOS {
+                return stop(.runtime, "Download \(family.os) for the simulator", "Lamp tries your app on \(family.name) in a simulator that appears on your Mac's screen, and that needs \(family.os). Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components and click Get beside \(family.os). Come back to Lamp when the download finishes.", .components)
+            }
             return stop(.runtime, "Download iOS for the simulator", "Lamp tries your app in a simulator, an iPhone or iPad that appears on your Mac's screen, and that needs iOS \(minimumIOS) or later. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components (Platforms in older versions of Xcode) and click Get beside the newest iOS. Come back to Lamp when the download finishes.", .components)
         }
         report.passed.append(.runtime)
         let devices = probe.run(DeveloperTools.path("simctl", in: developer), ["list", "devices", "available", "-j"], env)
         guard devices.ok, Simulator.device(family, listing: devices.output) != nil else {
-            return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with iOS \(minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
+            return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with \(family.os) \(family.isOtherOS ? family.minimum : minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
         }
         // The devices are run by a service and shown by an app (Simulator, or Device Hub in Xcode 27): an Xcode
         // without it would run the app on a screen nobody can see.
@@ -355,9 +373,14 @@ enum PhoneTools {
             // One signed-in team is chosen by itself, as Settings does.
             let what = phone != nil ? "Putting an app on your own iPhone or iPad" : "An app for both the Mac and the iPhone"
             let teams = probe.teams()
+            // What the app uses that Apple signs only for a paid team, in the words of every message below.
+            let uses = paidFor.isEmpty ? "iCloud" : paidFor.count == 1 ? paidFor[0] : paidFor.dropLast().joined(separator: ", ") + " and " + paidFor.last!
             guard !teams.isEmpty else {
+                if probe.accountsWithoutTeams() > 0 {
+                    return stop(.account, "Finish setting up your Apple Account", teamlessAccount + " Come back to Lamp and click Check Again.", .openXcode)
+                }
                 // A free account is turned away below, so it isn't offered here to an app it can't sign.
-                let account = requiresPaidTeam ? "This app keeps its data in iCloud, so it needs an Apple Account with a paid Apple Developer membership signed in to Xcode."
+                let account = requiresPaidTeam ? "This app uses \(uses), so it needs an Apple Account with a paid Apple Developer membership signed in to Xcode."
                     : "\(what) needs an Apple Account signed in to Xcode; a free one will do."
                 return stop(.account, "Sign in to Xcode", "\(account) Click Open Xcode, choose Xcode → Settings from the menu bar, click Accounts, then click + and sign in. Come back to Lamp and click Check Again.", .openXcode)
             }
@@ -369,14 +392,15 @@ enum PhoneTools {
                 team = teams[0].id
                 probe.chooseTeam(team)
             }
-            // Apple gives iCloud only to members of its Developer Program. A free account's team would pass
-            // everything here and then fail when Xcode signs the app, so it stops now, with the ways on.
+            // Apple gives some capabilities only to members of its Developer Program (iCloud, Siri, NFC…). A free
+            // account's team would pass everything here and then fail when Xcode signs the app, so it stops now,
+            // with the ways on.
             if requiresPaidTeam {
                 let free = probe.freeTeams()
                 if free.contains(team) {
                     var stopped = teams.contains(where: { !free.contains($0.id) })
-                        ? stop(.account, "Choose your paid Apple team", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership, and the team chosen in Lamp is a free one. Click Open Settings and choose your paid team under Building, then click Check Again.", .settings)
-                        : stop(.account, "This app needs a paid Apple membership", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. The account signed in to Xcode is a free one. Click See Membership to join on Apple's website, then click Check Again. To keep working without one, click Cancel and choose a simulator under Try On, or ask Lamp to keep the data on the device instead.", .membership)
+                        ? stop(.account, "Choose your paid Apple team", "This app uses \(uses), which Apple allows only with a paid Apple Developer membership, and the team chosen in Lamp is a free one. Click Open Settings and choose your paid team under Building, then click Check Again.", .settings)
+                        : stop(.account, "This app needs a paid Apple membership", "This app uses \(uses), which Apple allows only with a paid Apple Developer membership. The account signed in to Xcode is a free one. Click See Membership to join on Apple's website, then click Check Again. To keep working without one, click Cancel and choose a simulator under Try On, or ask Lamp to take \(paidFor.count > 1 ? "them" : "it") out.", .membership)
                     stopped.issue?.needsPaidTeam = true
                     return stopped
                 }

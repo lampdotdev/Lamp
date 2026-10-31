@@ -1,0 +1,3 @@
+# Who reviews changes to Lamp. GitHub asks these people for review on every pull request, and the "Protect main"
+# ruleset can require their approval once the repository is public.
+* @mrubens @brunobergher @daniel-lxs

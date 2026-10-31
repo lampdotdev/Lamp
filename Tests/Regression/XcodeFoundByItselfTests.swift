@@ -35,7 +35,9 @@ final class XcodeFoundByItselfTests: XCTestCase {
 
     func testAnXcodeInApplicationsIsTakenWhenTheCommandLineToolsAreSelected() throws {
         try makeXcode(at: applications.appendingPathComponent("Xcode.app"))
-        let real = realpath(applications.path, nil).map { defer { free($0) }; return String(cString: $0) }!
+        let resolved = realpath(applications.path, nil)!
+        defer { free(resolved) }
+        let real = String(cString: resolved)
         XCTAssertEqual(found(), real + "/Xcode.app/Contents/Developer")
     }
 

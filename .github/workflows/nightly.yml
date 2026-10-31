@@ -1,0 +1,160 @@
+# Builds, signs, notarizes and publishes Lamp Nightly from every push to main: a separate app from Lamp (its own
+# name, icon, bundle id, folders and update feed, Sources/Lamp/Edition.swift). One rolling pre-release, tagged
+# "nightly", whose tag moves to the commit and whose sparkle.json, title and notes are replaced each time, the new DMG
+# added and the newest three kept: a release is published once and edited from then on, so whatever listens for
+# releases (Slack) hears of a nightly once, never of each. The version is the last release plus the commits since it (0.24.0+37, as build.sh names a
+# build from source), with build number 0.24.0.37 so Sparkle orders the nightlies among themselves. Lamp Nightly
+# updates from /nightly/appcast.xml, which lists that one release (updates/api/appcast.js); Lamp and the website's
+# Download never see it.
+#
+# The same secrets and steps as mac-release.yml, from the "release" environment, which main may use as v* tags may.
+name: Nightly
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A build takes longer than main often goes between pushes, so one under way always finishes: cancelled by each newer
+# push, nightlies would rarely ship on a busy day. Meanwhile GitHub keeps only the latest push waiting, dropping any
+# older one, so the next nightly is always of main as it is then, and builds never pile up.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: xcode-27   # macOS 27 with Xcode 27, the same image as mac-build.yml and mac-release.yml
+    timeout-minutes: 60
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the version counts commits since the last release tag
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_$(cat .github/xcode-version).app"
+          xcodebuild -version
+
+      - name: Version
+        # A push that is a release tag itself is the release workflow's; nothing to add here.
+        run: |
+          described="$(git describe --tags --match 'v[0-9]*' 2>/dev/null || true)"
+          if [[ "$described" =~ ^v([0-9.]+)-([0-9]+)-g[0-9a-f]+$ ]]; then
+            echo "VERSION=${BASH_REMATCH[1]}+${BASH_REMATCH[2]}" >> $GITHUB_ENV
+            echo "BUILD=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" >> $GITHUB_ENV
+            echo "LAST_TAG=v${BASH_REMATCH[1]}" >> $GITHUB_ENV
+          else
+            echo "This commit is a release, or no release tag is reachable: no nightly."
+            echo "VERSION=" >> $GITHUB_ENV
+          fi
+
+      - name: Cache pi and llama.cpp downloads
+        if: env.VERSION != ''
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('build.sh') }}
+
+      - name: Import signing certificate
+        if: env.VERSION != ''
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN=$RUNNER_TEMP/signing.keychain-db
+          KC_PASS=$(openssl rand -hex 16)
+          echo "$P12" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security import $RUNNER_TEMP/cert.p12 -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm $RUNNER_TEMP/cert.p12
+
+      - name: Store notary credentials
+        if: env.VERSION != ''
+        run: |
+          xcrun notarytool store-credentials forge-notary \
+            --apple-id "${{ secrets.NOTARY_APPLE_ID }}" \
+            --team-id "${{ secrets.NOTARY_TEAM_ID }}" \
+            --password "${{ secrets.NOTARY_PASSWORD }}"
+
+      - name: Build, sign, notarize
+        if: env.VERSION != ''
+        run: FLAVOR=nightly APP_BUILD="$BUILD" ./release.sh "$VERSION"
+
+      - name: Sign the update for Sparkle
+        if: env.VERSION != ''
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: swift scripts/sparkle-sign.swift "dist/Lamp-Nightly-$VERSION.dmg" "$BUILD" "$VERSION" > dist/sparkle.json
+
+      - name: Release notes
+        # What changed since the last release, one line a commit: people on nightlies read it in the update window.
+        if: env.VERSION != ''
+        run: |
+          {
+            echo "Lamp Nightly from main at ${GITHUB_SHA:0:8}, with every change since $LAST_TAG:"
+            echo
+            git log --format='- %s' "$LAST_TAG..HEAD" | head -40
+          } > dist/notes.md
+          cat dist/notes.md
+
+      - name: Publish the nightly
+        if: env.VERSION != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The tag follows the commit; the release is made once and edited after that, never published again. The new
+          # DMG goes up whole before sparkle.json names it and before any old one comes down, so a run cut short leaves
+          # the release whole and the feed never pairs a signature with another file; the newest three stay, since the
+          # feed is cached for a quarter of an hour and an update window may stay open longer, and each names the DMG
+          # it signed (updates/api/appcast.js), which must still be there to verify.
+          # What this nightly fetches when it's needed (dist/assets: each starter's prebuilt app, named by its version)
+          # goes up with its DMG.
+          git push -f origin "$GITHUB_SHA:refs/tags/nightly"
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/assets/* --clobber
+            gh release upload nightly dist/sparkle.json --clobber
+            gh release edit nightly --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
+          else
+            gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json dist/assets/* \
+              --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
+          fi
+          gh release view nightly --json assets \
+            --jq '[.assets[] | select(.name | test("^Lamp-Nightly-.*\\.dmg$"))] | sort_by(.createdAt) | reverse | .[3:] | .[].name' |
+          while read -r old; do
+            [ -n "$old" ] || continue
+            echo "Removing $old"
+            gh release delete-asset nightly "$old" --yes || true
+          done
+          # What each nightly fetches when it's needed (its prebuilt starters, llama.cpp) stays far longer than its DMG:
+          # an installed nightly pins those files for as long as it runs, while a DMG only has to outlast update offers.
+          # The newest 20 versions' are kept, each version named at the end of its files.
+          gh release view nightly --json assets \
+            --jq '[.assets[] | select(.name | test("^Lamp-Nightly-.*\\.zip$"))] | sort_by(.createdAt) | reverse | .[].name' |
+          awk '{ v = $0; sub(/\.zip$/, "", v); sub(/.*-/, "", v); if (!(v in seen)) { seen[v] = 1; n++ } if (n > 20) print }' |
+          while read -r old; do
+            [ -n "$old" ] || continue
+            echo "Removing $old"
+            gh release delete-asset nightly "$old" --yes || true
+          done
+
+      - name: Remove nightlies published one release each
+        # Left by the first shape of this workflow (nightly-<version> releases), which told of each.
+        if: env.VERSION != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 200 --json tagName,isPrerelease --jq '.[] | select(.isPrerelease and (.tagName | startswith("nightly-"))) | .tagName' |
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "Removing $tag"
+            gh release delete "$tag" --yes --cleanup-tag || true
+          done

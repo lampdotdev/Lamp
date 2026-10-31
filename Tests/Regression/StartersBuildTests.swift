@@ -1,7 +1,7 @@
 import XCTest
 @testable import Lamp
 
-/// Each wish Lamp comes with, set up as the first launch sets it up (`Store.installStarters`) and built with the
+/// Each wish Lamp comes with, set up as opening it from the desk sets it up (`Store.add(starter:)`) and built with the
 /// build.sh Lamp writes for it, widget and all, the way Lamp runs it (`Store.runBuild`, in the app's sandbox). Minutes of compiling, so only when asked:
 /// `LAMP_BUILD_STARTERS=1 swift test --filter StartersBuildTests` (or `=today` for one). With
 /// `LAMP_STARTERS_OUT=<folder>` the apps are kept there, to open and try.
@@ -11,19 +11,14 @@ final class StartersBuildTests: XCTestCase {
         guard let only = ProcessInfo.processInfo.environment["LAMP_BUILD_STARTERS"] else {
             throw XCTSkip("Set LAMP_BUILD_STARTERS=1 to build every starter.")
         }
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let kept = ProcessInfo.processInfo.environment["LAMP_STARTERS_OUT"].map { URL(fileURLWithPath: $0) }
         let root = kept ?? FileManager.default.temporaryDirectory.appendingPathComponent("lamp-starters-\(UUID().uuidString)")
         defer { if kept == nil { try? FileManager.default.removeItem(at: root) } }
-        let folders = try FileManager.default.contentsOfDirectory(at: repo.appendingPathComponent("Resources/Starters"),
-                                                                   includingPropertiesForKeys: nil)
-            .filter { $0.hasDirectoryPath && (only == "1" || $0.lastPathComponent == only) }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let folders = try StarterTrees.folders().filter { only == "1" || $0.lastPathComponent == only }
         XCTAssertFalse(folders.isEmpty)
         for folder in folders {
-            let text = try String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8)
-            let starter = try XCTUnwrap(Starters.parse(text, folder: folder))
-            let project = try Template.draft(name: starter.name, in: root)
+            let starter = try XCTUnwrap(Starters.read(folder))
+            let project = try Template.draft(name: starter.name, platform: starter.kind, in: root)
             try Template.fill(project)
             try Starters.copy(starter, into: project)
             try Template.writeOwnedFiles(for: project)

@@ -46,25 +46,28 @@ enum Simulator {
               let devices = json["devices"] as? [String: [[String: Any]]] else { return [] }
         var found: [(udid: String, name: String, family: DeviceFamily, runtime: [Int])] = []
         for (runtime, list) in devices {
-            guard let range = runtime.range(of: "SimRuntime.iOS-") else { continue }
+            // iOS's iPhones and iPads, and tvOS's and visionOS's devices, which the same app is built for too.
+            guard let os = [DeviceFamily.iphone, .appletv, .vision].first(where: { runtime.contains($0.runtimeKey) }),
+                  let range = runtime.range(of: os.runtimeKey) else { continue }
             let version = runtime[range.upperBound...].split(separator: "-").compactMap { Int($0) }
-            guard let major = version.first, major >= minimumIOS else { continue }
+            guard let major = version.first, major >= (os == .iphone ? minimumIOS : os.minimum) else { continue }
             for device in list {
                 guard let name = device["name"] as? String, let udid = device["udid"] as? String else { continue }
-                let family: DeviceFamily? = name.hasPrefix("iPad") ? .ipad : name.hasPrefix("iPhone") ? .iphone : nil
+                let family: DeviceFamily? = os != .iphone ? os : name.hasPrefix("iPad") ? .ipad : name.hasPrefix("iPhone") ? .iphone : nil
                 if let family { found.append((udid, name, family, version)) }
             }
         }
         let names = Dictionary(grouping: found, by: \.name)
         // iPhones first, by name, and of one name the newest iOS first, comparing the whole version.
         func newer(_ a: [Int], _ b: [Int]) -> Bool { a.lexicographicallyPrecedes(b) == false && a != b }
+        let order: [DeviceFamily: Int] = [.iphone: 0, .ipad: 1, .appletv: 2, .vision: 3]
         return found.sorted { left, right in
-            let l = (left.family == .iphone ? 0 : 1, left.name), r = (right.family == .iphone ? 0 : 1, right.name)
+            let l = (order[left.family] ?? 9, left.name), r = (order[right.family] ?? 9, right.name)
             return l != r ? l < r : newer(left.runtime, right.runtime)
         }.map {
             let ios = $0.runtime.map(String.init).joined(separator: ".")
             return Choice(udid: $0.udid, name: $0.name, family: $0.family, version: $0.runtime.first ?? 0, runtime: $0.runtime,
-                          label: (names[$0.name]?.count ?? 0) > 1 ? "\($0.name) (iOS \(ios))" : $0.name)
+                          label: (names[$0.name]?.count ?? 0) > 1 ? "\($0.name) (\($0.family.os) \(ios))" : $0.name)
         }
     }
 
@@ -87,8 +90,9 @@ enum Simulator {
         typealias Candidate = (version: Int, name: String, booted: Bool, udid: String)
         var candidates: [Candidate] = []
         for (runtime, list) in devices {
-            guard let range = runtime.range(of: "SimRuntime.iOS-"),
-                  let major = Int(runtime[range.upperBound...].split(separator: "-").first ?? ""), major >= minimumIOS else { continue }
+            guard let range = runtime.range(of: family.runtimeKey),
+                  let major = Int(runtime[range.upperBound...].split(separator: "-").first ?? ""),
+                  major >= (family.isOtherOS ? family.minimum : minimumIOS) else { continue }
             for device in list {
                 guard let name = device["name"] as? String, name.hasPrefix(family.name), let udid = device["udid"] as? String else { continue }
                 candidates.append((major, name, device["state"] as? String == "Booted", udid))
@@ -106,9 +110,34 @@ enum Simulator {
         if show { await self.show(udid) }
     }
 
+    /// Whether the simulator is booted now.
+    static func isBooted(_ udid: String) async -> Bool {
+        await Subprocess.run(DeveloperTools.path("simctl"), ["list", "devices", "booted", "-j"], mergeErrors: false, timeout: 30).output.contains("\"\(udid)\"")
+    }
+
     static func install(_ app: URL, on udid: String) async throws {
         let result = await Subprocess.run(DeveloperTools.path("simctl"), ["install", udid, app.path], timeout: 120)
         guard result.ok else { throw Failure(message: "Couldn't put the app on the simulator: \(result.output.trimmed)") }
+    }
+
+    /// Where an app of a wish of several finds its wish's key on the simulator: in its own folder there, written after
+    /// each install, since the bundle Lamp installs is built in the app's own folder, which versions and shared copies
+    /// carry and the agent's commands write.
+    static let wishKeyFile = "Library/Lamp/wish-key"
+
+    /// Writes the wish's key into the app's own folder on the simulator, readable only by the person's own account, as
+    /// Android's are written into the app's storage (`Android.tellApp`). A failure is logged: the app opens, and says it
+    /// can't reach its wish's other apps.
+    static func tellApp(wishKey: Data, bundleID: String, on udid: String) async {
+        let result = await Subprocess.run(DeveloperTools.path("simctl"), ["get_app_container", udid, bundleID, "data"], mergeErrors: false, timeout: 30)
+        let container = result.output.trimmed
+        guard result.ok, container.hasPrefix("/") else { return NSLog("Lamp couldn't tell \(bundleID) its wish's key: \(result.errors.trimmed)") }
+        let file = URL(fileURLWithPath: container).appendingPathComponent(wishKeyFile)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        if !fm.createFile(atPath: file.path, contents: Data(wishKey.base64EncodedString().utf8), attributes: [.posixPermissions: 0o600]) {
+            NSLog("Lamp couldn't tell \(bundleID) its wish's key.")
+        }
     }
 
     /// Launches the app with its output going to `log`. Returns its process id.
@@ -489,8 +518,14 @@ extension Simulator {
             return matches
         }
 
+        /// The process showing simulators on screen, for the chat beside it (`ChatPanel`).
+        nonisolated static func viewerProcess() -> pid_t? { viewer()?.pid }
+
+        /// The title of a device's window, for the chat to find the one it goes beside.
+        nonisolated static func windowTitle(_ udid: String) -> String? { deviceTitle(udid) }
+
         /// The process showing simulators on screen (Simulator.viewers), if it's running.
-        private static func viewer() -> (pid: pid_t, oneAtATime: Bool)? {
+        private nonisolated static func viewer() -> (pid: pid_t, oneAtATime: Bool)? {
             for id in Simulator.viewers {
                 guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first else { continue }
                 let oneAtATime = id != Simulator.viewers[0]
@@ -1257,7 +1292,7 @@ extension Simulator {
         }
 
         /// The Simulator window's title for a device: "iPhone 16 – iOS 18.6", from its name and runtime.
-        private static func deviceTitle(_ udid: String) -> String? {
+        private nonisolated static func deviceTitle(_ udid: String) -> String? {
             let listing = Subprocess.runBlocking(DeveloperTools.path("simctl"), ["list", "devices", "-j"], mergeErrors: false, timeout: 30).output
             guard let data = listing.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

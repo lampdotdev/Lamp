@@ -166,7 +166,7 @@ enum Devices {
     /// the agent's to change after any look at it. Gives back the copy. `started` gets the copy's process, so
     /// Stop can end it like the build.
     @discardableResult
-    static func stage(_ project: LampProject, team: String, in folder: URL? = nil,
+    static func stage(_ project: LampProject, team: String, in folder: URL? = nil, wishKey: Data? = nil,
                       started: (@MainActor (Process) -> Void)? = nil) async throws -> URL {
         let fm = FileManager.default
         // The app's folder swapped for a link: the copy below couldn't read through it, and an empty app isn't one.
@@ -175,8 +175,12 @@ enum Devices {
         let files = dir.appendingPathComponent("app")
         try? fm.removeItem(at: files)
         try fm.createDirectory(at: files, withIntermediateDirectories: true)
-        try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files)
+        // A game's phone page as it is in the app's folder now, published as a Mac build publishes it (`TVs.stagePhone`,
+        // which turns away links), before the project is written: whether it has one decides the project's resources.
+        if GamePhones.takesOnIOS(project) { try await TVs.stagePhone(project) }
+        try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files, wishKey: wishKey)
         let names = ["Sources", Sharing.Assets.folder, Template.widgetFolder, Template.shareFolder, Template.watchFolder]
+            + (Template.showsPage(project) ? [TVTemplate.webFolder] : [])
         let copy = "cd \"$LAMP_FROM\" && for name in \(names.map(Sandbox.quoted).joined(separator: " ")); do "
             + "if [ -e \"$name\" ] || [ -L \"$name\" ]; then /bin/cp -Rp \"$name\" \"$LAMP_TO/\" || exit 1; fi; done"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [files.path]) else {
@@ -187,6 +191,10 @@ enum Devices {
                                      started: started) { output.append($0) }
         guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to build it.\n\n" + output.suffix(4).joined(separator: "\n")) }
         do { try checkUnlinked(dir) } catch { try? fm.removeItem(at: files); throw error }
+        // A game's page is told the device it's going on (the project's family's row).
+        if GameKit.isGame(project) { try GamePage.stage(files.appendingPathComponent(TVTemplate.webFolder), in: files, for: GamePage.place(for: project, at: .ios)) }
+        // And its phone page, which the game serves itself while it's in front (`GamePhones`), from its resources.
+        try GamePhones.write(project, to: files.appendingPathComponent(GamePhones.iosFolder), in: files)
         return files
     }
 
@@ -251,6 +259,46 @@ enum Devices {
         try Store.checkContained(copy)
         try await TeamSigning.sign(copy, with: plan, in: planDir, identity: identity)
         return copy
+    }
+
+    /// Puts the copy kept on a phone (`PhoneRenewals`) back with a new profile, without opening it: Lamp's project
+    /// planned again with new profiles, the same copy signed with them, installed over itself. Returns when the new
+    /// profile runs out. Throws a `PhoneFailure` the person can act on, or why the copy couldn't be signed.
+    static func renew(_ project: LampProject, record: PhoneRenewals.Record) async throws -> Date {
+        let app = PhoneRenewals.keptApp(for: project)
+        let signing = PhoneRenewals.keptSigning(for: project)
+        guard FileManager.default.fileExists(atPath: app.path), FileManager.default.fileExists(atPath: signing.path) else {
+            throw Failure(message: "Lamp no longer has the copy that's on the phone. Press Play to put the app there again.")
+        }
+        var output: [String] = []
+        let plan: TeamSigning.Plan, planDir: URL
+        do {
+            (plan, planDir) = try await TeamSigning.plan(for: project, team: record.team, place: .iphone, destination: "id=\(record.udid)", renewing: signing) { output.append($0) }
+        } catch {
+            throw PhoneFailure(stage: .build, output: output.joined(separator: "\n") + "\n" + error.localizedDescription)
+        }
+        guard let identity = await signingIdentity(for: record.team) else {
+            throw Failure(message: "This Mac has no certificate for your Apple team. Open Xcode → Settings → Accounts, choose the team and click Manage Certificates.")
+        }
+        try await TeamSigning.sign(app, with: plan, in: planDir, identity: identity)
+        try await install(app, on: record.udid)
+        return await TeamSigning.expiry(of: app.appendingPathComponent("embedded.mobileprovision")) ?? plan.expires
+    }
+
+    /// The bundle ids of the apps a developer built on the phone, or nil when it couldn't be asked.
+    static func developerApps(on udid: String) async -> [String]? {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-phone-apps-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "info", "apps", "--device", udid, "--json-output", file.path],
+                                          mergeErrors: true, timeout: 60)
+        guard result.ok, let data = try? Data(contentsOf: file) else { return nil }
+        return PhoneSlots.developerApps(in: data)
+    }
+
+    static func uninstall(_ bundleID: String, from udid: String) async throws {
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "uninstall", "app", "--device", udid, bundleID],
+                                          mergeErrors: true, timeout: 120)
+        guard result.ok else { throw PhoneFailure(stage: .install, output: result.output + "\n" + result.errors) }
     }
 
     static func install(_ app: URL, on udid: String) async throws {
@@ -323,21 +371,22 @@ enum Devices {
         output.split(separator: "\n").map(String.init).filter { !$0.trimmed.isEmpty }.suffix(lines).joined(separator: "\n")
     }
 
-    /// Why an app that keeps data in iCloud can't be built for `place` (the person's phone, this Mac), or nil
-    /// when it can: Apple signs iCloud only for a team in its Developer Program, so with a free account's team
-    /// Xcode's build would fail at signing. Said at the build, never before a request: a message always
-    /// reaches the agent, which is how the person takes iCloud out again.
-    static func membershipProblem(for project: LampProject, on place: String, team: String = Devices.team,
+    /// Why an app can't be built for `place` (the person's phone, this Mac), or nil when it can: it uses what Apple
+    /// signs only for a team in its Developer Program (`TeamLimits`), so with a free account's team Xcode's build would
+    /// fail at signing.
+    static func membershipProblem(for project: LampProject, on place: String, platform: Destination = .ios, team: String = Devices.team,
                                   free: Set<String> = PhoneTools.xcodeFreeTeams()) -> String? {
-        guard free.contains(team), Template.Capabilities.load(project).container(for: project) != nil else { return nil }
-        return "\(project.name) keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. Your Apple account is a free one, so Lamp can't put the app on \(place). Choose a simulator under Try On to keep working, or ask Lamp to keep the data on the device instead."
+        TeamLimits.problem(for: project, on: place, platform: platform, team: team, free: free)
     }
 
     /// What Try On is set to and what Lamp's device lookup returned, for an iPhone preview result once per turn. The
     /// lookup holds paired phones that are away too, and one that fails returns nothing, so this says what it holds.
-    static func tryOnNote(chosen udid: String?, among all: [Device]) -> String {
+    /// `listed` is false when Lamp hasn't asked for the phones (it asks only once something is done with a device), and
+    /// then nothing is said of them.
+    static func tryOnNote(chosen udid: String?, among all: [Device], listed: Bool = true) -> String {
         let devices = all.filter { $0.kind.isPhone }
         let simulator = "Try On is set to the simulator."
+        if udid == nil, !listed { return simulator }
         if let udid {
             guard let device = devices.first(where: { $0.udid == udid }) else {
                 return "Try On is set to one of the person's phones, which Lamp's device list didn't return. To open the app there, they connect and unlock it, then press Play."

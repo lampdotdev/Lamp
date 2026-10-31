@@ -38,30 +38,45 @@ enum Template {
         return slug
     }
 
+    /// The layout a wish's meta.json says (`NewerWish`): this Lamp's for a wish whose apps are all in folders of their own,
+    /// which a Lamp from before would read as an empty draft and write a new app into, and none for every other wish and
+    /// part, which such a Lamp reads as it always did.
+    /// A wish whose apps a Lamp from before wouldn't find as they are (two of one code, or one in a folder of another
+    /// name: `Parts.readByEarlierLamp`) says this Lamp's layout whatever its own folder holds, so that Lamp leaves it be.
+    static func layout(of project: LampProject) -> Int? {
+        if !project.isPart, !Parts.readByEarlierLamp(project) { return NewerWish.layout }
+        return project.holdsApp ? nil : NewerWish.foldersLayout
+    }
+
+    /// Written without following a link on the way (`AppFolder`): `.lamp` is in the app's folder, which the agent writes.
     static func saveMeta(_ project: LampProject) throws {
-        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
-                                             platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
-                                             device: project.device, target: project.platform == .universal ? project.chosen : nil,
-                                             simulator: project.platform.hasIOS ? project.simulator : nil,
+        try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
+                                             platform: project.platform, family: project.hasIOS ? project.family : nil,
+                                             device: project.device, target: project.platform.choosesPlace ? project.chosen : nil,
+                                             places: project.platform.addsPlaces ? project.places : nil,
+                                             engine: project.platform.addsPlaces ? project.engine : nil,
+                                             simulator: project.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
-                                             integration: project.platform == .device ? project.integration : nil))
-            .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+                                             integration: project.hasDevice ? project.integration : nil,
+                                             undecided: project.undecided,
+                                             apps: project.apps.isEmpty ? nil : project.apps,
+                                             waitsForDevice: project.waitsForDevice ? true : nil,
+                                             decided: project.decided ? true : nil, layout: layout(of: project))),
+                            to: project.dir.appendingPathComponent(".lamp/meta.json"), in: project.dir)
     }
 
-    /// Writes the scaffold into a draft's folder, as the kind of app it is now.
+    /// Writes the scaffold into a draft's folder, as the kind of app it is now (`Target.Recipe.fill`).
+    /// Never into a wish whose apps are all in folders of their own: a new app of it goes in a folder of its own too.
     static func fill(_ project: LampProject) throws {
-        let app: String, view: String, md: String
-        switch project.platform {
-        case .mac: (app, view, md) = (appSwift, contentViewSwift, appMd)
-        case .iphone: (app, view, md) = (iPhoneAppSwift, iPhoneContentViewSwift, iPhoneAppMd)
-        case .universal: (app, view, md) = (universalAppSwift, universalContentViewSwift, universalAppMd)
-        case .android: try fillAndroid(project); return
-        case .tv: try TVTemplate.fill(project); return
-        case .device: try DeviceApps.fill(project); return
-        }
+        guard project.holdsApp else { return }
+        try project.platform.target.recipe.fill(project)
+    }
+
+    /// A Swift app's scaffold, from its kind's App, ContentView and APP.md.
+    static func fillSwift(_ project: LampProject, app: String, view: String, md: String) throws {
         try write(app, to: "Sources/App.swift", for: project)
         try write(view, to: "Sources/ContentView.swift", for: project)
         try write(md, to: "APP.md", for: project)
@@ -113,6 +128,11 @@ enum Template {
     /// Writes one of Lamp's own files into the app's folder when it isn't already what it should be (so its date
     /// moves only when the app needs a rebuild), without following a link on the way (`AppFolder`), and
     /// executable when asked.
+    /// Lamp's own picture in an app's folder, written only when it differs, as text is.
+    static func put(_ data: Data, at url: URL, for project: LampProject) throws {
+        if AppFile.read(url, in: project) != data { try AppFolder.write(data, to: url, in: project.dir) }
+    }
+
     static func put(_ contents: String, at url: URL, for project: LampProject, executable: Bool = false) throws {
         if AppFile.read(url, in: project) != Data(contents.utf8) {
             try AppFolder.write(contents, to: url, in: project.dir, mode: executable ? 0o755 : 0o644)
@@ -121,18 +141,19 @@ enum Template {
         }
     }
 
-    /// The three files Lamp owns in every app, written afresh before every build: LampSupport.swift, build.sh
+    /// Lamp's own files in an app, written afresh before every build: each kind's own (`Target.Recipe.ownedFiles`).
+    /// Nothing for a wish whose own folder holds no app (`holdsApp`): its files would make one there again.
+    static func writeOwnedFiles(for project: LampProject) throws {
+        guard project.holdsApp else { return }
+        try project.platform.target.recipe.ownedFiles(project)
+    }
+
+    /// The three files Lamp owns in every Swift app: LampSupport.swift, build.sh
     /// and Package.swift. The last two are what the build runs (the shell runs build.sh, and SwiftPM compiles
     /// and executes Package.swift as a program before building anything), so nothing the agent, or something
     /// the agent read, put in them ever runs: they're replaced, not checked. A failure to write any of them is
     /// a failure to build, since the old file would be what runs.
-    static func writeOwnedFiles(for project: LampProject) throws {
-        // An Android app's own files are the Gradle project's and its Kotlin building blocks.
-        if project.platform == .android { try writeAndroidOwnedFiles(for: project); return }
-        // A TV app's own files are its web code; Lamp's is its building blocks there.
-        if project.platform == .tv { try TVTemplate.writeOwnedFiles(for: project); return }
-        // A device app's build is the integration's package step, which Lamp holds, not a file in the folder.
-        if project.platform == .device { return }
+    static func writeSwiftOwnedFiles(for project: LampProject, build: (_ widget: Bool, _ share: Bool) throws -> Void) throws {
         // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
         // Lamp's own folder (`phoneSecret(in:)`).
         AppFolder.remove(project.dir.appendingPathComponent(".lamp/phone-secret"), in: project.dir)
@@ -141,7 +162,7 @@ enum Template {
         let share = hasShare(project)
         // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and each
         // extension's beside them.
-        if project.platform.hasIOS {
+        if project.hasIOS {
             try put(Capabilities.load(project).simulatorEntitlementsPlist(for: project),
                     at: project.dir.appendingPathComponent(".lamp/entitlements.plist"), for: project)
             for (has, suffix) in [(widget, "widget"), (share, "share")] {
@@ -161,23 +182,8 @@ enum Template {
                 AppFolder.remove(watchEntitlements, in: project.dir)
             }
         }
-        switch project.platform {
-        case .mac:
-            try write(withScene(buildSh(widget: widget, share: share, widgetOnly: isWidgetOnly(project)), for: project), to: "build.sh", for: project, executable: true)
-            try write(withScene(packageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
-        case .iphone:
-            try write(withWatch(iPhoneBuildSh(widget: widget, share: share), for: project), to: "build.sh", for: project, executable: true)
-            try write(withWatch(iPhonePackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
-        case .universal:
-            // The Mac build is Xcode's, from a project Lamp writes beside the phone's (it is the phone's: one
-            // project, both platforms), signed for the person's team: that is what lets the app use what Apple
-            // ties to a team, which Lamp's own signing can't give it.
-            try write(withWatch(universalBuildSh(widget: widget, share: share), for: project), to: "build.sh", for: project, executable: true)
-            try write(withWatch(universalPackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
-            try writeDeviceProject(for: project, team: Devices.team)
-        case .android, .tv, .device:
-            break   // above
-        }
+        // build.sh and Package.swift, the kind's own.
+        try build(widget, share)
     }
 
     /// An iPhone app's build.sh or Package.swift as they are, or with its watch app when it has one: the
@@ -194,15 +200,26 @@ enum Template {
         precondition(template.contains(appSigningLine), "the build script changed")
         return template
             .replacingOccurrences(of: "swift build \"${FLAGS[@]}\" 2>&1\n", with: "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n")
-            .replacingOccurrences(of: appSigningLine, with: watchBuildSteps(complications: complications) + appSigningLine)
+            .replacingOccurrences(of: appSigningLine, with: onlyForIOS(watchBuildSteps(complications: complications)) + appSigningLine)
     }
 
     static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
-        let contents = template
-            .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
-            .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
-            .replacingOccurrences(of: "{{NAME}}", with: project.name)
+        let reason = Capabilities.load(project).localNetworkReason
+        // The app's name and its own words (the network reason in capabilities.json) come with a shared file, so
+        // they may hold anything the shell would run: `$(…)`, backquotes, a line that ends a heredoc. A script gets
+        // them as variables set in single quotes at its top (`shellWords`), which the shell expands as text only.
+        // A shared page's sites go beside its permission reasons, in every Info.plist the app is built with.
+        let network = SharedNetwork.plistLines(for: project)
+        let words = [("{{USAGE}}", "LAMP_USAGE", iosUsagePlistLines(name: project.name, localNetwork: reason) + network),
+                     ("{{MAC_USAGE}}", "LAMP_MAC_USAGE", macUsagePlistLines(name: project.name, localNetwork: reason) + network),
+                     ("{{NAME}}", "LAMP_APP_NAME", project.name)]
+        var filled = template.replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
+        if template.hasPrefix("#!") {
+            filled = shellWords(filled, words)
+        } else {
+            for (placeholder, _, value) in words { filled = filled.replacingOccurrences(of: placeholder, with: value) }
+        }
+        let contents = filled
             .replacingOccurrences(of: "{{EXE}}", with: project.exe)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
@@ -213,12 +230,25 @@ enum Template {
         try put(contents, at: url, for: project, executable: executable)
     }
 
+    /// A script with each placeholder that's used in it read from a variable, set in single quotes after its first
+    /// line: the value is never part of the script's code, so no name can run, end a heredoc or break a quote.
+    static func shellWords(_ script: String, _ words: [(placeholder: String, variable: String, value: String)]) -> String {
+        let used = words.filter { script.contains($0.placeholder) }
+        guard !used.isEmpty, let end = script.firstIndex(of: "\n") else { return script }
+        var body = String(script[script.index(after: end)...])
+        for word in used { body = body.replacingOccurrences(of: word.placeholder, with: "${\(word.variable)}") }
+        let lines = used.map { "\($0.variable)='\($0.value.replacingOccurrences(of: "'", with: "'\\''"))'\n" }.joined()
+        return script[...end] + lines + body
+    }
+
     /// What an app is told about itself and Lamp, read by LampSupport's `LampInstall` from its Info.plist. Lamp
     /// writes it into every copy it installs (`Store.setInstallValues`), and into the phone project's Info.plist,
     /// so the compiled app is the same for every install and every app.
     static func installValues(for project: LampProject) -> [String: String] {
         [
             "slug": project.id,
+            // Where its folder is under Lamp's apps: its id, or for a wish's other part its wish's folder and its own.
+            "folder": project.isPart ? project.dir.deletingLastPathComponent().lastPathComponent + "/" + project.dir.lastPathComponent : project.id,
             "dataID": Edition.appBundlePrefix + project.id,
             "token": token(for: project),
             "port": String(Gateway.port),
@@ -229,11 +259,6 @@ enum Template {
             "macHost": Devices.macHost,
             "widgetPort": String(widgetPort(for: project)),
             "widgetToken": project.platform == .mac ? widgetToken(for: project) : "",
-            "sidebarPort": String(sidebarPort(for: project)),
-            "sidebarTries": String(sidebarPortTries),
-            "sidebarHost": sidebarHost(for: project),
-            "sidebarKey": project.platform.hasMac ? sidebarKey(for: project) : "",
-            "sidebarFramer": sidebarFramer,
         ]
     }
 
@@ -252,14 +277,102 @@ enum Template {
         return "<key>LampInstall</key><dict>\(pairs)</dict>"
     }
 
+    /// Where an app of a wish of several finds its wish's key (`WishKeys`) in its Info.plist: a Mac app's installed copy,
+    /// and a phone's build in Lamp's own folder. Never in anything written in the app's own folder.
+    static let wishKeyName = "LampWishKey"
+
+    /// The Info.plist line for the wish's key, or nothing for an app on its own.
+    static func wishKeyPlistLines(_ key: Data?) -> String {
+        key.map { "<key>\(wishKeyName)</key><string>\($0.base64EncodedString())</string>" } ?? ""
+    }
+
+    /// The Bonjour type the apps of a wish of several are found by on the network (`LampWish`), each under a name only the
+    /// wish's key makes. iOS lets an app advertise and browse only the types its Info.plist names.
+    static let wishServiceType = "_lampwish._tcp"
+
+    /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. That's
+    /// decided by the apps the wish asks for (`LampProject.apps`), not only those made: the first app of a wish meant to
+    /// be a Mac app and an Android app has the block from its first build, while the other waits for this Mac to be able
+    /// to build it, so it's written to talk to it from the start. Apps are counted, not devices: an app for the Mac and
+    /// the iPhone is one. An app on its own (most apps, and every starter) gets none of it: its building blocks are written
+    /// as if the wish's apps couldn't talk at all, so it carries no code, size, rule or permission for something it can't
+    /// use. A wish that comes to ask for a second app has its blocks written again before its next turn and build, as
+    /// they always are.
+    /// The apps counted are the wish's, whichever folder each is in: a wish whose only app is in a folder of its own (the
+    /// app it began with replaced) is one app, and gets none of it either. An app that can't join the wish's room yet (a
+    /// Roku's, `WishRooms.joins`) isn't counted: there's nothing to reach it with, so an iPhone app beside only a Roku app
+    /// is on its own as far as the link goes.
+    static func talksToOtherApps(_ project: LampProject) -> Bool {
+        guard WishRooms.joins(project.platform) else { return false }
+        guard let apps = appsInWish(of: project) else { return true }
+        return apps.filter { WishRooms.joins($0.kind) }.count >= 2
+    }
+
+    /// Whether the wish an app is of has other apps at all, linked or not: what gives a device's app its `LampWish`
+    /// saying it can't reach them yet (`DeviceSupport`).
+    static func hasOtherApps(_ project: LampProject) -> Bool {
+        guard let apps = appsInWish(of: project) else { return true }
+        return apps.count >= 2
+    }
+
+    /// The apps of an app's wish, asked for or made, whichever folder each is in; nil when its wish can't be read (a part
+    /// whose wish is gone), which is taken as one of several, as every part was before a wish could lose its first app.
+    /// Each app once, by its folder (`Parts.setting`): two Mac apps are two apps, and a made app is the entry for it.
+    private static func appsInWish(of project: LampProject) -> [WishApp]? {
+        guard var wish = project.isPart ? Store.readWish(at: project.dir.deletingLastPathComponent()) : project else { return nil }
+        if wish.partFolders.isEmpty { wish.partFolders = Parts.folders(in: wish.dir) }
+        var apps = wish.apps
+        if wish.holdsApp { apps = Parts.setting(WishApp(kind: wish.platform, integration: Parts.listedIntegration(of: wish), folder: "."), in: apps) }
+        if project.isPart {
+            apps = Parts.setting(WishApp(kind: project.platform, integration: Parts.listedIntegration(of: project), folder: project.dir.lastPathComponent), in: apps)
+        }
+        for folder in wish.partFolders {
+            let dir = wish.dir.appendingPathComponent(folder)
+            if let kind = Parts.kindOfScaffold(in: dir, wish: wish.dir) {
+                apps = Parts.setting(WishApp(kind: kind, integration: kind == .device ? kind.target.recipe.integration(dir) : nil, folder: folder), in: apps)
+            }
+        }
+        return apps
+    }
+
+    /// Whether an app carries `LampWish`, the block for reaching its wish's other apps and its own other copies: every
+    /// app does, since any app may be open on several devices at once (two iPhones, a screen on an iPad and a TV), and
+    /// its copies share values through it. What's for a wish of several apps alone (the rule in the prompt that points
+    /// to the `wish-links` skill, the builder's note of where each app is) still goes by `talksToOtherApps`. An app on
+    /// its own looks for its copies on the network only once Lamp's room has shown it one, so an app on one device
+    /// never asks for Local Network.
+    static func carriesWish(_ project: LampProject) -> Bool { project.holdsApp || talksToOtherApps(project) }
+
+    /// LampSupport.swift as an app is given it: with `LampWish` for an app that carries it (`carriesWish`).
+    static func lampSupportSwift(for project: LampProject) -> String {
+        carriesWish(project) ? lampSupportSwift : withoutWish(lampSupportSwift)
+    }
+
+    /// The Swift building blocks without `LampWish` (and `LampController`, files and all, which ride on it): what an app
+    /// on its own is given, and what decides whether an app built by an earlier Lamp is out of date (`BuildStamp`), so the
+    /// block never makes such an app build again.
+    static func withoutWish(_ swift: String) -> String {
+        let swift = swift.replacingOccurrences(of: wishLeavesLampClosed, with: "")
+        guard let start = swift.range(of: "    // MARK: - The wish's other apps\n"),
+              let end = swift.range(of: "    // MARK: - Mac building blocks\n", range: start.upperBound..<swift.endIndex) else { return swift }
+        return String(swift[..<start.lowerBound]) + String(swift[end.lowerBound...])
+    }
+
+    /// The one line `LampWish` needs inside `LampAI`, which an app on its own goes without: the person may have quit
+    /// Lamp, and the wish's apps go on talking without it, asking it again now and then, so asking never starts it.
+    static let wishLeavesLampClosed = "                    if path.hasPrefix(\"/app/wish\") { throw error }   // LampWish goes on without Lamp\n"
+
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws {
-        // An Android app's building blocks are Kotlin (`writeAndroidSupport`).
-        if project.platform == .android { try writeAndroidSupport(for: project); return }
-        // A TV app has no Swift: its building blocks are its own script (`TVTemplate.writeOwnedFiles`).
-        guard project.platform != .tv, project.platform != .device else { return }
-        let contents = lampSupportSwift
+        guard project.holdsApp else { return }
+        try project.platform.target.recipe.support(project)
+    }
+
+    /// A Swift app's building blocks: an Android app's are Kotlin, a TV app's its own script, and a device app's what its
+    /// integration asks for (`Target.Recipe.support`).
+    static func writeSwiftSupport(for project: LampProject) throws {
+        let contents = lampSupportSwift(for: project)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try writeWidgetSupport(for: project)
@@ -290,7 +403,9 @@ enum Template {
         let plist = ios ? "$bundle/Info.plist" : "$bundle/Contents/Info.plist"
         return """
         # App Intents (Shortcuts, Siri, Spotlight, a widget's buttons): Xcode's tools write what the code declares into the app.
+        # What they did is kept in .build/appintents for this build alone: Lamp reads there whether they ran.
         INTENTS=""
+        rm -rf .build/appintents
         if grep -rqs --include='*.swift' -e 'import AppIntents' Sources Widget; then
           if PROCESSOR="$(xcrun -f appintentsmetadataprocessor 2>/dev/null)"; then
             INTENTS=1
@@ -349,7 +464,7 @@ enum Template {
 
     let package = Package(
         name: "{{EXE}}",
-        platforms: [.iOS(.v17)],
+        platforms: [.iOS(.v17), .tvOS(.v17), .visionOS(.v1)],
         targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
@@ -455,7 +570,7 @@ enum Template {
 
     let package = Package(
         name: "{{EXE}}",
-        platforms: [.macOS(.v14), .iOS(.v17)],
+        platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .visionOS(.v1)],
         targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
@@ -598,10 +713,16 @@ enum Template {
     # Builds build/{{EXE}}.app for the iPhone simulator. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
-    SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+    # The same app for Apple TV or Vision Pro when Try On points at one (LAMP_FAMILY), else for iPhone and iPad.
+    case "${LAMP_FAMILY:-}" in
+      appletv) SDKNAME=appletvsimulator; TRIPLE=arm64-apple-tvos17.0-simulator; FAMILIES="<integer>3</integer>"; PLATFORM=AppleTVSimulator; MINOS=17.0 ;;
+      vision) SDKNAME=xrsimulator; TRIPLE=arm64-apple-xros1.0-simulator; FAMILIES="<integer>7</integer>"; PLATFORM=XRSimulator; MINOS=1.0 ;;
+      *) SDKNAME=iphonesimulator; TRIPLE=arm64-apple-ios17.0-simulator; FAMILIES="<integer>1</integer><integer>2</integer>"; PLATFORM=iPhoneSimulator; MINOS=17.0 ;;
+    esac
+    SDK="$(xcrun --sdk "$SDKNAME" --show-sdk-path)"
     # Debug, as Xcode builds for the simulator: a release build optimizes the whole module at once, so every change
     # compiled all of it again, Lamp's own library included, and went through dsymutil too. The phone's is Xcode's.
-    FLAGS=(-c debug --triple arm64-apple-ios17.0-simulator --sdk "$SDK")
+    FLAGS=(-c debug --triple "$TRIPLE" --sdk "$SDK")
     \(appIntentsSetup(ios: true))
     # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
     # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
@@ -632,12 +753,12 @@ enum Template {
       <key>CFBundleShortVersionString</key><string>0.1</string>
       <key>CFBundleVersion</key><string>1</string>
       <key>LSRequiresIPhoneOS</key><true/>
-      <key>MinimumOSVersion</key><string>17.0</string>
-      <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+      <key>MinimumOSVersion</key><string>$MINOS</string>
+      <key>UIDeviceFamily</key><array>$FAMILIES</array>
       <key>UILaunchScreen</key><dict/>
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
-      <key>DTPlatformName</key><string>iphonesimulator</string>
-      <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
+      <key>DTPlatformName</key><string>$SDKNAME</string>
+      <key>CFBundleSupportedPlatforms</key><array><string>$PLATFORM</string></array>
     {{USAGE}}
     </dict></plist>
     PLIST
@@ -676,11 +797,17 @@ enum Template {
             """
         }
         script = swap(script, "swift build \"${FLAGS[@]}\" 2>&1\n", "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n"
-                      + (widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : ""))
+                      + onlyForIOS((widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : "")))
         script = swap(script, "{{USAGE}}\n</dict></plist>\nPLIST\n",
                       "{{USAGE}}\n" + appGroupPlistLines(group: "group.{{BUNDLE}}", liveActivities: widget) + "\n</dict></plist>\nPLIST\n")
-        script = swap(script, appSigningLine, (widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "") + appSigningLine)
+        script = swap(script, appSigningLine, onlyForIOS((widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "")) + appSigningLine)
         return script
+    }
+
+    /// Steps for what only iOS has (widgets, a share extension, the watch app), left out of a build for Apple TV or
+    /// Vision Pro (LAMP_FAMILY): those are the app alone.
+    static func onlyForIOS(_ steps: String) -> String {
+        "if [[ -z \"${LAMP_FAMILY:-}\" ]]; then\n" + steps + "fi\n"
     }
 
     /// What an app with extensions says in its Info.plist: the folder it shares with them, and with a widget
@@ -927,7 +1054,7 @@ enum Template {
     /// Whether the app has a watch app to build: Swift of the agent's in Watch/, outside Complications/. Only
     /// an app with an iPhone half has one. Asked before every build, as `hasWidget` is.
     static func hasWatch(_ project: LampProject) -> Bool {
-        guard project.platform.hasIOS else { return false }
+        guard project.hasIOS else { return false }
         let folder = project.dir.appendingPathComponent(watchFolder)
         let complications = folder.appendingPathComponent(complicationsFolder).path + "/"
         return swiftFiles(in: folder).contains { !$0.path.hasPrefix(complications) && $0.lastPathComponent != watchSupportFile }
@@ -1533,13 +1660,15 @@ enum Template {
         ("NFCReaderUsageDescription", "{{NAME}} reads NFC tags."),
         ("NSSiriUsageDescription", "{{NAME}} works with Siri and Shortcuts."),
         ("NSNearbyInteractionUsageDescription", "{{NAME}} finds nearby devices."),
-        ("NSLocalNetworkUsageDescription", "{{NAME}} talks to Lamp on your Mac for its AI features."),
+        ("NSLocalNetworkUsageDescription", "{{NAME}} talks to Lamp on your Mac and to devices on your network."),
         ("NSAppleMusicUsageDescription", "{{NAME}} plays music from your library."),
         ("NSHomeKitUsageDescription", "{{NAME}} reads and controls your home."),
     ]
 
     /// The usage descriptions as Info.plist lines, with the app's name in.
-    static func iosUsagePlistLines(name: String) -> String { usagePlistLines(iosUsageDescriptions, name: name) }
+    static func iosUsagePlistLines(name: String, localNetwork: String? = nil) -> String {
+        usagePlistLines(iosUsageDescriptions, name: name, localNetwork: localNetwork)
+    }
 
     /// The same for a Mac app: macOS kills an app that asks for one of these without its reason (microphone,
     /// speech, camera, photos, calendar, reminders, contacts, Bluetooth, Mail), and asks about the network
@@ -1562,11 +1691,16 @@ enum Template {
         ("NSAppleMusicUsageDescription", "{{NAME}} plays music from your library."),
     ]
 
-    static func macUsagePlistLines(name: String) -> String { usagePlistLines(macUsageDescriptions, name: name) }
+    static func macUsagePlistLines(name: String, localNetwork: String? = nil) -> String {
+        usagePlistLines(macUsageDescriptions, name: name, localNetwork: localNetwork)
+    }
 
-    private static func usagePlistLines(_ descriptions: [(key: String, text: String)], name: String) -> String {
-        descriptions.map { "  <key>\($0.key)</key><string>\($0.text.replacingOccurrences(of: "{{NAME}}", with: name).xmlEscaped)</string>" }
-            .joined(separator: "\n")
+    /// The reasons as Info.plist lines, the app's own local network reason (`Capabilities.localNetwork`) in place of Lamp's.
+    private static func usagePlistLines(_ descriptions: [(key: String, text: String)], name: String, localNetwork: String? = nil) -> String {
+        descriptions.map { entry in
+            let text = entry.key == "NSLocalNetworkUsageDescription" ? localNetwork ?? entry.text : entry.text
+            return "  <key>\(entry.key)</key><string>\(text.replacingOccurrences(of: "{{NAME}}", with: name).xmlEscaped)</string>"
+        }.joined(separator: "\n")
     }
 
     /// What the agent declares in capabilities.json at the app's root when the app needs more than its code
@@ -1604,6 +1738,12 @@ enum Template {
         var homekit: Bool?
         /// iPhone apps: notifications that break through Focus (`LampNotifications.send(timeSensitive:)`): an entitlement.
         var timeSensitive: Bool?
+        /// Device apps: the app is a game, which a console installs as one (an Xbox gives a game far more memory and
+        /// graphics than an app): `DeviceApps.isGame`.
+        var game: Bool?
+        /// The app's own reason for the local network, the sentence the system's question shows ("TV Remote finds your
+        /// TV and speakers to control them."), in place of Lamp's general one.
+        var localNetwork: String?
 
         static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
 
@@ -1620,7 +1760,18 @@ enum Template {
                                 backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds),
                                 background: background == true ? true : nil, icloud: icloud == true ? true : nil,
                                 weather: weather == true ? true : nil, homekit: homekit == true ? true : nil,
-                                timeSensitive: timeSensitive == true ? true : nil)
+                                timeSensitive: timeSensitive == true ? true : nil, game: game == true ? true : nil,
+                                localNetwork: localNetworkReason)
+        }
+
+        /// The local network reason, kept to one plain sentence of 150 characters at most, in words and plain punctuation:
+        /// it's shown as it is in the system's question, and goes into Info.plist and the commands that fill it in, so
+        /// nothing in it is markup or a shell's special characters (`$`, backticks, backslashes, quotes, `<>&`). Build
+        /// scripts never take it as code either way (`Template.shellWords`).
+        var localNetworkReason: String? {
+            guard let text = localNetwork?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text.count <= 150,
+                  text.range(of: #"^[\p{L}\p{N} .,;:!?'’()–-]+$"#, options: .regularExpression) != nil else { return nil }
+            return text
         }
 
         var isEmpty: Bool { checked == Capabilities() }
@@ -1648,7 +1799,7 @@ enum Template {
         /// after the id the app is signed with, team and all: containers are global, so one named after
         /// the plain id would be taken by whichever team made an app of that name first.
         func container(for project: LampProject) -> String? {
-            icloud == true && project.platform.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
+            icloud == true && project.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
         }
 
         /// The entitlements plist for codesign and for Xcode's automatic signing, which registers each
@@ -1656,11 +1807,11 @@ enum Template {
         /// sync engine hears of changes made elsewhere through notifications, whose entitlement is spelled
         /// differently on each platform.
         func entitlementsPlist(for project: LampProject, platform: Destination = .ios, appGroup: String? = nil) -> String {
-            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.platform.hasIOS, appGroup: appGroup)
+            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.hasIOS, appGroup: appGroup)
         }
 
         /// Whether the app gets the weather: declared, and signed for a team (an iPhone half).
-        func weather(for project: LampProject) -> Bool { weather == true && project.platform.hasIOS }
+        func weather(for project: LampProject) -> Bool { weather == true && project.hasIOS }
 
         /// The simulator build's entitlements, which build.sh puts in the binary: the iPhone's, with the app's
         /// identity as Xcode writes it, which HealthKit and iCloud look for before they do anything. Empty when
@@ -1774,6 +1925,8 @@ enum Template {
         /// The Info.plist keys a Mac app's capabilities own, each with its value or nil when nothing is declared.
         func macInfo(for project: LampProject) -> [String: Any?] {
             ["CFBundleDocumentTypes": documentTypes.isEmpty ? nil : documentTypes,
+             // What LampNetwork.find() looks for besides its own (an iPhone app's are in its own Info.plist, `lists`).
+             "NSBonjourServices": services.isEmpty ? nil : services,
              "LampBackground": background == true ? true : nil,
              "LampICloudContainer": container(for: project)]
         }
@@ -1786,12 +1939,19 @@ enum Template {
             for (key, value) in macInfo(for: project) {
                 if let value { info[key] = value } else { info.removeObject(forKey: key) }
             }
+            // Lamp's general reason is the one written before this, so an app that no longer declares its own gets it back.
+            if let reason = localNetworkReason { info["NSLocalNetworkUsageDescription"] = reason }
             info.write(to: url, atomically: true)
         }
 
         /// Those lists as Info.plist lines, or nothing.
-        var backgroundPlistLine: String {
-            lists.sorted { $0.key < $1.key }
+        var backgroundPlistLine: String { backgroundPlistLine(adding: nil) }
+
+        /// The same, with one more Bonjour type beside what the app declared: the wish's, for an app of several.
+        func backgroundPlistLine(adding service: String?) -> String {
+            var lists = lists
+            if let service, !(lists["NSBonjourServices"] ?? []).contains(service) { lists["NSBonjourServices", default: []].append(service) }
+            return lists.sorted { $0.key < $1.key }
                 .map { "  <key>\($0.key)</key><array>" + $0.value.map { "<string>\($0.xmlEscaped)</string>" }.joined() + "</array>" }
                 .joined(separator: "\n")
         }
@@ -1828,7 +1988,7 @@ enum Template {
     /// the app's sandbox with signing off, so nothing in them is trusted: what they're signed with comes from the same
     /// project written `forSigning`, in Lamp's folder over Lamp's own code in `files` (`TeamSigning`).
     static func writeDeviceProject(for project: LampProject, team: String, in folder: URL? = nil, reading files: URL? = nil,
-                                   forSigning: Bool = false) throws {
+                                   forSigning: Bool = false, wishKey: Data? = nil) throws {
         let fm = FileManager.default
         let universal = project.platform == .universal
         let dir = folder ?? project.dir.appendingPathComponent(".lamp/device")
@@ -1857,6 +2017,8 @@ enum Template {
         var pbxproj = universal ? universalPbxproj : devicePbxproj
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
+        if showsPage(project) { pbxproj = withWebFolder(pbxproj) }
+        if GamePhones.bundlesOnIOS(project) { pbxproj = withPhoneFolder(pbxproj) }
         if watch {
             let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
             let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
@@ -1907,17 +2069,24 @@ enum Template {
         let widgetPlist = widget || share ? appGroupPlistLines(group: group, liveActivities: widget) : ""
         // Only the phone's project, in Lamp's own folder, carries the secret its keys are sealed with; the one an
         // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
-        let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
+        let secret = folder != nil && !forSigning && project.hasIOS ? phoneSecret(in: dir) : ""
+        // The wish's key, for an app with others in its wish, goes the same way and only there.
+        let wish = folder != nil && !forSigning && project.hasIOS ? wishKeyPlistLines(wishKey) : ""
+        // An app of a wish of several finds the others, and is found, by the wish's Bonjour type, beside any of its own.
+        let background = capabilities.backgroundPlistLine(adding: !wish.isEmpty ? wishServiceType : nil)
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
+                .replacingOccurrences(of: "{{WISH_KEY}}", with: wish)
                 .replacingOccurrences(of: "{{LAMP_INSTALL}}", with: installPlistLines(for: project))
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
-                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
-                .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
+            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason
+                ?? (GamePhones.takesOnIOS(project) ? GamePhones.iosNetworkReason : nil)) + SharedNetwork.plistLines(for: project))
+                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason)
+                    + SharedNetwork.plistLines(for: project))
+                .replacingOccurrences(of: "{{BACKGROUND}}", with: background)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
                 .replacingOccurrences(of: "{{NAME}}", with: project.name)
@@ -1926,6 +2095,47 @@ enum Template {
             let url = dir.appendingPathComponent(path)
             if AppFile.read(url, inFolder: root) != Data(contents.utf8) { try AppFolder.write(contents, to: url, in: root) }
         }
+    }
+
+    /// Whether the app is a page in a web view of its own (a three.js game, a screen), whose Web/ goes into the app.
+    static func showsPage(_ project: LampProject) -> Bool {
+        project.platform.target.showsPage(project)
+    }
+
+    /// The app's Web/ as a folder in the app beside Assets, where the page's host reads it (`Bundle.main…/Web`).
+    static func withWebFolder(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the device project changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        var text = pbxproj
+        let assetsFile = "A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };"
+        text = swap(text, assetsFile, assetsFile + "\n\t\tE00000000000000000000001 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000002 /* Web */; };")
+        let assetsRef = "A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = \"<group>\"; };"
+        text = swap(text, assetsRef, assetsRef + "\n\t\tE00000000000000000000002 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Web; path = ../../Web; sourceTree = \"<group>\"; };")
+        text = swap(text, "A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */,",
+                    "A00000000000000000000002 /* Assets */, E00000000000000000000002 /* Web */, A00000000000000000000004 /* Assets.xcassets */,")
+        text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
+                    "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000001 /* Web in Resources */,")
+        return text
+    }
+
+    /// A game's phone page as a folder of the app's resources (Phone/ at the bundle's top), which the game serves itself
+    /// (`GamePhones`): copied beside the app's files by `Devices.stage`.
+    static func withPhoneFolder(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the device project changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        var text = pbxproj
+        let assetsFile = "A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };"
+        text = swap(text, assetsFile, assetsFile + "\n\t\tE00000000000000000000003 /* Phone in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000004 /* Phone */; };")
+        let assetsRef = "A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = \"<group>\"; };"
+        text = swap(text, assetsRef, assetsRef + "\n\t\tE00000000000000000000004 /* Phone */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Phone; path = ../../\(GamePhones.iosFolder); sourceTree = \"<group>\"; };")
+        text = swap(text, "A00000000000000000000002 /* Assets */, ", "A00000000000000000000002 /* Assets */, E00000000000000000000004 /* Phone */, ")
+        text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
+                    "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000003 /* Phone in Resources */,")
+        return text
     }
 
     /// The project names the app's folders by where it sits inside the app (../../Sources). Written anywhere
@@ -2014,7 +2224,7 @@ enum Template {
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
       <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-      <key>LampPhoneSecret</key><string>{{PHONE_SECRET}}</string>
+      <key>LampPhoneSecret</key><string>{{PHONE_SECRET}}</string>{{WISH_KEY}}
       {{LAMP_INSTALL}}
     {{USAGE}}
     {{BACKGROUND}}
@@ -2204,14 +2414,7 @@ enum Template {
 
     /// What an app is made for, read off its Package.swift, which every version keeps: the platforms it lists.
     /// A version restored from before `make_app_for` brings its kind back with its code (`Versions.restoreFiles`).
-    static func platform(fromPackageIn dir: URL) -> Platform? {
-        if isAndroid(dir) { return .android }
-        if TVTemplate.isTV(dir) { return .tv }
-        if DeviceApps.isScaffolded(dir) { return .device }
-        guard let text = try? String(contentsOf: dir.appendingPathComponent("Package.swift"), encoding: .utf8) else { return nil }
-        let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
-        return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil
-    }
+    static func platform(fromPackageIn dir: URL) -> Platform? { Targets.kind(of: dir) }
 
     /// The folder a Mac app and its widget share when Lamp signs them for the person's team: the team's id and
     /// the app's. macOS honours a group named so from the signature alone; one named "group.…" would need a
@@ -2466,106 +2669,52 @@ enum Template {
 
     """# + lampGlyphSwift
 
-    /// Lamp's flame in place of a symbol, where an app shows the way to change it with Lamp (the wand at the top
-    /// right of its windows, its menu bar panel and menu, its widget): drawn as the system's own `flame` symbol is,
-    /// the icon's outer flame as an outline and its inner one filled, at a symbol's size and weight. It's in
-    /// LampSupport.swift and in the widget's own file, which shares nothing else with it.
+    /// Lamp's mark where an app shows the way to change it with Lamp (the wand at the top right of its windows, its
+    /// menu bar panel and menu, its widget): the system's `shuffle` symbol, the one Lamp shows for remixing, at the
+    /// size and weight it's asked for. It's in LampSupport.swift and in the widget's own file, which shares nothing
+    /// else with it.
     static let lampGlyphSwift = #"""
 
-    /// Lamp's flame, drawn like an SF Symbol: the app icon's outer flame as an outline, its inner flame filled.
+    /// Lamp's mark: the system's shuffle symbol, the one Lamp shows for remixing.
     enum LampGlyph {
-        /// Width over height.
-        static let aspect: CGFloat = 516 / 725
+        static let symbol = "shuffle"
 
-        /// The two flames in a box one unit tall, y down, from the icon's own drawing. The inner one is smaller
-        /// than in the icon, about its foot, so the outline has room around it at a symbol's size.
-        static let paths: (outer: CGPath, inner: CGPath) = {
-            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: (x - 254) / 725, y: (y - 150) / 725) }
-            let outer = CGMutablePath()
-            outer.move(to: p(540, 150))
-            outer.addCurve(to: p(770, 600), control1: p(560, 290), control2: p(770, 380))
-            outer.addCurve(to: p(512, 875), control1: p(770, 755), control2: p(655, 875))
-            outer.addCurve(to: p(254, 600), control1: p(369, 875), control2: p(254, 755))
-            outer.addCurve(to: p(398, 325), control1: p(254, 465), control2: p(335, 395))
-            outer.addCurve(to: p(482, 472), control1: p(408, 405), control2: p(440, 450))
-            outer.addCurve(to: p(540, 150), control1: p(468, 350), control2: p(492, 250))
-            outer.closeSubpath()
-            let inner = CGMutablePath()
-            inner.move(to: p(524, 388))
-            inner.addCurve(to: p(662, 648), control1: p(560, 476), control2: p(662, 525))
-            inner.addCurve(to: p(512, 812), control1: p(662, 748), control2: p(597, 812))
-            inner.addCurve(to: p(362, 648), control1: p(427, 812), control2: p(362, 748))
-            inner.addCurve(to: p(452, 474), control1: p(362, 565), control2: p(418, 522))
-            inner.addCurve(to: p(500, 558), control1: p(462, 524), control2: p(480, 548))
-            inner.addCurve(to: p(524, 388), control1: p(494, 486), control2: p(502, 436))
-            inner.closeSubpath()
-            let foot = p(512, 812)
-            var smaller = CGAffineTransform(translationX: foot.x, y: foot.y).scaledBy(x: 0.72, y: 0.72)
-                .translatedBy(x: -foot.x, y: -foot.y)
-            return (outer, inner.copy(using: &smaller) ?? inner)
-        }()
-
-        /// The outline's width as a share of the point size, as heavy as a symbol's lines at that weight.
-        static func line(_ weight: NSFont.Weight) -> CGFloat {
-            switch weight.rawValue {
-            case ..<NSFont.Weight.regular.rawValue: 0.062
-            case ..<NSFont.Weight.medium.rawValue: 0.07
-            case ..<NSFont.Weight.semibold.rawValue: 0.075
-            case ..<NSFont.Weight.bold.rawValue: 0.085
-            default: 0.095
-            }
-        }
-
-        /// An image as a symbol at that point size would be: a template, which a button tints as it does a symbol,
-        /// unless it's given a colour of its own.
+        /// The symbol at that point size and weight: a template, which a button tints as it does any symbol, unless
+        /// it's given a color of its own.
         static func image(pointSize: CGFloat, weight: NSFont.Weight, color: NSColor? = nil,
                           description: String = "Customize This App") -> NSImage {
-            let width = pointSize * line(weight)
-            let size = NSSize(width: (pointSize * aspect + width).rounded(.up), height: (pointSize + width).rounded(.up))
-            let image = NSImage(size: size, flipped: true) { box in
-                guard let context = NSGraphicsContext.current?.cgContext else { return false }
-                let ink = (color ?? .black).cgColor
-                context.translateBy(x: (box.width - pointSize * aspect) / 2, y: (box.height - pointSize) / 2)
-                context.scaleBy(x: pointSize, y: pointSize)
-                context.addPath(paths.outer)
-                context.setLineWidth(width / pointSize)
-                context.setLineJoin(.round)
-                context.setStrokeColor(ink)
-                context.strokePath()
-                context.addPath(paths.inner)
-                context.setFillColor(ink)
-                context.fillPath()
-                return true
-            }
+            var configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
+            if let color { configuration = configuration.applying(NSImage.SymbolConfiguration(paletteColors: [color])) }
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+                .withSymbolConfiguration(configuration) ?? NSImage(size: NSSize(width: pointSize, height: pointSize))
             image.isTemplate = color == nil
-            image.accessibilityDescription = description
             return image
         }
 
-        /// The flame in SwiftUI, as tall as `size` points, in the foreground style.
+        /// The SwiftUI weight of the same name as an AppKit one.
+        static func fontWeight(_ weight: NSFont.Weight) -> Font.Weight {
+            switch weight.rawValue {
+            case ..<NSFont.Weight.light.rawValue: .thin
+            case ..<NSFont.Weight.regular.rawValue: .light
+            case ..<NSFont.Weight.medium.rawValue: .regular
+            case ..<NSFont.Weight.semibold.rawValue: .medium
+            case ..<NSFont.Weight.bold.rawValue: .semibold
+            case ..<NSFont.Weight.heavy.rawValue: .bold
+            default: .heavy
+            }
+        }
+
+        /// The symbol in SwiftUI, at `size` points, in the foreground style.
         struct Mark: View {
             var size: CGFloat
             var weight: NSFont.Weight = .medium
 
             var body: some View {
-                ZStack {
-                    Flame(inner: false).stroke(style: StrokeStyle(lineWidth: size * LampGlyph.line(weight), lineJoin: .round))
-                    Flame(inner: true).fill()
-                }
-                .frame(width: size * LampGlyph.aspect, height: size)
-                .padding(size * LampGlyph.line(weight) / 2)
-            }
-        }
-
-        private struct Flame: Shape {
-            let inner: Bool
-
-            func path(in rect: CGRect) -> Path {
-                Path(inner ? LampGlyph.paths.inner : LampGlyph.paths.outer)
-                    .applying(CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: rect.height, y: rect.height))
+                Image(systemName: LampGlyph.symbol).font(.system(size: size, weight: LampGlyph.fontWeight(weight)))
             }
         }
     }
+
     """#
 
 
@@ -2577,54 +2726,6 @@ enum Template {
         return 49_152 + Int(hash % 16_000)
     }
 
-    /// Where an app serves its own sidebar page for Chrome (`LampBrowser.startPage`): a port of its own below the
-    /// range macOS hands out, the same for every build, since Chrome's sidebar keeps it for when Lamp isn't open.
-    static func sidebarPort(for project: LampProject) -> Int {
-        var hash: UInt32 = 2_166_136_261
-        for byte in ("sidebar:" + project.bundleID).utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
-        return 40_000 + Int(hash % 9_000)
-    }
-    /// How many ports from `sidebarPort` an app tries when another program has the first.
-    static let sidebarPortTries = 4
-    /// Every address an app's sidebar page may be at, first port first.
-    static func sidebarURLs(for project: LampProject) -> [String] {
-        (0..<sidebarPortTries).map { "http://\(sidebarHost(for: project)):\(sidebarPort(for: project) + $0)/" }
-    }
-    /// A name of the app's own under .localhost, which Chrome sends to this Mac by itself: each app's page is then
-    /// its own origin, so one app's page can't read another's storage.
-    static func sidebarHost(for project: LampProject) -> String {
-        let readable = String(project.id.lowercased().unicodeScalars.map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? Character($0) : "-" }.prefix(40))
-        // The bundle id's hash keeps two apps whose names read the same here ("Recipe Box", "recipe_box") apart.
-        var hash: UInt32 = 2_166_136_261
-        for byte in project.bundleID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
-        let label = readable.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return (label.isEmpty ? "app" : label) + "-" + String(hash % 0xFFFFFF, radix: 16) + ".localhost"
-    }
-    /// What the app's page says it reads (`data-lamp-reads` on its `<html>`), read from the page's file by Lamp,
-    /// never from the page as it runs: it decides what Chrome's sidebar lets the page read and the consent line.
-    static func sidebarReads(_ project: LampProject) -> String {
-        let file = project.dir.appendingPathComponent("Assets/Sidebar/index.html")
-        guard let head = (try? String(contentsOf: file, encoding: .utf8))?.prefix(4000),
-              let tag = head.range(of: #"<html\b[^>]*>"#, options: [.regularExpression, .caseInsensitive]) else { return "" }
-        let value = head[tag].range(of: #"data-lamp-reads\s*=\s*["']?(page|selection)"#, options: [.regularExpression, .caseInsensitive])
-            .map { String(head[tag][$0]).lowercased() } ?? ""
-        return value.hasSuffix("selection") ? "selection" : value.hasSuffix("page") ? "page" : ""
-    }
-    /// The key the sidebar page's calls carry: Lamp hands it to Chrome's sidebar with the page's address.
-    static func sidebarKey(for project: LampProject) -> String {
-        secret(".lamp/sidebar-key", for: project)
-    }
-    /// Only Lamp's extension may frame an app's sidebar page.
-    static var sidebarFramer: String {
-        let id = (try? String(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BrowserCompanion/extension-id.txt"), encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return id.count == 32 ? "chrome-extension://\(id)" : "'none'"
-    }
-    /// Whether the app has a sidebar page of its own, rather than a surface Lamp's extension draws.
-    static func hasSidebarPage(_ project: LampProject) -> Bool {
-        FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("Assets/Sidebar/index.html").path)
-    }
-
     /// The secret an app and its widget are both built with, so the app answers its own widget and nobody else.
     static func widgetToken(for project: LampProject) -> String {
         secret(".lamp/widget-token", for: project)
@@ -2634,7 +2735,7 @@ enum Template {
     static func writeWidgetSupport(for project: LampProject) throws {
         guard hasWidget(project) else { return }
         // An iPhone widget reads the folder it shares with its app; a Mac widget asks the app (WidgetSharing).
-        let contents = project.platform.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
+        let contents = project.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
         try put(contents, at: project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile), for: project)
     }
 
@@ -3026,22 +3127,6 @@ enum Template {
         /// Entitlement lines this way adds to every widget's signature, as plist XML. None: the app group is
         /// added only for a team's signature (`widgetEntitlementsPlist(appGroup:)`).
         static let entitlements: [String] = []
-
-        /// What the agent is told about the app's data in a widget.
-        static let rule = """
-        It can't read what the app has saved (LampStore, files, settings), so the app hands it over: in the \
-        app, `LampWidget.share(Summary(…), as: "summary")` with any Codable value, at launch and whenever the \
-        data changes (it also redraws the widget); in the widget, `LampWidget.read(Summary.self, from: \
-        "summary") { summary in … }` in getSnapshot and getTimeline, or `await` it. That comes from \
-        Widget/LampWidgetSupport.swift, which Lamp writes: never edit it. It gives what the app shared last, \
-        also while the app is closed, and nil until the app has run once: then show a short line asking to \
-        open the app. Share a small value made for the widget, not everything, and declare its type on both sides. \
-        A button or toggle in the widget changes the app's data through the app: in Widget/, an App Intent \
-        whose `perform()` calls `await LampWidget.perform("addWater", 250)` (a name, and any Codable value or \
-        none) and returns `.result()`, shown with `Button(intent: AddWater()) { … }`; in the app, at launch, \
-        `LampWidget.onAction { name, payload in … }` does it (`payload.decode(Int.self)`) and shares what \
-        changed, and the widget redraws. It works with the app closed too: the app does it when it next starts.
-        """
     }
 
     /// What the widget is signed with. macOS shows no widget that isn't sandboxed, and the sandbox lets it
@@ -3190,7 +3275,13 @@ enum Template {
 
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: LampProject) -> Bool {
+        // A wish whose apps are all in folders of their own is no new app.
+        guard project.holdsApp else { return false }
         guard project.scaffolded else { return true }   // a draft: not even the scaffold yet
+        if GameKit.isGame(project) { return GameKit.isScaffold(project) }
+        if ScreenKit.isScreen(project) {
+            return AppFile.text(project.dir.appendingPathComponent("Web/app.js"), in: project).map { $0 == TVTemplate.appJS.replacingOccurrences(of: "{{NAME}}", with: project.name) } ?? false
+        }
         guard let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
         else { return false }
         return ([scaffoldHint] + earlierScaffoldHints).contains { view.contains($0) }
@@ -3222,7 +3313,8 @@ enum Template {
     /// action's spot is announced during the pause before it, with the time until it happens, so nothing waits.
     static let useAppLead = 0.2
 
-    static let lampSupportSwift = Connectors.fill(lampSupportTemplate) + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
+    static let lampSupportSwift = Connectors.fill(lampSupportTemplate).replacingOccurrences(of: "{{WISH_LEAVES_LAMP_CLOSED}}", with: wishLeavesLampClosed)
+        + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
 
     private static let lampSupportTemplate = #"""
     // Generated by Lamp before every build. Don't edit: changes are overwritten.
@@ -3232,26 +3324,48 @@ enum Template {
     import SwiftUI
     import SQLite3
     import JavaScriptCore
+    #if canImport(EventKit)
     import EventKit
+    #endif
+    #if canImport(Contacts)
     import Contacts
+    #endif
     import CryptoKit
+    #if canImport(PDFKit)
     import PDFKit
+    #endif
     import UniformTypeIdentifiers
     import UserNotifications
+    import AVFoundation
+    #if canImport(CloudKit)
     import CloudKit
+    #endif
+    #if canImport(HealthKit)
     import HealthKit
+    #endif
+    #if canImport(Photos)
     import Photos
+    #endif
     import CoreLocation
+    #if canImport(WeatherKit)
     import WeatherKit
+    #endif
+    #if canImport(MusicKit)
     import MusicKit
+    #endif
+    #if canImport(CoreSpotlight)
     import CoreSpotlight
+    #endif
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
     import ExtensionKit
     import Carbon.HIToolbox
     import Network
+    import dnssd
+    #if canImport(WidgetKit)
     import WidgetKit
+    #endif
     import CoreServices
     import ServiceManagement
     #if LAMP_LIVE
@@ -3262,12 +3376,24 @@ enum Template {
     typealias LampImage = NSImage
     #else
     import UIKit
+    #if canImport(BackgroundTasks)
     import BackgroundTasks
+    #endif
+    import Network
+    import dnssd
+    #if canImport(HomeKit)
     import HomeKit
+    #endif
+    #if canImport(WidgetKit)
     import WidgetKit
+    #endif
+    #if canImport(CoreMotion)
     import CoreMotion
+    #endif
     import Security
+    #if canImport(WatchConnectivity)
     import WatchConnectivity
+    #endif
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
     #endif
@@ -3384,8 +3510,17 @@ enum Template {
                 throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.",
                                      needsSetup: .text)
             }
-            // What the phone carries answers all three.
-            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
+            // What the phone carries answers all three. Actions need Lamp, whatever the phone carries.
+            if path == "/ai/status" {
+                let away: [String: Any] = ["available": true, "route": "OpenRouter, from this phone", "where": "remote"]
+                return ["text": true, "decisions": true, "pictures": true, "act": false,
+                        "details": ["text": away, "decisions": away, "pictures": away,
+                                    "act": ["available": false, "where": "unknown", "setup": "openLamp",
+                                            "reason": "Asking the app to do things needs Lamp: use it on the same Wi‑Fi as the Mac."] as [String: Any]]]
+            }
+            if path == "/ai/act" {
+                throw LampAI.Failure(message: "Couldn't reach Lamp, and asking the app to do things needs it. Try again on the same Wi‑Fi as the Mac.")
+            }
             fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
             switch path {
             case "/ai":
@@ -3409,19 +3544,21 @@ enum Template {
             var system = body["system"] as? String ?? ""
             let json = body["json"] as? Bool ?? false
             if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, key: key, model: model)
+            let schema = body["schema"] as? [String: Any]
+            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, schema: schema, key: key, model: model)
             guard json else { return text }
             // A JSON reply that doesn't parse is useless to the app: once more, saying so.
             text = unfenced(text)
             if !isJSON(text) {
                 let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
-                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, key: key, model: model))
+                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, schema: schema, key: key, model: model))
                 if !isJSON(text) { throw LampAI.Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.") }
             }
             return text
         }
 
-        private static func chat(prompt: String, system: String, images: [[String: String]], json: Bool, key: String, model: String) async throws -> String {
+        private static func chat(prompt: String, system: String, images: [[String: String]], json: Bool, schema: [String: Any]? = nil,
+                                 key: String, model: String) async throws -> String {
             var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 120
@@ -3437,7 +3574,9 @@ enum Template {
             messages.append(["role": "user", "content": content])
             var payload: [String: Any] = ["model": model, "messages": messages]
             if json {
-                payload["response_format"] = ["type": "json_object"]
+                // With a schema, the reply must fit it (a decision's every key, its exact options).
+                payload["response_format"] = schema.map { ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": $0]] }
+                    ?? ["type": "json_object"]
                 payload["max_tokens"] = 16_000
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -3457,6 +3596,36 @@ enum Template {
             }
             throw LampAI.Failure(message: "The AI didn't answer.")
         }
+        /// The answers' shape as a JSON schema the model is held to: every question's key, and a choice's own options.
+        private static func decisionSchema(_ questions: [String: Any]) -> [String: Any] {
+            func object(_ properties: [String: Any]) -> [String: Any] {
+                ["type": "object", "properties": properties, "required": properties.keys.sorted(), "additionalProperties": false]
+            }
+            let number: [String: Any] = ["type": "number"]
+            var answers: [String: Any] = [:]
+            for (id, value) in questions {
+                guard let question = value as? [String: Any], let type = question["type"] as? String else { continue }
+                switch type {
+                case "noul":
+                    answers[id] = object(["noul": number])
+                case "choice":
+                    // Each option once: an app may list one twice, and the schema's properties can't hold it twice.
+                    let options = Set((question["criteria"] as? [String: Any]).map { Array($0.keys) } ?? (question["criteria"] as? [String] ?? [])).sorted()
+                    answers[id] = object(["choice": ["type": "string", "enum": options] as [String: Any],
+                                          "probabilities": object(Dictionary(uniqueKeysWithValues: options.map { ($0, number as Any) })),
+                                          "confidence": number])
+                case "score":
+                    let levels = (question["criteria"] as? [Any])?.count ?? 0
+                    answers[id] = object(["score": number,
+                                          "probabilities": object(Dictionary(uniqueKeysWithValues: (0..<levels).map { (String($0), number as Any) })),
+                                          "confidence": number])
+                default:
+                    continue
+                }
+            }
+            return object(answers)
+        }
+
 
         /// Decisions without a decision model: the questions go to the text model as JSON, and its answers
         /// come back in the shape Jev's would, checked against each question as Lamp checks them.
@@ -3484,7 +3653,8 @@ enum Template {
             probability per level index, summing to 1; s is the probability-weighted index; confidence (0 to 1) is \
             how concentrated the probabilities are.
             """
-            let text = try await complete(["prompt": "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)", "system": system, "json": true], key: key, model: model)
+            let text = try await complete(["prompt": "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)", "system": system, "json": true,
+                                           "schema": decisionSchema(questions)], key: key, model: model)
             guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
                 throw LampAI.Failure(message: "The model's decision wasn't valid JSON.")
             }
@@ -3629,7 +3799,9 @@ enum Template {
         static var host: String { value("host") }
         /// The folder of Lamp's apps, and this app's in it.
         static var apps: String { value("apps") }
-        static var app: String { apps + "/" + slug }
+        /// Its folder: under its own name, or for a part of a wish (an app beside a TV app) inside its wish's. An app
+        /// installed by a Lamp from before says only its name.
+        static var app: String { apps + "/" + (value("folder").isEmpty ? slug : value("folder")) }
         static var macHost: String { value("macHost") }
         /// A link that asks Lamp to do something for this app.
         static func link(_ action: String) -> URL {
@@ -3701,6 +3873,7 @@ enum Template {
     struct LampCommands: Commands {
         init() {
             LampRuntime.start
+            LampShowcase.start
             LampWindows.start
             LampWidget.start
             LampMagic.start
@@ -3710,6 +3883,9 @@ enum Template {
         }
 
         var body: some Commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About \(LampAbout.name)") { LampAbout.show() }
+            }
             CommandGroup(after: .appInfo) {
                 Button("Customize with Lamp…") {
                     LampSidebar.openFromMenu()
@@ -3719,6 +3895,41 @@ enum Template {
             CommandGroup(after: .saveItem) {
                 Button("Share…") { LampShareApp.share() }
             }
+        }
+    }
+
+    /// The About window, with the app's credits as Lamp has them now. The Credits.html written into the bundle is only
+    /// as new as the app's install, and a credit added while the app is open (work brought in with a change that went
+    /// into the running app, with no install) would wait for the next one; Lamp answers from the wish's credits.json.
+    /// With no answer from Lamp (it isn't open, or this app isn't its), it's the bundle's page, as macOS shows it.
+    @MainActor enum LampAbout {
+        static var name: String {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+        }
+
+        static func show() {
+            Task {
+                let credits = await ask()
+                NSApp.activate()
+                NSApp.orderFrontStandardAboutPanel(options: credits.map { [.credits: $0] } ?? [:])
+            }
+        }
+
+        /// The credits page Lamp has for this app now; empty when it has none, nil when Lamp didn't answer.
+        private static func ask() async -> NSAttributedString? {
+            guard let url = URL(string: lampGateway + "/app/credits") else { return nil }
+            // Short: the window is opened by a click, and the bundle's page is there to fall back on.
+            var request = URLRequest(url: url, timeoutInterval: 1.5)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+            guard let page = answer["page"] as? String else { return NSAttributedString() }
+            return NSAttributedString(html: Data(page.utf8), documentAttributes: nil)
         }
     }
 
@@ -5190,6 +5401,9 @@ enum Template {
                 glass.hasShadow = false
                 glass.isReleasedWhenClosed = false
                 glass.becomesKeyOnlyIfNeeded = false
+                // It has the window's frame, so the window's own read of itself (`LampDriver.elements`) could take it
+                // for the window, and it has nothing in it to read.
+                glass.setAccessibilityElement(false)
                 // An alert the app runs while the person points would otherwise keep every click for itself.
                 glass.worksWhenModal = true
                 let picker = Picker(frame: NSRect(origin: .zero, size: window.frame.size))
@@ -5505,7 +5719,12 @@ enum Template {
         }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
-        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") }
+        /// On while Lamp has written its mark beside the apps, and on a Mac with no Lamp at all (the app was copied over,
+        /// or Lamp was removed): there the wand opens the chat's own way into Lamp (`RemixPanel`).
+        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") || !lampInstalled }
+        /// Whether the Lamp that installed this app is on this Mac at all. Here and not in `LampInstall`, which every
+        /// kind of app has and which reads only its own values: this asks macOS.
+        static var lampInstalled: Bool { NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) != nil }
 
         @MainActor private static func detach(from window: NSWindow) {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
@@ -5581,8 +5800,8 @@ enum Template {
         }
 
         /// The button that reloads the app for a change waiting on it, beside the wand: tinted glass in the accent
-        /// colour whose tint brightens and settles again, so it's seen without being in the way (a push button in
-        /// the accent colour before macOS 26). Its tint is all that moves: faded as a whole it would look disabled.
+        /// color whose tint brightens and settles again, so it's seen without being in the way (a push button in
+        /// the accent color before macOS 26). Its tint is all that moves: faded as a whole it would look disabled.
         /// A click asks Lamp to put the change in, by reopening the app as it was.
         @MainActor final class ReloadButton: NSButton {
             private var pulse: Timer?
@@ -5593,6 +5812,9 @@ enum Template {
                 button.identifier = NSUserInterfaceItemIdentifier("lampReload")
                 button.imagePosition = .imageLeading
                 button.imageHugsTitle = true
+                // The glass style is macOS 26's, and its names exist only in Xcode 26's SDK: a build with an older
+                // Xcode (the compiler says which) gets the push style on every macOS.
+                #if compiler(>=6.2)
                 if #available(macOS 26, *) {
                     button.bezelStyle = .glass
                     button.borderShape = .capsule
@@ -5600,6 +5822,9 @@ enum Template {
                 } else {
                     button.bezelStyle = .push
                 }
+                #else
+                button.bezelStyle = .push
+                #endif
                 button.bezelColor = .controlAccentColor
                 button.toolTip = "Reload the app to see the latest change"
                 button.setAccessibilityLabel("Reload to see the latest change")
@@ -5699,7 +5924,7 @@ enum Template {
 
         /// The wand floating over the app's own content: a dark disc with a white wand, legible over a game's night
         /// sky and a bright canvas alike, as the controls over a playing video are. The title bar's glass takes its
-        /// colours from the window's appearance, and over content of the other shade it all but disappeared.
+        /// colors from the window's appearance, and over content of the other shade it all but disappeared.
         @MainActor private final class FloatingWand: NSButton {
             convenience init() {
                 let image = LampGlyph.image(pointSize: 10, weight: .semibold)
@@ -5711,7 +5936,7 @@ enum Template {
                 wantsLayer = true
             }
 
-            /// The chat is open: the disc takes the accent colour.
+            /// The chat is open: the disc takes the accent color.
             var active = false { didSet { needsDisplay = true } }
 
             override var wantsUpdateLayer: Bool { true }
@@ -5747,6 +5972,7 @@ enum Template {
             image.accessibilityDescription = name
             let button = NSButton(image: image, target: Opener.shared, action: action)
             button.toolTip = tip
+            #if compiler(>=6.2)
             if #available(macOS 26, *) {
                 button.bezelStyle = .glass
                 button.borderShape = .circle
@@ -5754,6 +5980,10 @@ enum Template {
                 button.bezelStyle = .accessoryBarAction
                 button.isBordered = false
             }
+            #else
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            #endif
             return button
         }
 
@@ -5785,8 +6015,8 @@ enum Template {
                 floating.active = open
             } else {
                 // A toggle that's on, as a toolbar's are drawn lit. In the window in front the lit glass is filled
-                // with the accent colour and draws the symbol white; behind, or with the app in the back, the glass
-                // is gray and the symbol is put in the accent colour itself, since a tint alone doesn't show there.
+                // with the accent color and draws the symbol white; behind, or with the app in the back, the glass
+                // is gray and the symbol is put in the accent color itself, since a tint alone doesn't show there.
                 // An accent symbol on the accent glass all but disappeared.
                 let inFront = NSApp.isActive && window.isMainWindow
                 wand.setButtonType(.pushOnPushOff)
@@ -5975,7 +6205,7 @@ enum Template {
         @MainActor static func openFromMenu() {
             if LampMagic.isOn, frontWindow() == nil, LampMenuBar.isInstalled { return LampMenuBar.customize() }
             guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
-                NSWorkspace.shared.open(LampInstall.link("edit"))
+                NSWorkspace.shared.open(LampMagic.lampInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
                 return
             }
             window.makeKeyAndOrderFront(nil)
@@ -6008,6 +6238,11 @@ enum Template {
                 guard !isOpen(in: window) else { return }
                 show(chat)
                 return
+            }
+            // An app built from its code with its own script has no chat of its own: the extension is Lamp's and goes
+            // into an app only as Lamp installs it. Nothing to wait for, so it goes straight to Lamp, or its site.
+            guard FileManager.default.fileExists(atPath: Bundle.main.bundleURL.appendingPathComponent("Contents/Extensions/LampSidebar.appex").path) else {
+                return fallback()
             }
             Task { @MainActor in
                 // Just after Lamp installs a new build, macOS may not have registered its chat yet: the first
@@ -6049,6 +6284,7 @@ enum Template {
             guard isOpen(in: window), let chat = chat(in: window) else { return }
             chat.wanted = false
             hidePanel(chat)
+            tellLampClosed()
             giveBackWidth(chat)
             LampMagic.refit(window)
             coach(window)
@@ -6335,7 +6571,7 @@ enum Template {
             /// The rim inside the card, around the chat, where the pointer resizes it: the room around the card is its
             /// shadow, which clicks go through.
             static let rim: CGFloat = 6
-            /// The room around the card for its own shadow. The window's shadow drew a hard grey line round the card, as
+            /// The room around the card for its own shadow. The window's shadow drew a hard gray line round the card, as
             /// macOS outlines every window; this one is soft, and gone within the room, so clicks there reach what's
             /// behind (the app's own edge, beside it).
             static let shade: CGFloat = 14
@@ -6825,10 +7061,18 @@ enum Template {
             NSWorkspace.shared.open(LampInstall.link("sidebar"), configuration: configuration)
         }
 
+        /// The chat stays connected while it's hidden, so Lamp is told it was closed: it isn't brought back in Lamp's own
+        /// window when the app moves to another device and quits. Only a Lamp that's running is told.
+        @MainActor private static func tellLampClosed() {
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name(LampInstall.note + "sidebarClosed"), object: nil, userInfo: ["app": LampInstall.slug], deliverImmediately: true)
+        }
+
         /// No chat in this copy of the app (installed by a Lamp from before it): the chat in Lamp's window.
         @MainActor private static func fallback() {
             UserDefaults.standard.set(false, forKey: openKey)
-            NSWorkspace.shared.open(LampInstall.link("edit"))
+            // Lamp's window, or on a Mac without Lamp, its site.
+            NSWorkspace.shared.open(LampMagic.lampInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
         }
     }
 
@@ -6988,7 +7232,9 @@ enum Template {
             // ...and stops part way through when the person takes the app back with Lamp's Stop.
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name(LampInstall.note + "useAppStop." + LampInstall.slug), object: nil, queue: .main) { note in
-                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStop"] as? String
+                // Under a key long enough to be kept whole in the binary, which Lamp looks for (a name of 15 bytes or
+                // fewer is compiled into the code itself, so the old key's wasn't always found).
+                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStopSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.Handover.stop(id: id, signature: signature, token: LampInstall.token) }
             }
             // ...and, before it asks the app to quit for a rebuild, whether it still answers, so it can tell the
@@ -7031,45 +7277,87 @@ enum Template {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { MainActor.assumeIsolated { firstSnapshot(waited: waited + 0.1) } }
         }
 
-        /// Saves up to three open windows, frontmost first, as screenshot.png, screenshot-2.png and screenshot-3.png.
-        /// An app may picture its own windows without screen recording permission.
+        /// Saves up to three open windows, frontmost first, as screenshot.png, screenshot-2.png and screenshot-3.png,
+        /// then calls `done`. An app may picture its own windows without screen recording permission.
         @MainActor
-        static func snapshot() {
+        static func snapshot(then done: (@MainActor () -> Void)? = nil) {
+            // A page's things are read in the page, which answers a moment later.
+            guard let refresh = LampPageItems.refresh else { return snapshotNow(then: done) }
+            refresh { snapshotNow(then: done) }
+        }
+
+        @MainActor
+        private static func snapshotNow(then done: (@MainActor () -> Void)?) {
             LampDriver.keepBarPanel()
             let windows = windowsOnScreen
-            guard !windows.isEmpty else { return }   // nothing on screen: keep the last pictures
+            guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
             // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
             // the desk keeps this picture until the next launch.
-            if !previewTaken, let window = windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel) {
-                preview(of: window)
-            }
-            for index in 0..<3 {
-                let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
-                if index < windows.count, let png = picture(of: windows[index]) {
-                    try? png.write(to: url, options: .atomic)
-                } else {
-                    try? FileManager.default.removeItem(at: url)
+            let previewWindow = previewTaken ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
+            if previewWindow != nil { previewTaken = true }
+            let front = Array(windows.prefix(3))
+            let seen = capturable()
+            let shots = front.map { seen ? shot(of: $0) : nil }
+            let previewShot = previewWindow.flatMap { seen ? shot(of: $0) : nil }
+            // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name: read
+            // now, with the window as it's pictured, and written with the pictures, so a later snapshot's text never
+            // lands beside this one's pictures.
+            let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item))
+            // The window server's pictures are taken off the main thread: the first after a build has the system check
+            // the app's signature before it answers, which can take seconds, and the app froze (a spinning cursor) meanwhile.
+            pictures.async {
+                let taken = shots.map { $0.flatMap(capture) }
+                let previewPicture = previewShot.flatMap(capture)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        // The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it
+                        // shows after each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
+                        if let previewWindow {
+                            if let png = previewPicture ?? drawn(previewWindow) {
+                                try? png.write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
+                            } else {
+                                previewTaken = false
+                            }
+                        }
+                        let text = folder.appendingPathComponent("screen.txt")
+                        if let words {
+                            try? words.write(to: text, atomically: true, encoding: .utf8)
+                        } else {
+                            try? FileManager.default.removeItem(at: text)
+                        }
+                        for index in 0..<3 {
+                            let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
+                            if index < front.count, let png = taken[index] ?? drawn(front[index]) {
+                                try? png.write(to: url, options: .atomic)
+                            } else {
+                                try? FileManager.default.removeItem(at: url)
+                            }
+                        }
+                        done?()
+                    }
                 }
-            }
-            // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name.
-            let text = folder.appendingPathComponent("screen.txt")
-            if let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item)) {
-                try? words.write(to: text, atomically: true, encoding: .utf8)
-            } else {
-                try? FileManager.default.removeItem(at: text)
             }
         }
 
         @MainActor private static var previewTaken = false
+        private static let pictures = DispatchQueue(label: "lamp.pictures")
 
-        /// The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it shows after
-        /// each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
+        /// What a picture of a window needs from it, read on the main thread; the picture is taken off it (`capture`).
+        struct Shot: Sendable {
+            let number: Int
+            let size: CGSize
+            let scale: CGFloat
+        }
+
         @MainActor
-        private static func preview(of window: NSWindow) {
-            guard let png = picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage else { return }
-            previewTaken = true
-            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
-                .write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
+        static func shot(of window: NSWindow) -> Shot? {
+            guard window.windowNumber > 0, let view = window.contentView?.superview ?? window.contentView else { return nil }
+            return Shot(number: window.windowNumber, size: view.bounds.size, scale: scale(of: window))
+        }
+
+        /// The window server's picture of a window, as a PNG at the size every picture of it is sent at.
+        static func capture(_ shot: Shot) -> Data? {
+            shown(number: shot.number).flatMap { png($0, size: shot.size, scale: shot.scale) }
         }
 
         /// Open windows, frontmost first. A dialog or sheet comes before the window it's attached to: it's
@@ -7086,20 +7374,27 @@ enum Template {
                 && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) }
         }
 
-        /// Picture pixels per window point: at most 1400 pixels on the long side, a size models see unscaled.
+        /// Picture pixels per window point: at most 1024 pixels on the long side, a size models see unscaled and read
+        /// a window's words in, at half the bytes and tokens of 1400: every picture is sent again with each request.
         @MainActor
         static func scale(of window: NSWindow) -> CGFloat {
             let size = (window.contentView?.superview ?? window.contentView)?.bounds.size ?? window.frame.size
-            return min(window.backingScaleFactor, 1400 / max(size.width, size.height))
+            return min(window.backingScaleFactor, 1024 / max(size.width, size.height))
         }
 
-        /// The window with its title bar, at most 1400 pixels on the long side. It's the window as the system
+        /// The window with its title bar, at most 1024 pixels on the long side. It's the window as the system
         /// shows it, so video, maps and web pages are in the picture; asking for one's own windows needs no
         /// screen recording permission. If the system has no picture (the app is hidden), the app draws one itself,
         /// which leaves those out.
         @MainActor
         static func picture(of window: NSWindow) -> Data? {
             if let shown = shown(window) { return png(shown, at: window) }
+            return drawn(window)
+        }
+
+        /// The app's own drawing of the window, when the window server has no picture of it.
+        @MainActor
+        private static func drawn(_ window: NSWindow) -> Data? {
             guard let view = window.contentView?.superview ?? window.contentView,
                   let bitmap = bitmap(for: window) else { return nil }
             view.cacheDisplay(in: view.bounds, to: bitmap)
@@ -7109,7 +7404,12 @@ enum Template {
         /// A picture the window server took of the window, at the size every picture of it is sent at.
         @MainActor
         static func png(_ image: CGImage, at window: NSWindow) -> Data? {
-            guard let bitmap = bitmap(for: window), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+            guard let view = window.contentView?.superview ?? window.contentView else { return nil }
+            return png(image, size: view.bounds.size, scale: scale(of: window))
+        }
+
+        static func png(_ image: CGImage, size: CGSize, scale: CGFloat) -> Data? {
+            guard let bitmap = bitmap(size: size, scale: scale), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
             context.cgContext.interpolationQuality = .high
             context.cgContext.draw(image, in: CGRect(origin: .zero, size: bitmap.size))
             return bitmap.representation(using: .png, properties: [:])
@@ -7118,8 +7418,10 @@ enum Template {
         @MainActor
         private static func bitmap(for window: NSWindow) -> NSBitmapImageRep? {
             guard let view = window.contentView?.superview ?? window.contentView else { return nil }
-            let size = view.bounds.size
-            let scale = scale(of: window)
+            return bitmap(size: view.bounds.size, scale: scale(of: window))
+        }
+
+        private static func bitmap(size: CGSize, scale: CGFloat) -> NSBitmapImageRep? {
             let bitmap = NSBitmapImageRep(
                 bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -7132,14 +7434,23 @@ enum Template {
         /// marks it unavailable in favour of ScreenCaptureKit, which would ask for screen recording permission.
         @MainActor
         private static func shown(_ window: NSWindow) -> CGImage? {
-            typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
-            // While the screen is locked or the display sleeps, the window server hands back a blank picture.
+            guard window.windowNumber > 0, capturable() else { return nil }
+            return shown(number: window.windowNumber)
+        }
+
+        /// Whether the window server would give a picture now: not while the app is hidden, the screen is locked or the
+        /// display sleeps, when it hands back a blank one.
+        @MainActor
+        private static func capturable() -> Bool {
             let session = CGSessionCopyCurrentDictionary() as? [String: Any]
-            guard window.windowNumber > 0, NSApp.isHidden == false,
-                  session?["CGSSessionScreenIsLocked"] == nil, CGDisplayIsAsleep(CGMainDisplayID()) == 0,
-                  let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+            return NSApp.isHidden == false && session?["CGSSessionScreenIsLocked"] == nil && CGDisplayIsAsleep(CGMainDisplayID()) == 0
+        }
+
+        private static func shown(number: Int) -> CGImage? {
+            typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+            guard number > 0, let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
             // Only this window (1 << 3); its bounds without the shadow (1 << 0), at full resolution (1 << 3).
-            let image = unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 | 1 << 3)?
+            let image = unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(number), 1 | 1 << 3)?
                 .takeRetainedValue()
             guard let image, image.width > 1, image.height > 1 else { return nil }
             return image
@@ -7155,7 +7466,7 @@ enum Template {
                 try? #"{"error":"no window"}"#.write(to: folder.appendingPathComponent("motion.json"), atomically: true, encoding: .utf8)
                 return
             }
-            // Each frame is compared as it comes, as a small grey picture, so only those and the two full frames
+            // Each frame is compared as it comes, as a small gray picture, so only those and the two full frames
             // that differ most so far are kept: a window's full frames would add up to gigabytes.
             func small(_ image: CGImage) -> [UInt8] {
                 let w = 160, h = max(1, Int(160 * Double(image.height) / Double(max(image.width, 1))))
@@ -7231,7 +7542,7 @@ enum Template {
 
     // LampTransition
     /// While Lamp builds a change for this app, smoke curls up from the bottom of its windows, and when the change
-    /// goes in a band of white whooshes up across them once, so the change looks alive rather than abrupt. Only Lamp starts it: the
+    /// goes in Lamp's stripes roll up across them once, so the change looks alive rather than abrupt. Only Lamp starts it: the
     /// request is signed with the app's token (the "lampTransitionSignature" key marks the builds that understand
     /// it), and nothing here is reachable from the app's own code. It's drawn in clear windows laid over the app's
     /// (children, so they move and stack with them) that let every click through, and the pictures Lamp takes for
@@ -7310,7 +7621,7 @@ enum Template {
             }
         }
 
-        /// The change went in: the band whooshes up each window once (a soft wash where motion is reduced), then the smoke and the glow go.
+        /// The change went in: the stripes roll up each window once (fading where motion is reduced), then the smoke and the glow go.
         @MainActor static func land() {
             timeout?.cancel()
             if glasses.isEmpty {
@@ -7351,6 +7662,9 @@ enum Template {
                 isReleasedWhenClosed = false
                 hidesOnDeactivate = false
                 animationBehavior = .none
+                // Its frame is the window's, so the app's own read of the window (`LampDriver.elements`) would take
+                // this empty panel for it while a change goes in.
+                setAccessibilityElement(false)
                 look.cornerRadius = Self.cornerRadius(of: window)
                 contentView = look
                 window.addChildWindow(self, ordered: .above)
@@ -7403,20 +7717,24 @@ enum Template {
         /// The effect's layers, filling the window they're laid over and cut to its rounding. Core Animation runs
         /// them out of the app's process, so they keep moving while the app is busy taking the change in.
         ///
-        /// While the change is built, smoke in many colours curls up from the bottom edge, thick there and thinning as
-        /// it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
-        /// of most of the window. When the change goes in the smoke surges for a moment, then a level band of white,
-        /// the window's width, whooshes from the bottom to the top with a soft gray shadow just ahead of it, covering the
-        /// moment the new code draws and leaving the window clear behind it.
+        /// While the change is built, smoke in Lamp's stripe colors curls up from the bottom edge, thick there and thinning
+        /// as it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
+        /// of most of the window. When the change goes in the smoke surges for a moment, then the stripes roll up the window
+        /// on Lamp's slant, as if round a drum: each comes in as a thin line, widens to the middle and thins again as it
+        /// leaves, and at the middle of the roll they cover the window whole, leaving it clear behind them.
         @MainActor final class Look: NSView {
-            /// The colours the smoke mixes: blue, violet, pink, orange and teal.
+            /// Lamp's stripes, in the order they come up: green, lime, yellow, orange, red and magenta.
             static let hues: [NSColor] = [
-                NSColor(red: 0.25, green: 0.5, blue: 1, alpha: 1),
-                NSColor(red: 0.6, green: 0.38, blue: 1, alpha: 1),
-                NSColor(red: 1, green: 0.38, blue: 0.68, alpha: 1),
-                NSColor(red: 1, green: 0.6, blue: 0.22, alpha: 1),
-                NSColor(red: 0.2, green: 0.82, blue: 0.9, alpha: 1),
+                NSColor(red: 0.122, green: 0.541, blue: 0.29, alpha: 1),
+                NSColor(red: 0.486, green: 0.749, blue: 0.227, alpha: 1),
+                NSColor(red: 0.965, green: 0.722, blue: 0.11, alpha: 1),
+                NSColor(red: 0.941, green: 0.541, blue: 0.11, alpha: 1),
+                NSColor(red: 0.886, green: 0.251, blue: 0.165, alpha: 1),
+                NSColor(red: 0.824, green: 0.216, blue: 0.471, alpha: 1),
             ]
+
+            /// The stripes' slant, as on the website: rising to the right.
+            private static let slant: CGFloat = .pi / 6
 
             /// The window's own rounding, so the glow follows its corners.
             var cornerRadius: CGFloat = 12 {
@@ -7430,8 +7748,7 @@ enum Template {
 
             private let glowLayer = CALayer()
             private let wisps = CAEmitterLayer()
-            private let band = CAGradientLayer()
-            private let wash = CALayer()
+            private let stripes = CALayer()
             private var arranged = CGRect.zero
 
             override init(frame: NSRect) {
@@ -7440,7 +7757,7 @@ enum Template {
                 autoresizingMask = [.width, .height]
                 layer?.masksToBounds = true
                 layer?.cornerRadius = cornerRadius
-                for sublayer in [glowLayer, wash, wisps, band] {
+                for sublayer in [glowLayer, wisps, stripes] {
                     sublayer.opacity = 0
                     layer?.addSublayer(sublayer)
                 }
@@ -7469,7 +7786,7 @@ enum Template {
 
             private func arrange() {
                 // Only blur, no line: each band of the glow is drawn just outside the window, where the window's own
-                // rounding cuts it off, so all that shows is its shadow coming in from the edge, going round the colours.
+                // rounding cuts it off, so all that shows is its shadow coming in from the edge, going round the colors.
                 glowLayer.frame = bounds
                 glowLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
                 for (blur, strength) in [(CGFloat(54), Float(0.8)), (24, 1)] {
@@ -7493,7 +7810,7 @@ enum Template {
                     glowLayer.addSublayer(edge)
                 }
 
-                // Smoke rising from below the bottom edge, a stream of puffs for each colour. How far it rises goes with
+                // Smoke rising from below the bottom edge, a stream of puffs for each color. How far it rises goes with
                 // the window's height (speed times life, and the puffs growing), so it reaches about a third of the way
                 // up at any size.
                 wisps.frame = bounds
@@ -7506,7 +7823,7 @@ enum Template {
                     cell.contents = Self.puff
                     cell.color = hue.withAlphaComponent(0.42).cgColor
                     cell.redRange = 0.08; cell.greenRange = 0.08; cell.blueRange = 0.08
-                    cell.birthRate = Float(bounds.width / 55)
+                    cell.birthRate = Float(bounds.width / 66)
                     cell.lifetime = life; cell.lifetimeRange = 1.5
                     cell.velocity = rise; cell.velocityRange = rise * 0.45
                     cell.emissionLongitude = .pi / 2; cell.emissionRange = 0.55
@@ -7517,20 +7834,38 @@ enum Template {
                     return cell
                 }
 
-                // The band: the window's width and level, white through its body, fading out below where it's been, and
-                // a narrow gray shadow just above its top edge, ahead of it. Its colours run from the bottom of the layer up.
-                let height = max(bounds.height * 0.4, 120), shadow: CGFloat = 24
-                band.frame = CGRect(x: 0, y: -height - shadow, width: bounds.width, height: height + shadow)
-                band.startPoint = CGPoint(x: 0.5, y: 0)
-                band.endPoint = CGPoint(x: 0.5, y: 1)
-                let top = Double(height / (height + shadow))
-                band.colors = [NSColor(white: 1, alpha: 0), NSColor(white: 1, alpha: 0.85), NSColor(white: 1, alpha: 1), NSColor(white: 1, alpha: 1),
-                               NSColor(white: 0.35, alpha: 0.22), NSColor(white: 0.2, alpha: 0)].map(\.cgColor)
-                band.locations = [0, NSNumber(value: top * 0.45), NSNumber(value: top * 0.7), NSNumber(value: top),
-                                  NSNumber(value: top + 0.001), 1]
+                // The stripes: level in a layer turned to the slant and just big enough that, across its height, they reach
+                // from one corner of the window to the opposite one. Each starts with no height, waiting at the bottom.
+                let along = bounds.width * cos(Self.slant) + bounds.height * sin(Self.slant)
+                let across = bounds.width * sin(Self.slant) + bounds.height * cos(Self.slant)
+                stripes.bounds = CGRect(x: 0, y: 0, width: along, height: across)
+                stripes.position = CGPoint(x: bounds.midX, y: bounds.midY)
+                stripes.setAffineTransform(CGAffineTransform(rotationAngle: Self.slant))
+                stripes.sublayers?.forEach { $0.removeFromSuperlayer() }
+                for (index, hue) in Self.hues.enumerated() {
+                    let stripe = CALayer()
+                    stripe.backgroundColor = hue.cgColor
+                    stripe.allowsEdgeAntialiasing = true
+                    stripe.anchorPoint = .zero
+                    Self.place(stripe, index: index, roll: 0, across: across, along: along)
+                    stripes.addSublayer(stripe)
+                }
+            }
 
-                wash.frame = bounds
-                wash.backgroundColor = NSColor(white: 1, alpha: 0.35).cgColor
+            /// Where a stripe's edges are at a point of the roll, from 0 to 2π: the stripes lie side by side round a drum
+            /// whose near half is the window. An edge's height is the drum's seen from the front, so the stripes are thin
+            /// where the drum turns away, top and bottom, and the six together are as tall as the window at π.
+            private static func edges(index: Int, roll: CGFloat, across: CGFloat) -> (bottom: CGFloat, top: CGFloat) {
+                let share = CGFloat.pi / CGFloat(hues.count)
+                func height(_ angle: CGFloat) -> CGFloat { (1 - cos(min(max(angle, 0), .pi))) / 2 * across }
+                return (height(roll - CGFloat(index + 1) * share), height(roll - CGFloat(index) * share))
+            }
+
+            /// A stripe at a point of the roll, held a point past its lower edge so no line of the window shows between two.
+            private static func place(_ stripe: CALayer, index: Int, roll: CGFloat, across: CGFloat, along: CGFloat) {
+                let edge = edges(index: index, roll: roll, across: across)
+                stripe.position = CGPoint(x: 0, y: edge.bottom)
+                stripe.bounds = CGRect(x: 0, y: 0, width: along, height: edge.top > edge.bottom ? edge.top - edge.bottom + 1 : 0)
             }
 
             /// A puff of smoke: white, soft all the way to its edge, tinted by the cell that uses it.
@@ -7555,19 +7890,27 @@ enum Template {
                 wisps.birthRate = 1
             }
 
-            /// The change went in: the smoke surges and the band whooshes up (a soft wash where motion is reduced), and
+            /// The change went in: the smoke surges and the stripes roll up (the stripes fading where motion is reduced), and
             /// the glow and the smoke go. Answers how long that takes, after which the layers can go.
             func reveal(still: Bool) -> TimeInterval {
                 layoutSubtreeIfNeeded()
                 let glowing = glowLayer.presentation()?.opacity ?? glowLayer.opacity
+                let across = stripes.bounds.height, along = stripes.bounds.width
+                let layers = stripes.sublayers ?? []
                 if still {
                     wisps.birthRate = 0
                     Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6)
                     Self.animate(wisps, "opacity", from: wisps.presentation()?.opacity ?? wisps.opacity, to: 0, duration: 0.6)
-                    Self.animate(wash, "opacity", from: 1, to: 0, duration: 0.7)
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    for (index, stripe) in layers.enumerated() {
+                        Self.place(stripe, index: index, roll: .pi, across: across, along: along)
+                    }
+                    CATransaction.commit()
+                    Self.animate(stripes, "opacity", from: 0.35, to: 0, duration: 0.7)
                     return 0.8
                 }
-                // The smoke gathers itself, more of it and rising faster, for a moment before the whoosh. Timed by
+                // The smoke gathers itself, more of it and rising faster, for a moment before the roll. Timed by
                 // animations, not by the main thread, which may be busy with the new code.
                 let gather = 0.3
                 wisps.opacity = 1
@@ -7580,14 +7923,36 @@ enum Template {
                 wisps.birthRate = 0
                 wisps.add(surge, forKey: "surge")
 
-                // Then the band goes up, quickening as it goes, and the smoke and the glow go with it.
-                let whoosh = 0.8
-                band.opacity = 1
-                Self.animate(band, "position.y", from: Float(band.position.y), to: Float(bounds.height + band.bounds.height / 2),
-                             duration: whoosh, delay: gather, timing: CAMediaTimingFunction(controlPoints: 0.55, 0, 0.3, 1))
+                // Then the stripes roll up at the drum's steady turn, which is what eases them in and out at the edges, and
+                // the smoke and the glow go with them. Each stripe's edges are worked out ahead along the roll, so Core
+                // Animation can run them without the app.
+                let roll = 1.1
+                let steps = 60
+                let times = (0...steps).map { NSNumber(value: Double($0) / Double(steps)) }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                stripes.opacity = 1
+                for (index, stripe) in layers.enumerated() {
+                    let frames = (0...steps).map { Self.edges(index: index, roll: 2 * .pi * CGFloat($0) / CGFloat(steps), across: across) }
+                    Self.follow(stripe, "position.y", values: frames.map(\.bottom), times: times, duration: roll, delay: gather)
+                    Self.follow(stripe, "bounds.size.height", values: frames.map { $0.top > $0.bottom ? $0.top - $0.bottom + 1 : 0 },
+                                times: times, duration: roll, delay: gather)
+                    Self.place(stripe, index: index, roll: 2 * .pi, across: across, along: along)
+                }
+                CATransaction.commit()
                 Self.animate(wisps, "opacity", from: 1, to: 0, duration: 0.6, delay: gather + 0.1)
                 Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: 0.6, delay: gather)
-                return gather + whoosh + 0.2
+                return gather + roll + 0.2
+            }
+
+            private static func follow(_ layer: CALayer, _ key: String, values: [CGFloat], times: [NSNumber], duration: Double, delay: Double) {
+                let animation = CAKeyframeAnimation(keyPath: key)
+                animation.values = values
+                animation.keyTimes = times
+                animation.duration = duration
+                animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + delay
+                animation.fillMode = .backwards
+                layer.add(animation, forKey: key)
             }
 
             /// The glow and the smoke go without a change going in. Answers how long that takes.
@@ -7640,8 +8005,165 @@ enum Template {
     /// first change of each launch, the database is copied to Backups/ (the newest 20 are kept). Anything this
     /// version of the app can't read is left untouched: the user is told once, and it loads again once fixed.
     /// `folder` suits other files the app keeps, such as images (store their names, not their bytes).
+    /// Showcase mode, for a reel of the app. Launched with LAMP_SHOWCASE set to a folder holding a showcase.json (its
+    /// storyboard, with any files it brings), the app keeps its data in that folder, takes its AI's answers, its location
+    /// and the person's spoken lines from the script, and sends no notifications and runs no schedules; on a Mac it then
+    /// plays the script's `steps` on its own window (`LampDriver.playShowcase`). What happens is logged to events.tsv
+    /// with the time, for the reel's edit to put the sound, captions and camera where it happened. Nothing of the
+    /// person's is read, so the reel shows none of it.
+    ///
+    /// The app's own microphone, camera or speech code asks the script while it's on:
+    ///
+    ///     if LampShowcase.isOn { reply = await LampShowcase.hear { transcript = $0 } ?? ""; return }
+    ///     if LampShowcase.isOn { await LampShowcase.speak(utterance); return }
+    ///     if LampShowcase.isOn, let photo = LampShowcase.file("bottle.jpg") { … }      // beside showcase.json
+    enum LampShowcase {
+        static let folder: URL? = ProcessInfo.processInfo.environment["LAMP_SHOWCASE"]
+            .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+        static var isOn: Bool { folder != nil }
+        nonisolated(unsafe) static let script: [String: Any] = folder
+            .flatMap { try? Data(contentsOf: $0.appendingPathComponent("showcase.json")) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        /// How long each word of a spoken line takes to be heard.
+        static let wordTime = 0.34
+
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var taken: [String: Int] = [:]
+        nonisolated(unsafe) private static var answered: Set<Int> = []
+
+        /// Logs something that happened, with the time, for the reel.
+        static func note(_ event: String, _ fields: String...) {
+            guard let folder else { return }
+            let clean = fields.map { $0.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ") }
+            let line = ([String(format: "%.3f", Date().timeIntervalSince1970), event] + clean).joined(separator: "\t") + "\n"
+            lock.lock(); defer { lock.unlock() }
+            let url = folder.appendingPathComponent("events.tsv")
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close()
+            } else {
+                try? Data(line.utf8).write(to: url)
+            }
+        }
+
+        /// A file the script brought beside showcase.json (a photo for the camera, a recording for the microphone).
+        static func file(_ name: String) -> URL? {
+            guard let url = folder?.appendingPathComponent(name), FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+
+        /// The next of the script's `lines[name]`, in order, the last one again once they run out: what the person
+        /// says or types at that point. Each is a string, or `{"text": …, "caption": …}` with the words in English.
+        static func line(_ name: String = "spoken") -> (text: String, caption: String)? {
+            guard let list = (script["lines"] as? [String: Any])?[name] as? [Any], !list.isEmpty else { return nil }
+            let entry = list[min(take(name), list.count - 1)]
+            if let text = entry as? String { return (text, "") }
+            guard let entry = entry as? [String: Any], let text = entry["text"] as? String else { return nil }
+            return (text, entry["caption"] as? String ?? "")
+        }
+
+        private static func take(_ key: String) -> Int {
+            lock.lock(); defer { lock.unlock() }
+            let next = taken[key, default: 0]
+            taken[key] = next + 1
+            return next
+        }
+
+        /// The person saying the next of `lines[name]`: `partial` gets the words as they'd be recognized, one at a time,
+        /// and the whole line is answered once it's said. Nil when the script has none.
+        @MainActor static func hear(_ name: String = "spoken", partial: (String) -> Void = { _ in }) async -> String? {
+            guard let line = line(name) else { return nil }
+            note("hear", line.text, line.caption)
+            try? await Task.sleep(for: .seconds(0.5))
+            var words: [Substring] = []
+            for word in line.text.split(separator: " ") {
+                words.append(word)
+                partial(words.joined(separator: " "))
+                try? await Task.sleep(for: .seconds(wordTime))
+            }
+            note("hear-end")
+            return line.text
+        }
+
+        /// What the script's `captions` says a line means, for the reel's subtitles.
+        static func caption(_ text: String) -> String { (script["captions"] as? [String: String])?[text] ?? "" }
+
+        /// Says `utterance` into a file beside the log instead of the speakers, then waits as long as it lasts, so the
+        /// app behaves as if it spoke and the reel hears it where it did.
+        @MainActor static func speak(_ utterance: AVSpeechUtterance) async {
+            guard let folder else { return }
+            final class Recording: @unchecked Sendable {
+                var file: AVAudioFile?
+                var frames: AVAudioFramePosition = 0
+                var rate = 22050.0
+                var finished = false
+            }
+            let url = folder.appendingPathComponent("voice-\(take("voice") + 1).caf")
+            let synthesizer = AVSpeechSynthesizer()
+            let recording = Recording()
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                synthesizer.write(utterance) { buffer in
+                    guard !recording.finished, let pcm = buffer as? AVAudioPCMBuffer else { return }
+                    if pcm.frameLength == 0 { recording.finished = true; done.resume(); return }
+                    if recording.file == nil {
+                        recording.rate = pcm.format.sampleRate
+                        recording.file = try? AVAudioFile(forWriting: url, settings: pcm.format.settings,
+                                                          commonFormat: pcm.format.commonFormat, interleaved: pcm.format.isInterleaved)
+                    }
+                    try? recording.file?.write(from: pcm)
+                    recording.frames += AVAudioFramePosition(pcm.frameLength)
+                }
+            }
+            note("say", url.lastPathComponent, utterance.speechString, caption(utterance.speechString))
+            try? await Task.sleep(for: .seconds(Double(recording.frames) / recording.rate))
+            note("say-end")
+        }
+
+        /// The script's answer to one of LampAI's calls: the first unused entry of `ai` for that route ("/ai" when it
+        /// names none) whose `match`, if it has one, is in the request. Its `text` is the answer, `json` an object sent
+        /// as the answer's text, or `reply` the whole reply. A call the script has no answer for fails as AI does
+        /// when it isn't connected.
+        static func answer(_ path: String, _ body: Data) async throws -> [String: Any] {
+            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
+            let request = String(decoding: body, as: UTF8.self)
+            let entries = script["ai"] as? [[String: Any]] ?? []
+            let index: Int? = {
+                lock.lock(); defer { lock.unlock() }
+                let found = entries.indices.first { i in
+                    !answered.contains(i) && (entries[i]["route"] as? String ?? "/ai") == path
+                        && (entries[i]["match"] as? String).map { request.contains($0) } ?? true
+                }
+                if let found { answered.insert(found) }
+                return found
+            }()
+            note("ai", path)
+            try? await Task.sleep(for: .seconds(script["aiSeconds"] as? Double ?? 2.2))
+            note("ai-end", path)
+            guard let index else { throw LampAI.Failure(message: "The AI isn't connected.") }
+            let entry = entries[index]
+            if let reply = entry["reply"] as? [String: Any] { return reply }
+            if let json = entry["json"], let data = try? JSONSerialization.data(withJSONObject: json) {
+                return ["text": String(decoding: data, as: UTF8.self)]
+            }
+            return ["text": entry["text"] as? String ?? ""]
+        }
+
+        /// Where the script says the person is.
+        static var place: LampLocation.Place? {
+            guard let place = script["location"] as? [String: Any], let latitude = place["latitude"] as? Double,
+                  let longitude = place["longitude"] as? Double else { return nil }
+            return LampLocation.Place(latitude: latitude, longitude: longitude, accuracy: 20, date: Date(), name: place["name"] as? String)
+        }
+    }
+    // end LampShowcase
+
     enum LampStore {
         static let folder: URL = {
+            // A reel's take keeps its own, starting empty, so it shows nothing of the person's.
+            if let showcase = LampShowcase.folder {
+                let url = showcase.appendingPathComponent("data")
+                try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                return url
+            }
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             #if os(macOS)
             // On a Mac the data is kept under the app's plain id, whatever the app is signed as: an app made for
@@ -8144,6 +8666,148 @@ enum Template {
     }
     // end LampScreen
 
+    extension LampShowcase {
+        /// Runs once, at launch: the script's steps are played once the window is up.
+        static let start: Void = {
+            guard isOn else { return }
+            Task { @MainActor in await LampDriver.playShowcase() }
+        }()
+    }
+
+    extension LampDriver {
+        /// Plays showcase.json's `steps` on the app's own window, the way `use_app` would, logging where each thing
+        /// it acts on is (fractions of the window: x,y,width,height) so the reel's cursor goes there. A step is one of
+        /// use_app's actions (`{"action": "click", "target": "Take my seat"}`, which waits for its target to be there
+        /// and not dimmed), `{"wait": seconds}`, `{"wait_for": "Speak Italian"}`, `{"focus": "Send my reply"}` (or a
+        /// list of names, "window", or `[x, y, width, height]` in fractions of the window: where the reel's camera goes) or `{"mark": "words"}`. The script's `window`
+        /// (`{"width": 960, "height": 720}`) sizes the window first; it's brought to the front unless `front` is false,
+        /// since a window in the back is drawn with gray controls.
+        static func playShowcase() async {
+            var window: NSWindow?
+            for _ in 0..<150 {
+                window = LampRuntime.windowsOnScreen.first
+                if window != nil { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let window else { LampShowcase.note("missing", "window"); return }
+            if let size = LampShowcase.script["window"] as? [String: Double], let width = size["width"], let height = size["height"] {
+                window.setContentSize(NSSize(width: width, height: height))
+                window.center()
+            }
+            if LampShowcase.script["front"] as? Bool ?? true {
+                NSApp.activate()
+                window.makeKeyAndOrderFront(nil)
+            }
+            try? await Task.sleep(for: .seconds(1))
+            LampShowcase.note("ready", "\(Int(window.frame.width))x\(Int(window.frame.height))")
+            // The steps start once the recording has its first frame (the recorder leaves a `recording` file then),
+            // so nothing happens before the reel can see it. With none after two minutes (no recorder, or macOS still
+            // asking about it), nothing is played: a take without its opening is no reel.
+            let recording = LampShowcase.folder?.appendingPathComponent("recording").path ?? ""
+            for _ in 0..<1200 where !FileManager.default.fileExists(atPath: recording) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard FileManager.default.fileExists(atPath: recording) else {
+                LampShowcase.note("missing", "the recording's first frame")
+                LampShowcase.note("end")
+                return
+            }
+            try? await Task.sleep(for: .seconds(LampShowcase.script["lead"] as? Double ?? 0.8))
+            let steps = LampShowcase.script["steps"] as? [[String: Any]] ?? []
+            // A key held down (a game's controls) belongs to a batch, which lets it go. The person's click or Esc stops
+            // the batch, and the take with it: nothing more is played on an app they took back.
+            let batch = Handover.begin(id: "showcase", count: steps.count) { _ in }
+            for step in steps {
+                guard batch.carriesOn else { LampShowcase.note("missing", "the rest of the steps: the app was taken back"); break }
+                await playShowcase(step)
+            }
+            LampShowcase.note("end")
+        }
+
+        private static func playShowcase(_ step: [String: Any]) async {
+            let timeout = step["timeout"] as? Double ?? 30
+            if let seconds = step["wait"] as? Double { try? await Task.sleep(for: .seconds(seconds)); return }
+            if let target = step["wait_for"] as? String { _ = await showcaseFrame(of: target, timeout: timeout); return }
+            if let mark = step["mark"] as? String { LampShowcase.note("mark", mark); return }
+            if let rect = step["focus"] as? [Double], rect.count == 4 {
+                LampShowcase.note("focus", rect.map { String($0) }.joined(separator: ","), "region"); return
+            }
+            if let focus = step["focus"] {
+                let names = (focus as? [String]) ?? [focus as? String ?? "window"]
+                if names == ["window"] { LampShowcase.note("focus", "0,0,1,1", "window"); return }
+                var union: CGRect?
+                for name in names {
+                    guard let frame = await showcaseFrame(of: name, timeout: timeout, dimmed: true) else { continue }
+                    union = union.map { $0.union(frame) } ?? frame
+                }
+                if let union { LampShowcase.note("focus", showcaseText(union), names.joined(separator: ", ")) }
+                return
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: step),
+                  let action = try? JSONDecoder().decode(Action.self, from: data) else {
+                LampShowcase.note("missing", "a step it can't read"); return
+            }
+            if let target = action.target {
+                guard let frame = await showcaseFrame(of: target, timeout: timeout) else { return }
+                LampShowcase.note("act", showcaseText(frame), action.action, target)
+                // The reel's cursor gets there before anything happens.
+                try? await Task.sleep(for: .seconds(0.3))
+            } else if let x = action.x, let y = action.y, let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview {
+                // A spot given in the picture's pixels (what isn't listed): the reel's cursor goes there too.
+                let scale = LampRuntime.scale(of: window)
+                LampShowcase.note("act", showcaseText(CGRect(x: x / (frame.bounds.width * scale), y: y / (frame.bounds.height * scale), width: 0, height: 0)), action.action, "a spot")
+                try? await Task.sleep(for: .seconds(0.3))
+            }
+            // Taken from a run-loop timer (`after`), as `perform` takes its steps: an action that opens a dialog doesn't
+            // return until it closes, and the steps after it are how it gets answered. Those resume on the main queue,
+            // which keeps running while the dialog is open only because the action isn't itself on that queue.
+            after(0) {
+                guard Handover.current?.carriesOn == true else { return }
+                LampShowcase.note("did", run(action))
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+
+        /// Where `target` is in the front window, as fractions of it, once it's there (and not dimmed, unless that
+        /// doesn't matter: the camera can go to a button that isn't ready yet).
+        private static func showcaseFrame(of target: String, timeout: Double, dimmed: Bool = false) async -> CGRect? {
+            let end = Date().addingTimeInterval(timeout)
+            while Date() < end {
+                if let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview {
+                    let items = elements(in: window).map(\.item)
+                    if case .one(let index) = LampScreen.find(target, in: items), dimmed || !items[index].disabled {
+                        let scale = LampRuntime.scale(of: window)
+                        let size = CGSize(width: frame.bounds.width * scale, height: frame.bounds.height * scale)
+                        let f = items[index].frame
+                        return CGRect(x: f.minX / size.width, y: f.minY / size.height, width: f.width / size.width, height: f.height / size.height)
+                    }
+                }
+                // A page's things are read in the page, which answers a moment later.
+                LampPageItems.refresh? {}
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            LampShowcase.note("missing", target)
+            return nil
+        }
+
+        private static func showcaseText(_ r: CGRect) -> String {
+            String(format: "%.4f,%.4f,%.4f,%.4f", r.minX, r.minY, r.width, r.height)
+        }
+    }
+
+    /// A web page in the app (LampPage.swift's): the accessibility tree `LampDriver.elements` reads stops at a web view's
+    /// edge, so a page lists its own things (`LampPageReader`), in the window's picture's pixels. `refresh` reads them
+    /// again and then calls back; `items` are those last read in a window. Nothing in an app without a page.
+    @MainActor
+    enum LampPageItems {
+        static var refresh: ((@escaping @MainActor () -> Void) -> Void)?
+        static var items: (NSWindow) -> [LampScreen.Item] = { _ in [] }
+        /// Carries out an action aimed at a page (`point`, in the window's frame view, on it; or none, with the page
+        /// holding the keyboard) in the page's own script, which takes it whether or not the app is in front, where
+        /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's.
+        static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
+    }
+
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
     /// menus in the front window, from inside the app, so no Accessibility permission is needed. An action names
     /// what it's for by `target`, an id or name from the screen as text (LampScreen, written beside each picture),
@@ -8225,6 +8889,20 @@ enum Template {
                 held.append((up, timer))
             }
 
+            /// A key held down on a page (LampPage.swift), pressed in the page's own script: `release` lets it go after
+            /// `seconds`, or at once if the batch stops or a newer one takes its place, as `hold`'s keys are.
+            func hold(for seconds: Double, release: @escaping @MainActor () -> Void) {
+                let timer = Timer(timeInterval: seconds, repeats: false) { timer in
+                    MainActor.assumeIsolated {
+                        guard let index = self.pageHeld.firstIndex(where: { $0.timer === timer }) else { return }
+                        self.pageHeld.remove(at: index).release()
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                pageHeld.append((release, timer))
+            }
+            private var pageHeld: [(release: @MainActor () -> Void, timer: Timer)] = []
+
             /// Ends the batch where it is: nothing more is done, keys held down are let go, and Lamp is told.
             func stop() {
                 guard carriesOn else { return }
@@ -8239,6 +8917,11 @@ enum Template {
                     NSApp.postEvent(key.up, atStart: true)
                 }
                 held = []
+                for key in pageHeld {
+                    key.timer.invalidate()
+                    key.release()
+                }
+                pageHeld = []
             }
 
             /// Lamp's Stop for batch `id`, signed with the app's token like the request, so no other process can stop it.
@@ -8269,7 +8952,7 @@ enum Template {
 
         /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
         /// builds that check it; notifications reach every process, so the token itself never travels). Builds
-        /// that take Lamp's Stop (`Handover`) have "lampUseAppStop" in them.
+        /// that take Lamp's Stop (`Handover`) have "lampUseAppStopSignature" in them (older ones "lampUseAppStop").
         static func perform(_ json: String?, id: String?, signature: String?) {
             guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
@@ -8283,11 +8966,13 @@ enum Template {
             let before = front.flatMap(LampRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
             func answer(stopped: Bool) {
-                LampRuntime.snapshot()
                 var answer = ["id": id, "report": report.joined(separator: "\n")]
                 if stopped { answer["stopped"] = "person" }
-                try? JSONSerialization.data(withJSONObject: answer)
-                    .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
+                // Once the pictures are written, which Lamp reads with the answer.
+                LampRuntime.snapshot {
+                    try? JSONSerialization.data(withJSONObject: answer)
+                        .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
+                }
             }
             let batch = Handover.begin(id: id, count: actions.count) { why in
                 // The person has the app now, the menu bar icon's panel included: it takes the keyboard again and
@@ -8368,6 +9053,8 @@ enum Template {
                         last = (line, window, LampRuntime.picture(of: window))
                     }
                     report[line] = run(action)
+                    // A page reads its things again, for the next action's target: ready well within the pause.
+                    LampPageItems.refresh? {}
                     if action.action != "bar_icon" { keepBarPanel() }
                     tellWindow()
                     // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
@@ -8487,7 +9174,7 @@ enum Template {
             // What the action names, found in the window's own accessibility tree: it's acted on where it has
             // an action of its own, and its middle is the point to click otherwise.
             var action = action
-            var named: (item: LampScreen.Item, id: String, element: AXUIElement)?
+            var named: (item: LampScreen.Item, id: String, element: AXUIElement?)?
             if let target = action.target?.trimmingCharacters(in: .whitespacesAndNewlines), !target.isEmpty, !(window is NSSavePanel) {
                 let elements = elements(in: window)
                 let items = elements.map(\.item)
@@ -8522,6 +9209,11 @@ enum Template {
                     return "\(action.action): " + filePanel(panel)
                 }
             }
+            // On a page (LampPage.swift's), the page carries the action out itself.
+            if let act = LampPageItems.act, !(window is NSSavePanel), ["click", "double_click", "type", "key"].contains(action.action),
+               let did = act(action, action.x != nil && action.y != nil ? point : nil, window) {
+                return (what.map { "\(action.action) \($0): " } ?? "\(action.action): ") + did
+            }
             if isBarPanel(window), action.action == "key", action.key?.lowercased() == "escape" {
                 releaseBarPanel()
                 return "pressed escape: closed the menu bar icon's panel"
@@ -8533,9 +9225,9 @@ enum Template {
                 // A thing that presses itself (a button, a switch, a link, a row's disclosure) is asked to, the
                 // way VoiceOver asks it, so the click can't miss. A picker's press would open its menu on the
                 // user's screen, and a row's or field's is a click: those go by the point.
-                if let named, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
+                if let named, let element = named.element, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
                     guard !named.item.disabled else { return label + "it's dimmed right now, so nothing happened" }
-                    if AXUIElementPerformAction(named.element, kAXPressAction as CFString) == .success { return label + "pressed" }
+                    if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success { return label + "pressed" }
                 }
                 guard frame.bounds.contains(point) else { return label + "outside the window, whose picture is \(size) pixels" }
                 guard let view = frame.hitTest(point) else { return label + "nothing there" }
@@ -8551,9 +9243,9 @@ enum Template {
                 if let named, let what {
                     // A slider or stepper takes the number; a field takes the keyboard, with the text in place of
                     // what it held, so a value typed over "0.00" isn't "0.00120".
-                    if named.item.role == "slider" || named.item.role == "stepper" {
+                    if let element = named.element, named.item.role == "slider" || named.item.role == "stepper" {
                         guard let value = Double(text) else { return "type into \(what): give it a number" }
-                        guard AXUIElementSetAttributeValue(named.element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
+                        guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
                             return "type into \(what): it didn't take the number"
                         }
                         return "set \(what) to \(LampScreen.number(value))"
@@ -8588,8 +9280,8 @@ enum Template {
                 }
                 if let named, let what {
                     // Up and down step a slider or stepper; anything else goes to the thing once it has focus.
-                    if named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
-                        let stepped = AXUIElementPerformAction(named.element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
+                    if let element = named.element, named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
+                        let stepped = AXUIElementPerformAction(element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
                         return stepped ? "stepped \(what) \(name)" : "key \(name): \(what) didn't take the step"
                     }
                     if let view = frame.hitTest(point) { _ = click(view, at: point, in: window, count: 1) }
@@ -8622,7 +9314,11 @@ enum Template {
                 }
                 guard let view = frame.hitTest(point) else { return "drag: nothing there" }
                 drag(view, from: point, to: end, in: window)
-                return "dragged from \(Int(x)), \(Int(y)) to \(Int(toX)), \(Int(toY))" + (what.map { ", starting on \($0)" } ?? "")
+                let dragged = "dragged from \(Int(x)), \(Int(y)) to \(Int(toX)), \(Int(toY))" + (what.map { ", starting on \($0)" } ?? "")
+                if #available(macOS 27, *), !NSApp.isActive {
+                    return dragged + " (the app isn't in front, so something that only answers drags won't have taken it)"
+                }
+                return dragged
             case "wait":
                 return "waited \(action.amount ?? 1) s"
             default:
@@ -8641,13 +9337,13 @@ enum Template {
         /// accessibility API on this app's own process, which needs no permission: it's the one way to see
         /// SwiftUI's elements, whose bridge to AppKit stays asleep until an accessibility client asks, and
         /// it shows AppKit's and SwiftUI's alike. Frames are in the picture's pixels.
-        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement)] {
+        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement?)] {
             guard let frame = window.contentView?.superview, let root = axWindow(for: window) else { return [] }
             let scale = LampRuntime.scale(of: window)
             // The accessibility API counts from the top left of the main screen, pictures from the window's.
             let origin = CGPoint(x: window.frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - window.frame.maxY)
             let bounds = CGRect(origin: origin, size: frame.bounds.size)
-            var found: [(item: LampScreen.Item, element: AXUIElement)] = []
+            var found: [(item: LampScreen.Item, element: AXUIElement?)] = []
             func string(_ value: CFTypeRef?) -> String {
                 switch value {
                 case let text as String: text
@@ -8674,6 +9370,24 @@ enum Template {
             }
             let wanted = [kAXRoleAttribute, kAXSubroleAttribute, kAXDescriptionAttribute, kAXTitleAttribute, kAXPlaceholderValueAttribute, kAXValueAttribute,
                           kAXPositionAttribute, kAXSizeAttribute, kAXSelectedAttribute, kAXEnabledAttribute, kAXChildrenAttribute]
+            // A web view's insides aren't read: each read of them waits on the main thread, where this runs, until it
+            // times out, so a page froze the app for seconds. Its frame, as the accessibility API counts, tells it apart.
+            // A page is looked at its own way (a screen's or a game's preview); the outline is of the app around it.
+            var webViews: [CGRect] = []
+            if let web = NSClassFromString("WKWebView") {
+                func collect(_ view: NSView) {
+                    if view.isKind(of: web) {
+                        let rect = window.convertToScreen(view.convert(view.bounds, to: nil))
+                        webViews.append(CGRect(x: rect.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - rect.maxY, width: rect.width, height: rect.height))
+                    } else {
+                        view.subviews.forEach(collect)
+                    }
+                }
+                if let content = window.contentView { collect(content) }
+            }
+            func isWebView(_ rect: CGRect) -> Bool {
+                webViews.contains { abs($0.minX - rect.minX) < 2 && abs($0.minY - rect.minY) < 2 && abs($0.width - rect.width) < 2 && abs($0.height - rect.height) < 2 }
+            }
             func visit(_ element: AXUIElement, depth: Int, under: Set<String>) {
                 guard depth < 60, found.count < 400 else { return }
                 let read = axAttributes(element, wanted)
@@ -8706,10 +9420,12 @@ enum Template {
                         if control { under = captions.union([label]) }
                     }
                 }
+                if isWebView(rect) { return }
                 for child in read[10] as? [AXUIElement] ?? [] { visit(child, depth: depth + 1, under: under) }
             }
             visit(root, depth: 0, under: [])
-            return found
+            // A page's own things, read in the page (`LampPageItems`): clicked and typed into at their points.
+            return found + LampPageItems.items(window).map { ($0, nil) }
         }
 
         /// This window as the accessibility API has it: the one of this app's windows, or sheets on them, in
@@ -8724,7 +9440,11 @@ enum Template {
                     && abs(size.width - window.frame.width) < 2 && abs(size.height - window.frame.height) < 2
             }
             let windows = axAttribute(AXUIElementCreateApplication(getpid()), kAXWindowsAttribute) as? [AXUIElement] ?? []
-            if let found = windows.first(where: matches) { return found }
+            // A clear window laid over this one (an overlay of the app's own) has its frame too, and nothing in it.
+            let matching = windows.filter(matches)
+            if let found = matching.first(where: { (axAttribute($0, kAXChildrenAttribute) as? [AXUIElement])?.isEmpty == false }) ?? matching.first {
+                return found
+            }
             for parent in windows {
                 for child in axAttribute(parent, kAXChildrenAttribute) as? [AXUIElement] ?? [] where axAttribute(child, kAXRoleAttribute) as? String == kAXSheetRole {
                     if matches(child) { return child }
@@ -9041,11 +9761,32 @@ enum Template {
                 }
             }
             if let up = event(.leftMouseUp, end, steps + 1) { NSApp.postEvent(up, atStart: false) }
+            // From macOS 27 SwiftUI's gestures take the pointer only as the window dispatches it, and only in the key
+            // window, as with a click.
+            if #available(macOS 27, *) {
+                asKey(window) {
+                    window.sendEvent(down)
+                    while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: .distantPast, inMode: .default, dequeue: true) {
+                        window.sendEvent(next)
+                        if next.type == .leftMouseUp { break }
+                    }
+                }
+                return
+            }
             view.mouseDown(with: down)
             while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: .distantPast, inMode: .default, dequeue: true) {
                 if next.type == .leftMouseUp { view.mouseUp(with: next); break }
                 view.mouseDragged(with: next)
             }
+        }
+
+        /// A tap or drag gesture takes the pointer only in the key window, as a real press makes it. A panel that had
+        /// the keyboard (the chat beside the window) gets it back, so what the person types there stays there.
+        private static func asKey(_ window: NSWindow, _ body: () -> Void) {
+            let keyBefore = NSApp.keyWindow
+            if NSApp.isActive, !window.isKeyWindow, window.canBecomeKey { window.makeKey() }
+            body()
+            if let keyBefore, keyBefore !== window, keyBefore is NSPanel, keyBefore.isVisible { keyBefore.makeKey() }
         }
 
         private static func click(_ view: NSView, at point: NSPoint, in window: NSWindow, count: Int) -> String {
@@ -9056,14 +9797,24 @@ enum Template {
                                        pressure: type == .leftMouseDown ? 1 : 0)
                 }
                 guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return "couldn't click" }
-                // Straight to the view: through the window, a click on an inactive window would only activate it.
                 // AppKit controls (buttons, fields, column headers) track the mouse and take the mouse-up from the
-                // event queue. SwiftUI's own views (plain buttons, toggles, tap gestures) leave it there and want
-                // it handed to them.
+                // event queue. SwiftUI's own views (plain buttons, toggles) leave it there and want it handed to them.
+                // From macOS 27 SwiftUI presses nothing for a click handed straight to its view, only for one the
+                // window dispatches, which reaches it whether or not the window is key; before, through the window a
+                // click on an inactive window would only activate it, so it went straight to the view.
                 NSApp.postEvent(up, atStart: true)
-                view.mouseDown(with: down)
-                if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-                    view.mouseUp(with: unused)
+                if #available(macOS 27, *) {
+                    asKey(window) {
+                        window.sendEvent(down)
+                        if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                            window.sendEvent(unused)
+                        }
+                    }
+                } else {
+                    view.mouseDown(with: down)
+                    if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                        view.mouseUp(with: unused)
+                    }
                 }
             }
             // A row of a list, table or sidebar: AppKit only selects rows while the real mouse is held down, so
@@ -9080,6 +9831,9 @@ enum Template {
                 guard count == 2 else { return "row \(row + 1) of a list, now selected" }
                 send("\r", code: 36, flags: [], to: window)
                 return "row \(row + 1) of a list, selected and opened"
+            }
+            if #available(macOS 27, *), !NSApp.isActive {
+                return describe(view) + " (the app isn't in front, so something that only answers taps won't have taken the click)"
             }
             return describe(view)
         }
@@ -9450,6 +10204,8 @@ enum Template {
 
     // MARK: - Health
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The person's Health data (steps, heart rate, sleep, workouts, weight, what they ate and drank), read and
     /// written through HealthKit on an iPhone or iPad, once capabilities.json says `{"healthkit": true}`. A
     /// Mac has no Health data of its own (`isAvailable` is false there), so an app for both reads on the
@@ -9793,6 +10549,7 @@ enum Template {
             }
         }
     }
+    #endif
 
 
     // MARK: - Photos
@@ -9958,7 +10715,7 @@ enum Template {
     ///     let here = try await LampLocation.current()          // Place: coordinates and "Street, Town"
     ///     let km = LampLocation.distance(from: here, to: there)
     ///     let office = try await LampLocation.find("1 Infinite Loop, Cupertino")
-    ///     LampLocation.shared.watch()                           // `.current` follows big moves (a few hundred metres)
+    ///     LampLocation.shared.watch()                           // `.current` follows big moves (a few hundred meters)
     ///     LampLocation.shared.watchVisits()                     // iPhone: `.visits`, where they stopped and for how long
     @MainActor
     final class LampLocation: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -9967,7 +10724,7 @@ enum Template {
         struct Place: Codable, Hashable {
             var latitude: Double
             var longitude: Double
-            var accuracy: Double      // metres
+            var accuracy: Double      // meters
             var date: Date
             var name: String?         // "Street, Town", when the map knows
         }
@@ -10019,10 +10776,10 @@ enum Template {
             // The system's question makes the app inactive; when it's active again the person has answered,
             // even with an answer that changes nothing (keeping "While Using" when asked for Always), which
             // the location manager doesn't report.
-            #if os(iOS)
-            let active = UIApplication.didBecomeActiveNotification
-            #else
+            #if os(macOS)
             let active = NSApplication.didBecomeActiveNotification
+            #else
+            let active = UIApplication.didBecomeActiveNotification
             #endif
             NotificationCenter.default.addObserver(forName: active, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { LampLocation.shared.settle() }
@@ -10041,6 +10798,8 @@ enum Template {
         /// Asks once (while in use, or always for watching in the background); true when allowed. A question
         /// the system won't ask again (refused, restricted, Always asked before) answers straight away.
         static func authorize(always: Bool = false) async -> Bool {
+            // A reel's take is where its script says, or nowhere; the Mac's own location is never asked for.
+            if LampShowcase.isOn { return LampShowcase.place != nil }
             let me = shared
             let status = me.manager.authorizationStatus
             if status == .denied || status == .restricted { return false }
@@ -10093,6 +10852,11 @@ enum Template {
 
         /// Where the person is now, named when the map knows the place.
         static func current() async throws -> Place {
+            if LampShowcase.isOn {
+                guard let place = LampShowcase.place else { throw Failure(message: "The showcase script names no location.") }
+                shared.current = place
+                return place
+            }
             guard await authorize() else { throw Failure(message: "The app isn't allowed to know where the person is. They can allow it in Settings.") }
             let location: CLLocation = try await withCheckedThrowingContinuation { continuation in
                 shared.once.append(continuation)
@@ -10120,17 +10884,22 @@ enum Template {
                          date: Date(), name: [mark.name, mark.locality].compactMap { $0 }.joined(separator: ", "))
         }
 
-        /// Kilometres between two places, as the crow flies.
+        /// Kilometers between two places, as the crow flies.
         static func distance(from a: Place, to b: Place) -> Double {
             CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude)) / 1000
         }
 
-        /// Keeps `current` up as the person moves a few hundred metres or more, sparing the battery.
+        /// Keeps `current` up as the person moves a few hundred meters or more, sparing the battery.
         func watch() {
+            // A reel's take stays where its script put it: nothing live may move it.
+            if LampShowcase.isOn { current = LampShowcase.place ?? current; return }
             wantsMoves = true
             Task {
                 guard await Self.authorize(), wantsMoves else { return }
+                // Apple TV and Vision Pro don't follow big moves: they stay put.
+                #if os(iOS) || os(macOS)
                 manager.startMonitoringSignificantLocationChanges()
+                #endif
                 status = "Following big moves"
             }
         }
@@ -10138,6 +10907,7 @@ enum Template {
         /// Keeps `visits`: where the person stops and for how long, even with the app closed. iPhone only;
         /// needs `always` and the location background mode.
         func watchVisits() {
+            if LampShowcase.isOn { return }
             #if os(iOS)
             wantsVisits = true
             Task {
@@ -10154,7 +10924,9 @@ enum Template {
         func stop() {
             wantsMoves = false
             wantsVisits = false
+            #if os(iOS) || os(macOS)
             manager.stopMonitoringSignificantLocationChanges()
+            #endif
             #if os(iOS)
             manager.stopMonitoringVisits()
             #endif
@@ -10162,10 +10934,12 @@ enum Template {
         }
 
         private static func allowed(_ status: CLAuthorizationStatus) -> Bool {
-            #if os(iOS)
+            #if os(macOS)
+            status == .authorizedAlways || status == .authorized
+            #elseif os(iOS)
             status == .authorizedWhenInUse || status == .authorizedAlways
             #else
-            status == .authorizedAlways || status == .authorized
+            status == .authorizedWhenInUse
             #endif
         }
 
@@ -10463,6 +11237,635 @@ enum Template {
             Song(id: item.id.rawValue, title: item.title, artist: item.artistName, album: item.albumTitle ?? "",
                  seconds: item.duration ?? 0, artworkURL: item.artwork?.url(width: 300, height: 300)?.absoluteString,
                  inLibrary: inLibrary ? true : nil)
+        }
+    }
+
+    // MARK: - Roku
+
+    /// A Roku on the person's network, driven the way Roku's own phone app drives it (its External Control
+    /// Protocol, on port 8060): nothing is installed on the Roku. It takes commands only once the person has set
+    /// Settings, System, Advanced system settings, Control by mobile apps, Network access to Enabled (a Roku
+    /// says Limited until then, which refuses them). Never suggest Permissive.
+    ///
+    ///     let rokus = await LampRoku.find()                         // every Roku that answers, by name
+    ///     guard let roku = rokus.first else { … }                   // say none was found, and how to set one up
+    ///     try await roku.launch(named: "Netflix")                    // by the name on its home screen
+    ///     try await roku.launch(appID: "837", contentID: "dQw4w9WgXcQ", mediaType: "movie")   // a deep link
+    ///     try await roku.press(.play)                                // .home, .select, .up, .back, .volumeUp …
+    ///     try await roku.type("star trek")                           // into the keyboard on its screen
+    ///     let open = try await roku.activeApp()                      // nil on the home screen
+    ///     let now = try await roku.playing()                         // state, position and duration
+    ///     try await roku.power(on: false)                            // Roku TVs only (roku.isTV)
+    ///     try await roku.input(.hdmi1)
+    struct LampRoku: Identifiable, Codable, Hashable {
+        var id: String          // its serial number
+        var name: String        // what the person called it ("Living Room")
+        var model: String
+        var address: String
+        var isTV: Bool
+        /// Control by mobile apps: "enabled", "limited", "disabled", or "" where the Roku doesn't say.
+        var control: String
+
+        /// Whether it takes key presses and launches from apps now.
+        var canBeControlled: Bool { control != "limited" && control != "disabled" }
+
+        struct App: Identifiable, Codable, Hashable {
+            var id: String
+            var name: String
+            var version: String
+        }
+
+        struct Playing: Codable, Hashable {
+            var state: String       // "play", "pause", "buffer", "stop", "close", "none"
+            var appID: String?
+            var position: Double?   // seconds
+            var duration: Double?
+        }
+
+        enum Key: String, CaseIterable {
+            case home = "Home", back = "Back", select = "Select", up = "Up", down = "Down", left = "Left", right = "Right"
+            case play = "Play", rewind = "Rev", fastForward = "Fwd", replay = "InstantReplay", info = "Info"
+            case search = "Search", enter = "Enter", backspace = "Backspace", findRemote = "FindRemote"
+            // A Roku TV's, and a player's that controls its TV.
+            case volumeUp = "VolumeUp", volumeDown = "VolumeDown", mute = "VolumeMute"
+            case powerOn = "PowerOn", powerOff = "PowerOff", channelUp = "ChannelUp", channelDown = "ChannelDown"
+        }
+
+        enum Input: String, CaseIterable {
+            case tuner = "InputTuner", hdmi1 = "InputHDMI1", hdmi2 = "InputHDMI2", hdmi3 = "InputHDMI3", hdmi4 = "InputHDMI4", av1 = "InputAV1"
+        }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        /// What the person does once on the Roku for apps to control it.
+        static let setUp = "On the Roku, open Settings, then System, Advanced system settings, Control by mobile apps, and set Network access to Enabled."
+
+        // MARK: Finding
+
+        /// Every Roku that answers on this network, by name. It asks the way Roku's own app does (SSDP), then where
+        /// one was found before, and only then each address near this device's, since an iPhone app may not ask
+        /// the whole network at once. The first time, the system asks the person whether the app may use the local
+        /// network, and nothing answers until they allow it: offer to look again.
+        static func find(timeout: TimeInterval = 3) async -> [LampRoku] {
+            let answered = await ssdp(timeout: min(timeout, 2))
+            var found = await read(Array(Set(answered + remembered)), timeout: timeout)
+            // Where SSDP got no answer (an iPhone app can't send it), the Rokus found before are only a start: one added
+            // or moved since is found by the sweep.
+            if answered.isEmpty {
+                let more = await read(neighbours().filter { address in !found.contains { $0.address == address } }, timeout: 1.5)
+                found += more.filter { roku in !found.contains { $0.id == roku.id } }
+            }
+            if !found.isEmpty { UserDefaults.standard.set(found.map(\.address), forKey: rememberKey) }
+            return found.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+
+        /// The Roku at an address the person typed, read fresh.
+        static func at(_ address: String) async throws -> LampRoku {
+            let xml = try await request(address, "/query/device-info", method: "GET", timeout: 4)
+            guard let roku = roku(at: address, from: xml) else { throw Failure(message: "Nothing at \(address) answered as a Roku.") }
+            return roku
+        }
+
+        // MARK: Reading
+
+        /// Every field the Roku tells about itself ("software-version", "power-mode", "is-tv" …).
+        func info() async throws -> [String: String] {
+            let xml = try await Self.request(address, "/query/device-info", method: "GET")
+            var fields: [String: String] = [:]
+            for match in Self.matches(#"<([a-z0-9-]+)>([^<]*)</\1>"#, in: xml) { fields[match[0]] = Self.unescaped(match[1]) }
+            return fields
+        }
+
+        /// The apps on its home screen.
+        func apps() async throws -> [App] {
+            Self.apps(in: try await Self.request(address, "/query/apps", method: "GET"))
+        }
+
+        /// What's open on it: nil on the home screen.
+        func activeApp() async throws -> App? {
+            let xml = try await Self.request(address, "/query/active-app", method: "GET")
+            guard !xml.contains("type=\"home\"") else { return nil }
+            return Self.apps(in: xml).first { !$0.id.isEmpty }
+        }
+
+        /// What it's playing, if anything.
+        func playing() async throws -> Playing {
+            let xml = try await Self.request(address, "/query/media-player", method: "GET")
+            func seconds(_ tag: String) -> Double? {
+                Self.matches("<\(tag)>([0-9]+) ms</\(tag)>", in: xml).first.flatMap { Double($0[0]) }.map { $0 / 1000 }
+            }
+            let state = Self.matches(#"<player[^>]* state="([^"]*)""#, in: xml).first?[0] ?? "none"
+            let app = Self.matches(#"<plugin[^>]* id="([^"]*)""#, in: xml).first?[0]
+            return Playing(state: state, appID: app, position: seconds("position"), duration: seconds("duration"))
+        }
+
+        // MARK: Doing
+
+        /// Opens an app, and with a content id and media type ("movie", "episode", "series", "live", the app's own
+        /// words) goes straight to that show, where the app supports deep links.
+        func launch(appID: String, contentID: String? = nil, mediaType: String? = nil) async throws {
+            var query: [URLQueryItem] = []
+            if let contentID { query.append(URLQueryItem(name: "contentId", value: contentID)) }
+            if let mediaType { query.append(URLQueryItem(name: "mediaType", value: mediaType)) }
+            var parts = URLComponents()
+            parts.queryItems = query.isEmpty ? nil : query
+            let id = appID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? appID
+            // The Roku answers once the app has opened, which can take several seconds.
+            _ = try await Self.request(address, "/launch/\(id)" + (parts.percentEncodedQuery.map { "?" + $0 } ?? ""), method: "POST", timeout: 20)
+        }
+
+        /// Opens the app with this name on its home screen ("Netflix", "YouTube").
+        func launch(named name: String, contentID: String? = nil, mediaType: String? = nil) async throws {
+            let apps = try await apps()
+            let wanted = name.lowercased()
+            guard let app = apps.first(where: { $0.name.lowercased() == wanted }) ?? apps.first(where: { $0.name.lowercased().contains(wanted) }) else {
+                throw Failure(message: "\(self.name) has no app called \(name). Add it from the Roku's home screen first.")
+            }
+            try await launch(appID: app.id, contentID: contentID, mediaType: mediaType)
+        }
+
+        func press(_ key: Key) async throws {
+            try await send("/keypress/\(key.rawValue)")
+        }
+
+        /// Types into the keyboard on its screen, a character at a time, as its remote's app does.
+        func type(_ text: String) async throws {
+            for character in text {
+                let letter = String(character).addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+                try await send("/keypress/Lit_\(letter)")
+            }
+        }
+
+        /// Turns a Roku TV on or off. A Roku player has no power of its own to switch.
+        func power(on: Bool) async throws {
+            guard isTV else { throw Failure(message: "\(name) is a Roku player, not a Roku TV, so it can't be turned on or off.") }
+            try await press(on ? .powerOn : .powerOff)
+        }
+
+        /// Switches a Roku TV to one of its inputs.
+        func input(_ input: Input) async throws {
+            guard isTV else { throw Failure(message: "\(name) is a Roku player, not a Roku TV, so it has no inputs.") }
+            try await send("/keypress/\(input.rawValue)")
+        }
+
+        // MARK: Talking to it
+
+        private func send(_ path: String) async throws {
+            _ = try await Self.request(address, path, method: "POST")
+        }
+
+        private static func request(_ address: String, _ path: String, method: String, timeout: TimeInterval = 5) async throws -> String {
+            guard let url = URL(string: "http://\(address):8060\(path)") else { throw Failure(message: "\(address) isn't a Roku's address.") }
+            var request = URLRequest(url: url, timeoutInterval: timeout)
+            request.httpMethod = method
+            if method == "POST" { request.httpBody = Data() }
+            let data: Data
+            let response: URLResponse
+            do { (data, response) = try await URLSession.shared.data(for: request) }
+            catch { throw Failure(message: "The Roku at \(address) didn't answer. Check that it's on and on the same Wi-Fi.") }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401 || status == 403 { throw Failure(message: "The Roku doesn't take commands from apps yet. " + setUp) }
+            guard (200..<300).contains(status) else { throw Failure(message: "The Roku answered \(status) to \(path).") }
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        private static let rememberKey = "lamp.roku.addresses"
+        private static var remembered: [String] { UserDefaults.standard.stringArray(forKey: rememberKey) ?? [] }
+
+        private static func read(_ addresses: [String], timeout: TimeInterval) async -> [LampRoku] {
+            var found: [LampRoku] = []
+            // A few dozen at a time: a sweep of a whole home network is 254 addresses.
+            for batch in stride(from: 0, to: addresses.count, by: 48).map({ Array(addresses[$0..<min($0 + 48, addresses.count)]) }) {
+                await withTaskGroup(of: LampRoku?.self) { group in
+                    for address in batch {
+                        group.addTask { (try? await request(address, "/query/device-info", method: "GET", timeout: timeout)).flatMap { roku(at: address, from: $0) } }
+                    }
+                    for await roku in group { if let roku, !found.contains(where: { $0.id == roku.id }) { found.append(roku) } }
+                }
+            }
+            return found
+        }
+
+        private static func roku(at address: String, from xml: String) -> LampRoku? {
+            func field(_ tag: String) -> String { matches("<\(tag)>([^<]*)</\(tag)>", in: xml).first.map { unescaped($0[0]) } ?? "" }
+            let serial = field("serial-number")
+            guard !serial.isEmpty else { return nil }
+            let model = field("friendly-model-name").isEmpty ? field("model-name") : field("friendly-model-name")
+            let name = field("user-device-name").isEmpty ? model : field("user-device-name")
+            // ecp-setting-mode isn't in Roku's documentation, but Rokus report it.
+            return LampRoku(id: serial, name: name, model: model, address: address, isTV: field("is-tv") == "true", control: field("ecp-setting-mode"))
+        }
+
+        private static func apps(in xml: String) -> [App] {
+            matches(#"<app ([^>]*)>([^<]*)</app>"#, in: xml).map { match in
+                let attributes = Dictionary(matches(#"([a-z-]+)="([^"]*)""#, in: match[0]).map { ($0[0], $0[1]) }) { first, _ in first }
+                return App(id: attributes["id"] ?? "", name: unescaped(match[1]), version: attributes["version"] ?? "")
+            }
+        }
+
+        private static func matches(_ pattern: String, in text: String) -> [[String]] {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+            return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { match in
+                (1..<match.numberOfRanges).map { Range(match.range(at: $0), in: text).map { String(text[$0]) } ?? "" }
+            }
+        }
+
+        private static func unescaped(_ text: String) -> String {
+            text.replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&apos;", with: "'")
+                .replacingOccurrences(of: "&amp;", with: "&")
+        }
+
+        /// The addresses that answered an SSDP search for Rokus. An iPhone app may not send it without an entitlement
+        /// Apple grants on request; then nothing answers, and the sweep finds them instead.
+        private static func ssdp(timeout: TimeInterval) async -> [String] {
+            await Task.detached { () -> [String] in
+                let socketID = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+                guard socketID >= 0 else { return [] }
+                defer { close(socketID) }
+                var wait = timeval(tv_sec: 0, tv_usec: 250_000)
+                setsockopt(socketID, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+                var to = sockaddr_in()
+                to.sin_family = sa_family_t(AF_INET)
+                to.sin_port = in_port_t(1900).bigEndian
+                to.sin_addr.s_addr = inet_addr("239.255.255.250")
+                let search = Array("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nST: roku:ecp\r\nMX: 1\r\n\r\n".utf8)
+                let sent = withUnsafePointer(to: &to) { pointer in
+                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(socketID, search, search.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+                }
+                guard sent > 0 else { return [] }
+                var found: [String] = []
+                var buffer = [UInt8](repeating: 0, count: 2048)
+                let end = Date().addingTimeInterval(timeout)
+                while Date() < end {
+                    let count = recv(socketID, &buffer, buffer.count, 0)
+                    guard count > 0 else { continue }
+                    let answer = String(decoding: buffer[0..<count], as: UTF8.self)
+                    guard answer.lowercased().contains("roku:ecp"),
+                          let line = answer.split(whereSeparator: \.isNewline).first(where: { $0.lowercased().hasPrefix("location:") }),
+                          let host = URL(string: line.dropFirst("location:".count).trimmingCharacters(in: .whitespaces))?.host,
+                          !found.contains(host) else { continue }
+                    found.append(host)
+                }
+                return found
+            }.value
+        }
+
+        /// The other addresses of this device's home network (its /24), for the sweep.
+        private static func neighbours() -> [String] { LampNetwork.neighbours() }
+    }
+
+    // MARK: - Network
+
+    /// What's on the person's home network, for an app that controls, plays to or reads their devices (a remote for
+    /// the TV and speakers, what's playing, a light), and the system's Local Network permission that comes first: on
+    /// the iPhone, and on a Mac since macOS 15, nothing on the network answers until the person allows it.
+    ///
+    ///     // After the app has said in its own words why it looks (a first screen, a button):
+    ///     switch await LampNetwork.requestAccess() {             // the system asks the person once
+    ///     case .allowed: devices = await LampNetwork.find()       // everything that answers, with what it says of itself
+    ///     case .denied: Text(LampNetwork.allowHint)               // where to turn it on; offer to look again
+    ///     default: Text("Join your home Wi-Fi to find your devices.")
+    ///     }
+    ///     LampNetwork.access                                      // the last answer, without asking
+    ///
+    /// `find()` asks with SSDP (to the whole network on a Mac, and to each address on it, which also works on an
+    /// iPhone) and with Bonjour, for the types the app declares in capabilities.json's `bonjourServices` (an iPhone
+    /// app sees only those; a Mac app also looks for common ones: AirPlay, Google Cast, Sonos, Spotify Connect,
+    /// HomeKit). Each device comes with its address, name, maker and model, what it answered SSDP for and the
+    /// Bonjour services it offers: enough to work out how to reach it. A Roku is `LampRoku`'s.
+    enum LampNetwork {
+        struct Access: RawRepresentable, Hashable, Codable {
+            var rawValue: String
+            /// Not asked yet, or not on a home network (no Wi-Fi or Ethernet with a private address).
+            static let unknown = Access(rawValue: "unknown")
+            static let allowed = Access(rawValue: "allowed")
+            /// The person said no, or hasn't answered the system's question.
+            static let denied = Access(rawValue: "denied")
+        }
+
+        struct Device: Identifiable, Codable, Hashable {
+            var id: String { address }
+            var address: String
+            /// What it calls itself (its UPnP friendly name or Bonjour name), else its address.
+            var name: String
+            var maker: String
+            var model: String
+            /// The SERVER line of its SSDP answer ("Roku/15.3.4 UPnP/1.0 Roku/15.3.4"); empty when it didn't answer SSDP.
+            var server: String
+            /// What it answered SSDP for ("roku:ecp", "urn:schemas-upnp-org:device:MediaRenderer:1").
+            var ssdp: [String]
+            /// Where its UPnP description is, from its SSDP answer.
+            var location: String?
+            var bonjour: [Service]
+        }
+
+        struct Service: Codable, Hashable {
+            var type: String    // "_sonos._tcp"
+            var name: String
+            var port: Int?
+            /// What it says of itself in its TXT record (an AirPlay device's "model", a Cast device's "md" and "fn").
+            var txt: [String: String] = [:]
+        }
+
+        /// Where the person turns Local Network on for this app.
+        static var allowHint: String {
+            #if os(iOS)
+            "Allow Local Network for this app in Settings, Privacy & Security, Local Network."
+            #else
+            "Allow this app in System Settings, Privacy & Security, Local Network."
+            #endif
+        }
+
+        private static let accessKey = "lamp.network.access", askedKey = "lamp.network.asked"
+
+        /// The last answer `requestAccess()` heard, without asking.
+        static var access: Access {
+            Access(rawValue: UserDefaults.standard.string(forKey: accessKey) ?? "unknown")
+        }
+
+        /// Asks for the local network. The first time, the system puts its question up and this waits for the
+        /// person's answer (`timeout` at most); after that it says how things stand at once. Call it after the app has
+        /// said why, never at launch.
+        static func requestAccess(timeout: TimeInterval = 60) async -> Access {
+            guard let target = neighbours().first else { return remember(.unknown) }
+            let asked = UserDefaults.standard.bool(forKey: askedKey)
+            UserDefaults.standard.set(true, forKey: askedKey)
+            let until = Date().addingTimeInterval(asked ? 0 : timeout)
+            while true {
+                let now = await probe(target)
+                if now == .allowed || Date() >= until { return remember(now) }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+
+        @discardableResult private static func remember(_ access: Access) -> Access {
+            UserDefaults.standard.set(access.rawValue, forKey: accessKey)
+            return access
+        }
+
+        /// A datagram to a neighbor, which is what has the system ask; its path says whether the network is allowed.
+        private static func probe(_ address: String) async -> Access {
+            let connection = NWConnection(host: NWEndpoint.Host(address), port: 1900, using: .udp)
+            return await withCheckedContinuation { continuation in
+                let once = Once()
+                @Sendable func finish(_ access: Access) {
+                    guard once.take() else { return }
+                    connection.cancel()
+                    continuation.resume(returning: access)
+                }
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        connection.send(content: Data(search("ssdp:all").utf8), completion: .contentProcessed { _ in finish(.allowed) })
+                    case .waiting, .failed:
+                        finish(connection.currentPath?.unsatisfiedReason == .localNetworkDenied ? .denied : .unknown)
+                    default: break
+                    }
+                }
+                connection.start(queue: .global())
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3) { finish(.unknown) }
+            }
+        }
+
+        // MARK: Finding
+
+        /// Everything that answers on the home network, by name. `bonjour` adds Bonjour types to look for; on an iPhone
+        /// each must be in capabilities.json's `bonjourServices`, or the system refuses to look.
+        static func find(bonjour: [String] = [], timeout: TimeInterval = 3) async -> [Device] {
+            var wanted = Set(bonjour + (Bundle.main.object(forInfoDictionaryKey: "NSBonjourServices") as? [String] ?? []))
+            #if os(macOS)
+            wanted.formUnion(["_airplay._tcp", "_googlecast._tcp", "_sonos._tcp", "_spotify-connect._tcp", "_hap._tcp"])
+            #endif
+            let types = Array(wanted)
+            async let answered = ssdp(timeout: timeout)
+            async let advertised = browse(types, timeout: timeout)
+            var byAddress: [String: Device] = [:]
+            for answer in await answered {
+                var device = byAddress[answer.address] ?? Device(address: answer.address, name: answer.address, maker: "", model: "", server: "", ssdp: [], bonjour: [])
+                if device.server.isEmpty { device.server = answer.server }
+                if !answer.target.isEmpty, !answer.target.hasPrefix("uuid:"), !device.ssdp.contains(answer.target) { device.ssdp.append(answer.target) }
+                if device.location == nil, let location = answer.location, URL(string: location)?.host == answer.address { device.location = location }
+                byAddress[answer.address] = device
+            }
+            for (address, service) in await advertised {
+                var device = byAddress[address] ?? Device(address: address, name: service.name, maker: "", model: "", server: "", ssdp: [], bonjour: [])
+                if !device.bonjour.contains(service) { device.bonjour.append(service) }
+                if device.name == address { device.name = service.name }
+                byAddress[address] = device
+            }
+            // Each SSDP device's own description: what it's called, who made it, what it is.
+            await withTaskGroup(of: Device.self) { group in
+                for device in byAddress.values {
+                    group.addTask { await described(device) }
+                }
+                for await device in group { byAddress[device.address] = device }
+            }
+            // This device answers its own Bonjour look; it isn't one of the person's things to control.
+            let mine = own()
+            return byAddress.values.filter { !mine.contains($0.address) && !$0.address.hasPrefix("127.") }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+
+        private static func described(_ device: Device) async -> Device {
+            guard let location = device.location, let url = URL(string: location), url.scheme == "http",
+                  let (data, _) = try? await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 2)) else { return device }
+            let xml = String(decoding: data, as: UTF8.self)
+            func tag(_ name: String) -> String? {
+                guard let open = xml.range(of: "<\(name)>"), let close = xml.range(of: "</\(name)>", range: open.upperBound..<xml.endIndex) else { return nil }
+                let text = String(xml[open.upperBound..<close.lowerBound]).replacingOccurrences(of: "&amp;", with: "&")
+                    .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
+                    .replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&apos;", with: "'")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return text.isEmpty ? nil : text
+            }
+            var device = device
+            // A speaker's room ("Living Room") is what the person calls it, where its friendly name is a serial number.
+            if let name = tag("roomName") ?? tag("friendlyName") { device.name = name }
+            device.maker = tag("manufacturer") ?? device.maker
+            device.model = tag("modelName") ?? tag("modelDescription") ?? device.model
+            return device
+        }
+
+        private struct Answer {
+            let address: String, server: String, location: String?, target: String
+        }
+
+        private static func search(_ target: String) -> String {
+            "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: \(target)\r\n\r\n"
+        }
+
+        /// One SSDP search, to the whole network where the system lets it (a Mac) and to each address near this
+        /// device's, which needs no multicast and so works on an iPhone too. Most players and TVs answer either.
+        private static func ssdp(timeout: TimeInterval) async -> [Answer] {
+            let hosts = neighbours()
+            return await Task.detached { () -> [Answer] in
+                let socketID = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+                guard socketID >= 0 else { return [] }
+                defer { close(socketID) }
+                var wait = timeval(tv_sec: 0, tv_usec: 250_000)
+                setsockopt(socketID, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+                let message = Array(search("ssdp:all").utf8)
+                // Sent without waiting: a send to an address nobody has can stall while the network looks for it.
+                let flags = fcntl(socketID, F_GETFL)
+                _ = fcntl(socketID, F_SETFL, flags | O_NONBLOCK)
+                for host in ["239.255.255.250"] + hosts {
+                    var to = sockaddr_in()
+                    to.sin_family = sa_family_t(AF_INET)
+                    to.sin_port = in_port_t(1900).bigEndian
+                    to.sin_addr.s_addr = inet_addr(host)
+                    for _ in 0..<2 {
+                        let sent = withUnsafePointer(to: &to) { pointer in
+                            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(socketID, message, message.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+                        }
+                        // A full buffer is given a moment; any other refusal (no route, an address that's away) is skipped.
+                        guard sent < 0, errno == EAGAIN || errno == ENOBUFS else { break }
+                        usleep(5_000)
+                    }
+                }
+                _ = fcntl(socketID, F_SETFL, flags)
+                var found: [Answer] = []
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                let end = Date().addingTimeInterval(timeout)
+                while Date() < end {
+                    var from = sockaddr_in()
+                    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+                    let count = withUnsafeMutablePointer(to: &from) {
+                        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(socketID, &buffer, buffer.count, 0, $0, &length) }
+                    }
+                    guard count > 0 else { continue }
+                    let address = String(cString: inet_ntoa(from.sin_addr))
+                    var fields: [String: String] = [:]
+                    for line in String(decoding: buffer[0..<count], as: UTF8.self).split(whereSeparator: \.isNewline).dropFirst() {
+                        guard let colon = line.firstIndex(of: ":") else { continue }
+                        fields[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                    }
+                    found.append(Answer(address: address, server: fields["server"] ?? "", location: fields["location"], target: fields["st"] ?? ""))
+                }
+                return found
+            }.value
+        }
+
+        /// The devices that advertise these Bonjour types, each resolved to its address, without reaching the device.
+        private static func browse(_ types: [String], timeout: TimeInterval) async -> [(String, Service)] {
+            await withTaskGroup(of: [(String, Service)].self) { group in
+                for type in types {
+                    group.addTask {
+                        // Resolved all at once: a home can have a dozen AirPlay speakers, each a moment's wait.
+                        await withTaskGroup(of: (String, Service)?.self) { each in
+                            for (endpoint, txt) in await services(of: type, timeout: timeout) {
+                                guard case .service(let name, _, let domain, _) = endpoint else { continue }
+                                each.addTask {
+                                    await Task.detached { resolve(name: name, type: type, domain: domain) }.value
+                                        .map { ($0.0, Service(type: type, name: name, port: $0.1, txt: txt)) }
+                                }
+                            }
+                            var found: [(String, Service)] = []
+                            for await one in each { if let one { found.append(one) } }
+                            return found
+                        }
+                    }
+                }
+                var all: [(String, Service)] = []
+                for await found in group { all += found }
+                return all
+            }
+        }
+
+        private static func services(of type: String, timeout: TimeInterval) async -> [(NWEndpoint, [String: String])] {
+            let browser = NWBrowser(for: .bonjourWithTXTRecord(type: type, domain: nil), using: .tcp)
+            let seen = Seen()
+            browser.browseResultsChangedHandler = { results, _ in
+                seen.set(results.map { result in
+                    if case .bonjour(let record) = result.metadata { return (result.endpoint, record.dictionary) }
+                    return (result.endpoint, [:])
+                })
+            }
+            browser.start(queue: .global())
+            try? await Task.sleep(for: .seconds(timeout))
+            browser.cancel()
+            return seen.endpoints
+        }
+
+        /// What a browser has seen so far, from its own queue.
+        private final class Seen: @unchecked Sendable {
+            private let lock = NSLock()
+            private var list: [(NWEndpoint, [String: String])] = []
+            func set(_ endpoints: [(NWEndpoint, [String: String])]) { lock.lock(); list = endpoints; lock.unlock() }
+            var endpoints: [(NWEndpoint, [String: String])] { lock.lock(); defer { lock.unlock() }; return list }
+        }
+
+        /// The first of several callers to finish a wait, so it's resumed once.
+        private final class Once: @unchecked Sendable {
+            private let lock = NSLock()
+            private var done = false
+            func take() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
+        }
+
+        /// A Bonjour service's IPv4 address and port, asked of the network (mDNS) and never of the device: its host and
+        /// port from the service's record, then the host's address.
+        private static func resolve(name: String, type: String, domain: String) -> (String, Int?)? {
+            final class Answer { var host: String?; var port: Int? }
+            let answer = Answer()
+            var reference: DNSServiceRef?
+            let heard: DNSServiceResolveReply = { _, _, _, code, _, host, port, _, _, context in
+                guard code == kDNSServiceErr_NoError, let host, let context else { return }
+                let answer = Unmanaged<Answer>.fromOpaque(context).takeUnretainedValue()
+                answer.host = String(cString: host)
+                answer.port = Int(UInt16(bigEndian: port))
+            }
+            let started = withExtendedLifetime(answer) {
+                DNSServiceResolve(&reference, 0, 0, name, type, domain, heard, Unmanaged.passUnretained(answer).toOpaque())
+            }
+            guard started == kDNSServiceErr_NoError, let reference else { return nil }
+            defer { DNSServiceRefDeallocate(reference) }
+            var waiting = pollfd(fd: DNSServiceRefSockFD(reference), events: Int16(POLLIN), revents: 0)
+            if poll(&waiting, 1, 3000) > 0 { DNSServiceProcessResult(reference) }
+            guard let host = answer.host else { return nil }
+            var hints = addrinfo()
+            hints.ai_family = AF_INET
+            hints.ai_socktype = SOCK_STREAM
+            var found: UnsafeMutablePointer<addrinfo>?
+            guard getaddrinfo(host, nil, &hints, &found) == 0, let first = found, let address = first.pointee.ai_addr else { return nil }
+            defer { freeaddrinfo(found) }
+            let ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { String(cString: inet_ntoa($0.pointee.sin_addr)) }
+            return (ip, answer.port)
+        }
+
+        /// The other addresses of this device's home network (its /24).
+        static func neighbours() -> [String] {
+            var hosts: [String] = []
+            for ip in homeAddresses().sorted() {
+                for last in UInt32(1)...254 where ip & 0xFFFF_FF00 | last != ip {
+                    let host = ip & 0xFFFF_FF00 | last
+                    let text = "\(host >> 24).\(host >> 16 & 0xFF).\(host >> 8 & 0xFF).\(host & 0xFF)"
+                    if !hosts.contains(text) { hosts.append(text) }
+                }
+            }
+            return hosts
+        }
+
+        /// This device's own addresses on a home network: 10/8, 172.16/12 and 192.168/16.
+        private static func homeAddresses() -> Set<UInt32> {
+            var list: UnsafeMutablePointer<ifaddrs>?
+            guard getifaddrs(&list) == 0, let first = list else { return [] }
+            defer { freeifaddrs(list) }
+            var own: Set<UInt32> = []
+            for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+                let entry = pointer.pointee
+                guard let address = entry.ifa_addr, address.pointee.sa_family == sa_family_t(AF_INET),
+                      Int32(entry.ifa_flags) & IFF_UP != 0, Int32(entry.ifa_flags) & IFF_LOOPBACK == 0 else { continue }
+                let ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
+                if ip >> 24 == 10 || ip >> 20 == 0xAC1 || ip >> 16 == 0xC0A8 { own.insert(ip) }
+            }
+            return own
+        }
+
+        private static func own() -> Set<String> {
+            Set(homeAddresses().map { "\($0 >> 24).\($0 >> 16 & 0xFF).\($0 >> 8 & 0xFF).\($0 & 0xFF)" })
         }
     }
 
@@ -10957,592 +12360,6 @@ enum Template {
         }
     }
 
-    #endif
-
-    #if os(macOS)
-    /// This app's sidebar in Chrome, beside the page the person is on: a page of the app's own (`startPage`, below).
-    /// An app built before pages publishes a Surface instead, which Lamp's extension draws, sending each click back
-    /// to `handle`. Every Chrome tab has a sidebar of its
-    /// own: `surface(tab)` draws one tab's, and `event.tab` says which tab a click came from, so keep what a click
-    /// prepares (a preview, a draft) by tab and two pages never mix. Declare where it fits in browser.json at the
-    /// app's root. Start it once, from the app's shared model:
-    ///
-    ///     LampBrowser.start(surface: { tab in model.sidebar(for: tab) }, handle: { event in await model.handle(event) })
-    ///
-    /// A page is read only when a button with `readsPage` (the page's readable text) or `readsSelection` (only the
-    /// passage the person selected) is clicked. Page text is untrusted: give it to LampAI as `data:`.
-    @MainActor
-    enum LampBrowser {
-        /// A heading with text under it, a list (`items`, one line each), or both.
-        struct Section: Codable { var title: String; var text: String = ""; var items: [String] = [] }
-        /// A field the person can change before clicking. `lines` above 1 makes it a box for longer text.
-        struct Field: Codable { var id: String; var label: String; var value: String = ""; var lines: Int = 1 }
-        /// A button. The first is drawn as the main one. Never both `readsPage` and `readsSelection`.
-        struct Action: Codable { var id: String; var label: String; var readsPage: Bool = false; var readsSelection: Bool = false }
-        struct Surface: Codable {
-            var title: String
-            var detail: String = ""
-            var sections: [Section] = []
-            var fields: [Field] = []
-            var actions: [Action] = []
-            var busy: Bool = false
-        }
-        struct Page: Codable {
-            var url: String
-            var title: String
-            /// The page's readable text, or only the selected passage when `scope` is "selection".
-            var text: String
-            var scope: String?
-            /// The page was longer than the 24,000 characters given: what's missing may be further down.
-            var truncated: Bool?
-            var isSelection: Bool { scope == "selection" }
-            /// Whether `quote` is in the page's text word for word, ignoring case, spacing and the style of quote
-            /// marks and dashes. An AI can make a quote up: check each one before showing or saving it as the page's.
-            func contains(_ quote: String) -> Bool {
-                func plain(_ s: String) -> String {
-                    var t = s.lowercased()
-                    for (from, to) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201C}", "\""), ("\u{201D}", "\""),
-                                       ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{00A0}", " ")] { t = t.replacingOccurrences(of: from, with: to) }
-                    return t.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-                }
-                let wanted = plain(quote)
-                return !wanted.isEmpty && plain(text).contains(wanted)
-            }
-        }
-        struct Event: Codable {
-            var id: String
-            /// Which Chrome tab the click came from (or Lamp's own preview of the sidebar).
-            var tab: String
-            var action: String
-            /// What the person typed, by field id.
-            var fields: [String: String]
-            var page: Page?
-        }
-        private static var service: Task<Void, Never>?
-        /// Start once from a shared app model. The sidebar stays up across opening and closing windows.
-        static func start(surface: @escaping (_ tab: String) -> Surface, handle: @escaping (Event) async -> Void) {
-            guard service == nil else { return }
-            service = Task { await serve(surface: surface, handle: handle) }
-        }
-        /// For a sidebar that shows the same on every tab: one that keeps no draft or preview.
-        static func start(surface: @escaping () -> Surface, handle: @escaping (Event) async -> Void) {
-            start(surface: { _ in surface() }, handle: handle)
-        }
-        /// Asks Lamp to show this app's offer to connect Chrome. No browser installation belongs in app code.
-        static func openSetup() async {
-            _ = try? await LampAI.post("/browser/setup", [:], timeout: 10)
-        }
-        /// Publishes the surface twice a second, for each tab the sidebar is open in, and runs one click at a
-        /// time. A click is acknowledged after `handle` returns; make saves idempotent by the page or item.
-        private static func serve(surface: @escaping (String) -> Surface, handle: @escaping (Event) async -> Void) async {
-            let boot = UUID().uuidString
-            var ack: String?
-            var handling: String?
-            var tabs: [String] = []
-            var work: Task<Void, Never>?
-            defer { work?.cancel() }
-            func encoded(_ tab: String) throws -> Any {
-                var published = surface(tab)
-                published.busy = published.busy || handling != nil
-                return try JSONSerialization.jsonObject(with: JSONEncoder().encode(published))
-            }
-            while !Task.isCancelled {
-                var pause = 0.5
-                do {
-                    var body: [String: Any] = ["boot": boot, "surface": try encoded(""),
-                                               "surfaces": try Dictionary(uniqueKeysWithValues: tabs.prefix(16).map { ($0, try encoded($0)) })]
-                    if let ack { body["ack"] = ack }
-                    var request = URLRequest(url: URL(string: lampGateway + "/browser/surface")!)
-                    request.httpMethod = "POST"
-                    request.timeoutInterval = 5
-                    request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    if status == 400, let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        print("The browser sidebar couldn't be drawn: \(reply["error"] as? String ?? "") Check its sizes: up to 8 actions, 12 fields, 20 sections.")
-                    }
-                    // Lamp without the sidebar turned on: asked again now and then, in case it's turned on.
-                    guard status == 200, let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        pause = status == 404 || status == 403 ? 5 : 1
-                        throw CancellationError()
-                    }
-                    tabs = reply["tabs"] as? [String] ?? []
-                    if let rawEvent = reply["event"],
-                       let event = try? JSONDecoder().decode(Event.self, from: JSONSerialization.data(withJSONObject: rawEvent)),
-                       handling == nil, event.id != ack {
-                        handling = event.id
-                        work = Task { await handle(event); ack = event.id; handling = nil }
-                    }
-                } catch { /* Lamp closed or not ready: the sidebar shows again once it answers. */ }
-                do { try await Task.sleep(for: .seconds(pause)) } catch { return }
-            }
-        }
-
-        // MARK: The sidebar as the app's own page
-
-        /// A call from the sidebar page's script, `lamp.call(name, body)`: its name, the Chrome tab it came from
-        /// (keep what one tab prepares apart from another's), and the JSON it sent.
-        struct Call: Sendable {
-            var name: String
-            var tab: String
-            var body: Data
-            func decode<T: Decodable>(_ type: T.Type) throws -> T {
-                try JSONDecoder().decode(T.self, from: body.isEmpty ? Data("null".utf8) : body)
-            }
-        }
-        /// Thrown from a page call: its message is what the page's `lamp.call` rejects with.
-        struct Failure: Error, LocalizedError {
-            var message: String
-            init(_ message: String) { self.message = message }
-            var errorDescription: String? { message }
-        }
-
-        /// The app serves its sidebar page itself (Assets/Sidebar, index.html first) on this Mac's own address, at a
-        /// name and port of its own, so its sidebar works while the app is open whether Lamp is or not. Chrome's
-        /// sidebar frames it; the page asks the app for its data and actions with `lamp.call`, and for the page the
-        /// person is on with `lamp.readPage()` after a click, or when the app's right-click item is chosen (`lamp.onMenu`).
-        /// `api` answers the calls, on the main actor:
-        ///
-        ///     LampBrowser.startPage { call in
-        ///         switch call.name {
-        ///         case "list": return model.saved
-        ///         case "preview": return try await model.preview(call.decode(LampBrowser.Page.self), tab: call.tab)
-        ///         default: throw LampBrowser.Failure("Unknown call \(call.name).")
-        ///         }
-        ///     }
-        ///
-        /// Call `pageChanged()` when what the page shows changed in the app, so `lamp.onChange` fires there.
-        ///
-        /// The page itself (Assets/Sidebar/index.html, its CSS and JavaScript beside it) is described, with a page
-        /// to start from that goes through every state, in Lamp's chrome-sidebar skill: open it with `read_skill`.
-        /// A call that fails throws `Failure`, whose message the page shows; the page loads nothing from the
-        /// internet, so a picture of an item reaches it from the app (`/assets/<file>`, or a `data:` URL).
-        static func startPage(api: @escaping @MainActor (Call) async throws -> any Encodable) {
-            pageAPI = api
-            PageServer.queue.async { PageServer.listen() }
-        }
-        static func pageChanged() { PageServer.queue.async { PageServer.version += 1 } }
-        fileprivate static var pageAPI: (@MainActor (Call) async throws -> any Encodable)?
-
-        /// A small HTTP server for the one page. Only requests naming the app's own host get anything (a website
-        /// that points a name of its own at this Mac is refused), the page's data only with the key Chrome's
-        /// sidebar was given, and only the extension may frame the page.
-        fileprivate enum PageServer {
-            /// The first of the ports the app may use; when another program has it, the next few are tried, as
-            /// Chrome's sidebar and Lamp's preview do. Only this app answers its own name on any of them.
-            static let firstPort = UInt16(clamping: LampInstall.number("sidebarPort"))
-            static let tries = UInt16(clamping: max(1, LampInstall.number("sidebarTries")))
-            nonisolated(unsafe) static var port: UInt16 = firstPort
-            static let host = LampInstall.value("sidebarHost")
-            static let key = LampInstall.value("sidebarKey")
-            static let queue = DispatchQueue(label: "LampBrowser.page")
-            nonisolated(unsafe) static var listeners: [NWListener] = []
-            nonisolated(unsafe) static var version = 0
-            static let policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors \(LampInstall.value("sidebarFramer"))"
-
-            static var folder: URL? { LampAssets.folder?.appendingPathComponent("Sidebar") }
-
-            /// Both of this Mac's own addresses, since Chrome tries `::1` first for a `.localhost` name: a program
-            /// holding either one at a port would otherwise get the page's address, and its key, there. When either is
-            /// taken, the next port is tried for both.
-            static func listen(offset: UInt16 = 0) {
-                guard listeners.isEmpty else { return }
-                guard offset < tries, let endpoint = NWEndpoint.Port(rawValue: firstPort + offset) else {
-                    return print("The sidebar page couldn't be served: other programs have ports \(firstPort)–\(firstPort + tries - 1).")
-                }
-                var made: [NWListener] = []
-                for address in [IPv4Address.loopback as IPAddress, IPv6Address.loopback as IPAddress] {
-                    let parameters = NWParameters.tcp
-                    parameters.requiredLocalEndpoint = .hostPort(host: address is IPv4Address ? .ipv4(.loopback) : .ipv6(.loopback), port: endpoint)
-                    // Network won't hold both addresses at one port without it; another program still can't share it.
-                    parameters.allowLocalEndpointReuse = true
-                    guard let listener = try? NWListener(using: parameters) else { made.forEach { $0.cancel() }; return listen(offset: offset + 1) }
-                    made.append(listener)
-                }
-                listeners = made
-                port = firstPort + offset
-                for listener in made {
-                    listener.newConnectionHandler = { accept($0) }
-                    listener.stateUpdateHandler = { state in
-                        switch state {
-                        case .failed, .waiting:
-                            // One address taken is the port taken: both move on together.
-                            guard listeners.contains(where: { $0 === listener }) else { return }
-                            listeners.forEach { $0.cancel() }
-                            listeners = []
-                            listen(offset: offset + 1)
-                        default: break
-                        }
-                    }
-                    listener.start(queue: queue)
-                }
-            }
-
-            struct Request {
-                var method: String, path: String, headers: [String: String], body: Data
-                /// Nil until the whole request has arrived.
-                init?(_ data: Data) {
-                    guard let end = data.range(of: Data("\r\n\r\n".utf8)),
-                          let head = String(data: data[..<end.lowerBound], encoding: .utf8) else { return nil }
-                    var lines = head.components(separatedBy: "\r\n")
-                    let first = lines.removeFirst().split(separator: " ")
-                    guard first.count >= 2 else { return nil }
-                    method = String(first[0]); path = String(first[1]); headers = [:]
-                    for line in lines {
-                        guard let colon = line.firstIndex(of: ":") else { continue }
-                        headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-                    }
-                    let length = Int(headers["content-length"] ?? "0") ?? 0
-                    guard length >= 0, data.count - end.upperBound >= length else { return nil }
-                    body = data[end.upperBound..<(end.upperBound + length)]
-                }
-            }
-
-            static func accept(_ connection: NWConnection) {
-                connection.start(queue: queue)
-                var received = Data()
-                var arrived = false
-                // A request has a few seconds to arrive whole; the app's answer (an AI answer can take a minute) has
-                // as long as it needs.
-                queue.asyncAfter(deadline: .now() + 15) { if !arrived { connection.cancel() } }
-                func read() {
-                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, complete, error in
-                        if let data { received.append(data) }
-                        if received.count > 1_100_000 { return connection.cancel() }
-                        if let request = Request(received) { arrived = true; return respond(request, on: connection) }
-                        if complete || error != nil { return connection.cancel() }
-                        read()
-                    }
-                }
-                read()
-            }
-
-            /// An SF Symbol as a PNG at `size` points (drawn at twice that), in `color` (hex) or black.
-            @MainActor static func symbolPNG(_ name: String, color: String?, size: Int, weight: String?) -> Data? {
-                let points = CGFloat(min(max(size, 8), 128))
-                let weights: [String: NSFont.Weight] = ["ultralight": .ultraLight, "thin": .thin, "light": .light, "regular": .regular,
-                                                        "medium": .medium, "semibold": .semibold, "bold": .bold, "heavy": .heavy, "black": .black]
-                var tint = NSColor.black
-                if let color, color.count == 6, let rgb = UInt32(color, radix: 16) {
-                    tint = NSColor(srgbRed: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
-                }
-                let config = NSImage.SymbolConfiguration(pointSize: points, weight: weights[weight ?? ""] ?? .regular)
-                    .applying(NSImage.SymbolConfiguration(paletteColors: [tint]))
-                guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return nil }
-                let pixels = NSSize(width: ceil(symbol.size.width * 2), height: ceil(symbol.size.height * 2))
-                guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(pixels.width), pixelsHigh: Int(pixels.height), bitsPerSample: 8,
-                                                 samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-                rep.size = symbol.size
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-                symbol.draw(in: NSRect(origin: .zero, size: symbol.size))
-                NSGraphicsContext.restoreGraphicsState()
-                return rep.representation(using: .png, properties: [:])
-            }
-
-            static func send(_ status: Int, _ type: String, _ body: Data, on connection: NWConnection) {
-                let reason = [200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 421: "Misdirected Request", 503: "Unavailable"][status] ?? "Error"
-                let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n" +
-                    "Content-Security-Policy: \(policy)\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\n" +
-                    "Referrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-                connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
-            }
-            static func json(_ status: Int, _ value: [String: Any], on connection: NWConnection) {
-                send(status, "application/json", (try? JSONSerialization.data(withJSONObject: value)) ?? Data("{}".utf8), on: connection)
-            }
-
-            static func respond(_ request: Request, on connection: NWConnection) {
-                // A website can point any name at this Mac, and another program may have taken the app's first
-                // port: only the app's own name, at the port it has, is answered.
-                guard request.headers["host"] == "\(host):\(port)" else { return json(421, ["error": "Wrong host."], on: connection) }
-                let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
-                // Proof that this is the app, not another program that took one of its ports: the key's signature
-                // over the sidebar's nonce and the port asked, which only the app can make and which fits only the
-                // address it was asked at. Chrome's sidebar hands the page its key only after checking it.
-                if path == "/lamp/proof", request.method == "GET" {
-                    let query = request.path.split(separator: "?", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
-                    guard let nonce = URLComponents(string: "?" + query)?.queryItems?.first(where: { $0.name == "nonce" })?.value,
-                          !nonce.isEmpty, nonce.count <= 100 else { return json(400, ["error": "No nonce."], on: connection) }
-                    let code = HMAC<SHA256>.authenticationCode(for: Data("\(nonce):\(port)".utf8), using: SymmetricKey(data: Data(key.utf8)))
-                    return json(200, ["proof": code.map { String(format: "%02x", $0) }.joined()], on: connection)
-                }
-                // The symbols the window shows, drawn by the app as the window draws them, so the page can use the same.
-                if path.hasPrefix("/symbols/") {
-                    let query = URLComponents(string: request.path)?.queryItems ?? []
-                    let value = { (name: String) in query.first { $0.name == name }?.value }
-                    let name = String(path.dropFirst("/symbols/".count)).replacingOccurrences(of: ".png", with: "")
-                    guard name.count <= 80, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "." }),
-                          let png = DispatchQueue.main.sync(execute: { MainActor.assumeIsolated { symbolPNG(name, color: value("color"),
-                                                                                 size: Int(value("size") ?? "") ?? 32, weight: value("weight")) } }) else {
-                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
-                    }
-                    return send(200, "image/png", png, on: connection)
-                }
-                // The app's own pictures (its Assets folder), so an item shows the picture the window shows for it.
-                if path.hasPrefix("/assets/") {
-                    let parts = path.dropFirst("/assets/".count).split(separator: "/").map { String($0).removingPercentEncoding ?? "" }
-                    let images = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
-                                  "heic": "image/heic", "svg": "image/svg+xml"]
-                    guard let assets = LampAssets.folder, !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") }),
-                          let type = images[(parts.last! as NSString).pathExtension.lowercased()] else {
-                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
-                    }
-                    let root = assets.resolvingSymlinksInPath().path + "/"
-                    let file = parts.reduce(assets) { $0.appendingPathComponent($1) }.resolvingSymlinksInPath()
-                    guard file.path.hasPrefix(root), let data = try? Data(contentsOf: file) else {
-                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
-                    }
-                    return send(200, type, data, on: connection)
-                }
-                if path.hasPrefix("/lamp/") {
-                    // The page's data: only for the key Chrome's sidebar (or Lamp's preview) was given, and never
-                    // for a request another site made.
-                    let site = request.headers["sec-fetch-site"]
-                    guard request.headers["x-lamp-key"] == key, site == nil || site == "same-origin" else {
-                        return json(403, ["error": "Not for this page."], on: connection)
-                    }
-                    if path == "/lamp/version" { return json(200, ["version": version], on: connection) }
-                    guard request.method == "POST", path.hasPrefix("/lamp/call/"),
-                          let name = String(path.dropFirst("/lamp/call/".count)).removingPercentEncoding, !name.isEmpty, name.count <= 100 else {
-                        return json(404, ["error": "Not found."], on: connection)
-                    }
-                    let call = Call(name: name, tab: String((request.headers["x-lamp-tab"] ?? "").prefix(40)), body: request.body)
-                    Task { @MainActor in
-                        guard let api = LampBrowser.pageAPI else { return queue.async { json(503, ["error": "The app isn't ready."], on: connection) } }
-                        do {
-                            let value = try await api(call)
-                            let data = try JSONEncoder().encode(value)
-                            queue.async { send(200, "application/json", data, on: connection) }
-                        } catch {
-                            let message = error is DecodingError ? "The app couldn't read what the page sent."
-                                : (error as? LocalizedError)?.errorDescription ?? "The app couldn't do that."
-                            queue.async { json(400, ["error": message], on: connection) }
-                        }
-                    }
-                    return
-                }
-                guard request.method == "GET" else { return json(404, ["error": "Not found."], on: connection) }
-                if path == "/lamp.js" { return send(200, "text/javascript; charset=utf-8", Data(LampBrowser.script.utf8), on: connection) }
-                if path == "/lamp.css" { return send(200, "text/css; charset=utf-8", Data(LampBrowser.style.utf8), on: connection) }
-                // The page's own files, and nothing outside its folder.
-                let parts = (path == "/" ? "/index.html" : path).split(separator: "/").map { String($0).removingPercentEncoding ?? "" }
-                guard let folder, !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") }) else {
-                    return json(404, ["error": "Not found."], on: connection)
-                }
-                // Links are followed before the check, so one pointing out of the folder is refused like `..`.
-                let root = folder.resolvingSymlinksInPath().path + "/"
-                let file = parts.reduce(folder) { $0.appendingPathComponent($1) }.resolvingSymlinksInPath()
-                guard file.path.hasPrefix(root), let data = try? Data(contentsOf: file) else {
-                    return send(404, "text/plain", Data("Not found".utf8), on: connection)
-                }
-                let types = ["html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
-                             "json": "application/json", "svg": "image/svg+xml", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-                             "gif": "image/gif", "webp": "image/webp", "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf"]
-                send(200, types[file.pathExtension.lowercased()] ?? "application/octet-stream", data, on: connection)
-            }
-        }
-
-        /// `lamp.js`, which the page loads first: `lamp.call`, `lamp.readPage`, `lamp.readSelection`, `lamp.onChange`,
-        /// `lamp.onMenu`.
-        nonisolated fileprivate static let script = """
-        // Lamp's bridge for this app's sidebar page. The page sits in Chrome's sidebar, framed by Lamp's extension;
-        // what it knows of the person's tab comes only through that frame, after a click.
-        (() => {
-          const tab = new URLSearchParams(location.hash.slice(1)).get('tab') || sessionStorage.getItem('lamp.tab') || 'preview';
-          sessionStorage.setItem('lamp.tab', tab);
-          if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-          // The key for the app's data comes from the sidebar, and only once the app has proved it serves this page.
-          let key = '';
-          const preview = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampPreview;
-          const framer = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
-          let next = 0; const waiting = {};
-          addEventListener('message', event => {
-            if (event.source !== parent || event.origin !== framer || !event.data || event.data.lamp !== 'answer') return;
-            const done = waiting[event.data.id]; delete waiting[event.data.id]; if (done) done(event.data);
-          });
-          function ask(body) {
-            if (preview) return preview.postMessage(body);
-            if (parent === window || !framer) return Promise.resolve({error: 'Open this in Chrome’s sidebar.'});
-            return new Promise(resolve => { const id = ++next; waiting[id] = resolve; parent.postMessage({...body, id}, framer); });
-          }
-          let token = '', proving = null;
-          function prove() {
-            proving = proving || (async () => {
-              const hello = await ask({lamp: 'hello'});
-              if (hello && hello.key) { key = hello.key; return; }
-              if (!hello || !hello.nonce) return;
-              const proof = await fetch('/lamp/proof?nonce=' + encodeURIComponent(hello.nonce)).then(r => r.json()).catch(() => ({}));
-              const answer = await ask({lamp: 'proof', nonce: hello.nonce, proof: proof.proof || ''});
-              if (answer && answer.key) { key = answer.key; token = answer.token || ''; }
-            })().finally(() => { proving = null; });
-            return proving;
-          }
-          const ready = prove();
-          // The sidebar asks each document it loads to prove itself again.
-          addEventListener('message', event => {
-            if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'prove') prove();
-          });
-          // The app's right-click item was chosen on this tab: the handler does what the item says, as the person's
-          // click would. Held until the page has given its handler, so one given after the news still gets it.
-          const menuHandlers = []; let menuWaiting = false;
-          function chosen() {
-            if (!menuHandlers.length) { menuWaiting = true; return; }
-            menuWaiting = false;
-            menuHandlers.forEach(f => { try { Promise.resolve(f()).catch(() => {}); } catch {} });
-          }
-          addEventListener('message', event => {
-            if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'menu') chosen();
-          });
-          // Lamp's own preview of the sidebar (the builder's) chooses the item through this, as Chrome's sidebar does above.
-          if (preview) Object.defineProperty(window, '__lampChooseMenu', {value: chosen});
-          async function call(name, body) {
-            await ready;
-            let reply;
-            try {
-              reply = await fetch('/lamp/call/' + encodeURIComponent(name), {method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-Lamp-Key': key, 'X-Lamp-Tab': tab}, body: JSON.stringify(body === undefined ? null : body)});
-            } catch { throw new Error('Open the app on your Mac, then try again.'); }
-            const value = await reply.json().catch(() => null);
-            if (!reply.ok) throw new Error((value && value.error) || 'The app couldn’t do that.');
-            return value;
-          }
-          async function read(scope) {
-            await ready;
-            const answer = await ask({lamp: 'read', scope, token});
-            if (!answer || answer.error) throw new Error((answer && answer.error) || 'The page couldn’t be read.');
-            return answer.page;
-          }
-          // Every second: what changed in the app, and to the sidebar, that the app still answers here (when it
-          // doesn't, the sidebar looks for it again, at whichever of its ports it reopened).
-          const watchers = []; let version = null;
-          async function poll() {
-            try {
-              await ready;
-              const reply = await fetch('/lamp/version', {headers: {'X-Lamp-Key': key}});
-              const value = await reply.json();
-              if (reply.ok && !preview && framer) parent.postMessage({lamp: 'alive'}, framer);
-              if (version !== null && value.version !== version) watchers.forEach(f => { try { f(); } catch {} });
-              version = value.version;
-            } catch {}
-            setTimeout(poll, 1000);
-          }
-          poll();
-          // The page's own colours, so Lamp's strip above it is drawn in them and the two read as one.
-          // Only a solid background goes: a gradient or a see-through one gives its first solid colour, or nothing, and
-          // with no background the strip keeps all of its own colours, so its words are never drawn on the wrong one.
-          function solid(value) {
-            const m = /rgba?\\(([^)]*)\\)/.exec(value || '');
-            if (!m) return '';
-            const parts = m[1].split(',').map(p => p.trim());
-            return parts.length < 4 || parseFloat(parts[3]) >= 1 ? 'rgb(' + parts.slice(0, 3).join(', ') + ')' : '';
-          }
-          function tellLook() {
-            if (preview || !framer) return;
-            const html = getComputedStyle(document.documentElement), body = getComputedStyle(document.body);
-            const v = name => html.getPropertyValue(name).trim();
-            const bg = solid(body.backgroundColor) || solid(body.backgroundImage) || solid(html.backgroundColor) || solid(html.backgroundImage);
-            parent.postMessage(bg ? {lamp: 'look', bg, ink: body.color, muted: v('--muted'), line: v('--line'), accent: v('--accent')}
-                                  : {lamp: 'look'}, framer);
-          }
-          if (document.readyState === 'loading') addEventListener('DOMContentLoaded', tellLook); else tellLook();
-          matchMedia('(prefers-color-scheme: dark)').addEventListener('change', tellLook);
-          window.lamp = {
-            tab, call,
-            /// The readable text of the page the person is on: {url, title, text, truncated}. Call it from a click.
-            readPage: () => read('page'),
-            /// Only the passage the person selected on the page. Call it from a click.
-            readSelection: () => read('selection'),
-            /// Called when the app says what the page shows changed (LampBrowser.pageChanged()).
-            onChange(f) { watchers.push(f); },
-            /// Called when the person chose the app's right-click item for this page: do what it says, reading the
-            /// page once with lamp.readPage() or lamp.readSelection() as a click would.
-            onMenu(f) { menuHandlers.push(f); if (menuWaiting) chosen(); },
-          };
-        })();
-        """
-
-        /// `lamp.css`: the sidebar drawn as Apple draws a Mac app's narrow list pane, light and dark: the grouped grey
-        /// background, white rounded groups, rows whose separators start at the words, SF, and one tint, which the page
-        /// chooses with `<html data-tint="green">` among Apple's system colours (text and button shades measured to
-        /// read in both appearances). The parts (groups, rows, pictures, symbols as masks, buttons, fields, the bar at
-        /// the foot) are described in the chrome-sidebar skill, and rearrange themselves at large text sizes. The
-        /// variables `--accent`, `--ink`, `--muted`, `--line` and `--bg` are plain colours because the strip above
-        /// the page takes them (`tellLook`).
-        nonisolated fileprivate static let style = """
-        :root{color-scheme:light dark;--bg:#f2f2f7;--surface:#ffffff;--ink:#1d1d1f;--muted:#6e6e73;--line:#dcdce0;--separator:rgba(60,60,67,.2);--tertiary:rgba(60,60,67,.3);--fill:rgba(120,120,128,.12);--fill-strong:rgba(120,120,128,.2);--hairline:rgba(0,0,0,.06);--raised:#ffffff;--raised-shadow:0 .5px 1px rgba(0,0,0,.12),0 2px 6px rgba(0,0,0,.06);--field:#c7c7cc;--danger:#d70015;--accent:var(--tint-text);--on-accent:var(--on-tint);--font:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;--title-font:var(--font);--title-size:1.25rem;--title-weight:700;--radius:12px;--control-radius:7px;--control-height:28px;--shadow:none;--gutter:16px}
-        @media (prefers-color-scheme:dark){:root{--bg:#1c1c1e;--surface:#2c2c2e;--ink:#f5f5f7;--muted:#98989d;--line:#3a3a3c;--separator:rgba(84,84,88,.65);--tertiary:rgba(235,235,245,.3);--fill:rgba(118,118,128,.24);--fill-strong:rgba(118,118,128,.36);--hairline:rgba(255,255,255,.06);--raised:#636366;--raised-shadow:0 1px 2px rgba(0,0,0,.3);--field:#48484a;--danger:#ff6961}}
-        :root,html[data-tint=blue]{--tint:#007aff;--tint-text:#0063d0;--tint-fill:#0071e3;--on-tint:#ffffff;--tint-wash:#dbecff}
-        html[data-tint=green]{--tint:#34c759;--tint-text:#1f7a35;--tint-fill:#1f7a35;--on-tint:#ffffff;--tint-wash:#e3f7e8}
-        html[data-tint=orange]{--tint:#ff9500;--tint-text:#c93400;--tint-fill:#c93400;--on-tint:#ffffff;--tint-wash:#fff0db}
-        html[data-tint=red]{--tint:#ff3b30;--tint-text:#d10014;--tint-fill:#d70015;--on-tint:#ffffff;--tint-wash:#ffe4e2}
-        html[data-tint=pink]{--tint:#ff2d55;--tint-text:#cd0f43;--tint-fill:#d30f45;--on-tint:#ffffff;--tint-wash:#ffe2e7}
-        html[data-tint=purple]{--tint:#af52de;--tint-text:#8944ab;--tint-fill:#8944ab;--on-tint:#ffffff;--tint-wash:#f4e7fa}
-        html[data-tint=indigo]{--tint:#5856d6;--tint-text:#3634a3;--tint-fill:#3634a3;--on-tint:#ffffff;--tint-wash:#e8e7f9}
-        html[data-tint=teal]{--tint:#30b0c7;--tint-text:#0071a4;--tint-fill:#0071a4;--on-tint:#ffffff;--tint-wash:#e2f4f7}
-        html[data-tint=brown]{--tint:#a2845e;--tint-text:#7f6545;--tint-fill:#7f6545;--on-tint:#ffffff;--tint-wash:#f2eee8}
-        @media (prefers-color-scheme:dark){
-        :root,html[data-tint=blue]{--tint:#0a84ff;--tint-text:#51a5ff;--tint-fill:#0071e3;--on-tint:#ffffff;--tint-wash:#27384b}
-        html[data-tint=green]{--tint:#30d158;--tint-text:#30d158;--tint-fill:#30d158;--on-tint:#002e0f;--tint-wash:#2d4334}
-        html[data-tint=orange]{--tint:#ff9f0a;--tint-text:#ffb340;--tint-fill:#ff9f0a;--on-tint:#3a1d00;--tint-wash:#4a3c29}
-        html[data-tint=red]{--tint:#ff453a;--tint-text:#ff7a73;--tint-fill:#d70015;--on-tint:#ffffff;--tint-wash:#4a3030}
-        html[data-tint=pink]{--tint:#ff375f;--tint-text:#ff728d;--tint-fill:#d30f45;--on-tint:#ffffff;--tint-wash:#4a2e35}
-        html[data-tint=purple]{--tint:#bf5af2;--tint-text:#da8fff;--tint-fill:#8944ab;--on-tint:#ffffff;--tint-wash:#413249}
-        html[data-tint=indigo]{--tint:#5e5ce6;--tint-text:#9694ff;--tint-fill:#3634a3;--on-tint:#ffffff;--tint-wash:#333348}
-        html[data-tint=teal]{--tint:#40c8e0;--tint-text:#5de6ff;--tint-fill:#40c8e0;--on-tint:#002a33;--tint-wash:#2f4247}
-        html[data-tint=brown]{--tint:#ac8e68;--tint-text:#bfa37e;--tint-fill:#ac8e68;--on-tint:#2b1d0e;--tint-wash:#3e3a36}
-        }
-        *{box-sizing:border-box}html{background:var(--bg)}
-        body{margin:0;padding:0 0 24px;background:var(--bg);color:var(--ink);font:400 .8125rem/1.38 var(--font);-webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none;cursor:default}
-        .selectable,input,textarea{-webkit-user-select:text;user-select:text}
-        h1,h2,h3,p{margin:0}h1,.title{font:var(--title-weight) var(--title-size)/1.2 var(--title-font)}h2{font:600 .8125rem/1.3 var(--font)}h3,.headline{font:600 .8125rem/1.3 var(--font)}
-        .muted,.secondary{color:var(--muted)}.tint{color:var(--tint-text)}a{color:var(--tint-text);text-decoration:none}img{-webkit-user-drag:none}
-        .num{font-variant-numeric:tabular-nums}.clamp-1,.clamp-2{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}.clamp-1{-webkit-line-clamp:1}.clamp-2{-webkit-line-clamp:2}
-        :focus-visible{outline:3px solid color-mix(in srgb,var(--tint) 50%,transparent);outline-offset:1px}
-        .sym{display:inline-block;flex:none;width:1.15em;height:1.15em;vertical-align:-.2em;background-color:currentColor;-webkit-mask:var(--sym) center/contain no-repeat;mask:var(--sym) center/contain no-repeat}
-        .symbol{width:1.1em;height:1.1em;vertical-align:-.15em}
-        .collection-header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:20px var(--gutter) 10px calc(var(--gutter) + 2px)}
-        .collection-header .count{color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums;white-space:nowrap}
-        .section-header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font:600 .8125rem/1.3 var(--font);margin:18px calc(var(--gutter) + 4px) 7px}
-        .section-footer{color:var(--muted);font-size:.6875rem;line-height:1.35;margin:7px calc(var(--gutter) + 4px) 0}
-        .group,.box{margin:0 var(--gutter);background:var(--surface);border-radius:var(--radius);corner-shape:superellipse(1.6);box-shadow:0 0 0 .5px var(--hairline);overflow:hidden}
-        .group+.group,.box+.box{margin-top:12px}.box>p{padding:10px 12px}
-        .row{position:relative;display:flex;align-items:center;gap:12px;min-height:44px;padding:9px 12px;--inset:12px}
-        .row.has-thumb{--inset:calc(24px + var(--thumb,44px))}.row.has-dot{--inset:33px;align-items:flex-start;padding-top:11px;padding-bottom:11px}.row.has-dot .dot{margin-top:4px}
-        .row+.row::before,.field+.field::before{content:"";position:absolute;top:0;right:0;left:var(--inset);height:.5px;background:var(--separator)}
-        .row .main,.row .grow{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-        .row .title-line{font:600 .8125rem/1.3 var(--font)}
-        .meta,.row .sub{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;color:var(--muted);font-size:.75rem}.meta>span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.meta .sym{font-size:.6875rem}
-        .row .trailing{flex:none;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums}
-        .row[role=button]:active{background:var(--fill)}.row[role=button]:focus-visible{outline:0;box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--tint) 50%,transparent);border-radius:8px}
-        .facts-line,.facts{display:flex;flex-wrap:wrap;color:var(--muted);font-size:.75rem}.facts-line>span,.facts>span{white-space:nowrap}.facts-line>span:not(:last-child)::after,.facts>span:not(:last-child)::after{content:"·";margin:0 5px}
-        .thumb{flex:none;width:var(--thumb,44px);height:var(--thumb,44px);border-radius:9px;corner-shape:superellipse(1.6);object-fit:cover;background:var(--fill);outline:.5px solid var(--hairline);outline-offset:-.5px}
-        .thumb.placeholder{display:grid;place-items:center;background:var(--tint-wash);color:var(--tint-text);font-size:calc(var(--thumb,44px) * .42)}
-        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:16px 12px;margin:0 var(--gutter)}
-        .card{display:flex;flex-direction:column;gap:6px;min-width:0}.card .picture,.card>img{display:block;width:100%;aspect-ratio:4/3;border-radius:10px;corner-shape:superellipse(1.6);object-fit:cover;background:var(--fill);outline:.5px solid var(--hairline);outline-offset:-.5px}
-        .card .picture.placeholder{display:grid;place-items:center;color:var(--tint-text);font-size:1.875rem;background:var(--tint-wash)}.card .title-line{font:600 .8125rem/1.3 var(--font)}
-        button,.button{-webkit-appearance:none;appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:var(--control-height);padding:0 12px;border:0;border-radius:var(--control-radius);font:500 .8125rem/1.2 var(--font);white-space:nowrap;cursor:default;background:var(--fill-strong);color:var(--ink)}
-        button:active{filter:brightness(.92)}button:disabled{opacity:.45}
-        button.primary{background:var(--tint-fill);color:var(--on-tint);font-weight:600}button.tinted{background:var(--tint-wash);color:var(--tint-text);font-weight:600}button.plain,button.link{background:none;color:var(--tint-text);padding:0 4px;min-height:0}button.capsule{border-radius:999px;padding:0 14px}
-        .offer{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding:12px}.offer .main{flex:1 1 120px;min-width:0}.offer>button{margin-left:auto}.offer .thumb{--thumb:40px}
-        .page-top{height:12px}
-        .segmented{display:flex;margin:0 var(--gutter) 10px;padding:2px;border-radius:8px;background:var(--fill)}.segmented button{flex:1;min-height:24px;border-radius:6px;background:transparent;font-size:.75rem}.segmented button[aria-pressed=true]{background:var(--raised);box-shadow:var(--raised-shadow)}
-        .pill{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 8px;border-radius:999px;font:600 .6875rem/1 var(--font);background:var(--tint-wash);color:var(--tint-text);white-space:nowrap}.pill.neutral{background:var(--fill);color:var(--muted)}
-        .verdict{display:inline-flex;align-items:center;gap:4px;font:600 .8125rem/1.2 var(--font);white-space:nowrap}.verdict .sym{font-size:.75rem}.verdict.bad{color:var(--danger)}.verdict.good{color:var(--tint-text)}.verdict.unknown{color:var(--muted);font-weight:500}
-        .dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--tint)}.dot.off{background:transparent}
-        .status,.status-line{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.75rem;margin:10px calc(var(--gutter) + 4px) 0}.status:empty,.status-line:empty{display:none}.error{color:var(--danger)}
-        .empty{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:36px 28px;color:var(--muted)}.empty .sym{font-size:2.5rem;color:var(--tertiary);margin-bottom:6px}.empty .title{font-size:1.0625rem;font-weight:600;color:var(--ink)}
-        .field{position:relative;display:flex;align-items:center;gap:12px;min-height:40px;padding:0 12px;--inset:12px}.field>label{flex:none;width:84px;margin:0;color:var(--ink)}
-        input,textarea,select{display:block;flex:1;width:100%;min-width:0;margin:6px 0;padding:4px 8px;border:0;border-radius:6px;background:var(--fill);color:var(--ink);font:400 .8125rem/1.38 var(--font)}textarea{resize:vertical}
-        input:focus,textarea:focus,select:focus{outline:3px solid color-mix(in srgb,var(--tint) 50%,transparent);outline-offset:0;background:var(--surface);box-shadow:inset 0 0 0 .5px var(--field)}input::placeholder,textarea::placeholder{color:var(--tertiary)}
-        label{display:block}
-        .bottom-bar,.actions{position:sticky;bottom:0;display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:18px;padding:10px var(--gutter) 14px;background:color-mix(in srgb,var(--bg) 85%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-top:.5px solid var(--separator)}
-        ul.list{list-style:none;margin:0 var(--gutter);padding:0;background:var(--surface);border-radius:var(--radius);overflow:hidden}ul.list li{position:relative;padding:11px 12px}ul.list li+li::before{content:"";position:absolute;top:0;right:0;left:12px;height:.5px;background:var(--separator)}
-        @media (max-width:19em){.offer{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start}.offer>button{grid-column:2;justify-self:start;margin:0}.row{flex-wrap:wrap;align-items:flex-start;--thumb:32px}.row .trailing{flex-basis:100%;padding-left:calc(var(--inset) - 12px)}.meta>span,.facts-line>span,.facts>span,.verdict{white-space:normal}.clamp-1{-webkit-line-clamp:3}.collection-header{flex-wrap:wrap}.field{display:block;padding:8px 12px}.field>label{width:auto}.grid{grid-template-columns:1fr}}
-        [hidden]{display:none!important}
-        """
-    }
     #endif
 
     // LampSecrets
@@ -12862,7 +13679,9 @@ enum Template {
                     Section { fields } footer: { note }
                 }
                 .navigationTitle("Connect \(api.name)")
+                #if !os(tvOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #endif
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel", role: .cancel) { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
@@ -13000,10 +13819,15 @@ enum Template {
     /// Text calls take a few seconds; decisions well under a second; image calls 10–60 seconds. Show a ProgressView, and show
     /// `error.localizedDescription` on failure. Aspect ratios look like "1:1", "16:9", "3:4".
     ///
-    /// Not every Mac has every kind of AI set up. `await LampAI.isAvailable(.pictures)` (or `.text`, `.decisions`) says
+    /// Not every Mac has every kind of AI set up. `await LampAI.isAvailable(.pictures)` (or `.text`, `.decisions`, `.act`) says
     /// whether it can answer now: check it where a feature depends on it, and show the feature with a short note
     /// ("Pictures need AI set up in Lamp") rather than hiding it or failing at it. A call that fails for that reason has
-    /// `needsSetup` set on its `LampAI.Failure`, and Lamp offers the person a way to set it up.
+    /// `needsSetup` set on its `LampAI.Failure`, and Lamp offers the person a way to set it up. `LampAI.status(_:)` says
+    /// more: what answers, whether on this Mac or at a service, and why not; `LampAI.openSetup(for:)` is the button for it.
+    ///
+    /// To have the app do what the person asks in their own words, give `LampAI.act` (or a `LampActSession`) the app's
+    /// own reads and checked writes: the AI chooses among them, the app checks and runs each, and the result says what
+    /// was done from the tools' receipts.
     enum LampAI {
         struct Failure: LocalizedError {
             let message: String
@@ -13012,7 +13836,8 @@ enum Template {
             var errorDescription: String? { message }
         }
 
-        enum Capability: String { case text, decisions, pictures, browser }
+        /// `act`: the app's own tools doing what the person asks (`LampAI.act`).
+        enum Capability: String { case text, decisions, pictures, act }
 
         /// Whether this kind of AI can answer now. False when Lamp can't be reached and the phone has no key.
         static func isAvailable(_ capability: Capability) async -> Bool {
@@ -13407,6 +14232,7 @@ enum Template {
         }
 
         private static func post(_ path: String, body: Data, timeout: TimeInterval = 240) async throws -> [String: Any] {
+            if LampShowcase.isOn { return try await LampShowcase.answer(path, body) }
             #if os(iOS) && !targetEnvironment(simulator)
             // Away from the Mac, the phone answers for itself when it has a key: when the Mac didn't answer
             // the last check, and when a call to it fails to connect meanwhile.
@@ -13444,7 +14270,7 @@ enum Template {
                 } catch let error as URLError where error.code == .cannotConnectToHost && attempt == 0 {
                     // Lamp isn't running: start it in the background, then retry once. (A phone can't start
                     // it; the simulator app just waits a moment in case Lamp is coming up.)
-                    #if os(macOS)
+{{WISH_LEAVES_LAMP_CLOSED}}                    #if os(macOS)
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
                     if let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
@@ -13476,6 +14302,601 @@ enum Template {
                   let jpeg = LampImage.lampJPEG(scaled, quality: 0.8)
             else { return nil }
             return ["media_type": "image/jpeg", "data": jpeg.base64EncodedString()]
+        }
+    }
+
+    // MARK: - Doing things for the person
+
+    /// How one kind of AI stands for this app now, as Lamp sees it (`LampAI.status`).
+    struct LampAIStatus {
+        /// Where the AI works out its answer, for telling the person where their words go. A Claude Code or Codex
+        /// sign-in runs on the Mac but sends what it's given to its company: that's `remote`.
+        enum Processing: String { case onDevice, remote, unknown }
+        /// What the person can do when it can't answer: set it up in Lamp, open Lamp, or update Lamp.
+        enum Setup: String { case setUpInLamp = "lamp", openLamp, updateLamp }
+
+        var available: Bool
+        /// What answers, as the person would say it ("Claude Sonnet via Claude Code"); nil when nothing does.
+        var route: String?
+        var processing: Processing
+        /// Why it can't answer, or why it isn't the best it could be, in a sentence to show as it is.
+        var reason: String?
+        var setup: Setup?
+    }
+
+    extension LampAI {
+        /// Whether a kind of AI answers this app now, what answers it, where, and if not, why and what would help. A
+        /// status that says available isn't a promise: a call can still fail (signed out, offline), so keep the
+        /// person's request and show the failure with a way to try again.
+        static func status(_ capability: Capability) async -> LampAIStatus {
+            let reply: [String: Any]
+            do { reply = try await post("/ai/status", [:], timeout: 10) } catch {
+                return LampAIStatus(available: false, route: nil, processing: .unknown,
+                                    reason: "Lamp isn't open, or can't be reached from here.", setup: .openLamp)
+            }
+            guard let details = (reply["details"] as? [String: Any])?[capability.rawValue] as? [String: Any] else {
+                // A Lamp from before `details` answers with booleans alone, and knows nothing of actions.
+                if capability == .act {
+                    return LampAIStatus(available: false, route: nil, processing: .unknown, reason: "This needs a newer Lamp.", setup: .updateLamp)
+                }
+                let on = reply[capability.rawValue] as? Bool ?? false
+                return LampAIStatus(available: on, route: nil, processing: .unknown,
+                                    reason: on ? nil : "AI isn't set up in Lamp yet.", setup: on ? nil : .setUpInLamp)
+            }
+            let available = details["available"] as? Bool ?? false
+            return LampAIStatus(available: available, route: details["route"] as? String,
+                                processing: LampAIStatus.Processing(rawValue: details["where"] as? String ?? "") ?? .unknown,
+                                reason: details["reason"] as? String,
+                                setup: (details["setup"] as? String).flatMap(LampAIStatus.Setup.init(rawValue:)) ?? (available ? nil : .setUpInLamp))
+        }
+
+        /// The person pressed the app's "Set up in Lamp": Lamp shows the ways to set it up in the app's chat, which
+        /// opens beside the window. Only ever from the person's press. Keep what they typed, check `status` again when
+        /// the app comes back to the front, and let them send it again themselves: never run it for them after setup.
+        @MainActor static func openSetup(for capability: Capability) {
+            Task { @MainActor in
+                _ = try? await post("/ai/setup", ["capability": capability.rawValue], timeout: 10)
+                #if os(macOS)
+                LampSidebar.openFromMenu()
+                #endif
+            }
+        }
+
+        /// The person asks the app to do something in their own words, and the app's own tools do it: a few reads and
+        /// checked writes over its data, chosen by the AI, run by the app. `LampActSession` has the details; this starts a
+        /// request in `session`, or in a session of its own when there's none to keep (no questions back can be answered then).
+        @MainActor static func act(request: String, about: String = "", context: (any Encodable)? = nil, tools: [LampActTool],
+                                   session: LampActSession? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn {
+            (session ?? LampActSession(about: about, tools: tools)).ask(request, context: context, onStep: onStep)
+        }
+
+        fileprivate static var actPresent: String { present }
+    }
+
+    /// The shape of one argument of a tool, as Lamp checks it before the app sees the call.
+    struct LampActArg {
+        fileprivate let json: [String: Any]
+
+        private static func make(_ type: String, _ about: String, optional: Bool, _ more: [String: Any] = [:]) -> LampActArg {
+            var json = more
+            json["type"] = type
+            if !about.isEmpty { json["about"] = about }
+            if optional { json["optional"] = true }
+            return LampActArg(json: json)
+        }
+        /// Text; with `oneOf`, one of those exactly (ids, kinds of operation).
+        static func text(_ about: String = "", oneOf: [String] = [], optional: Bool = false) -> LampActArg {
+            make("string", about, optional: optional, oneOf.isEmpty ? [:] : ["oneOf": oneOf])
+        }
+        static func whole(_ about: String = "", min: Int? = nil, max: Int? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = [:]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("integer", about, optional: optional, more)
+        }
+        static func number(_ about: String = "", min: Double? = nil, max: Double? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = [:]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("number", about, optional: optional, more)
+        }
+        static func yesNo(_ about: String = "", optional: Bool = false) -> LampActArg { make("boolean", about, optional: optional) }
+        /// A day, YYYY-MM-DD.
+        static func day(_ about: String = "", optional: Bool = false) -> LampActArg { make("date", about, optional: optional) }
+        /// A date and time, ISO 8601 with its offset.
+        static func moment(_ about: String = "", optional: Bool = false) -> LampActArg { make("datetime", about, optional: optional) }
+        static func list(of item: LampActArg, _ about: String = "", min: Int? = nil, max: Int? = nil, optional: Bool = false) -> LampActArg {
+            var more: [String: Any] = ["of": item.json]
+            if let min { more["min"] = min }
+            if let max { more["max"] = max }
+            return make("list", about, optional: optional, more)
+        }
+
+        fileprivate var optional: Bool { json["optional"] as? Bool == true }
+    }
+
+    /// For a tool that takes no arguments.
+    struct LampActNoArgs: Decodable {}
+
+    /// What a tool's code is told about the call it runs.
+    struct LampActCall {
+        /// The same for the same change asked again in this request, through every question back and answer: make the
+        /// ids of what a write adds from it, so a change delivered twice finds what it added the first time.
+        let key: String
+        /// The AI's id for this call.
+        let id: String
+        /// The person's request, kept through its questions back.
+        let request: String
+        /// When the turn's time runs out. A write that waits (a network call) checks `Task.isCancelled` after it.
+        let deadline: Date
+    }
+
+    /// What a write did, in the app's own words. It's what the person is shown and what the AI is told; never write
+    /// more than the code knows ("Sent" when a device took a command, not "The lights are on").
+    struct LampActReceipt {
+        var summary: String
+        /// Anything else the AI should see, such as the id of what was added. JSON-friendly values only.
+        var details: [String: Any] = [:]
+
+        init(_ summary: String, details: [String: Any] = [:]) {
+            self.summary = summary
+            self.details = details
+        }
+    }
+
+    /// One of the app's tools: a read (looks something up) or a write (changes something), each a few lines over the
+    /// app's own data and commands. A write has a `check` of its own, run right before it, that looks its items up
+    /// again by id and says why it can't be done now; it runs only when the check says nothing.
+    struct LampActTool {
+        let name: String
+        let about: String
+        let reads: Bool
+        let args: [String: LampActArg]
+        fileprivate let check: (@MainActor ([String: Any], LampActCall) async throws -> String?)?
+        fileprivate let perform: @MainActor ([String: Any], LampActCall) async throws -> Any
+
+        fileprivate static func decode<Args: Decodable>(_ args: [String: Any], as type: Args.Type) throws -> Args {
+            guard let data = try? JSONSerialization.data(withJSONObject: args) else { throw LampAI.Failure(message: "Its arguments couldn't be read.") }
+            do { return try JSONDecoder().decode(Args.self, from: data) } catch {
+                throw LampAI.Failure(message: "Its arguments don't fit: \(error.localizedDescription)")
+            }
+        }
+
+        /// A look-up with nothing to say. `run` returns what the AI should see: ids and names, as little as answers it.
+        static func read<Value: Encodable>(_ name: String, _ about: String,
+                                           run: @escaping @MainActor () async throws -> Value) -> LampActTool {
+            read(name, about, args: [:], as: LampActNoArgs.self) { _, _ in try await run() }
+        }
+
+        /// A look-up with arguments, decoded as `type`.
+        static func read<Args: Decodable, Value: Encodable>(_ name: String, _ about: String, args: [String: LampActArg],
+                                                            as type: Args.Type,
+                                                            run: @escaping @MainActor (Args, LampActCall) async throws -> Value) -> LampActTool {
+            LampActTool(name: name, about: about, reads: true, args: args, check: nil) { raw, call in
+                let value = try await run(try decode(raw, as: Args.self), call)
+                let data = try JSONEncoder().encode(value)
+                return try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+            }
+        }
+
+        /// A change. `check` says in a sentence why it can't be done now (the item is gone, the device can't, the value
+        /// is out of range), or nil; `run` does it the way the app's own button does and says what it did.
+        static func write<Args: Decodable>(_ name: String, _ about: String, args: [String: LampActArg],
+                                           as type: Args.Type,
+                                           check: @escaping @MainActor (Args, LampActCall) async -> String?,
+                                           run: @escaping @MainActor (Args, LampActCall) async throws -> LampActReceipt) -> LampActTool {
+            LampActTool(name: name, about: about, reads: false, args: args,
+                        check: { raw, call in await check(try decode(raw, as: Args.self), call) },
+                        perform: { raw, call in try await run(try decode(raw, as: Args.self), call) })
+        }
+
+        fileprivate var declared: [String: Any] {
+            ["name": name, "about": about, "reads": reads, "args": args.mapValues(\.json)]
+        }
+
+        /// The app's own check of a call's shape, beside Lamp's: arguments it declared, none it needs missing.
+        fileprivate func problem(_ given: [String: Any]) -> String? {
+            if let extra = given.keys.sorted().first(where: { args[$0] == nil }) { return "\(name) has no argument \(extra)." }
+            if let missing = args.keys.sorted().first(where: { !args[$0]!.optional && (given[$0] == nil || given[$0] is NSNull) }) {
+                return "\(name) needs \(missing)."
+            }
+            return nil
+        }
+    }
+
+    /// A change the app made, with what its tool said.
+    struct LampActDone {
+        let tool: String
+        let key: String
+        let receipt: LampActReceipt
+    }
+
+    /// A change the app didn't make, and why.
+    struct LampActMiss {
+        let tool: String
+        let reason: String
+        /// It had started when it failed, so some of it may have gone through: it isn't "nothing changed".
+        var partly = false
+    }
+
+    /// What a turn is doing, for showing it as it goes. Called on the main thread.
+    enum LampActStep {
+        case thinking
+        case reading(String)
+        case changing(String)
+        case changed(LampActDone)
+        case failed(LampActMiss)
+    }
+
+    /// How a turn ended.
+    struct LampActResult {
+        enum Stop: String {
+            /// The person (or the app) cancelled, or started something else.
+            case cancelled
+            /// The turn's time ran out.
+            case time
+            /// The AI used all its steps without replying.
+            case steps
+            /// The request asked for more than a request may: changes, questions back, or what a session keeps.
+            case limit
+            /// The AI couldn't answer (signed out, offline, a service down): `error` says how.
+            case error
+            /// Lamp couldn't be reached.
+            case unreachable
+        }
+
+        /// The AI's last words. Show them only for a question, or when nothing was changed; say what was done from `done`.
+        var reply = ""
+        /// The AI's question back, when it needs to know which one, who or when: answer it with `session.answer`.
+        var question: String?
+        /// Two to four short answers to offer as buttons for the question, or none.
+        var choices: [String] = []
+        /// What this turn changed, from the tools' own receipts.
+        var done: [LampActDone] = []
+        var failed: [LampActMiss] = []
+        var skipped: [LampActMiss] = []
+        var stopped: Stop?
+        var error: String?
+
+        /// What to tell the person, from what the app did: the receipts, what failed or was skipped, and why it
+        /// stopped. The AI's reply is added only for a question or when nothing changed.
+        var summary: String {
+            var lines = done.map(\.receipt.summary)
+            lines += failed.map { $0.partly ? "May have partly done \($0.tool): \($0.reason)" : "Didn't \($0.tool): \($0.reason)" }
+            lines += skipped.map { "Skipped \($0.tool): \($0.reason)" }
+            switch stopped {
+            case .cancelled?:
+                let started = !done.isEmpty || failed.contains(where: \.partly)
+                lines.append(started ? "Stopped. Nothing after this was done." : "Stopped before changing anything.")
+            case .time?: lines.append("Ran out of time.")
+            case .steps?: lines.append("Couldn't finish in the steps one request may take.")
+            case .limit?: lines.append(error ?? "That's more than one request can do.")
+            case .error?, .unreachable?: lines.append(error ?? "The AI couldn't answer.")
+            case nil: break
+            }
+            // The AI's words only for its question, or beside "Nothing was changed" when nothing was even tried: what it
+            // says it did is never shown as done.
+            if let question { lines.append(question) }
+            else if lines.isEmpty { lines.append(reply.isEmpty ? "Nothing was changed." : "Nothing was changed. \(reply)") }
+            return lines.joined(separator: "\n")
+        }
+    }
+
+    /// One request being worked on: its result when it's over, and a way to stop it.
+    @MainActor final class LampActTurn {
+        fileprivate var task: Task<LampActResult, Never>?
+        fileprivate weak var session: LampActSession?
+        fileprivate let generation: Int
+
+        fileprivate init(session: LampActSession, generation: Int) {
+            self.session = session
+            self.generation = generation
+        }
+
+        var result: LampActResult {
+            get async { await task?.value ?? LampActResult(stopped: .cancelled) }
+        }
+
+        /// Stops it: nothing more is asked or changed, and a change already under way is kept in the receipts, since it
+        /// can't be taken back. Late answers from the AI run nothing.
+        func cancel() {
+            session?.cancel(generation)
+            task?.cancel()
+        }
+    }
+
+    /// The app's conversation with the AI about doing things: one request at a time, each with any questions back and
+    /// their answers, and every change made, by the app's own tools.
+    ///
+    ///     let session = LampActSession(about: "A grocery list.", tools: [
+    ///         .read("items", "The list's items: id and name.") { list.items.map { ["id": $0.id, "name": $0.name] } },
+    ///         .write("add", "Adds an item.", args: ["name": .text("What to add")], as: Add.self,
+    ///                check: { add, _ in add.name.isEmpty ? "Say what to add." : nil },
+    ///                run: { add, call in list.add(add.name, id: call.key); return LampActReceipt("Added \(add.name)") }),
+    ///     ])
+    ///     let turn = session.ask("add milk and eggs")
+    ///     let result = await turn.result
+    ///     if let question = result.question { show(question, result.choices) } else { show(result.summary) }
+    ///     // later, the person's answer: session.answer("Whole milk")
+    ///
+    /// The AI proposes calls; Lamp checks their shapes; the app's `check` decides whether each change is allowed now and
+    /// its `run` makes it. Reads run first, then changes one at a time, each checked right before it runs; a change that
+    /// fails skips the rest of that step. The same change asked twice in a request runs once. A request may take 4 AI
+    /// steps between questions, 6 changes in all, 3 questions back, and the route's time (25 seconds over OpenRouter, a
+    /// minute through Claude Code, Codex or a model on the Mac); asking something new, cancelling or closing ends it.
+    @MainActor final class LampActSession {
+        static let maxSteps = 4
+        static let maxWrites = 6
+        static let maxQuestions = 3
+        /// What a session keeps of its changes; past this it stops taking changes and says so, rather than forget them.
+        static let maxReceipts = 60
+        static let maxSeconds: Double = 60
+
+        let about: String
+        let tools: [LampActTool]
+        /// Every change this session made, in order.
+        private(set) var receipts: [LampActDone] = []
+        /// The question waiting for the person's answer.
+        private(set) var question: String?
+        private(set) var choices: [String] = []
+
+        private struct Operation {
+            let id = UUID().uuidString
+            let request: String
+            var answers: [(question: String, answer: String)] = []
+            var writes = 0
+        }
+        private var operation: Operation?
+        /// Each change's result by its key, so the same change asked again gets it without running again.
+        private var ran: [String: Any] = [:]
+        private var generation = 0
+        private var cancelled: Set<Int> = []
+        private var closed = false
+        private weak var running: LampActTurn?
+        private let send: ([String: Any], TimeInterval) async throws -> [String: Any]
+
+        /// `send` stands in for Lamp in a test; leave it out.
+        init(about: String = "", tools: [LampActTool], send: (([String: Any], TimeInterval) async throws -> [String: Any])? = nil) {
+            self.about = about
+            self.tools = tools
+            self.send = send ?? { body, timeout in try await LampAI.post("/ai/act", body, timeout: timeout) }
+        }
+
+        /// A new request: whatever was under way or waiting for an answer ends.
+        func ask(_ request: String, context: (any Encodable)? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn {
+            question = nil
+            choices = []
+            operation = Operation(request: request)
+            return start(context: context, onStep: onStep)
+        }
+
+        /// The person's answer to the question waiting. Only the first answer counts: nil when nothing is waiting.
+        func answer(_ text: String, context: (any Encodable)? = nil, onStep: ((LampActStep) -> Void)? = nil) -> LampActTurn? {
+            guard let asked = question, var op = operation, !closed else { return nil }
+            question = nil
+            choices = []
+            op.answers.append((asked, text))
+            operation = op
+            return start(context: context, onStep: onStep)
+        }
+
+        /// Stops whatever is under way and drops the question waiting.
+        func cancel() { cancel(generation) }
+
+        /// For good: nothing more runs, and anything that comes back is dropped.
+        func close() {
+            closed = true
+            cancel()
+            operation = nil
+        }
+
+        fileprivate func cancel(_ turn: Int) {
+            cancelled.insert(turn)
+            if turn == generation {
+                question = nil
+                choices = []
+                // A request to Lamp still waiting is given up, so the turn ends now rather than when the AI answers.
+                running?.task?.cancel()
+            }
+        }
+
+        private func start(context: (any Encodable)?, onStep: ((LampActStep) -> Void)?) -> LampActTurn {
+            running?.task?.cancel()
+            generation += 1
+            let turn = LampActTurn(session: self, generation: generation)
+            var json: Any?
+            if let context, let data = try? JSONEncoder().encode(context) { json = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) }
+            let mine = generation
+            // The turn keeps its session while it runs, so `LampAI.act` without a session of the app's own still finishes.
+            turn.task = Task { @MainActor in await self.run(mine, context: json, onStep: onStep ?? { _ in }) }
+            running = turn
+            return turn
+        }
+
+        private func run(_ turn: Int, context: Any?, onStep: (LampActStep) -> Void) async -> LampActResult {
+            var out = LampActResult()
+            guard !closed, var op = operation else { out.stopped = .cancelled; return out }
+            if op.answers.count > Self.maxQuestions {
+                out.stopped = .limit
+                out.error = "That took more questions than one request can. Start again, saying which ones."
+                return out
+            }
+            let started = Date()
+            var deadline = started.addingTimeInterval(Self.maxSeconds)
+            func over() -> LampActResult.Stop? {
+                if closed || cancelled.contains(turn) || turn != generation || Task.isCancelled { return .cancelled }
+                if Date() >= deadline { return .time }
+                return nil
+            }
+            var request = op.request
+            for (asked, answer) in op.answers { request += "\n\nYou asked: \(asked)\nThe person answered: \(answer)" }
+            let earlier = receipts.filter { $0.key.hasPrefix(Self.prefix(op)) }.map(\.receipt.summary)
+            if !earlier.isEmpty { request += "\n\nAlready done for this request (don't do these again): " + earlier.joined(separator: "; ") }
+            var steps: [[String: Any]] = []
+            var route: String?
+            while true {
+                if let stop = over() { out.stopped = stop; break }
+                let left = deadline.timeIntervalSinceNow
+                if left <= 0.5 { out.stopped = .time; break }
+                var body: [String: Any] = ["request": request, "about": about, "now": LampAI.actPresent,
+                                           "tools": tools.map(\.declared), "steps": steps, "seconds": Int(left)]
+                if let context { body["context"] = context }
+                if let route { body["route"] = route }
+                if steps.count >= Self.maxSteps - 1 { body["final"] = true }
+                onStep(.thinking)
+                let answer: [String: Any]
+                do { answer = try await send(body, left) } catch {
+                    if let stop = over() { out.stopped = stop; break }
+                    let message = (error as? LampAI.Failure)?.message ?? error.localizedDescription
+                    out.stopped = message.contains("reach Lamp") ? .unreachable : .error
+                    out.error = message
+                    break
+                }
+                // The route's own time for a turn, counted from its start, shortens it; it never lengthens it.
+                if let seconds = (answer["seconds"] as? NSNumber)?.doubleValue, seconds > 0 {
+                    deadline = min(deadline, started.addingTimeInterval(seconds))
+                }
+                // Cancelled, out of time or replaced: an answer that comes late runs nothing.
+                if let stop = over() { out.stopped = stop; break }
+                route = answer["route"] as? String ?? route
+                if let calls = answer["calls"] as? [[String: Any]], !calls.isEmpty {
+                    let ids = calls.compactMap { $0["id"] as? String }
+                    guard ids.count == calls.count, Set(ids).count == ids.count else {
+                        out.stopped = .error
+                        out.error = "The AI gave two calls the same id."
+                        break
+                    }
+                    let results = await runCalls(calls, op: &op, out: &out, deadline: deadline, over: over, onStep: onStep)
+                    operation = turn == generation ? op : operation
+                    steps.append(["calls": calls, "results": calls.map { call -> [String: Any] in
+                        let id = call["id"] as! String
+                        return results[id] ?? ["id": id, "ok": false, "skipped": "Not run."]
+                    }])
+                    if out.stopped != nil { break }
+                    if steps.count >= Self.maxSteps { out.stopped = .steps; break }
+                    continue
+                }
+                out.reply = answer["reply"] as? String ?? ""
+                if answer["ask"] as? Bool == true, op.answers.count >= Self.maxQuestions {
+                    out.reply = ""
+                    out.stopped = .limit
+                    out.error = "That took more questions than one request can. Start again, saying which ones."
+                } else if answer["ask"] as? Bool == true {
+                    out.question = out.reply
+                    let offered = answer["choices"] as? [Any] ?? []
+                    let fit = offered.count >= 2 && offered.count <= 4 && offered.allSatisfy { item in
+                        guard let text = item as? String, !text.trimmingCharacters(in: .whitespaces).isEmpty, text.count <= 24 else { return false }
+                        return text.rangeOfCharacter(from: CharacterSet(charactersIn: "<>*_`#[]{}|\\\n\r\t")) == nil
+                    }
+                    out.choices = fit ? offered.map { ($0 as! String).trimmingCharacters(in: .whitespaces) } : []
+                    question = out.question
+                    choices = out.choices
+                }
+                break
+            }
+            if turn == generation { operation = op }
+            return out
+        }
+
+        private static func prefix(_ op: Operation) -> String { "k" + String(op.id.prefix(8)).lowercased() }
+
+        /// Reads first, one after another; then the changes, each checked right before it runs. A change that fails
+        /// skips the ones after it in this step, which the AI is told.
+        private func runCalls(_ calls: [[String: Any]], op: inout Operation, out: inout LampActResult, deadline: Date,
+                              over: () -> LampActResult.Stop?, onStep: (LampActStep) -> Void) async -> [String: [String: Any]] {
+            var results: [String: [String: Any]] = [:]
+            func tool(_ call: [String: Any]) -> LampActTool? { tools.first { $0.name == call["name"] as? String } }
+            // A null is an argument left out: the same change either way, to the key and to the tool.
+            func args(_ call: [String: Any]) -> [String: Any] { (call["args"] as? [String: Any] ?? [:]).filter { !($0.value is NSNull) } }
+            func callInfo(_ call: [String: Any], key: String) -> LampActCall {
+                LampActCall(key: key, id: call["id"] as! String, request: op.request, deadline: deadline)
+            }
+            for call in calls where tool(call)?.reads != false {
+                let id = call["id"] as! String
+                if let stop = over() { out.stopped = stop; return results }
+                guard let tool = tool(call) else { results[id] = ["id": id, "ok": false, "error": "There's no tool called \(call["name"] as? String ?? "")."]; continue }
+                if let bad = tool.problem(args(call)) { results[id] = ["id": id, "ok": false, "error": bad]; continue }
+                onStep(.reading(tool.name))
+                do {
+                    let value = try await tool.perform(args(call), callInfo(call, key: ""))
+                    results[id] = ["id": id, "ok": true, "value": Self.cut(value)]
+                } catch {
+                    results[id] = ["id": id, "ok": false, "error": Self.words(error)]
+                }
+            }
+            var stopped: String?
+            for call in calls where tool(call)?.reads == false {
+                let id = call["id"] as! String, tool = tool(call)!, given = args(call)
+                func miss(_ reason: String, skipped: Bool = false, partly: Bool = false) {
+                    let entry = LampActMiss(tool: tool.name, reason: reason, partly: partly)
+                    if skipped { out.skipped.append(entry) } else { out.failed.append(entry); onStep(.failed(entry)) }
+                    results[id] = ["id": id, "ok": false, skipped ? "skipped" : "error": reason]
+                    if !skipped { stopped = stopped ?? "An earlier change in this step didn't go through." }
+                }
+                if let stop = over() { out.stopped = stop; return results }
+                if let stopped { miss(stopped, skipped: true); continue }
+                if let bad = tool.problem(given) { miss(bad); continue }
+                let key = Self.prefix(op) + Self.hash(tool.name + "|" + Self.canonical(given))
+                // The same change asked again in this request gets its first result, and doesn't run again: one that
+                // failed while it ran may have done part of it, so it isn't tried again by itself either.
+                if let kept = ran[key] {
+                    if let failed = kept as? [String: Any], let reason = failed["failedWhileRunning"] as? String {
+                        miss("Already tried in this request, and it didn't go through: \(reason)")
+                    } else {
+                        results[id] = ["id": id, "ok": true, "repeat": true, "value": kept]
+                    }
+                    continue
+                }
+                if op.writes >= Self.maxWrites { miss("Over this request's limit of \(Self.maxWrites) changes."); out.stopped = .limit; out.error = "That's more changes than one request can make. Ask for the rest separately."; return results }
+                if receipts.count >= Self.maxReceipts { miss("This conversation has made as many changes as it can keep track of."); out.stopped = .limit; out.error = "Close this and start again to make more changes."; return results }
+                let info = callInfo(call, key: key)
+                let problem: String?
+                do { problem = try await tool.check?(given, info) } catch { problem = Self.words(error) }
+                if let problem { miss(problem); continue }
+                // Cancel and the time are looked at again right before the change, never in the middle of it.
+                if let stop = over() { out.stopped = stop; return results }
+                onStep(.changing(tool.name))
+                op.writes += 1
+                do {
+                    let receipt = try await tool.perform(given, info) as! LampActReceipt
+                    // Done is done, even if the turn was cancelled while it ran: it's kept and shown.
+                    var value = receipt.details.filter { JSONSerialization.isValidJSONObject([$0.value]) }
+                    value["summary"] = receipt.summary
+                    ran[key] = value
+                    let done = LampActDone(tool: tool.name, key: key, receipt: receipt)
+                    out.done.append(done)
+                    receipts.append(done)
+                    results[id] = ["id": id, "ok": true, "value": value]
+                    onStep(.changed(done))
+                } catch {
+                    ran[key] = ["failedWhileRunning": Self.words(error)]
+                    miss(Self.words(error), partly: true)
+                }
+            }
+            return results
+        }
+
+        private static func words(_ error: Error) -> String { (error as? LampAI.Failure)?.message ?? error.localizedDescription }
+
+        /// At most 4 KB of a read goes back to the AI, cut with a note.
+        private static func cut(_ value: Any) -> Any {
+            guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value]) else {
+                return ["note": "The result couldn't be read."]
+            }
+            guard data.count > 4096 else { return value }
+            return ["cut": String(String(decoding: data, as: UTF8.self).prefix(4000)), "note": "Cut short: ask for less."]
+        }
+
+        private static func canonical(_ value: Any) -> String {
+            guard let data = try? JSONSerialization.data(withJSONObject: [value], options: [.sortedKeys]) else { return "" }
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        /// FNV-1a: short and stable, for keys.
+        private static func hash(_ text: String) -> String {
+            var h: UInt64 = 0xcbf29ce484222325
+            for byte in text.utf8 { h = (h ^ UInt64(byte)) &* 0x100000001b3 }
+            return String(h, radix: 16)
         }
     }
 
@@ -13544,6 +14965,2803 @@ enum Template {
             score = json["score"] as? Double
             probabilities = json["probabilities"] as? [String: Double] ?? [:]
             confidence = json["confidence"] as? Double
+        }
+    }
+
+    // MARK: - The wish's other apps
+
+    /// The other apps of this app's wish (a TV app, an iPhone app, an Android app…): which are open now, and messages
+    /// between them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app
+    /// of the wish is a peer named by its folder in the wish: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
+    /// "android". One for the whole app, started the first time it's used; keep using `LampWish.shared`. What they say
+    /// is sealed with a key only the wish's apps have, which Lamp gave each as it put it on its device.
+    ///
+    ///     @ObservedObject var wish = LampWish.shared
+    ///     wish.peers                                    // the wish's other apps open now
+    ///     wish.peer("tv")?.isOpen                       // whether the TV app is open; nil when the wish has no "tv"
+    ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "Open the TV app on your TV.",
+    ///                                                   // "The TV app was last open 5 min ago. Open it on your TV."
+    ///     wish.peer("tv")?.status.lastSeen              // when it was last open on this device, or since when while it is
+    ///     wish.peer("screen")?.copies                   // where it's open now, one copy for each device: .id, .device, .since
+    ///     wish.send(["score": 3], to: "tv")             // JSON to one app (to each copy of it that's open); false (with why
+    ///                                                   // in the app's log) when it wasn't sent
+    ///     wish.send(["score": 3], to: copy.id)          // to one copy of an app: "screen.k3j9x0ab"
+    ///     wish.send(["round": 2])                       // to every other app of the wish
+    ///     wish.onMessage { from, data in … }           // what another app sent: who, and its JSON
+    ///     wish.onMessage { from, data, copy in … }     // and which copy of it, to answer that one alone
+    ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable),
+    ///                                                   // .localNetworkDenied (the person turned off Local Network for this app), .ended
+    ///     wish.status.reason                            // what to show about it: "" while all is well
+    ///     wish.me                                       // this app's own peer name
+    ///     wish.copy                                     // this copy's own: the app open on this device ("screen.k3j9x0ab")
+    ///     wish.values["list"]                           // a value the wish's apps share, kept on each device (@Published)
+    ///     wish.set("list", ["milk", "eggs"])            // sets it here and in every other app, now or when they next meet;
+    ///                                                   // nil removes it; false (with why in the app's log) when it wasn't set
+    ///     wish.onChange { key, value, from in … }       // a value changed, here (from == me) or in another app
+    ///     let sending = wish.sendFile(data, name: "photo.jpg", type: "image/jpeg", to: "tv")
+    ///                                                   // up to 64 MB to one copy: sending.sent, .progress, .state, .cancel()
+    ///     wish.onFile { from, file in … }               // a file another app sent: who, and file.name, .type, .data, .copy
+    ///     LampWishStatus()                              // a ready-made view of all that: one line for each other app
+    ///     LampWishStatus("tv")                          // the TV app's line alone
+    ///
+    /// A `State` is one of the values above, and more may come: switch on it with a `default`. Show a `reason` as it is
+    /// rather than words of your own; it changes as time goes by ("5 min ago"). An open app built by an older Lamp is
+    /// `.outOfDate`, still open, with a reason saying to open it from Lamp. An app can be open on several devices at once
+    /// (a screen on the kitchen iPad and on the TV): each is a copy of it, all reach the others and keep the same values, a
+    /// message to the app goes to every copy, and a file goes to one copy, the one opened last unless you name a copy's
+    /// `id`. Another copy of this same app is in `apps` while it's open. Each message, as the JSON that goes out, is at
+    /// most `messageLimit` (16 KB); anything bigger (a picture, a recording, a document) goes with `sendFile`, to an app
+    /// that's open now, two at a time to each. A message or a file is for apps open now;
+    /// `values` are for what must outlast an app being closed: each is JSON of at most `valueLimit` (8 KB), all of them
+    /// `valuesLimit` (64 KB), and where two apps set one while apart, the later setting wins in both. Keep every control
+    /// usable while an app isn't open. A TV app's game controls (buttons, sticks, files to the TV) go with `LampController`, below.
+    @MainActor final class LampWish: ObservableObject {
+        /// Where this app's link stands, or another app's. More values may come.
+        struct State: RawRepresentable, Hashable, Sendable {
+            let rawValue: String
+            init(rawValue: String) { self.rawValue = rawValue }
+            /// This app is joining the wish's other apps.
+            static let connecting = State(rawValue: "connecting")
+            /// This app is with the others; another app is open and reachable.
+            static let connected = State(rawValue: "connected")
+            /// This app's wish has no other app, and no other copy of this one is open.
+            static let alone = State(rawValue: "alone")
+            /// This app can't reach Lamp, nor any other app of the wish.
+            static let away = State(rawValue: "away")
+            /// This app called `stop()`.
+            static let ended = State(rawValue: "ended")
+            /// The person turned off Local Network for this app, so it can't reach the others on the home network.
+            static let localNetworkDenied = State(rawValue: "localNetworkDenied")
+            /// Another app isn't open now.
+            static let notOpen = State(rawValue: "notOpen")
+            /// Another app is open but was built by another Lamp than this one: it's to be opened from Lamp to be updated.
+            static let outOfDate = State(rawValue: "outOfDate")
+        }
+        /// A state with what it means to the person, in words to show as they are ("" when there's nothing to say).
+        struct Status: Equatable, Sendable {
+            var state: State
+            var reason: String
+            /// Another app's: when it was last open, or since when while it is; nil if it never was while this app was,
+            /// on this device.
+            var lastSeen: Date?
+        }
+        struct Peer: Identifiable, Equatable {
+            /// The peer's name: its folder in the wish, lowercased ("tv", "iphone", "apple", "mac", "android").
+            let id: String
+            /// Where it's open now, one copy for each device, the one opened first first: none while it isn't open.
+            var copies: [Copy] = []
+            /// The device word the tools use for it ("iphone" for an app for iPhone and Mac too).
+            let kind: String
+            /// What Lamp calls it: "the TV app".
+            let name: String
+            /// Where it runs, in its own words, once it has been open: "TV preview", "iPhone simulator", "Android emulator", "Mac"…
+            var device: String
+            var status: Status
+            var isOpen: Bool { status.state == .connected || status.state == .outOfDate }
+        }
+        /// An app open on one device: messages and files can go to it alone by its `id` ("screen.k3j9x0ab").
+        struct Copy: Identifiable, Equatable {
+            let id: String
+            var device: String
+            var since: Date
+        }
+        static let messageLimit = 16 * 1024
+        static let valueLimit = 8 * 1024
+        static let valuesLimit = 64 * 1024
+        static let shared = LampWish()
+
+        /// Every other app of the wish, open or not.
+        @Published private(set) var apps: [Peer] = []
+        @Published private(set) var status = Status(state: .connecting, reason: LampWish.reason(.connecting), lastSeen: nil)
+        @Published private(set) var me = ""
+        /// The values the wish's apps share, by name: the same in every app once they've met.
+        @Published private(set) var values: [String: Any] = [:]
+
+        /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
+        /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
+        /// (`LampStore.shared`), 6 the wish's own collections, shared by all its apps, 7 Lamp keeping them too; an app from
+        /// before says none, which counts as 1.
+        private static let wire = 7
+        /// The wish's other apps open now.
+        var peers: [Peer] { apps.filter(\.isOpen) }
+        var state: State { status.state }
+        /// This copy's peer name: the app's own, then this device's id for it, which the app keeps beside the wish.
+        var copy: String { me.isEmpty ? "" : me + "." + copyID }
+
+        // Two ways to the others, used together: Lamp's relay while Lamp is open on the Mac, and a link straight to each
+        // app that listens (this one does too), found on the home network by an opaque Bonjour name or at the address it
+        // was last reached at. Each is sealed the same way, with the wish's key; a message goes the direct way when there
+        // is one. So the apps go on talking with Lamp closed, or the Mac asleep, as long as they're on the same network.
+        private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
+        private let link = Link()
+        private var address: URL?
+        private var sealer: Sealer?
+        private var opener: Sealer?
+        private var handshake: (nonce: Data, tag: Data)?
+        private var relayIn = false
+        /// Lamp's room said Lamp keeps the wish's shared collections: Lamp is shared with as a copy is, under its own name
+        /// (`keeper`), so a copy that opens alone gets the latest and what it changes reaches the others when they open.
+        /// Never one of the wish's apps or copies.
+        private var lampKeeps = false
+        nonisolated private static let keeper = "lamp"
+        private var lampAway = false
+        private var alone = false
+        /// Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then an
+        /// app with no other app in its wish doesn't look for its copies on the network, so an app on one device never
+        /// asks for Local Network.
+        private var copiesSeen = false
+        /// The copies in Lamp's room now, by peer name ("screen.k3j9x0ab"): the device they said, since when, and what
+        /// they speak (`wire`). An app built before copies is in it by its name alone.
+        private var relayPresent: [String: (device: String, since: Date, wire: Int)] = [:]
+        /// This device's id for the app, made the first time it runs and kept with what it keeps of the wish, so the app
+        /// open here and on another device at once are two copies, and this one opened again is the same one.
+        private var copyID = LampWish.newCopyID()
+        /// Each value as it was last set, here or by another app, and when: a removed one is kept, without its value, so
+        /// an older setting from an app that was away doesn't bring it back.
+        private var entries: [String: Entry] = [:]
+        /// This app's clock for values: the latest time it has set or heard of, and a count within the same millisecond, so
+        /// what it sets next is later than anything it knows of, whatever the device's own clock says.
+        private var clock: (ms: Int64, n: Int64) = (0, 0)
+        private var changeListeners: [(String, Any?, String) -> Void] = []
+        private var messageListeners: [(String, Any, String) -> Void] = []
+        /// Every app of the wish, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
+        private var roster: [(id: String, kind: String, name: String)] = []
+        private var directs: [String: Direct] = [:]
+        private var opening: [ObjectIdentifier: Direct] = [:]
+        private var listener: NWListener?
+        private var listenerPort: UInt16?
+        private var listenerTried = Date.distantPast
+        private var browser: NWBrowser?
+        private var found: [String: NWEndpoint] = [:]
+        private var told: [String: [String]] = [:]
+        private var dialing: Set<String> = []
+        private var nextDial: [String: (at: Date, tries: Int)] = [:]
+        /// Since when each copy has been open, by its peer name.
+        private var openSince: [String: Date] = [:]
+        /// When each app was last open, kept on the device so it's still known after this app was closed.
+        private var lastSeen: [String: Date] = [:]
+        private var appsOpen: Set<String> = []
+        /// The apps the wish asks for that Lamp hasn't made yet.
+        private var waiting: Set<String> = []
+        private var localNetworkDenied = false
+        /// What this app last told Lamp's room of its link, for the builder to see.
+        private var reported = ""
+        private var beats = 0
+        private var devices: [String: String] = [:]
+        private var monitor: NWPathMonitor?
+        private var closed = false
+        private var retry = 0
+        private var heard = Date()
+        private var beat: Timer?
+        private var saidAway = false
+        private var undeliveredSaid: Set<String> = []
+        /// Files on their way to the others and from them, by the other app's peer name and the id the sender gave it.
+        private var outgoing: [String: Outgoing] = [:]
+        private var incoming: [String: Incoming] = [:]
+        /// Started anywhere, so a file sent after a relaunch isn't taken for one from before still on its way.
+        private var nextFile = Int.random(in: 1..<(1 << 30))
+        private var fileListeners: [(String, LampFile) -> Void] = []
+        /// The app's shared collections (`LampStore.shared`, `LampStore.sharedFiles`), by name and item id, each item as
+        /// it was last set here or by another copy: see "Shared collections" below.
+        private var collections: [String: [String: SharedItem]] = [:]
+        private var collectionListeners: [String: [([(String, Any?)], String) -> Void]] = [:]
+        private var collectionsUnsaved: Set<String> = []
+        private var collectionsSaving = false
+        /// A shared file's bytes asked of another copy ("collection\tid"), of whom and when; how often each was asked; and
+        /// the files other copies asked of this one, waiting to go, by copy.
+        private var fileAsks: [String: (peer: String, at: Date)] = [:]
+        private var fileTries: [String: Int] = [:]
+        private var filesToSend: [String: [(collection: String, id: String)]] = [:]
+        private var filesSending: [String: Int] = [:]
+        /// Which app a peer name is a copy of.
+        private static func app(of peer: String) -> String { peer.split(separator: ".", maxSplits: 1).first.map(String.init) ?? peer }
+        private static func newCopyID() -> String { String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! }) }
+        /// `LampController`s, each a player of the wish's TV app's game, by what they're held by: what the TV app sends
+        /// them, and the files it sends them, which aren't the app's own `onMessage` and `onFile`.
+        private var pads: [(owner: Weak, message: (String, [String: Any]) -> Void, file: (String, String, LampFile) -> Void, apps: () -> Void)] = []
+        private final class Weak { weak var object: AnyObject?; init(_ object: AnyObject) { self.object = object } }
+
+        /// One link straight to another app of the wish, dialled or taken: its handshake, then its seals each way.
+        private final class Direct: @unchecked Sendable {   // touched only on the main queue
+            let connection: NWConnection
+            let dialled: Bool
+            var peer: String
+            var hello: (nonce: Data, tag: Data)?
+            var transcript: Data?
+            var sealer: Sealer?
+            var opener: Sealer?
+            var ready = false
+            var heard = Date()
+            var device = ""
+            var wire = 1
+            var done: ((Bool) -> Void)?
+            init(connection: NWConnection, dialled: Bool, peer: String) {
+                self.connection = connection
+                self.dialled = dialled
+                self.peer = peer
+            }
+        }
+
+        private init() {
+            restoreValues()
+            restore()
+            restoreCollections()
+            open()
+            reach()
+            beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+            // Back to the front, or onto another network: the others are looked for again at once.
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { [weak self] _ in DispatchQueue.main.async { MainActor.assumeIsolated { self?.lookAgain() } } }
+            monitor.start(queue: .main)
+            self.monitor = monitor
+            #if os(macOS)
+            let front = NSApplication.didBecomeActiveNotification
+            #else
+            let front = UIApplication.willEnterForegroundNotification
+            #endif
+            NotificationCenter.default.addObserver(forName: front, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.lookAgain() }
+            }
+        }
+
+        /// Joins the wish's other apps again after `stop()`; otherwise nothing, since it joins by itself.
+        func start() {
+            guard closed else { return }
+            closed = false
+            retry = 0
+            open()
+            reach()
+        }
+
+        func stop() {
+            closed = true
+            link.task?.cancel(with: .goingAway, reason: nil)
+            link.task = nil
+            sealer = nil
+            relayIn = false
+            lampKeeps = false
+            relayPresent = [:]
+            dropFiles("The link was stopped.") { _, _ in true }
+            for direct in Array(directs.values) + Array(opening.values) { drop(direct) }
+            listener?.cancel()
+            listener = nil
+            browser?.cancel()
+            browser = nil
+            rebuild()
+        }
+
+        /// The wish's app with this peer name (or the app a copy's name is of), open or not; nil when the wish has no such app.
+        func peer(_ id: String) -> Peer? { apps.first { $0.id == Self.app(of: id) } }
+
+        /// The copies a message for `peer` goes to: the one it names, or every open copy of the app it names, or with none
+        /// every open copy of every other app.
+        private func copies(for peer: String?) -> [String] {
+            guard let peer else { return peers.flatMap { $0.copies.map(\.id) } }
+            if peer.contains(".") { return self.peer(peer)?.copies.contains { $0.id == peer } == true ? [peer] : [] }
+            return self.peer(peer)?.copies.map(\.id) ?? []
+        }
+
+        /// Sends `data` (anything JSON can hold) to one of the wish's apps (each copy of it open now) or one copy, or with no
+        /// `to` to all of them; false, with the reason in the app's log, when it wasn't sent.
+        @discardableResult
+        func send(_ data: Any, to peer: String? = nil) -> Bool {
+            let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the wish's apps"
+            guard state == .connected else {
+                if !saidAway { saidAway = true; fputs("LampWish: \(what) wasn't sent: not connected (\(state.rawValue)). Check state and peers before sending.\n", stderr) }
+                return false
+            }
+            let targets = copies(for: peer)
+            if peer != nil, targets.isEmpty {
+                fputs("LampWish: \(what) wasn't sent: that app isn't open now (open: \(peers.flatMap { $0.copies.map(\.id) })).\n", stderr)
+                return false
+            }
+            // Measured as it goes through Lamp's room to each copy, with its name: the longest, when it's for several.
+            let frame: [String: Any] = ["t": "send", "data": data, "to": targets.max { $0.utf8.count < $1.utf8.count } ?? ""]
+            guard JSONSerialization.isValidJSONObject(frame), let text = try? JSONSerialization.data(withJSONObject: frame) else {
+                fputs("LampWish: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
+                return false
+            }
+            guard text.count <= Self.messageLimit else {
+                fputs("LampWish: \(what) of \(text.count) bytes wasn't sent: a message between the wish's apps is at most \(Self.messageLimit) bytes as JSON.\n", stderr)
+                return false
+            }
+            // Each app the straight way when there is one, else through Lamp's room.
+            for target in targets {
+                if let direct = directs[target], direct.ready,
+                   let message = try? JSONSerialization.data(withJSONObject: ["t": "message", "data": data]) {
+                    sealed(message, on: direct)
+                } else if relayPresent[target] != nil,
+                          let relayed = try? JSONSerialization.data(withJSONObject: ["t": "send", "data": data, "to": target]) {
+                    say(relayed)
+                }
+            }
+            return true
+        }
+
+        /// A word for Lamp itself, through its room: what a page in this app has of a change Lamp put into it (lamp.js's
+        /// "A change while it's open"). Nothing when Lamp's room isn't reached; it goes nowhere else.
+        func toLamp(_ data: Any) {
+            guard relayIn, JSONSerialization.isValidJSONObject(["data": data]),
+                  let frame = try? JSONSerialization.data(withJSONObject: ["t": "send", "to": "lamp", "data": data]),
+                  frame.count <= Self.messageLimit else { return }
+            say(frame)
+        }
+
+        /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
+        func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { messageListeners.append { from, data, _ in handler(from, data) } }
+
+        /// The same, with which copy of the app sent it (its `id`, "screen.k3j9x0ab"), to answer that copy alone.
+        func onMessage(_ handler: @escaping (_ from: String, _ data: Any, _ copy: String) -> Void) { messageListeners.append(handler) }
+
+        /// Sets a value the wish's apps share (anything JSON can hold; nil removes it), here at once and in each other app
+        /// now if it's open, else when they next meet. False, with the reason in the app's log, when it wasn't set.
+        @discardableResult
+        func set(_ key: String, _ value: Any?) -> Bool {
+            let what = "The value \"\(key)\""
+            guard Self.isValueName(key) else {
+                fputs("LampWish: \(what) wasn't set: a value's name is 1 to 64 bytes, and not __proto__.\n", stderr)
+                return false
+            }
+            dropExpired()
+            var kept: Any?
+            if let value, !(value is NSNull) {
+                guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value]) else {
+                    fputs("LampWish: \(what) wasn't set: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
+                    return false
+                }
+                let bytes = Self.size(of: value)
+                guard bytes <= Self.valueLimit else {
+                    fputs("LampWish: \(what) of \(bytes) bytes wasn't set: a value is at most \(Self.valueLimit) bytes as JSON.\n", stderr)
+                    return false
+                }
+                guard size(without: key) + key.utf8.count + max(32, bytes) <= Self.valuesLimit else {
+                    fputs("LampWish: \(what) wasn't set: the wish's values would pass \(Self.valuesLimit) bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.\n", stderr)
+                    return false
+                }
+                // Kept as it reads back from JSON, so this app sees what the others will.
+                kept = ((try? JSONSerialization.jsonObject(with: data)) as? [Any])?.first
+            }
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            clock = now > clock.ms ? (now, 0) : clock.n < Self.counts ? (clock.ms, clock.n + 1) : (clock.ms + 1, 0)
+            let entry = Entry(value: kept, ms: clock.ms, n: Int(clock.n), peer: copy)
+            entries[key] = entry
+            valuesChanged([(key, kept)], from: copy)
+            for each in copies(for: nil) where wire(of: each) >= 2 { share([key: entry], to: each) }
+            return true
+        }
+
+        /// Hears every change to the wish's values: its name, the new value (nil when removed), and the peer name of the
+        /// app that set it, this one's own (`me`) for a change made here or by another copy of this app.
+        func onChange(_ handler: @escaping (_ key: String, _ value: Any?, _ from: String) -> Void) { changeListeners.append(handler) }
+
+        /// The words for a state of this app's link, the same in every language Lamp's apps are written in.
+        static func reason(_ state: State) -> String {
+            switch state {
+            case .connecting: "Connecting to the wish's other apps…"
+            case .away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
+            #if os(macOS)
+            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in System Settings, Privacy & Security."
+            #else
+            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in Settings."
+            #endif
+            default: ""
+            }
+        }
+
+        /// Why another app isn't there, in the same words in every language Lamp's apps are written in: where to open it,
+        /// and when it was last open here when it has been.
+        static func notOpen(name: String, kind: String, lastSeen: Date?, waiting: Bool = false, now: Date = Date()) -> String {
+            let title = name.prefix(1).uppercased() + name.dropFirst()
+            // Having been open here outranks a list that still says it isn't made.
+            if waiting, lastSeen == nil { return "\(title) isn't ready yet." }
+            let place = ["tv": "your TV", "mac": "your Mac", "iphone": "your iPhone", "android": "your Android device"][kind] ?? "its device"
+            guard let lastSeen else { return "Open \(name) on \(place)." }
+            return "\(title) was last open \(ago(now.timeIntervalSince(lastSeen))). Open it on \(place)."
+        }
+
+        /// What to do about an open app built by another Lamp, in the same words in every language: the older of the two
+        /// is opened from Lamp, which builds it again.
+        static func outOfDate(name: String, older: Bool) -> String {
+            older ? "\(name.prefix(1).uppercased() + name.dropFirst()) is out of date. Open it from Lamp on your Mac to update it."
+                : "This app is older than \(name). Open it from Lamp on your Mac to update it."
+        }
+
+        static func ago(_ seconds: TimeInterval) -> String {
+            let minutes = Int(max(0, seconds) / 60), hours = minutes / 60, days = hours / 24
+            switch true {
+            case minutes < 1: return "a moment ago"
+            case minutes < 60: return "\(minutes) min ago"
+            case hours < 24: return hours == 1 ? "an hour ago" : "\(hours) hours ago"
+            default: return days == 1 ? "yesterday" : "\(days) days ago"
+            }
+        }
+
+        /// What `LampWishStatus` says of an app that's open: "TV app connected", "iPhone app connected".
+        static func connected(_ name: String) -> String { (name.hasPrefix("the ") ? String(name.dropFirst(4)) : name) + " connected" }
+
+        /// Where this copy runs, for the others to show.
+        private static var device: String {
+            #if os(macOS)
+            return "Mac"
+            #elseif targetEnvironment(simulator)
+            return "iPhone simulator"
+            #else
+            return UIDevice.current.model
+            #endif
+        }
+
+        // The wish's key, which Lamp gave this copy as it put it here: in the installed app's Info.plist, or on the
+        // simulator in the app's own folder there. It never crosses the network: the app proves it holds it.
+        private static let key: SymmetricKey? = {
+            var text = Bundle.main.object(forInfoDictionaryKey: "LampWishKey") as? String
+            #if targetEnvironment(simulator)
+            if text == nil { text = try? String(contentsOfFile: NSHomeDirectory() + "/Library/Lamp/wish-key", encoding: .utf8) }
+            #endif
+            guard let data = text.flatMap({ Data(base64Encoded: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }), data.count == 32 else { return nil }
+            return SymmetricKey(data: data)
+        }()
+
+        // MARK: What's known
+
+        /// The state and the list of apps, from what each way says now.
+        private func rebuild() {
+            let now = Date()
+            var arrived: [String] = []
+            // Values set before this app knew its own name take it now, so two apps' settings never tie.
+            if !me.isEmpty, entries.values.contains(where: { $0.peer.isEmpty }) {
+                for (key, entry) in entries where entry.peer.isEmpty { entries[key]?.peer = copy }
+                keepValues()
+            }
+            if !me.isEmpty { nameUnnamedItems() }
+            // Every copy open either way, this one aside: an app is open while any copy of it is.
+            var open: Set<String> = []
+            if !closed {
+                open.formUnion(relayPresent.keys)
+                open.formUnion(directs.filter { $0.value.ready }.keys)
+                open.remove(copy)
+            }
+            for id in open where openSince[id] == nil { openSince[id] = relayPresent[id]?.since ?? now; arrived.append(id) }
+            for id in Array(openSince.keys) where !open.contains(id) { openSince[id] = nil }
+            for id in open {
+                if let device = directs[id].flatMap({ $0.ready ? $0.device : nil }) ?? relayPresent[id]?.device, !device.isEmpty { devices[id] = device }
+            }
+            // This app itself is listed only while another copy of it is open.
+            // A loop, not a map: Swift before 6.4 can't type a closure this long that reaches into the roster's entries.
+            var list: [Peer] = []
+            for listed in roster.filter({ $0.id != me || open.contains { Self.app(of: $0) == me } }) {
+                let copies = open.filter { Self.app(of: $0) == listed.id }.map { Copy(id: $0, device: devices[$0] ?? "", since: openSince[$0] ?? now) }
+                    .sorted { ($0.since, $0.id) < ($1.since, $1.id) }
+                let isOpen = !copies.isEmpty
+                if isOpen {
+                    // Open, so made, whatever a list kept from before said.
+                    waiting.remove(listed.id)
+                    appsOpen.insert(listed.id)
+                } else if appsOpen.remove(listed.id) != nil {
+                    lastSeen[listed.id] = now
+                    keep()
+                }
+                // Out of date only when no copy speaks what this one does. `spoken`, not `wire`: a local named like the
+                // `wire(of:)` the line before calls reads as a circular reference to Swift before 6.4.
+                let wires = copies.map { wire(of: $0.id) }
+                let spoken = wires.contains(Self.wire) ? Self.wire : wires.first ?? Self.wire
+                let since = copies.first?.since
+                let status = isOpen && spoken != Self.wire
+                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: listed.name, older: spoken < Self.wire), lastSeen: since)
+                    : isOpen ? Status(state: .connected, reason: "", lastSeen: since)
+                    : Status(state: .notOpen, reason: Self.notOpen(name: listed.name, kind: listed.kind, lastSeen: lastSeen[listed.id],
+                                                                   waiting: waiting.contains(listed.id), now: now),
+                             lastSeen: lastSeen[listed.id])
+                list.append(Peer(id: listed.id, copies: copies, kind: listed.kind, name: listed.name, device: copies.last?.device ?? "", status: status))
+            }
+            if !copiesSeen, open.contains(where: { Self.app(of: $0) == me }) {
+                copiesSeen = true
+                keep()
+                DispatchQueue.main.async { MainActor.assumeIsolated { self.lookAgain() } }
+            }
+            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open, as
+            // long as none ever was; once one has been, not reaching it is said as for any other app.
+            let next: State = closed ? .ended : (alone || (roster.count == 1 && open.isEmpty && !copiesSeen)) ? .alone
+                : (relayIn || directs.values.contains { $0.ready }) ? .connected
+                : localNetworkDenied ? .localNetworkDenied : lampAway ? .away : .connecting
+            // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
+            // this one connected when it does.
+            if next != status.state { status = Status(state: next, reason: Self.reason(next), lastSeen: nil) }
+            if next == .connected { saidAway = false }
+            // A copy no longer open takes the files on their way to it and from it with it.
+            for app in roster {
+                dropFiles("\(Self.title(app.name)) closed.") { key, _ in
+                    let peer = String(key.prefix { $0 != "\t" })
+                    return Self.app(of: peer) == app.id && !open.contains(peer)
+                }
+            }
+            // Set only when something changed, since a reason is worked out again on every beat ("5 min ago").
+            if list != apps {
+                apps = list
+                for pad in pads where pad.owner.object != nil { pad.apps() }
+            }
+            report()
+            // A copy that has just come is told every value this one has, and tells this one its own, so the two agree
+            // again whichever was open meanwhile.
+            for id in arrived where wire(of: id) >= 2 && !entries.isEmpty { share(entries, to: id) }
+            // And what its shared collections add up to, so each asks the other for what differs.
+            let sharing = Set(storePeers)
+            for id in arrived where sharing.contains(id) { sendSums(to: id) }
+            if !arrived.isEmpty { fetchFiles() }
+        }
+
+        /// What another open copy speaks: 1 for an app from before values, which says nothing of it.
+        private func wire(of peer: String) -> Int {
+            directs[peer].flatMap { $0.ready ? $0.wire : nil } ?? relayPresent[peer]?.wire ?? 1
+        }
+
+        // MARK: Values
+
+        /// A value as it was last set, and when: by the clock of the copy that set it, then the count within that
+        /// millisecond, then that copy's peer name, so every copy orders two settings the same way, two copies of one app
+        /// included.
+        private struct Entry {
+            var value: Any?
+            var ms: Int64
+            var n: Int
+            var peer: String
+            func isLater(than other: Entry) -> Bool { (ms, n, peer) > (other.ms, other.n, other.peer) }
+            var json: [String: Any] {
+                var json: [String: Any] = ["c": [ms, n, peer]]
+                if let value { json["v"] = value }
+                return json
+            }
+            init(value: Any?, ms: Int64, n: Int, peer: String) { self.value = value; self.ms = ms; self.n = n; self.peer = peer }
+            /// One another app sent, or this one kept: whole numbers in range only, as every language reads them.
+            init?(_ json: Any?) {
+                guard let json = json as? [String: Any], let c = json["c"] as? [Any], c.count == 3,
+                      let ms = LampWish.whole(c[0]), let n = LampWish.whole(c[1]), let peer = c[2] as? String,
+                      ms <= LampWish.latest, n <= LampWish.counts, peer.utf8.count <= 32 else { return nil }
+                self.init(value: json["v"].flatMap { $0 is NSNull ? nil : $0 }, ms: ms, n: Int(n), peer: peer)
+            }
+        }
+
+        /// The bounds every app holds a setting's time to: a millisecond clock within 2^50, a count within a million.
+        nonisolated private static let latest: Int64 = 1 << 50
+        nonisolated private static let counts: Int64 = 1_000_000
+        /// How long a removal is kept, so an app away longer than this may bring the value back.
+        private static let removalsKept: Int64 = 30 * 24 * 3600 * 1000
+
+        nonisolated private static func whole(_ value: Any) -> Int64? {
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), !CFNumberIsFloatType(number),
+                  number.int64Value >= 0 else { return nil }
+            return number.int64Value
+        }
+
+        /// A name the wish's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already.
+        private static func isValueName(_ key: String) -> Bool { (1...64).contains(key.utf8.count) && key != "__proto__" }
+
+        /// A value's size as JSON, slashes as they are, the same as the TV page's and the Android app's measure.
+        private static func size(of value: Any) -> Int {
+            ((try? JSONSerialization.data(withJSONObject: [value], options: .withoutEscapingSlashes)).map(\.count) ?? 2) - 2
+        }
+
+        private static func json(_ object: Any) -> Data? { try? JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes) }
+
+        /// What a setting takes in the store: its name, and its value as JSON or at least 32 bytes, which is what its
+        /// removal takes while kept. Counted the same when an app sets and when it takes from others, so all an app can
+        /// make, removals included, fits in what the others take from it.
+        private static func held(_ key: String, _ entry: Entry) -> Int { key.utf8.count + max(32, entry.value.map(size(of:)) ?? 32) }
+
+        /// What the store takes, removals kept included, leaving one name out.
+        private func size(without key: String) -> Int {
+            entries.reduce(0) { $1.key == key ? $0 : $0 + Self.held($1.key, $1.value) }
+        }
+
+        /// What every setting this app has adds up to, sealed with the wish's key: two apps with the same say the same.
+        private func digest() -> String {
+            guard let key = Self.key else { return "" }
+            var data = Data()
+            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) {
+                for part in [name, String(entry.ms), String(entry.n), entry.peer] { data.append(Data(part.utf8)); data.append(0) }
+            }
+            return Self.derive("lamp-wish values", key, data).prefix(8).base64EncodedString()
+        }
+
+        /// What another app sent of the values: settings, taken when they're later than what this app has; what all of
+        /// its add up to (`sum`), answered with all of this app's and a request for all of its when they differ; and that
+        /// request (`ask`), answered with all of this app's. So a setting lost on the way is made up within a minute.
+        private func heardValues(_ m: [String: Any], from peer: String) {
+            merge(m["values"] as? [String: Any] ?? [:], from: peer)
+            if let sum = m["sum"] as? String, sum != digest() { share(entries, to: peer, extra: ["ask": true]) }
+            else if m["ask"] as? Bool == true { share(entries, to: peer) }
+        }
+
+        /// Settings another app sent: each taken when it's later than what this app has, so whichever order they come
+        /// in, every app ends with the same.
+        private func merge(_ given: [String: Any], from peer: String) {
+            var changed: [(String, Any?)] = []
+            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits,
+            // so they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            dropExpired()
+            let most = Self.valuesLimit * 2 * max(2, roster.count)
+            var held = entries.reduce(0) { $0 + Self.held($1.key, $1.value) }
+            // The removals kept, oldest first: let go first when something needs room, since a removal only outvotes an
+            // older copy of what it removed, and the oldest matter least.
+            var removals: [String]? = nil, next = 0
+            func oldestRemoval(except key: String) -> String? {
+                if removals == nil {
+                    removals = entries.filter { $0.value.value == nil }.sorted { $1.value.isLater(than: $0.value) }.map(\.key)
+                }
+                while let list = removals, next < list.count {
+                    let name = list[next]
+                    next += 1
+                    if name != key, let entry = entries[name], entry.value == nil { return name }
+                }
+                return nil
+            }
+            for (key, json) in given.sorted(by: { $0.key < $1.key }) {
+                guard Self.isValueName(key), let entry = Entry(json) else { continue }
+                if (entry.ms, Int64(entry.n)) > (clock.ms, clock.n) { clock = (entry.ms, Int64(entry.n)) }
+                if let had = entries[key], !entry.isLater(than: had) { continue }
+                // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
+                // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
+                if let value = entry.value, Self.size(of: value) > Self.valueLimit * 2 { continue }
+                let old = entries[key].map { Self.held(key, $0) } ?? 0, need = Self.held(key, entry)
+                while held - old + need > most, let gone = oldestRemoval(except: key), let removal = entries.removeValue(forKey: gone) {
+                    held -= Self.held(gone, removal)
+                }
+                if held - old + need > most {
+                    // A value that doesn't fit beside the others' values is left; a removal goes all the same, without
+                    // keeping it, so a value removed is never left behind.
+                    guard entry.value == nil, let had = entries.removeValue(forKey: key) else { continue }
+                    held -= old
+                    if had.value != nil { changed.append((key, nil)) }
+                    continue
+                }
+                held = held - old + need
+                entries[key] = entry
+                changed.append((key, entry.value))
+            }
+            if !changed.isEmpty {
+                valuesChanged(changed, from: peer)
+                pass(changed.compactMap { key, _ in entries[key].map { (key, $0) } }, from: peer)
+            }
+        }
+
+        /// Settings taken from one copy go on to the others open now that it may not reach: those this one reaches
+        /// straight, and those in Lamp's room when it isn't there itself. Two copies that only dial (two TVs) reach each
+        /// other's values through an app that listens this way when Lamp is closed. A copy that has a setting already takes
+        /// nothing from it, so it goes no further.
+        private func pass(_ list: [(String, Entry)], from peer: String) {
+            guard !list.isEmpty else { return }
+            let settings = Dictionary(list, uniquingKeysWith: { a, _ in a })
+            for each in copies(for: nil) where each != peer && wire(of: each) >= 2 {
+                let straight = directs[each]?.ready == true
+                if straight || (relayPresent[peer] == nil && relayPresent[each] != nil) { share(settings, to: each) }
+            }
+        }
+
+        private func valuesChanged(_ changed: [(String, Any?)], from peer: String) {
+            values = entries.compactMapValues(\.value)
+            keepValues()
+            let from = Self.app(of: peer)
+            for (key, value) in changed { for listener in changeListeners { listener(key, value, from) } }
+        }
+
+        /// Sends settings to another open app, the straight way when there is one, else through Lamp's room, a few at a
+        /// time so each message stays within what a message may be; `extra` goes with the last.
+        private func share(_ list: [String: Entry], to peer: String, extra: [String: Any] = [:]) {
+            var batch: [String: Any] = [:], size = 0
+            func flush(last: Bool) {
+                guard !batch.isEmpty || (last && !extra.isEmpty) else { return }
+                var frame: [String: Any] = ["t": "values", "values": batch]
+                if last { frame.merge(extra) { $1 } }
+                if let direct = directs[peer], direct.ready {
+                    if let json = Self.json(frame) { sealed(json, on: direct) }
+                } else if relayPresent[peer] != nil {
+                    frame["to"] = peer
+                    if let json = Self.json(frame) { say(json) }
+                }
+                batch = [:]
+                size = 0
+            }
+            for (key, entry) in list.sorted(by: { $0.key < $1.key }) {
+                let json = entry.json
+                let bytes = Self.json([key: json])?.count ?? 0
+                if size + bytes > 12 * 1024 { flush(last: false) }
+                batch[key] = json
+                size += bytes
+            }
+            flush(last: true)
+        }
+
+        private var valuesKey: String? { Self.keptKey.map { $0 + ".values" } }
+
+        /// A removal is kept for a month, then let go: before anything is weighed against a limit, on restore, and before
+        /// what's kept is written, so an app whose removals filled it can set values again once the month is over.
+        private func dropExpired() {
+            let old = Int64(Date().timeIntervalSince1970 * 1000) - Self.removalsKept
+            entries = entries.filter { $0.value.value != nil || $0.value.ms > old }
+        }
+
+        private func keepValues() {
+            dropExpired()
+            guard let valuesKey else { return }
+            let kept: [String: Any] = ["values": entries.mapValues(\.json), "clock": [clock.ms, clock.n]]
+            UserDefaults.standard.set(Self.json(kept), forKey: valuesKey)
+        }
+
+        private func restoreValues() {
+            guard let valuesKey, let data = UserDefaults.standard.data(forKey: valuesKey),
+                  let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+            for (key, json) in kept["values"] as? [String: Any] ?? [:] where Self.isValueName(key) { if let entry = Entry(json) { entries[key] = entry } }
+            if let c = kept["clock"] as? [Any], c.count == 2, let ms = Self.whole(c[0]), let n = Self.whole(c[1]), ms <= Self.latest, n <= Self.counts {
+                clock = (ms, n)
+            }
+            dropExpired()
+            values = entries.compactMapValues(\.value)
+        }
+
+        /// Tells Lamp's room how this app's link stands (its state, and which apps it reaches straight), only when that
+        /// changes, so the builder can tell an app that can't reach the others on the network from one that does.
+        private func report() {
+            guard relayIn else { return }
+            let direct = directs.values.filter(\.ready).map(\.peer).sorted()
+            let now = status.state.rawValue + (localNetworkDenied ? " localNetworkDenied" : "") + " " + direct.joined(separator: ",")
+            guard now != reported,
+                  let json = try? JSONSerialization.data(withJSONObject: ["t": "status", "state": localNetworkDenied ? State.localNetworkDenied.rawValue : status.state.rawValue,
+                                                                         "direct": direct]) else { return }
+            reported = now
+            say(json)
+        }
+
+        private func setRoster(_ list: [[String: Any]]) {
+            let given = list.compactMap { app -> (id: String, kind: String, name: String)? in
+                guard let id = app["peer"] as? String, Self.isName(id), !id.contains(".") else { return nil }
+                return (id, app["kind"] as? String ?? "", app["name"] as? String ?? id)
+            }
+            guard !given.isEmpty else { return }
+            let changed = given.map(\.id).sorted() != roster.map(\.id).sorted()
+            roster = given
+            waiting = Set(list.filter { $0["waiting"] as? Bool == true }.compactMap { $0["peer"] as? String })
+            for id in Array(directs.keys) where !given.contains(where: { $0.id == Self.app(of: id) }) { directs[id].map(drop) }
+            keep()
+            // Where each app listens follows its place in the list: a changed list moves this one's.
+            if changed { listen(again: true) }
+            rebuild()
+        }
+
+        /// What this app keeps of its wish on the device, by the wish's tag: who it is, the wish's apps and where each was
+        /// last reached, so it finds the others with Lamp closed.
+        private static var keptKey: String? { key.map { "LampWish." + tag(of: $0).map { String(format: "%02x", $0) }.joined() } }
+
+        private func keep() {
+            guard let keptKey = Self.keptKey else { return }
+            let apps = roster.map { app -> [String: Any] in
+                var kept: [String: Any] = ["peer": app.id, "kind": app.kind, "name": app.name]
+                if waiting.contains(app.id) { kept["waiting"] = true }
+                return kept
+            }
+            let seen = lastSeen.mapValues { Int($0.timeIntervalSince1970 * 1000) }
+            let kept: [String: Any] = ["me": me, "copy": copyID, "copies": copiesSeen, "apps": apps, "at": told, "seen": seen]
+            UserDefaults.standard.set(try? JSONSerialization.data(withJSONObject: kept), forKey: keptKey)
+        }
+
+        private func restore() {
+            guard let keptKey = Self.keptKey, let data = UserDefaults.standard.data(forKey: keptKey),
+                  let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return keep() }
+            me = kept["me"] as? String ?? ""
+            let madeNow = (kept["copy"] as? String).map { Self.isName("a." + $0) } != true
+            if !madeNow, let id = kept["copy"] as? String { copyID = id }
+            defer { if madeNow { keep() } }
+            told = kept["at"] as? [String: [String]] ?? [:]
+            lastSeen = (kept["seen"] as? [String: Int] ?? [:]).mapValues { Date(timeIntervalSince1970: Double($0) / 1000) }
+            let apps = kept["apps"] as? [[String: Any]] ?? []
+            waiting = Set(apps.filter { $0["waiting"] as? Bool == true }.compactMap { $0["peer"] as? String })
+            roster = apps.compactMap { app in
+                (app["peer"] as? String).map { ($0, app["kind"] as? String ?? "", app["name"] as? String ?? $0) }
+            }
+            copiesSeen = kept["copies"] as? Bool == true
+            rebuild()
+        }
+
+        /// Where another copy was reached or said it listens, the latest first.
+        private func remember(_ peer: String, at places: [String]) {
+            guard peer != copy, peer != me, !places.isEmpty else { return }
+            var list = places.filter { !$0.isEmpty }
+            for place in told[peer] ?? [] where !list.contains(place) { list.append(place) }
+            told[peer] = Array(list.prefix(6))
+            keep()
+        }
+
+        // MARK: Files and a game's controls
+
+        /// Sends a file (up to 64 MB) to one of the wish's apps that's open now, in pieces, the straight way when there is one,
+        /// else through Lamp's room; the transfer says how far it's got, and ends failed, with why, when it didn't get there.
+        /// It goes to one copy: the one `to` names ("screen.k3j9x0ab"), or for an app open on several devices the one opened
+        /// last. Two go to each copy at a time: send a third once one has finished (`try await transfer.finished()`).
+        @discardableResult
+        func sendFile(_ data: Data, name: String, type: String = "application/octet-stream", to peer: String) -> LampTransfer {
+            sendFile(data, name: name, type: type, to: peer, channel: "")
+        }
+
+        /// Hears the files the wish's other apps send: who sent it (its peer name), and the file, whole (`file.copy` is which
+        /// copy of the app sent it).
+        func onFile(_ handler: @escaping (_ from: String, _ file: LampFile) -> Void) { fileListeners.append(handler) }
+
+        /// A file on its way to another app, on the way it started on: a file's pieces and acknowledgements can't change
+        /// ways halfway, so a way that goes takes its files with it.
+        private final class Outgoing {
+            let peer: String
+            let via: Direct?
+            let transfer: LampTransfer
+            let bytes: Data
+            var offset = 0
+            var acknowledged = 0
+            var sending = false
+            /// When the other app last acknowledged some of it: a file it stops taking ends.
+            var moved = Date()
+            init(peer: String, via: Direct?, transfer: LampTransfer, bytes: Data) { self.peer = peer; self.via = via; self.transfer = transfer; self.bytes = bytes }
+        }
+        private final class Incoming {
+            let name: String
+            let type: String
+            let size: Int
+            let channel: String
+            let via: Direct?
+            var data = Data()
+            /// When its last piece came: a file that stops coming ends, as one that stops going does.
+            var moved = Date()
+            init(name: String, type: String, size: Int, channel: String, via: Direct?) {
+                self.name = name; self.type = type; self.size = size; self.channel = channel; self.via = via
+            }
+        }
+
+        fileprivate func sendFile(_ data: Data, name: String, type: String, to given: String, channel: String) -> LampTransfer {
+            // One copy: the one named, else the one opened last.
+            let peer = given.contains(".") ? given : self.peer(given)?.copies.last?.id ?? given
+            let id = nextFile
+            nextFile = nextFile >= Int(Int32.max) - 1 ? 1 : nextFile + 1
+            let transfer = LampTransfer(id: id, name: name, size: data.count)
+            let key = "\(peer)\t\(id)"
+            func failed(_ reason: String) -> LampTransfer {
+                fputs("LampWish: the file \"\(name)\" wasn't sent: \(reason)\n", stderr)
+                transfer.end(.failed(reason))
+                return transfer
+            }
+            guard data.count <= LampFiles.largest else { return failed("The file is too big to send: 64 MB at most.") }
+            // A shared file's bytes to Lamp, which keeps them for the copies that open later: through its room alone.
+            if peer == Self.keeper, channel.hasPrefix("store:") {
+                guard relayIn, lampKeeps, outgoing.keys.filter({ $0.hasPrefix(peer + "\t") }).count < LampFiles.transfers,
+                      fileMessage(["t": "file", "id": id, "name": String(name.prefix(200)), "type": String(type.prefix(100)), "size": data.count, "ch": channel],
+                                  to: peer, via: nil) else { return failed("Lamp isn't reachable now.") }
+                outgoing[key] = Outgoing(peer: peer, via: nil, transfer: transfer, bytes: data)
+                pump(key)
+                return transfer
+            }
+            guard let app = self.peer(peer) else { return failed("The wish has no app called \"\(given)\".") }
+            guard app.isOpen, state == .connected else { return failed(app.status.reason.isEmpty ? "\(Self.title(app.name)) isn't open now." : app.status.reason) }
+            guard app.copies.contains(where: { $0.id == peer }) else { return failed("That copy of \(app.name) isn't open now.") }
+            guard wire(of: peer) >= 3 else { return failed(Self.outOfDate(name: app.name, older: true)) }
+            guard outgoing.keys.filter({ $0.hasPrefix(peer + "\t") }).count < LampFiles.transfers else {
+                return failed("Another file to \(app.name) is still on its way: send this one once it's there.")
+            }
+            let via = directs[peer].flatMap { $0.ready ? $0 : nil }
+            var start: [String: Any] = ["t": "file", "id": id, "name": String(name.prefix(200)), "type": String(type.prefix(100)), "size": data.count]
+            if !channel.isEmpty { start["ch"] = channel }
+            guard fileMessage(start, to: peer, via: via) else { return failed("\(Self.title(app.name)) isn't reachable now.") }
+            transfer.cancelling = { [weak self] in
+                guard let self, let file = self.outgoing.removeValue(forKey: key) else { return }
+                self.fileMessage(["t": "file-cancel", "id": id], to: peer, via: file.via)
+                transfer.end(.failed("The file was cancelled."))
+            }
+            outgoing[key] = Outgoing(peer: peer, via: via, transfer: transfer, bytes: data)
+            pump(key)
+            return transfer
+        }
+
+        /// A file's message on the way it goes: straight, or through Lamp's room, there with whom it's for.
+        @discardableResult
+        private func fileMessage(_ message: [String: Any], to peer: String, via direct: Direct?) -> Bool {
+            if let direct {
+                guard directs[peer] === direct, direct.ready, let json = Self.json(message) else { return false }
+                sealed(json, on: direct)
+                return true
+            }
+            var message = message
+            message["to"] = peer
+            guard relayIn, relayPresent[peer] != nil || (peer == Self.keeper && lampKeeps), let json = Self.json(message) else { return false }
+            say(json)
+            return true
+        }
+
+        /// A file's next pieces, one handed over at a time and never more than a window past what the other app has
+        /// acknowledged, so a message sent meanwhile waits behind one piece at most.
+        private func pump(_ key: String) {
+            guard let file = outgoing[key], !file.sending, file.offset < file.bytes.count,
+                  file.offset - file.acknowledged < LampFiles.window else { return }
+            let count = min(LampFiles.chunk, file.bytes.count - file.offset)
+            let piece = Self.piece(peer: file.via == nil ? file.peer : "", id: file.transfer.id,
+                                   bytes: file.bytes.subdata(in: file.offset..<(file.offset + count)))
+            file.offset += count
+            file.sending = true
+            let sent: @Sendable () -> Void = { [weak self] in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        file.sending = false
+                        self?.pump(key)
+                    }
+                }
+            }
+            if let direct = file.via, directs[file.peer] === direct {
+                sealed(piece, on: direct, then: sent)
+            } else if file.via == nil, relayIn {
+                say(piece, then: sent)
+            } else {
+                outgoing[key] = nil
+                file.transfer.end(.failed("The link was lost."))
+            }
+        }
+
+        /// A piece as it goes sealed (`WishChannel.piece` in Lamp): 1, a peer's name with its length before it (the one
+        /// it's for, to Lamp's room; the one it's from, from it; none straight), the transfer's id, then the bytes.
+        private static func piece(peer: String, id: Int, bytes: Data) -> Data {
+            var data = Data([1, UInt8(peer.utf8.count)])
+            data.append(Data(peer.utf8))
+            data.append(contentsOf: [UInt8(id >> 24 & 0xff), UInt8(id >> 16 & 0xff), UInt8(id >> 8 & 0xff), UInt8(id & 0xff)])
+            data.append(bytes)
+            return data
+        }
+
+        /// A file's message from another app: one coming (`file`), how far one going has got (`file-ack`), one going turned
+        /// down (`file-refuse`), or one coming called off (`file-cancel`).
+        private func heardFile(_ m: [String: Any], from peer: String, via direct: Direct?) {
+            guard let id = m["id"] as? Int, id > 0 else { return }
+            let key = "\(peer)\t\(id)"
+            switch m["t"] as? String {
+            case "file":
+                let channel = m["ch"] as? String ?? ""
+                let takes = channel.hasPrefix("store:") || (channel.hasPrefix("pad") ? pads.contains { $0.owner.object != nil } : !fileListeners.isEmpty)
+                let coming = incoming.keys.filter { $0.hasPrefix(peer + "\t") }.count
+                guard let size = m["size"] as? Int, size >= 0, size <= LampFiles.largest, incoming[key] == nil, coming < LampFiles.transfers, takes else {
+                    fileMessage(["t": "file-refuse", "id": id, "reason": takes ? "The file is too big to take now." : "This app takes no files."], to: peer, via: direct)
+                    return
+                }
+                let file = Incoming(name: m["name"] as? String ?? "file", type: m["type"] as? String ?? "", size: size, channel: channel, via: direct)
+                incoming[key] = file
+                if size == 0 { finished(key, file, from: peer) }
+            case "file-ack":
+                guard let file = outgoing[key], file.via === direct, let got = m["got"] as? Int, got >= file.acknowledged, got <= file.offset else { return }
+                file.acknowledged = got
+                file.moved = Date()
+                file.transfer.sent = got
+                if got == file.bytes.count {
+                    outgoing[key] = nil
+                    file.transfer.end(.done)
+                } else {
+                    pump(key)
+                }
+            case "file-refuse":
+                guard let file = outgoing[key], file.via === direct else { return }
+                outgoing[key] = nil
+                file.transfer.end(.failed(m["reason"] as? String ?? "The other app turned the file down."))
+            case "file-cancel":
+                if incoming[key]?.via === direct { incoming[key] = nil }
+            default:
+                break
+            }
+        }
+
+        private func hearPiece(_ data: Data, via direct: Direct?) {
+            let bytes = [UInt8](data.prefix(2 + 32 + 4))
+            guard bytes.count >= 2, bytes[1] <= 32, data.count > 2 + Int(bytes[1]) + 4 else { return }
+            let n = Int(bytes[1])
+            let peer = direct?.peer ?? String(decoding: bytes[2..<(2 + n)], as: UTF8.self)
+            let id = bytes[(2 + n)..<(2 + n + 4)].reduce(0) { $0 << 8 | Int($1) }
+            let key = "\(peer)\t\(id)"
+            guard let file = incoming[key], file.via === direct else { return }
+            let piece = data.dropFirst(2 + n + 4)
+            guard file.data.count + piece.count <= file.size else {
+                incoming[key] = nil
+                fileMessage(["t": "file-refuse", "id": id, "reason": "The file was bigger than it said."], to: peer, via: direct)
+                return
+            }
+            file.data.append(piece)
+            file.moved = Date()
+            fileMessage(["t": "file-ack", "id": id, "got": file.data.count], to: peer, via: direct)
+            if file.data.count == file.size { finished(key, file, from: peer) }
+        }
+
+        private func finished(_ key: String, _ file: Incoming, from peer: String) {
+            incoming[key] = nil
+            if file.size == 0, let id = Int(key.split(separator: "\t").last ?? "") { fileMessage(["t": "file-ack", "id": id, "got": 0], to: peer, via: file.via) }
+            let done = LampFile(name: file.name, type: file.type, data: file.data, copy: peer)
+            if file.channel.hasPrefix("store:") {
+                sharedFileArrived(String(file.channel.dropFirst(6)), id: file.name, data: file.data, from: peer)
+            } else if file.channel.hasPrefix("pad") {
+                for pad in pads where pad.owner.object != nil { pad.file(peer, file.channel, done) }
+            } else {
+                for listener in fileListeners { listener(Self.app(of: peer), done) }
+            }
+        }
+
+        /// The files on their way that `gone` picks (by the other copy's peer name and id, and the way each goes) end, with why.
+        private func dropFiles(_ reason: String, where gone: (String, Direct?) -> Bool) {
+            for (key, file) in outgoing where gone(key, file.via) {
+                outgoing[key] = nil
+                file.transfer.end(.failed(reason))
+            }
+            for (key, file) in incoming where gone(key, file.via) { incoming[key] = nil }
+        }
+
+        private static func title(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() }
+
+        /// A `LampController` taking what the wish's TV app sends its players: kept for as long as `owner` is.
+        /// `apps` hears whenever the list of the wish's apps changes (one came, went, or can take a game's controls).
+        fileprivate func addPad(owner: AnyObject, message: @escaping (String, [String: Any]) -> Void, file: @escaping (String, String, LampFile) -> Void,
+                                apps: @escaping () -> Void) {
+            pads.removeAll { $0.owner.object == nil || $0.owner.object === owner }
+            pads.append((Weak(owner), message, file, apps))
+        }
+
+        fileprivate func removePad(owner: AnyObject) { pads.removeAll { $0.owner.object == nil || $0.owner.object === owner } }
+
+        /// A game's controls for another copy (its `Lamp.controllers`), on the straight way when there is one, else through
+        /// Lamp's room; false when that copy isn't open, or doesn't take them.
+        @discardableResult
+        fileprivate func sendPad(_ message: [String: Any], to peer: String) -> Bool {
+            guard !closed, self.peer(peer)?.copies.contains(where: { $0.id == peer }) == true, wire(of: peer) >= 3 else { return false }
+            if let direct = directs[peer], direct.ready, let json = Self.json(["t": "pad", "m": message]) {
+                sealed(json, on: direct)
+                return true
+            }
+            guard relayIn, relayPresent[peer] != nil, let json = Self.json(["t": "pad", "m": message, "to": peer]) else { return false }
+            say(json)
+            return true
+        }
+
+        /// Whether another copy is open and takes files and a game's controls: one built before them is out of date.
+        fileprivate func takesFiles(_ peer: String) -> Bool { self.peer(peer)?.copies.contains(where: { $0.id == peer }) == true && wire(of: peer) >= 3 }
+
+        private func heardPad(_ message: [String: Any], from peer: String) {
+            for pad in pads where pad.owner.object != nil { pad.message(peer, message) }
+        }
+
+        // MARK: Lamp's room
+
+        // Where to join, from Lamp: the relay's socket and this app's peer name. What lets it in is the wish's key, proved
+        // in a handshake that sends nothing anyone could use again, and everything after it is sealed.
+        private func open() {
+            guard !closed else { return }
+            guard let key = Self.key else {
+                status = Status(state: .away, reason: "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.", lastSeen: nil)
+                return
+            }
+            Task { @MainActor in
+                do {
+                    if address == nil || me.isEmpty {
+                        let answer = try await LampAI.post("/app/wish", ["device": Self.device], timeout: 20)
+                        if answer["alone"] as? Bool == true {
+                            // The wish has no other app: nothing to join, until one is added.
+                            alone = true
+                            me = ((answer["me"] as? [String: Any])?["peer"] as? String) ?? me
+                            if let mine = answer["me"] as? [String: Any] { setRoster([mine]) }
+                            rebuild()
+                            return again(after: (answer["renew"] as? Double ?? 300))
+                        }
+                        guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let peer = answer["peer"] as? String else {
+                            throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the wish's apps meet.")
+                        }
+                        alone = false
+                        address = socket
+                        me = peer
+                        setRoster(answer["apps"] as? [[String: Any]] ?? [])
+                    }
+                    guard let address, !closed else { return }
+                    let task = URLSession.shared.webSocketTask(with: address)
+                    task.maximumMessageSize = LampFiles.chunk + 1024   // a file's piece, sealed
+                    link.task = task
+                    sealer = nil
+                    opener = nil
+                    task.resume()
+                    heard = Date()
+                    let nonce = Self.random(16), tag = Self.tag(of: key)
+                    handshake = (nonce, tag)
+                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": copy, "nonce": nonce.base64EncodedString()])
+                    try await task.send(.string(String(decoding: hello, as: UTF8.self)))
+                    receive(on: task)
+                } catch {
+                    // Lamp isn't there (closed, restarting, or the Mac asleep): the apps go on the straight way meanwhile,
+                    // and Lamp is asked again after a while.
+                    if let task = link.task {
+                        task.cancel(with: .goingAway, reason: nil)
+                        link.task = nil
+                    }
+                    address = nil
+                    // Said once each time Lamp goes, so the log shows why without a line for every try.
+                    if !lampAway { fputs("LampWish: \(error.localizedDescription)\n", stderr) }
+                    lampAway = true
+                    rebuild()
+                    again()
+                }
+            }
+        }
+
+        private func receive(on task: URLSessionWebSocketTask) {
+            task.receive { [weak self] result in
+                Task { @MainActor in
+                    guard let self, self.link.task === task else { return }
+                    switch result {
+                    case .success(let message):
+                        self.heard = Date()
+                        self.arrived(message, on: task)
+                        if self.link.task === task { self.receive(on: task) }
+                    case .failure:
+                        self.dropped(task)
+                    }
+                }
+            }
+        }
+
+        // Before the handshake is done only its challenge is heard, in clear; after it, only sealed messages and beats.
+        // Anything else was made up on the way, and lets the link go.
+        private func arrived(_ message: URLSessionWebSocketTask.Message, on task: URLSessionWebSocketTask) {
+            switch message {
+            case .string(let text):
+                let said = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+                if said?["t"] as? String == "beat" { return }
+                guard sealer == nil, let said, said["t"] as? String == "challenge", answer(said, on: task) else { return refuse(task) }
+            case .data(let sealed):
+                guard var box = opener, let plain = box.open(sealed) else { return refuse(task) }
+                opener = box
+                // A file's piece, else a message.
+                if plain.first == 1 { return hearPiece(plain, via: nil) }
+                guard let m = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] else { return refuse(task) }
+                hear(m)
+            @unknown default:
+                return
+            }
+        }
+
+        // The relay proved it holds the wish's key: this app proves it does too, and both seal from here on.
+        private func answer(_ challenge: [String: Any], on task: URLSessionWebSocketTask) -> Bool {
+            guard let key = Self.key, let handshake, let server = challenge["peer"] as? String, (1...32).contains(server.utf8.count),
+                  let theirs = (challenge["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
+                  let proof = (challenge["proof"] as? String).flatMap({ Data(base64Encoded: $0) }) else { return false }
+            let transcript = Self.transcript(tag: handshake.tag, client: copy, server: server, clientNonce: handshake.nonce, serverNonce: theirs)
+            guard Self.same(proof, Self.derive("lamp-wish server", key, transcript)) else { return false }
+            self.handshake = nil
+            let mine = try? JSONSerialization.data(withJSONObject: ["t": "proof", "proof": Self.derive("lamp-wish client", key, transcript).base64EncodedString()])
+            task.send(.string(String(decoding: mine ?? Data(), as: UTF8.self))) { _ in }
+            sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
+            opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
+            if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device, "wire": Self.wire]) { say(join) }
+            return true
+        }
+
+        /// Seals a message for Lamp's room and sends it, in the order said: each is sealed with the next number this way.
+        /// `then` hears once it has gone, which a file waits for before its next piece.
+        private func say(_ json: Data, then: (@Sendable () -> Void)? = nil) {
+            guard let task = link.task, var box = sealer else { return }
+            let sealed = box.seal(json)
+            sealer = box
+            task.send(.data(sealed)) { error in
+                if let error { fputs("LampWish: a message didn't go: \(error.localizedDescription)\n", stderr) }
+                then?()
+            }
+        }
+
+        private func refuse(_ task: URLSessionWebSocketTask) {
+            fputs("LampWish: the link to the wish's other apps heard something that wasn't theirs, and started again.\n", stderr)
+            task.cancel(with: .goingAway, reason: nil)
+            dropped(task)
+        }
+
+        private func hear(_ m: [String: Any]) {
+            switch m["t"] as? String {
+            case "welcome":
+                retry = 0
+                undeliveredSaid = []
+                lampAway = false
+                relayIn = true
+                lampKeeps = m["keeps"] as? Bool == true
+                reported = ""
+                if let name = m["peer"] as? String, Self.isName(name) { me = Self.app(of: name) }
+                setRoster(m["apps"] as? [[String: Any]] ?? [])
+                relayPresent = [:]
+                for seen in m["peers"] as? [[String: Any]] ?? [] { present(seen) }
+                tellWhereIListen()
+                rebuild()
+                // Lamp keeps what the copies share: each tells the other what it has, as two copies do when they meet.
+                if lampKeeps, !me.isEmpty { sendSums(to: Self.keeper); fetchFiles() }
+            case "joined":
+                if let joined = m["peer"] as? [String: Any] { present(joined) }
+                rebuild()
+            case "left":
+                if let id = m["peer"] as? String {
+                    relayPresent[id] = nil
+                    // What was on its way through the room to or from it can't arrive now, even if it's still reached straight.
+                    dropFiles("The link was lost.") { key, way in way == nil && key.hasPrefix(id + "\t") }
+                }
+                rebuild()
+            case "at":
+                if let id = m["peer"] as? String { remember(id, at: m["addresses"] as? [String] ?? []); lookAgain() }
+            case "apps":
+                // The wish gained an app or lost one: the others keep what's known of them.
+                setRoster(m["apps"] as? [[String: Any]] ?? [])
+            case "message":
+                guard let from = m["from"] as? String, let data = m["data"] else { return }
+                for listener in messageListeners { listener(Self.app(of: from), data, from) }
+            case "values":
+                guard let from = m["from"] as? String, Self.isName(from) else { return }
+                heardValues(m, from: from)
+            case "store":
+                guard let from = m["from"] as? String, Self.isName(from) else { return }
+                heardStore(m, from: from)
+            case "pad":
+                guard let from = m["from"] as? String, let pad = m["m"] as? [String: Any] else { return }
+                heardPad(pad, from: from)
+            case let kind? where kind.hasPrefix("file"):
+                guard let from = m["from"] as? String, Self.isName(from) else { return }
+                heardFile(m, from: from, via: nil)
+            case "undelivered":
+                // Said once for each app until the room changes: the code that sent it can't tell otherwise.
+                guard let to = m["to"] as? String, undeliveredSaid.insert(to).inserted else { return }
+                // A copy gone before the room said so: it's no longer counted as there.
+                if to.contains(".") { relayPresent[to] = nil; rebuild() }
+                fputs("LampWish: a message to \"\(to)\" didn't arrive: \(m["reason"] as? String ?? "it isn't in the room").\n", stderr)
+            default:
+                break
+            }
+        }
+
+        private func present(_ json: [String: Any]) {
+            guard let id = json["peer"] as? String else { return }
+            let since = (json["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? Date()
+            relayPresent[id] = (json["device"] as? String ?? "", since, json["wire"] as? Int ?? 1)
+            if let places = json["at"] as? [String], !places.isEmpty { remember(id, at: places); lookAgain() }
+        }
+
+        private func dropped(_ task: URLSessionWebSocketTask) {
+            guard link.task === task else { return }
+            let code = task.closeCode.rawValue
+            link.task = nil
+            sealer = nil
+            opener = nil
+            handshake = nil
+            relayIn = false
+            lampKeeps = false
+            relayPresent = [:]
+            dropFiles("The link was lost.") { _, way in way == nil }
+            // Turned away, or the room ended, or dropped before it was let in: the relay may have moved, or this app may
+            // not be of the wish it was, so Lamp is asked again where to join and who this app is.
+            if code == 4003 || code == 4005 || retry >= 3 { address = nil }
+            rebuild()
+            again()
+        }
+
+        private func again(after: Double? = nil) {
+            guard !closed else { return }
+            retry = min(retry + 1, 6)
+            let wait = after ?? Double(retry) * 0.75
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                self?.open()
+            }
+        }
+
+        // A beat on every link, in clear since it carries nothing: whoever hears nothing for a while lets the other go.
+        private func tick() {
+            for (key, file) in outgoing where Date().timeIntervalSince(file.moved) > 20 {
+                outgoing[key] = nil
+                fileMessage(["t": "file-cancel", "id": file.transfer.id], to: file.peer, via: file.via)
+                file.transfer.end(.failed("The file stopped moving."))
+            }
+            for (key, file) in incoming where Date().timeIntervalSince(file.moved) > 20 {
+                incoming[key] = nil
+                if let peer = key.split(separator: "\t").first, let id = Int(key.split(separator: "\t").last ?? "") {
+                    fileMessage(["t": "file-refuse", "id": id, "reason": "The file stopped moving."], to: String(peer), via: file.via)
+                }
+            }
+            if let task = link.task {
+                if Date().timeIntervalSince(heard) > 12 {
+                    task.cancel(with: .goingAway, reason: nil)
+                    dropped(task)
+                } else {
+                    task.send(.string(#"{"t":"beat"}"#)) { _ in }
+                }
+            }
+            for direct in Array(directs.values) {
+                if Date().timeIntervalSince(direct.heard) > 15 { drop(direct); continue }
+                frame(Data(#"{"t":"beat"}"#.utf8), text: true, on: direct)
+            }
+            // When each open app was last seen is kept every minute, so it's known even when this app is closed while
+            // the other is open; and the reasons are worked out again, since they say how long ago.
+            let now = Date()
+            for app in apps where app.isOpen { lastSeen[app.id] = now }
+            beats += 1
+            if beats % 12 == 0, !peers.isEmpty { keep() }
+            // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
+            if beats % 12 == 0 { for each in copies(for: nil) where wire(of: each) >= 2 { share([:], to: each, extra: ["sum": digest()]) } }
+            // And its shared collections, and a shared file asked of a copy that has gone quiet is asked again.
+            if beats % 12 == 0 { for each in storePeers { sendSums(to: each) } }
+            if beats % 12 == 6 { fetchFiles() }
+            // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
+            if Self.key != nil { rebuild() }
+            reach()
+        }
+
+        // MARK: Straight to the others
+
+        /// Listens, looks for the others and dials the ones it can reach: as it starts, on each beat for those whose time
+        /// to try again has come, and at once whenever something changed (`lookAgain`).
+        private func reach() {
+            guard !closed, !alone, Self.key != nil, !me.isEmpty, roster.count >= 2 || copiesSeen else { return }
+            listen()
+            browse()
+            let now = Date()
+            // Every copy known of: found on the network, in Lamp's room, or reached before. A copy of this app on another
+            // device is dialled as any other app is.
+            let known = Set(found.keys).union(told.keys).union(relayPresent.keys)
+            for peer in known.sorted() where peer != copy && peer != me && roster.contains(where: { $0.id == Self.app(of: peer) })
+                && directs[peer]?.ready != true && !dialing.contains(peer) {
+                if let wait = nextDial[peer], wait.at > now { continue }
+                let places = endpoints(of: peer)
+                guard !places.isEmpty else { continue }
+                dial(peer, places)
+            }
+        }
+
+        private func lookAgain() {
+            nextDial = [:]
+            if listener == nil { listenerTried = .distantPast }
+            reach()
+        }
+
+        /// This app's place on the network: the wish's port for it, worked out from the wish's key and its place in the
+        /// wish's list, so a TV that can't look up names knows where to try; any port when another program has that one.
+        private static func port(for peer: String, among roster: [String]) -> UInt16? {
+            guard let key else { return nil }
+            let d = derive("lamp-wish port", key)
+            let base = 20000 + (Int(d[0]) << 8 | Int(d[1])) % 1500 * 8
+            guard let rank = roster.sorted().firstIndex(of: peer), rank < 8 else { return nil }
+            return UInt16(base + rank)
+        }
+
+        /// The name an app is found by on the network, which says nothing of the wish or the app to anyone without the key.
+        /// Each copy adds its own id to it ("…-k3j9x0ab"), so the app's copies on several devices are each found.
+        private static func serviceName(of app: String) -> String? {
+            key.map { derive("lamp-wish service", $0, Data(app.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined() }
+        }
+
+        private static var serviceType: String { "_lampwish._tcp" }
+
+        private static func socketParameters() -> NWParameters {
+            let socket = NWProtocolWebSocket.Options()
+            socket.autoReplyPing = true
+            socket.maximumMessageSize = LampFiles.chunk + 1024   // a file's piece, sealed
+            let parameters = NWParameters.tcp
+            parameters.defaultProtocolStack.applicationProtocols.insert(socket, at: 0)
+            return parameters
+        }
+
+        private func listen(again: Bool = false, anyPort: Bool = false) {
+            if again { listener?.cancel(); listener = nil; listenerPort = nil; listenerTried = .distantPast }
+            guard listener == nil, anyPort || Date().timeIntervalSince(listenerTried) > 30, let name = Self.serviceName(of: me).map({ $0 + "-" + copyID }) else { return }
+            listenerTried = Date()
+            let wanted = anyPort ? nil : Self.port(for: me, among: roster.map(\.id)).flatMap { NWEndpoint.Port(rawValue: $0) }
+            let made = (wanted.flatMap { try? NWListener(using: Self.socketParameters(), on: $0) }) ?? (try? NWListener(using: Self.socketParameters()))
+            guard let made else { return }
+            made.service = NWListener.Service(name: name, type: Self.serviceType)
+            made.newConnectionHandler = { [weak self] connection in
+                MainActor.assumeIsolated { self?.take(connection) }
+            }
+            made.stateUpdateHandler = { [weak self, weak made] state in
+                MainActor.assumeIsolated {
+                    guard let self, let made, self.listener === made else { return }
+                    switch state {
+                    case .ready:
+                        self.listenerPort = made.port?.rawValue
+                        self.tellWhereIListen()
+                    case .waiting(let error) where Self.isDenied(error):
+                        self.denied(true)
+                    case .failed:
+                        made.cancel()
+                        self.listener = nil
+                        self.listenerPort = nil
+                        // Another program has the wish's port: any port, found by name and told to Lamp's room instead.
+                        if wanted != nil { self.listen(anyPort: true) }
+                    default:
+                        break
+                    }
+                }
+            }
+            listener = made
+            made.start(queue: .main)
+        }
+
+        private func browse() {
+            guard browser == nil else { return }
+            let browser = NWBrowser(for: .bonjour(type: Self.serviceType, domain: nil), using: .tcp)
+            browser.browseResultsChangedHandler = { [weak self] results, _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    var seen: [String: NWEndpoint] = [:]
+                    for result in results {
+                        guard case .service(let name, _, _, _) = result.endpoint else { continue }
+                        let parts = name.split(separator: "-", maxSplits: 1).map(String.init)
+                        guard parts.count == 2, Self.isName("a." + parts[1]),
+                              let app = self.roster.first(where: { Self.serviceName(of: $0.id) == parts[0] }) else { continue }
+                        let peer = app.id + "." + parts[1]
+                        if peer != self.copy { seen[peer] = result.endpoint }
+                    }
+                    let fresh = seen.keys.filter { self.found[$0] == nil }
+                    self.found = seen
+                    for id in fresh { self.nextDial[id] = nil }
+                    if !fresh.isEmpty { self.reach() }
+                }
+            }
+            browser.stateUpdateHandler = { [weak self, weak browser] state in
+                MainActor.assumeIsolated {
+                    guard let self, self.browser === browser else { return }
+                    // Looking on the network is what macOS and iOS ask the person about: turned down, it waits saying so,
+                    // and goes on by itself once they allow it.
+                    switch state {
+                    case .ready: self.denied(false)
+                    case .waiting(let error): self.denied(Self.isDenied(error))
+                    case .failed(let error):
+                        self.denied(Self.isDenied(error))
+                        self.browser?.cancel()
+                        self.browser = nil
+                    default: break
+                    }
+                }
+            }
+            self.browser = browser
+            browser.start(queue: .main)
+        }
+
+        /// Whether the system turned the network down because the person didn't allow Local Network for this app.
+        private static func isDenied(_ error: NWError) -> Bool {
+            if case .dns(let code) = error { return code == -65570 }   // kDNSServiceErr_PolicyDenied
+            return false
+        }
+
+        private func denied(_ now: Bool) {
+            guard now != localNetworkDenied else { return }
+            localNetworkDenied = now
+            if !now { lookAgain() }
+            rebuild()
+        }
+
+        /// Where to reach another copy: found by its name now, else where it was last reached or said it listens.
+        private func endpoints(of peer: String) -> [NWEndpoint] {
+            var list: [NWEndpoint] = []
+            if let found = found[peer] { list.append(found) }
+            for place in told[peer] ?? [] {
+                guard let colon = place.lastIndex(of: ":"), let port = NWEndpoint.Port(String(place[place.index(after: colon)...])) else { continue }
+                let host = String(place[..<colon]).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+                list.append(.hostPort(host: NWEndpoint.Host(host), port: port))
+            }
+            return list
+        }
+
+        /// Where this app listens, for Lamp's room to tell the others, who keep it for when Lamp is closed.
+        private func tellWhereIListen() {
+            guard relayIn, let port = listenerPort else { return }
+            // This Mac's own address first, for an app of the wish on the same Mac (an iPhone app in the simulator): it shares
+            // the Mac's network, and an app on another device that tries it is turned away at once.
+            let places = (["127.0.0.1"] + Self.addresses()).map { "\($0):\(port)" }
+            if let json = try? JSONSerialization.data(withJSONObject: ["t": "at", "addresses": places]) { say(json) }
+        }
+
+        /// This device's addresses on its networks, IPv4, not the loopback.
+        private static func addresses() -> [String] {
+            var list: [String] = []
+            var first: UnsafeMutablePointer<ifaddrs>?
+            guard getifaddrs(&first) == 0, let start = first else { return [] }
+            defer { freeifaddrs(start) }
+            var each: UnsafeMutablePointer<ifaddrs>? = start
+            while let item = each {
+                defer { each = item.pointee.ifa_next }
+                let flags = Int32(item.pointee.ifa_flags)
+                guard let address = item.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET),
+                      flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0 else { continue }
+                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                    list.append(String(cString: host))
+                }
+            }
+            return list
+        }
+
+        /// Dials another copy at each place in turn until one answers and proves it holds the wish's key; tried again later,
+        /// less often each time it fails, and at once when it's found anew. Whichever copy of that app answers is taken
+        /// (an address can change hands), and kept as the copy it said it is.
+        private func dial(_ peer: String, _ places: [NWEndpoint]) {
+            guard !closed else { dialing.remove(peer); return }
+            guard let place = places.first else {
+                dialing.remove(peer)
+                let tries = (nextDial[peer]?.tries ?? 0) + 1
+                nextDial[peer] = (Date().addingTimeInterval(min(30, pow(2, Double(tries))) * Double.random(in: 0.8...1.2)), tries)
+                return
+            }
+            dialing.insert(peer)
+            // A WebSocket asks for its link only of an address a URL can name, so a name found on the network is looked up
+            // first, with a plain connection that goes no further.
+            if case .service = place {
+                let look = NWConnection(to: place, using: .tcp), settled = Flag()
+                let next = { [weak self] (found: NWEndpoint?) in
+                    guard !settled.on else { return }
+                    settled.on = true
+                    look.stateUpdateHandler = nil
+                    look.cancel()
+                    self?.dial(peer, (found.map { [$0] } ?? []) + places.dropFirst())
+                }
+                look.stateUpdateHandler = { state in
+                    MainActor.assumeIsolated {
+                        switch state {
+                        case .ready: next(look.currentPath?.remoteEndpoint)
+                        case .failed, .waiting, .cancelled: next(nil)
+                        default: break
+                        }
+                    }
+                }
+                look.start(queue: .main)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { MainActor.assumeIsolated { next(nil) } }
+                return
+            }
+            guard case .hostPort(let host, let port) = place, let name = Self.urlHost(host),
+                  let url = URL(string: "ws://\(name):\(port.rawValue)/") else { return dial(peer, Array(places.dropFirst())) }
+            let direct = Direct(connection: NWConnection(to: .url(url), using: Self.socketParameters()), dialled: true, peer: peer)
+            direct.done = { [weak self, weak direct] worked in
+                guard let self else { return }
+                if worked {
+                    self.dialing.remove(peer)
+                    self.nextDial[peer] = nil
+                    // Another copy answered where this one was looked for: what was kept of the old one goes.
+                    let reached = direct?.peer ?? peer
+                    if reached != peer { self.told[peer] = nil }
+                    // Kept by an address any app of the wish can dial again, an IPv4 one or a name.
+                    switch host {
+                    case .ipv4, .name: self.remember(reached, at: ["\(name):\(port.rawValue)"])
+                    default: break
+                    }
+                } else {
+                    self.dial(peer, Array(places.dropFirst()))
+                }
+            }
+            start(direct)
+            direct.connection.stateUpdateHandler = { [weak self] state in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    switch state {
+                    case .ready:
+                        self.receive(direct)
+                        self.hello(direct)
+                    // Waiting is a place that can't be reached now: the next one is tried rather than this one again.
+                    case .failed, .waiting, .cancelled: self.drop(direct)
+                    default: break
+                    }
+                }
+            }
+            direct.connection.start(queue: .main)
+        }
+
+        /// A host as a URL names it: an IPv4 address without the interface it was found on, an IPv6 one in brackets.
+        private static func urlHost(_ host: NWEndpoint.Host) -> String? {
+            switch host {
+            case .ipv4(let v4): return "\(v4)".split(separator: "%").first.map(String.init)
+            case .ipv6(let v6):
+                let parts = "\(v6)".split(separator: "%", maxSplits: 1)
+                return parts.first.map { "[" + $0 + (parts.count > 1 ? "%25" + parts[1] : "") + "]" }
+            case .name(let name, _): return isPlace(name) ? name : nil
+            @unknown default: return nil
+            }
+        }
+
+        private static func isPlace(_ name: String) -> Bool {
+            (1...253).contains(name.utf8.count) && name.utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x41 && $0 <= 0x5a) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2d || $0 == 0x2e }
+        }
+
+        private final class Flag: @unchecked Sendable { var on = false }   // touched only on the main queue
+
+        /// An app of the wish, or anyone, dialling this one: let in only once it proves it holds the wish's key.
+        private func take(_ connection: NWConnection) {
+            // Eight unproven at a time, counting only those dialled in, so this app's own dials never shut the others out.
+            guard opening.values.filter({ !$0.dialled }).count < 8, !closed else { return connection.cancel() }
+            let direct = Direct(connection: connection, dialled: false, peer: "")
+            start(direct)
+            connection.stateUpdateHandler = { [weak self] state in
+                MainActor.assumeIsolated {
+                    if case .ready = state { self?.receive(direct) }
+                    if case .failed = state { self?.drop(direct) }
+                    if case .cancelled = state { self?.drop(direct) }
+                }
+            }
+            connection.start(queue: .main)
+        }
+
+        private func start(_ direct: Direct) {
+            opening[ObjectIdentifier(direct)] = direct
+            // A handshake not done in a few seconds is let go.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                MainActor.assumeIsolated { if !direct.ready { self?.drop(direct) } }
+            }
+        }
+
+        private func hello(_ direct: Direct) {
+            guard let key = Self.key else { return drop(direct) }
+            let nonce = Self.random(16), tag = Self.tag(of: key)
+            direct.hello = (nonce, tag)
+            if let json = try? JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": copy, "nonce": nonce.base64EncodedString()]) {
+                frame(json, text: true, on: direct)
+            }
+        }
+
+        private func receive(_ direct: Direct) {
+            direct.connection.receiveMessage { [weak self] content, context, _, error in
+                MainActor.assumeIsolated {
+                    guard let self, error == nil else { self?.drop(direct); return }
+                    let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
+                    direct.heard = Date()
+                    switch metadata?.opcode {
+                    case .text?: self.text(content ?? Data(), on: direct)
+                    case .binary?: self.binary(content ?? Data(), on: direct)
+                    case .close?: return self.drop(direct)
+                    default: break
+                    }
+                    if self.opening[ObjectIdentifier(direct)] != nil || self.directs[direct.peer] === direct { self.receive(direct) }
+                }
+            }
+        }
+
+        // The same handshake as Lamp's room, the app that listens taking the relay's side and naming itself.
+        private func text(_ data: Data, on direct: Direct) {
+            guard data.count <= Self.messageLimit, let key = Self.key,
+                  let said = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return drop(direct) }
+            let kind = said["t"] as? String
+            if kind == "beat" { return }
+            if direct.dialled, direct.sealer == nil, kind == "challenge", let hello = direct.hello,
+               let server = said["peer"] as? String, Self.isName(server), server != copy, Self.app(of: server) == Self.app(of: direct.peer),
+               let theirs = (said["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
+               let proof = (said["proof"] as? String).flatMap({ Data(base64Encoded: $0) }) {
+                let transcript = Self.transcript(tag: hello.tag, client: copy, server: server, clientNonce: hello.nonce, serverNonce: theirs)
+                guard Self.same(proof, Self.derive("lamp-wish server", key, transcript)) else { return drop(direct) }
+                direct.peer = server
+                direct.hello = nil
+                if let json = try? JSONSerialization.data(withJSONObject: ["t": "proof", "proof": Self.derive("lamp-wish client", key, transcript).base64EncodedString()]) {
+                    frame(json, text: true, on: direct)
+                }
+                direct.sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
+                direct.opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
+                if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device, "wire": Self.wire]) { sealed(join, on: direct) }
+                return
+            }
+            if !direct.dialled, direct.transcript == nil, kind == "hello",
+               let tag = (said["tag"] as? String).flatMap({ Data(base64Encoded: $0) }), Self.same(tag, Self.tag(of: key)),
+               let peer = said["peer"] as? String, Self.isName(peer), peer != copy, peer != me, roster.contains(where: { $0.id == Self.app(of: peer) }),
+               let theirs = (said["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16 {
+                let ours = Self.random(16)
+                let transcript = Self.transcript(tag: tag, client: peer, server: copy, clientNonce: theirs, serverNonce: ours)
+                direct.peer = peer
+                direct.transcript = transcript
+                if let json = try? JSONSerialization.data(withJSONObject: ["t": "challenge", "peer": copy, "nonce": ours.base64EncodedString(),
+                                                                         "proof": Self.derive("lamp-wish server", key, transcript).base64EncodedString()]) {
+                    frame(json, text: true, on: direct)
+                }
+                return
+            }
+            if !direct.dialled, direct.sealer == nil, kind == "proof", let transcript = direct.transcript,
+               let proof = (said["proof"] as? String).flatMap({ Data(base64Encoded: $0) }),
+               Self.same(proof, Self.derive("lamp-wish client", key, transcript)) {
+                direct.opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
+                direct.sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
+                return
+            }
+            drop(direct)
+        }
+
+        private func binary(_ data: Data, on direct: Direct) {
+            guard var box = direct.opener, let plain = box.open(data) else { return drop(direct) }
+            direct.opener = box
+            if plain.first == 1 { return direct.ready ? hearPiece(plain, via: direct) : drop(direct) }
+            guard let m = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] else { return drop(direct) }
+            switch m["t"] as? String {
+            case "join" where !direct.dialled && !direct.ready:
+                direct.device = String((m["device"] as? String ?? "").prefix(40))
+                direct.wire = m["wire"] as? Int ?? 1
+                if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": copy, "device": Self.device, "wire": Self.wire]) { sealed(welcome, on: direct) }
+                ready(direct)
+            case "welcome" where direct.dialled && !direct.ready:
+                direct.device = String((m["device"] as? String ?? "").prefix(40))
+                direct.wire = m["wire"] as? Int ?? 1
+                ready(direct)
+            case "message" where direct.ready:
+                guard let data = m["data"] else { return }
+                for listener in messageListeners { listener(Self.app(of: direct.peer), data, direct.peer) }
+            case "values" where direct.ready:
+                heardValues(m, from: direct.peer)
+            case "store" where direct.ready:
+                heardStore(m, from: direct.peer)
+            case "pad" where direct.ready:
+                if let pad = m["m"] as? [String: Any] { heardPad(pad, from: direct.peer) }
+            case let kind? where direct.ready && kind.hasPrefix("file"):
+                heardFile(m, from: direct.peer, via: direct)
+            default:
+                break
+            }
+        }
+
+        /// A link proved both ways. Two copies that both listen may each have dialled the other: the one the copy with the
+        /// earlier peer name dialled is kept on both sides, so they agree without saying.
+        private func ready(_ direct: Direct) {
+            guard !closed else { return drop(direct) }
+            opening[ObjectIdentifier(direct)] = nil
+            if let other = directs[direct.peer], other !== direct, other.ready {
+                let keepNew = direct.dialled == (copy < direct.peer)
+                if !keepNew { direct.done?(true); direct.done = nil; return drop(direct) }
+                other.done = nil
+                drop(other)
+            }
+            direct.ready = true
+            directs[direct.peer] = direct
+            direct.done?(true)
+            direct.done = nil
+            rebuild()
+        }
+
+        private func drop(_ direct: Direct) {
+            opening[ObjectIdentifier(direct)] = nil
+            direct.connection.stateUpdateHandler = nil
+            direct.connection.cancel()
+            dropFiles("The link was lost.") { _, way in way === direct }
+            if directs[direct.peer] === direct {
+                directs[direct.peer] = nil
+                rebuild()
+            }
+            let done = direct.done
+            direct.done = nil
+            done?(false)
+        }
+
+        private func sealed(_ json: Data, on direct: Direct, then: (@Sendable () -> Void)? = nil) {
+            guard var box = direct.sealer else { return }
+            let sealed = box.seal(json)
+            direct.sealer = box
+            frame(sealed, text: false, on: direct, then: then)
+        }
+
+        private func frame(_ data: Data, text: Bool, on direct: Direct, then: (@Sendable () -> Void)? = nil) {
+            let metadata = NWProtocolWebSocket.Metadata(opcode: text ? .text : .binary)
+            let context = NWConnection.ContentContext(identifier: "message", metadata: [metadata])
+            direct.connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in then?() })
+        }
+
+        // The wish's channel, the same steps as Lamp's relay takes on its side, byte for byte: every value is an HMAC
+        // under the wish's key of a label, a zero byte and what it's about; messages are AES-GCM with a nonce that
+        // counts them, so one that was changed, sent again or put out of order doesn't open.
+        private static func derive(_ label: String, _ key: SymmetricKey, _ data: Data = Data()) -> Data {
+            var message = Data(label.utf8)
+            message.append(0)
+            message.append(data)
+            return Data(HMAC<SHA256>.authenticationCode(for: message, using: key))
+        }
+
+        private static func tag(of key: SymmetricKey) -> Data { derive("lamp-wish tag", key).prefix(8) }
+
+        private static func transcript(tag: Data, client: String, server: String, clientNonce: Data, serverNonce: Data) -> Data {
+            var data = tag
+            for name in [client, server] { data.append(UInt8(name.utf8.count)); data.append(Data(name.utf8)) }
+            data.append(clientNonce)
+            data.append(serverNonce)
+            return data
+        }
+
+        /// A peer's name: an app's ("tv"), or a copy's, the app's then a dot and the copy's id ("tv.k3j9x0ab"), 32 bytes at most.
+        private static func isName(_ name: String) -> Bool {
+            let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+            guard (1...32).contains(name.utf8.count), (1...2).contains(parts.count), !parts.contains(where: \.isEmpty) else { return false }
+            return parts[0].utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2d }
+                && parts.dropFirst().allSatisfy { $0.utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) } }
+        }
+
+        private static func same(_ a: Data, _ b: Data) -> Bool {
+            a.count == b.count && zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
+        }
+
+        private static func random(_ count: Int) -> Data {
+            var generator = SystemRandomNumberGenerator()
+            return Data((0..<count).map { _ in UInt8.random(in: 0...255, using: &generator) })
+        }
+
+        private struct Sealer {
+            let key: SymmetricKey
+            var count: UInt64 = 0
+            private func nonce() -> AES.GCM.Nonce {
+                var bytes = Data(repeating: 0, count: 4)
+                withUnsafeBytes(of: count.bigEndian) { bytes.append(contentsOf: $0) }
+                return try! AES.GCM.Nonce(data: bytes)
+            }
+            mutating func seal(_ plain: Data) -> Data {
+                defer { count += 1 }
+                let box = try! AES.GCM.seal(plain, using: key, nonce: nonce())
+                return box.ciphertext + box.tag
+            }
+            mutating func open(_ sealed: Data) -> Data? {
+                guard sealed.count >= 16, let box = try? AES.GCM.SealedBox(nonce: nonce(), ciphertext: sealed.dropLast(16), tag: sealed.suffix(16)),
+                      let plain = try? AES.GCM.open(box, using: key) else { return nil }
+                count += 1
+                return plain
+            }
+        }
+    }
+
+    /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
+    /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
+    /// dot of its color. Nothing while this app is alone, with no other app or copy open. Give a peer name for that app's line alone. It
+    /// takes the font and colors of where it's put, so style it as the rest of the app; or show `LampWish`'s own
+    /// `status` and `peer(_:)?.status` in a view of your own.
+    struct LampWishStatus: View {
+        @ObservedObject private var wish = LampWish.shared
+        private let only: String?
+
+        init(_ peer: String? = nil) { only = peer }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                if wish.state == .ended {
+                    // Stopped: it no longer knows who is open.
+                } else if wish.state != .connected, !wish.status.reason.isEmpty {
+                    line(.orange, wish.status.reason)
+                } else {
+                    ForEach(wish.apps.filter { only == nil || $0.id == only }) { app in
+                        switch app.status.state {
+                        case .connected: line(.green, LampWish.connected(app.name))
+                        case .outOfDate: line(.orange, app.status.reason)
+                        default: line(.secondary, app.status.reason)
+                        }
+                    }
+                }
+            }
+        }
+
+        private func line(_ colour: Color, _ text: String) -> some View {
+            HStack(spacing: 6) {
+                Circle().fill(colour).frame(width: 7, height: 7)
+                Text(text).fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    // MARK: - The wish's TV app
+
+    /// Joins the TV app of this app's wish as a player of its `Lamp.controllers`, the way a phone's page does, over the
+    /// home Wi‑Fi with nothing to pair or set up. It goes the way `LampWish` reaches the TV app, straight to it or through
+    /// Lamp on the Mac, sealed with the wish's key, so it goes on with Lamp closed. Keep it while it's used (a @StateObject,
+    /// or a model's property); it leaves the game when released.
+    ///
+    ///     @StateObject private var pad = LampController.connect()
+    ///     Button("Next") { pad.press("next") }                  // a tap: held, then let go
+    ///     pad.button("fire", down: true); pad.button("fire", down: false)
+    ///     pad.axis("stick", x: 0.4, y: -1)                      // each from -1 to 1
+    ///     pad.send(["volume": 4])                               // JSON; false when it wasn't sent
+    ///     let sending = pad.sendFile(data, name: "game.nes")    // up to 64 MB: sending.sent, .progress, .state, .cancel()
+    ///     pad.onMessage { data in … }                           // what the TV app sent with Lamp.controllers.send
+    ///     pad.onFile { file in … }                              // a file it sent with sendFile: file.name, .type, .data
+    ///     pad.state                                             // .connecting, .connected, .waiting (the TV app isn't open,
+    ///                                                           // or isn't taking players), .ended
+    ///
+    /// Each message, as the JSON that goes out, is at most `messageLimit` (16 KB). A bigger one isn't sent: `send`
+    /// returns false and says why in the app's log, and the TV app's log says so too. Send something big (a file, a
+    /// picture) with `sendFile`.
+    @MainActor final class LampController: ObservableObject {
+        enum State: String { case connecting, connected, waiting, ended, full }
+        /// The most bytes one message may take as JSON, its wrapping included (`ControllerWire.message` in Lamp).
+        static let messageLimit = 16 * 1024
+        @Published private(set) var state: State = .connecting { didSet { if state == .connected { saidAway = false } } }
+        /// The player number the TV app knows this one by (1, 2, …), once it has given one.
+        @Published private(set) var player: Int?
+
+        private let wish = LampWish.shared
+        /// This controller among any others the app has, each a player of its own: on everything it says and is told.
+        private let pad = String(UUID().uuidString.prefix(8)).lowercased()
+        /// The copy of the wish's TV app this plays with, by its peer name ("tv.k3j9x0ab"): the one open longest, kept
+        /// while it stays open.
+        private var tv: String?
+        private var seq = 0
+        private var listeners: [(Any) -> Void] = []
+        private var fileListeners: [(LampFile) -> Void] = []
+        private var sending: [LampTransfer] = []
+        private var closed = false
+        private var saidAway = false
+        /// The TV app this controller has asked to play with, welcomed or not yet: who to tell it has gone when it's closed
+        /// or let go, kept where `deinit` reaches it.
+        private final class Leaving: @unchecked Sendable { var tv: String?; var pad = "" }
+        private let leaving = Leaving()
+
+        static func connect() -> LampController {
+            let pad = LampController()
+            // What the TV app's game says to its players, its files to them, and the TV app opening or closing.
+            pad.leaving.pad = pad.pad
+            pad.wish.addPad(owner: pad, message: { [weak pad] from, m in pad?.hear(m, from: from) },
+                            file: { [weak pad] from, channel, file in pad?.heardFile(file, channel: channel, from: from) },
+                            apps: { [weak pad] in pad?.appsChanged() })
+            pad.appsChanged()
+            return pad
+        }
+
+        deinit {
+            guard let tv = leaving.tv else { return }
+            let pad = leaving.pad
+            DispatchQueue.main.async { MainActor.assumeIsolated { _ = LampWish.shared.sendPad(["t": "leave", "pad": pad], to: tv) } }
+        }
+
+        func press(_ name: String) {
+            button(name, down: true)
+            button(name, down: false)
+        }
+        @discardableResult func button(_ name: String, down: Bool) -> Bool { post(["t": "button", "name": name, "down": down]) }
+        @discardableResult func axis(_ name: String, x: Double, y: Double) -> Bool {
+            post(["t": "axis", "name": name, "x": max(-1, min(1, x)), "y": max(-1, min(1, y))])
+        }
+        /// Sends `data` (anything JSON can hold) to the TV app's `onMessage`; false, with the reason in the app's log, when
+        /// it wasn't. Anything over `messageLimit` goes with `sendFile`.
+        @discardableResult func send(_ data: Any) -> Bool { post(["t": "message", "data": data]) }
+        func onMessage(_ handler: @escaping (Any) -> Void) { listeners.append(handler) }
+        /// Files the TV app sends this one with `Lamp.controllers.sendFile`, whole.
+        func onFile(_ handler: @escaping (LampFile) -> Void) { fileListeners.append(handler) }
+
+        /// Sends a file to the TV app's `onFile`, up to 64 MB, in pieces; the transfer says how far it's got.
+        @discardableResult
+        func sendFile(_ data: Data, name: String, type: String = "application/octet-stream") -> LampTransfer {
+            guard state == .connected, let tv else {
+                let transfer = LampTransfer(id: 0, name: name, size: data.count)
+                transfer.end(.failed("The TV app isn't connected."))
+                return transfer
+            }
+            let transfer = wish.sendFile(data, name: name, type: type, to: tv, channel: "pad:" + pad)
+            sending = sending.filter { $0.state == .sending } + [transfer]
+            return transfer
+        }
+
+        func close() {
+            guard !closed else { return }
+            // Asked to play, even if not welcomed yet: the TV app may take it in after this, and must let it go again.
+            if let asked = leaving.tv { wish.sendPad(["t": "leave", "pad": pad], to: asked) }
+            closed = true
+            leaving.tv = nil
+            wish.removePad(owner: self)
+            for transfer in sending { transfer.cancel() }
+            sending = []
+            state = .ended
+        }
+
+        // Nothing is dropped without a word in the app's log: the code that sent it can't tell otherwise why the TV app
+        // never heard it. Being away from the TV app is said once until it's back, not for every message meanwhile.
+        private func post(_ message: [String: Any]) -> Bool {
+            let what = message["t"] as? String == "message" ? "A message" : "'\(message["name"] as? String ?? "")'"
+            // While the TV app isn't open (.waiting) there's no one to give it to.
+            guard state == .connected, let tv else {
+                if !saidAway { saidAway = true; fputs("LampController: \(what) wasn't sent: not connected to the TV app (\(state.rawValue)). Check pad.state before sending.\n", stderr) }
+                return false
+            }
+            var message = message
+            message["seq"] = seq + 1
+            message["at"] = Int(Date().timeIntervalSince1970 * 1000)
+            message["pad"] = pad
+            // Measured as it goes through Lamp's room, wrapping and all.
+            let frame: [String: Any] = ["t": "pad", "m": message, "to": tv]
+            guard JSONSerialization.isValidJSONObject(frame), let data = try? JSONSerialization.data(withJSONObject: frame) else {
+                fputs("LampController: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
+                return false
+            }
+            guard data.count <= Self.messageLimit else {
+                fputs("LampController: \(what) of \(data.count) bytes wasn't sent: a message between devices is at most \(Self.messageLimit) bytes as JSON. Send something big with sendFile.\n", stderr)
+                wish.sendPad(["t": "too-big", "bytes": data.count, "pad": pad], to: tv)
+                return false
+            }
+            seq += 1
+            return wish.sendPad(message, to: tv)
+        }
+
+        /// The wish's list changed: the TV app came (this one asks to play), went, or can't take players yet.
+        private func appsChanged() {
+            guard !closed else { return }
+            let app = wish.apps.first { $0.kind == "tv" }
+            let open = app?.copies.map(\.id) ?? []
+            if let tv, open.contains(tv) {} else if let first = open.first {
+                // Another copy of the TV app: a player of its game anew.
+                if tv != nil, state == .connected { state = .connecting; player = nil }
+                tv = first
+            }
+            guard let app, app.isOpen, let tv else {
+                // Its players went with it.
+                leaving.tv = nil
+                if state != .waiting { state = .waiting }
+                player = nil
+                return
+            }
+            // Built by an earlier Lamp: it takes no players this way until it's opened from Lamp, which builds it again.
+            guard wish.takesFiles(tv) else {
+                if state != .waiting { state = .waiting; fputs("LampController: \(app.status.reason)\n", stderr) }
+                return
+            }
+            if state != .connected { join() }
+        }
+
+        private func join() {
+            guard let tv else { return }
+            if state == .waiting || state == .ended { state = .connecting }
+            if wish.sendPad(["t": "join", "now": Int(Date().timeIntervalSince1970 * 1000), "pad": pad], to: tv) { leaving.tv = tv }
+        }
+
+        /// What the TV app's `Lamp.controllers` says to this player.
+        private func hear(_ m: [String: Any], from peer: String) {
+            // Said to another controller of this app's, not this one.
+            guard !closed, peer == tv, (m["pad"] as? String).map({ $0 == pad }) ?? true else { return }
+            switch m["t"] as? String {
+            case "host":
+                // The TV app has just started taking players.
+                if state != .connected { join() }
+            case "welcome":
+                seq = 0
+                state = .connected
+                leaving.tv = tv
+            case "player":
+                if let number = m["number"] as? Int { player = number }
+            case "state":
+                // The TV app stopped taking players, or started again.
+                if m["host"] as? Bool == true { join() } else {
+                    for transfer in sending { transfer.cancel() }
+                    sending = []
+                    state = .waiting
+                    leaving.tv = nil
+                    player = nil
+                }
+            case "message":
+                if let data = m["data"] { for listener in listeners { listener(data) } }
+            case "full":
+                closed = true
+                wish.removePad(owner: self)
+                state = .full
+            default:
+                break
+            }
+        }
+
+        private func heardFile(_ file: LampFile, channel: String, from peer: String) {
+            guard !closed, peer == tv, channel == "pad" || channel == "pad:" + pad else { return }
+            for listener in fileListeners { listener(file) }
+        }
+    }
+
+    /// How files go between a wish's apps, the same in every library and at Lamp's relay (`ControllerWire`): pieces of
+    /// at most `chunk` bytes, at most `window` sent ahead of what the receiver has acknowledged, `largest` at most, and
+    /// `transfers` at once each way between two apps.
+    enum LampFiles {
+        nonisolated static let chunk = 64 * 1024
+        nonisolated static let window = 512 * 1024
+        nonisolated static let largest = 64 * 1024 * 1024
+        nonisolated static let transfers = 2
+    }
+
+    /// A file on its way to another app of the wish (`LampWish.sendFile`, `LampController.sendFile`).
+    @MainActor final class LampTransfer: ObservableObject, Identifiable {
+        enum State: Equatable { case sending, done, failed(String) }
+        let id: Int
+        let name: String
+        /// Its size in bytes, and how many of them the TV app has.
+        let size: Int
+        @Published fileprivate(set) var sent = 0
+        @Published fileprivate(set) var state: State = .sending
+        var progress: Double { size == 0 ? 1 : Double(sent) / Double(size) }
+        fileprivate var cancelling: () -> Void = {}
+        private var waiting: [CheckedContinuation<Void, Error>] = []
+
+        fileprivate init(id: Int, name: String, size: Int) {
+            self.id = id
+            self.name = name
+            self.size = size
+        }
+
+        func cancel() { if state == .sending { cancelling() } }
+
+        /// Waits until the TV app has all of it; throws when it didn't get there.
+        func finished() async throws {
+            switch state {
+            case .done: return
+            case .failed(let reason): throw LampAI.Failure(message: reason)
+            case .sending: try await withCheckedThrowingContinuation { waiting.append($0) }
+            }
+        }
+
+        fileprivate func end(_ result: State) {
+            guard state == .sending else { return }
+            if result == .done { sent = size }
+            state = result
+            for waiter in waiting {
+                if case .failed(let reason) = result { waiter.resume(throwing: LampAI.Failure(message: reason)) } else { waiter.resume() }
+            }
+            waiting = []
+        }
+    }
+
+    /// A file another app of the wish sent (`LampWish.onFile`), or the TV app sent with `Lamp.controllers.sendFile`.
+    struct LampFile {
+        let name: String
+        let type: String
+        let data: Data
+        /// Which copy of the app sent it ("screen.k3j9x0ab"), to send one back to that copy alone.
+        var copy = ""
+    }
+
+    // MARK: - Shared collections
+
+    /// What `LampStore.shared` and `LampStore.sharedFiles` keep, carried by `LampWish`: every copy of the app (the same app
+    /// open on a Mac, an iPad, a TV and an Android frame) keeps each collection on its device, and copies that meet, through
+    /// Lamp's room or straight, merge them item by item as they merge values: each item's latest setting wins, and a deleted
+    /// one is kept for a month without its value, so an older setting from a copy that was away can't bring it back. Two
+    /// copies that changed different items while apart both keep both. A collection is sent in pieces within a message's
+    /// size, and only the parts that differ: as copies meet, and once a minute, each tells the other what each sixteenth of
+    /// each collection adds up to (`sum`), and asks for the sixteenths where they differ (`ask`). A shared file is an item
+    /// saying its size, type and checksum; a copy without its bytes asks one that has them, which sends them as a file.
+    extension LampWish {
+        /// An item, as JSON.
+        static let itemLimit = 8 * 1024
+        /// Everything this app sets in its shared collections, items and their deletions (32 bytes each, as for values).
+        static let sharedLimit = 1024 * 1024
+        /// Every shared file's bytes together.
+        static let sharedFilesLimit = 256 * 1024 * 1024
+        static let collectionsLimit = 32
+
+        private struct SharedItem {
+            var entry: Entry
+            /// What it takes of `sharedLimit`: its id, and its value as JSON or at least 32 bytes, which a deletion takes.
+            var held: Int
+        }
+
+        /// A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name, and
+        /// one of the wish's own, shared by all its apps rather than this app's copies, has "wish:" before the name.
+        nonisolated static func isCollection(_ name: String) -> Bool {
+            var plain = name.hasPrefix("files:") ? String(name.dropFirst(6)) : name
+            if plain.hasPrefix("wish:") { plain = String(plain.dropFirst(5)) }
+            return (1...64).contains(plain.utf8.count) && plain != "__proto__" && plain.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
+        }
+        /// One of the wish's own collections (`LampStore.shared(name, wish: true)`): every app of the wish keeps it, not only
+        /// this app's copies.
+        nonisolated static func isWishWide(_ name: String) -> Bool { (name.hasPrefix("files:") ? String(name.dropFirst(6)) : name).hasPrefix("wish:") }
+        nonisolated fileprivate static func isItemID(_ id: String) -> Bool { (1...128).contains(id.utf8.count) && id != "__proto__" }
+
+        // What `LampStore.shared` and `LampStore.sharedFiles` call, and the bridge to the page an app of Lamp's own is
+        // around (`LampPageWish`): use those rather than these.
+
+        /// The items of a collection now, deleted ones left out, by id.
+        func items(in name: String) -> [(id: String, value: Any)] {
+            (collections[name] ?? [:]).compactMap { id, item in item.entry.value.map { (id, $0) } }.sorted { $0.id < $1.id }
+        }
+
+        func item(in name: String, id: String) -> Any? { collections[name]?[id]?.entry.value }
+
+        /// Hears every change to a collection, a batch at a time: each item's id and its value (nil when deleted), and the
+        /// app that made them (`me` for a change made here or by another copy of this app).
+        func onItems(in name: String, _ handler: @escaping ([(String, Any?)], String) -> Void) {
+            collectionListeners[name, default: []].append(handler)
+        }
+
+        /// Sets items (nil deletes one), here at once and in every other copy now if it's open, else when they next meet. An
+        /// item set to what it is already changes nothing. False, with why in the app's log, when none was set.
+        @discardableResult
+        func putItems(in name: String, _ given: [(String, Any?)]) -> Bool {
+            let what = "LampStore.shared(\"\(name.hasPrefix("files:") ? String(name.dropFirst(6)) : name)\")".replacingOccurrences(of: "(\"wish:", with: "(\"")
+            guard Self.isCollection(name) else {
+                fputs("\(what): a collection's name is 1 to 64 letters, digits, \"-\", \"_\" or \".\", and not __proto__.\n", stderr)
+                return false
+            }
+            guard collections[name] != nil || collections.count < Self.collectionsLimit else {
+                fputs("\(what): an app shares at most \(Self.collectionsLimit) collections.\n", stderr)
+                return false
+            }
+            dropExpiredItems()
+            // Only what this app set counts: a wish's own collections also hold what its other apps set, which this one
+            // can't make room for.
+            var held = collections.values.reduce(0) { $0 + $1.values.reduce(0) { $0 + (isOwn($1.entry) ? $1.held : 0) } }
+            var sets: [String: Entry] = [:], changed: [(String, Any?)] = [], failed = false
+            for (id, value) in given {
+                guard Self.isItemID(id) else {
+                    fputs("\(what): an item's id is 1 to 128 bytes; \"\(id.prefix(40))\" wasn't set.\n", stderr)
+                    failed = true
+                    continue
+                }
+                let had = collections[name]?[id]
+                var kept: Any?, size = 32
+                if let value, !(value is NSNull) {
+                    guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value], options: .sortedKeys) else {
+                        fputs("\(what): the item \"\(id)\" holds something JSON can't, and wasn't set.\n", stderr)
+                        failed = true
+                        continue
+                    }
+                    size = Self.size(of: value)
+                    guard size <= Self.itemLimit else {
+                        fputs("\(what): the item \"\(id)\" is \(size) bytes as JSON, and wasn't set: an item is at most \(Self.itemLimit).\n", stderr)
+                        failed = true
+                        continue
+                    }
+                    if let old = had?.entry.value, (try? JSONSerialization.data(withJSONObject: [old], options: .sortedKeys)) == data { continue }
+                    kept = ((try? JSONSerialization.jsonObject(with: data)) as? [Any])?.first
+                } else if had?.entry.value == nil {
+                    continue
+                }
+                let need = id.utf8.count + max(32, size)
+                let ownHad = had.map { isOwn($0.entry) ? $0.held : 0 } ?? 0
+                // A deletion is never turned down: it takes no more than the item it replaces, so the wish holds no more than before.
+                guard kept == nil || held - ownHad + need <= Self.sharedLimit else {
+                    fputs("\(what): the item \"\(id)\" wasn't set: this app's items in shared collections would pass \(Self.sharedLimit) bytes (a deleted item counts 32 bytes for a month).\n", stderr)
+                    failed = true
+                    continue
+                }
+                held += need - ownHad
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                clock = now > clock.ms ? (now, 0) : clock.n < Self.counts ? (clock.ms, clock.n + 1) : (clock.ms + 1, 0)
+                let entry = Entry(value: kept, ms: clock.ms, n: Int(clock.n), peer: copy)
+                collections[name, default: [:]][id] = SharedItem(entry: entry, held: need)
+                sets[id] = entry
+                changed.append((id, kept))
+            }
+            guard !changed.isEmpty else { return !failed }
+            keepValues()
+            itemsChanged(name, changed, from: copy)
+            for each in storePeers where shares(name, with: each) { shareItems(name, sets, to: each) }
+            return !failed
+        }
+
+        /// Makes this copy's items of a collection exactly these: each set (an unchanged one changes nothing), and an item this
+        /// copy set last that isn't among them deleted. For what a copy reads that the others can't (calendars, an album),
+        /// published again each time it's read; items another copy set are left as they are.
+        @discardableResult
+        func publishItems(in name: String, _ given: [(String, Any)]) -> Bool {
+            let ids = Set(given.map(\.0))
+            let gone = (collections[name] ?? [:]).filter { !ids.contains($0.key) && $0.value.entry.value != nil && $0.value.entry.peer == copy }.map { ($0.key, nil as Any?) }
+            return putItems(in: name, given.map { ($0.0, $0.1 as Any?) } + gone)
+        }
+
+        private func itemsChanged(_ name: String, _ changed: [(String, Any?)], from peer: String) {
+            collectionsUnsaved.insert(name)
+            saveCollectionsSoon()
+            if name.hasPrefix("files:") { for (id, _) in changed { dropStaleBytes(name, id: id) } }
+            for listener in collectionListeners[name] ?? [] { listener(changed, Self.app(of: peer)) }
+            if name.hasPrefix("files:") { fetchFiles() }
+        }
+
+        /// An item this app set last, on this copy or another, or before it knew its own name.
+        private func isOwn(_ entry: Entry) -> Bool { entry.peer.isEmpty || (!me.isEmpty && Self.app(of: entry.peer) == me) }
+
+        /// Items set before this app knew its own name take it now, so two copies' settings never tie.
+        private func nameUnnamedItems() {
+            for (name, list) in collections where list.values.contains(where: { $0.entry.peer.isEmpty }) {
+                for (id, item) in list where item.entry.peer.isEmpty { collections[name]?[id]?.entry.peer = copy }
+                collectionsUnsaved.insert(name)
+                saveCollectionsSoon()
+            }
+        }
+
+        // MARK: Between copies
+
+        /// Who this copy shares collections with now: the other copies of this app that speak 5, which share all of them,
+        /// and the copies of the wish's other apps that speak 6, which share only the wish's own (`shares`).
+        private var storePeers: [String] {
+            guard !me.isEmpty else { return [] }
+            return copies(for: nil).filter { $0 != copy && wire(of: $0) >= (Self.app(of: $0) == me ? 5 : 6) } + (relayIn && lampKeeps ? [Self.keeper] : [])
+        }
+
+        /// Whether a collection goes to another copy and is taken from it: this app's own collections only between its own
+        /// copies, never another app's of the wish; the wish's own between every app of it.
+        private func shares(_ name: String, with peer: String) -> Bool {
+            !me.isEmpty && peer != copy && (Self.app(of: peer) == me || Self.isWishWide(name) || peer == Self.keeper)
+        }
+
+        private func heardStore(_ m: [String: Any], from peer: String) {
+            guard !me.isEmpty, peer != copy else { return }
+            switch m["op"] as? String {
+            case "items":
+                guard let name = m["s"] as? String, Self.isCollection(name), shares(name, with: peer), let given = m["items"] as? [String: Any] else { return }
+                mergeItems(name, given, from: peer)
+            case "sum":
+                // Asks for each sixteenth of a collection where the other has something this one doesn't.
+                let theirs = m["sums"] as? [String: String] ?? [:]
+                var asks: [String: [Int]] = [:]
+                for (name, sum) in theirs where Self.isCollection(name) && shares(name, with: peer) {
+                    let mine = sums(name)
+                    let parts = Self.parts(sum)
+                    let differ = (0..<16).filter { parts[$0] != 0 && parts[$0] != mine[$0] }
+                    if !differ.isEmpty { asks[name] = differ }
+                }
+                if !asks.isEmpty { storeMessage(["op": "ask", "asks": asks], to: peer) }
+            case "ask":
+                for (name, buckets) in m["asks"] as? [String: [Int]] ?? [:] where Self.isCollection(name) && shares(name, with: peer) {
+                    let wanted = Set(buckets)
+                    let list = (collections[name] ?? [:]).filter { wanted.contains(Int(Self.fnv($0.key) & 15)) }.mapValues(\.entry)
+                    if !list.isEmpty { shareItems(name, list, to: peer) }
+                }
+            case "file":
+                // Another copy asks for a shared file's bytes: sent when this one has them as they are now.
+                guard let name = m["s"] as? String, name.hasPrefix("files:"), shares(name, with: peer), let id = m["id"] as? String, let sum = m["sum"] as? String,
+                      let meta = item(in: name, id: id) as? [String: Any], meta["sum"] as? String == sum,
+                      FileManager.default.fileExists(atPath: bytesURL(name, id: id, sum: sum).path) else { return }
+                if !(filesToSend[peer] ?? []).contains(where: { $0.collection == name && $0.id == id }) { filesToSend[peer, default: []].append((name, id)) }
+                sendFiles(to: peer)
+            default:
+                break
+            }
+        }
+
+        /// Items another copy sent, each taken when it's later than what this one has, so whatever order they come in,
+        /// every copy ends with the same. What's held from other copies is bounded as values are: to what every app of the
+        /// wish could set between them, twice over, the oldest deletions let go first when a flood needs room.
+        private func mergeItems(_ name: String, _ given: [String: Any], from peer: String) {
+            guard collections[name] != nil || collections.count < Self.collectionsLimit * 2 else { return }
+            dropExpiredItems()
+            let most = Self.sharedLimit * 2 * max(2, roster.count)
+            var held = collections.values.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.held } }
+            var removals: [(String, String)]? = nil, next = 0
+            func oldestRemoval(except id: String) -> (String, String)? {
+                if removals == nil {
+                    removals = collections.flatMap { name, list in list.filter { $0.value.entry.value == nil }.map { (name, $0.key, $0.value.entry) } }
+                        .sorted { $1.2.isLater(than: $0.2) }.map { ($0.0, $0.1) }
+                }
+                while let list = removals, next < list.count {
+                    let each = list[next]
+                    next += 1
+                    if each != (name, id), collections[each.0]?[each.1]?.entry.value == nil { return each }
+                }
+                return nil
+            }
+            let old = Int64(Date().timeIntervalSince1970 * 1000) - Self.removalsKept
+            var changed: [(String, Any?)] = [], taken: [String: Entry] = [:]
+            for (id, json) in given.sorted(by: { $0.key < $1.key }) {
+                guard Self.isItemID(id), let entry = Entry(json) else { continue }
+                if (entry.ms, Int64(entry.n)) > (clock.ms, clock.n) { clock = (entry.ms, Int64(entry.n)) }
+                let had = collections[name]?[id]
+                if let had, !entry.isLater(than: had.entry) { continue }
+                let size = entry.value.map(Self.size(of:)) ?? 32
+                if size > Self.itemLimit * 2 { continue }
+                let need = id.utf8.count + max(32, size)
+                // A deletion too old to keep, or with no room left to keep it, still deletes; a value with no room is left.
+                func dropOnly() {
+                    guard entry.value == nil, let had = collections[name]?.removeValue(forKey: id) else { return }
+                    held -= had.held
+                    collectionsUnsaved.insert(name)
+                    if had.entry.value != nil { changed.append((id, nil)) }
+                }
+                if entry.value == nil, entry.ms < old { dropOnly(); continue }
+                while held - (had?.held ?? 0) + need > most, let gone = oldestRemoval(except: id), let removal = collections[gone.0]?.removeValue(forKey: gone.1) {
+                    held -= removal.held
+                    collectionsUnsaved.insert(gone.0)
+                }
+                if held - (had?.held ?? 0) + need > most { dropOnly(); continue }
+                held += need - (had?.held ?? 0)
+                collections[name, default: [:]][id] = SharedItem(entry: entry, held: need)
+                taken[id] = entry
+                changed.append((id, entry.value))
+            }
+            keepValues()
+            if !changed.isEmpty { itemsChanged(name, changed, from: peer) } else if !collectionsUnsaved.isEmpty { saveCollectionsSoon() }
+            // Passed on as values are: to the copies open now that the one it came from may not reach.
+            // Lamp tells each copy in its room what it keeps, so what came from Lamp goes no further; what came straight from a
+            // copy Lamp's room doesn't have goes on to Lamp.
+            for each in storePeers where each != peer && !taken.isEmpty && shares(name, with: each) {
+                if directs[each]?.ready == true || (peer != Self.keeper && relayPresent[peer] == nil && (relayPresent[each] != nil || each == Self.keeper)) {
+                    shareItems(name, taken, to: each)
+                }
+            }
+        }
+
+        /// Sends items to another copy, the straight way when there is one, else through Lamp's room, a few at a time so each
+        /// message stays within what a message may be.
+        private func shareItems(_ name: String, _ list: [String: Entry], to peer: String) {
+            var batch: [String: Any] = [:], size = 0
+            func flush() {
+                guard !batch.isEmpty else { return }
+                storeMessage(["op": "items", "s": name, "items": batch], to: peer)
+                batch = [:]
+                size = 0
+            }
+            for (id, entry) in list.sorted(by: { $0.key < $1.key }) {
+                let json = entry.json
+                let bytes = Self.json([id: json])?.count ?? 0
+                if size + bytes > 12 * 1024 { flush() }
+                batch[id] = json
+                size += bytes
+            }
+            flush()
+        }
+
+        private func storeMessage(_ body: [String: Any], to peer: String) {
+            var frame = body
+            frame["t"] = "store"
+            if let direct = directs[peer], direct.ready {
+                if let json = Self.json(frame) { sealed(json, on: direct) }
+            } else if relayPresent[peer] != nil || (peer == Self.keeper && relayIn && lampKeeps) {
+                frame["to"] = peer
+                if let json = Self.json(frame) { say(json) }
+            }
+        }
+
+        /// Tells another copy what each sixteenth of each collection adds up to.
+        private func sendSums(to peer: String) {
+            var said: [String: String] = [:]
+            for name in collections.keys where !(collections[name] ?? [:]).isEmpty && shares(name, with: peer) {
+                said[name] = sums(name).map { String(format: "%08x", $0) }.joined()
+            }
+            if !said.isEmpty { storeMessage(["op": "sum", "sums": said], to: peer) }
+        }
+
+        /// Each sixteenth of a collection (by its ids) as one number: every item's id and when it was set, hashed and
+        /// combined, so two copies with the same items say the same, in every language Lamp's apps are written in.
+        private func sums(_ name: String) -> [UInt32] {
+            var parts = [UInt32](repeating: 0, count: 16)
+            for (id, item) in collections[name] ?? [:] {
+                parts[Int(Self.fnv(id) & 15)] ^= Self.fnv("\(id)\u{0}\(item.entry.ms)\u{0}\(item.entry.n)\u{0}\(item.entry.peer)")
+            }
+            return parts
+        }
+
+        nonisolated private static func parts(_ sum: String) -> [UInt32] {
+            let chars = Array(sum.utf8)
+            guard chars.count == 128 else { return [UInt32](repeating: 0, count: 16) }
+            return (0..<16).map { UInt32(String(decoding: chars[($0 * 8)..<($0 * 8 + 8)], as: UTF8.self), radix: 16) ?? 0 }
+        }
+
+        /// FNV-1a over UTF-8, 32 bits.
+        nonisolated private static func fnv(_ text: String) -> UInt32 {
+            var hash: UInt32 = 2166136261
+            for byte in text.utf8 { hash = (hash ^ UInt32(byte)) &* 16777619 }
+            return hash
+        }
+
+        // MARK: Shared files
+
+        /// Where a shared file's bytes are kept on this device, with the checksum they have in their name.
+        private func bytesURL(_ name: String, id: String, sum: String) -> URL {
+            bytesFolder.appendingPathComponent(Self.hex(Data(SHA256.hash(data: Data("\(name)\u{0}\(id)".utf8))).prefix(16)) + "-" + sum)
+        }
+
+        private var bytesFolder: URL {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(Bundle.main.bundleIdentifier ?? "app").appendingPathComponent("Lamp shared files")
+                .appendingPathComponent((Self.keptKey ?? "LampWish") + "." + copyID)
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            return base
+        }
+
+        nonisolated private static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
+        nonisolated fileprivate static func checksum(_ data: Data) -> String { hex(Data(SHA256.hash(data: data)).prefix(16)) }
+
+        /// Keeps a file in a shared files' collection: its bytes on this device, and an item saying what it is.
+        @discardableResult
+        func putFile(in name: String, id: String, data: Data, type: String) -> Bool {
+            guard data.count <= LampFiles.largest else {
+                fputs("LampStore.sharedFiles: \"\(id)\" is too big to share: 64 MB at most.\n", stderr)
+                return false
+            }
+            let others = (collections[name] ?? [:]).filter { $0.key != id }.compactMap { ($0.value.entry.value as? [String: Any])?["size"] as? Int }.reduce(0, +)
+            let all = collections.filter { $0.key.hasPrefix("files:") && $0.key != name }.values
+                .flatMap { $0.values.compactMap { ($0.entry.value as? [String: Any])?["size"] as? Int } }.reduce(0, +)
+            guard others + all + data.count <= Self.sharedFilesLimit else {
+                fputs("LampStore.sharedFiles: \"\(id)\" wasn't kept: the app's shared files would pass \(Self.sharedFilesLimit / 1024 / 1024) MB.\n", stderr)
+                return false
+            }
+            let sum = Self.checksum(data)
+            let meta: [String: Any] = ["size": data.count, "type": String(type.prefix(100)), "sum": sum]
+            let url = bytesURL(name, id: id, sum: sum)
+            if !FileManager.default.fileExists(atPath: url.path) {
+                do { try data.write(to: url, options: .atomic) } catch {
+                    fputs("LampStore.sharedFiles: couldn't keep \"\(id)\": \(error.localizedDescription)\n", stderr)
+                    return false
+                }
+            }
+            return putItems(in: name, [(id, meta)])
+        }
+
+        /// A shared file's bytes on this device, once they're here.
+        func fileURL(in name: String, id: String) -> URL? {
+            guard let sum = (item(in: name, id: id) as? [String: Any])?["sum"] as? String else { return nil }
+            let url = bytesURL(name, id: id, sum: sum)
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+
+        /// The bytes of a file as it was before, once it changed or went.
+        private func dropStaleBytes(_ name: String, id: String) {
+            let sum = (item(in: name, id: id) as? [String: Any])?["sum"] as? String
+            let prefix = bytesURL(name, id: id, sum: "").lastPathComponent
+            for each in (try? FileManager.default.contentsOfDirectory(atPath: bytesFolder.path)) ?? []
+            where each.hasPrefix(prefix) && each != prefix + (sum ?? "") {
+                try? FileManager.default.removeItem(at: bytesFolder.appendingPathComponent(each))
+            }
+        }
+
+        /// Asks for the shared files this copy lacks, each of one other copy at a time: the one that set it first, then each
+        /// of the others in turn, two at a time of each, asked again when one goes quiet for a minute or closes.
+        private func fetchFiles() {
+            let open = storePeers
+            guard !open.isEmpty else { return }
+            let now = Date()
+            var here = 0
+            for (name, list) in collections where name.hasPrefix("files:") {
+                for (id, item) in list { if let size = (item.entry.value as? [String: Any])?["size"] as? Int, fileURL(in: name, id: id) != nil { here += size } }
+            }
+            for (name, list) in collections.sorted(by: { $0.key < $1.key }) where name.hasPrefix("files:") {
+                for (id, item) in list.sorted(by: { $0.key < $1.key }) {
+                    guard let meta = item.entry.value as? [String: Any], let sum = meta["sum"] as? String, let size = meta["size"] as? Int else { continue }
+                    let sources = open.filter { shares(name, with: $0) }
+                    guard !sources.isEmpty else { continue }
+                    let key = name + "\t" + id
+                    if fileURL(in: name, id: id) != nil { fileAsks[key] = nil; fileTries[key] = nil; continue }
+                    if let ask = fileAsks[key], sources.contains(ask.peer), now.timeIntervalSince(ask.at) < 60 { continue }
+                    guard here + size <= Self.sharedFilesLimit * 2 else { return }
+                    let tries = fileTries[key] ?? 0
+                    let order = sources.contains(item.entry.peer) ? [item.entry.peer] + sources.filter { $0 != item.entry.peer } : sources
+                    let source = order[tries % order.count]
+                    guard fileAsks.values.filter({ $0.peer == source && now.timeIntervalSince($0.at) < 60 }).count < 2 else { continue }
+                    fileTries[key] = tries + 1
+                    fileAsks[key] = (source, now)
+                    here += size
+                    storeMessage(["op": "file", "s": name, "id": id, "sum": sum], to: source)
+                }
+            }
+        }
+
+        /// The files another copy asked for, two at a time.
+        private func sendFiles(to peer: String) {
+            while (filesSending[peer] ?? 0) < 2, var queue = filesToSend[peer], !queue.isEmpty {
+                let (name, id) = queue.removeFirst()
+                filesToSend[peer] = queue.isEmpty ? nil : queue
+                guard let url = fileURL(in: name, id: id), let data = try? Data(contentsOf: url),
+                      let meta = item(in: name, id: id) as? [String: Any] else { continue }
+                let transfer = sendFile(data, name: id, type: meta["type"] as? String ?? "", to: peer, channel: "store:" + name)
+                guard transfer.state == .sending else { continue }
+                filesSending[peer, default: 0] += 1
+                Task { @MainActor [weak self] in
+                    try? await transfer.finished()
+                    self?.filesSending[peer, default: 1] -= 1
+                    self?.sendFiles(to: peer)
+                }
+            }
+        }
+
+        /// A shared file's bytes from another copy: kept when they're the file as it is now.
+        private func sharedFileArrived(_ name: String, id: String, data: Data, from peer: String) {
+            guard shares(name, with: peer) else { return }
+            let key = name + "\t" + id
+            fileAsks[key] = nil
+            guard name.hasPrefix("files:"), Self.isCollection(name), let meta = item(in: name, id: id) as? [String: Any],
+                  let sum = meta["sum"] as? String, Self.checksum(data) == sum else { return fetchFiles() }
+            let url = bytesURL(name, id: id, sum: sum)
+            guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+            fileTries[key] = nil
+            for listener in collectionListeners[name] ?? [] { listener([(id, meta)], Self.app(of: peer)) }
+            fetchFiles()
+        }
+
+        // MARK: Kept on the device
+
+        private func dropExpiredItems() {
+            let old = Int64(Date().timeIntervalSince1970 * 1000) - Self.removalsKept
+            for (name, list) in collections where list.values.contains(where: { $0.entry.value == nil && $0.entry.ms <= old }) {
+                collections[name] = list.filter { $0.value.entry.value != nil || $0.value.entry.ms > old }
+                collectionsUnsaved.insert(name)
+            }
+        }
+
+        /// Written a moment after a change, so a burst of them is written once.
+        private func saveCollectionsSoon() {
+            guard !collectionsSaving else { return }
+            collectionsSaving = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in MainActor.assumeIsolated { self?.saveCollections() } }
+        }
+
+        private func saveCollections() {
+            collectionsSaving = false
+            guard let keptKey = Self.keptKey else { return }
+            for name in collectionsUnsaved {
+                let list = collections[name] ?? [:]
+                UserDefaults.standard.set(list.isEmpty ? nil : Self.json(list.mapValues(\.entry.json)), forKey: keptKey + ".shared." + name)
+            }
+            collectionsUnsaved = []
+            UserDefaults.standard.set(collections.filter { !$0.value.isEmpty }.keys.sorted(), forKey: keptKey + ".shared")
+        }
+
+        private func restoreCollections() {
+            guard let keptKey = Self.keptKey else { return }
+            for name in UserDefaults.standard.stringArray(forKey: keptKey + ".shared") ?? [] where Self.isCollection(name) {
+                guard let data = UserDefaults.standard.data(forKey: keptKey + ".shared." + name),
+                      let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+                var list: [String: SharedItem] = [:]
+                for (id, json) in kept where Self.isItemID(id) {
+                    guard let entry = Entry(json) else { continue }
+                    list[id] = SharedItem(entry: entry, held: id.utf8.count + max(32, entry.value.map(Self.size(of:)) ?? 32))
+                }
+                collections[name] = list
+            }
+            dropExpiredItems()
+        }
+    }
+
+    /// A list the app keeps the same on every copy of it: the same app open on a Mac, an iPad, a TV and an Android photo
+    /// frame shows one shopping list, one set of chores, one calendar. Each copy keeps the items on its device, so it
+    /// works alone and with Lamp closed, and copies merge them item by item whenever they meet, through Lamp or straight
+    /// on the home network: two copies that changed different items while apart both keep both; where two changed the
+    /// same item, the later change wins in both.
+    ///
+    ///     @ObservedObject var groceries = LampStore.shared("groceries", of: Grocery.self)   // Grocery: Codable & Identifiable
+    ///     groceries.items                   // [Grocery], by id; the view follows changes made here or on another copy
+    ///     groceries.put(item)               // add, or replace the one with the same id: false (with why in the log) if not
+    ///     groceries.delete(item.id)
+    ///     groceries.get(id)
+    ///     groceries.publish(events)         // what this copy read (calendars, an album) for the copies that can't:
+    ///                                       // its items become exactly these
+    ///     groceries.onChange { id, item, from in … }   // item nil when deleted; from == wish.me for this app's own copies
+    ///
+    /// With `wish: true` the list is the wish's own rather than this app's: every app of the wish keeps it the same (a Mac
+    /// app and the iPhone app beside it sharing one calendar), each reading and changing it with the same name.
+    ///
+    ///     @ObservedObject var events = LampStore.shared("events", of: Event.self, wish: true)
+    ///
+    /// An item is at most `LampWish.itemLimit` (8 KB) as JSON, and everything the app shares at most
+    /// `LampWish.sharedLimit` (1 MB, thousands of small items); pictures and other big things go in `sharedFiles`.
+    extension LampStore {
+        @MainActor static func shared<T: Codable & Identifiable>(_ name: String, of type: T.Type, wish: Bool = false) -> Shared<T> {
+            let key = wish ? "wish:" + name : name
+            if let existing = sharedLists[key] as? Shared<T> { return existing }
+            let list = Shared<T>(name: key)
+            sharedLists[key] = list
+            return list
+        }
+
+        @MainActor private static var sharedLists: [String: AnyObject] = [:]
+        @MainActor private static var sharedFolders: [String: SharedFiles] = [:]
+
+        @MainActor final class Shared<T: Codable & Identifiable>: ObservableObject {
+            let name: String
+            @Published private(set) var items: [T] = []
+            private var byID: [String: T] = [:]
+            private var listeners: [(String, T?, String) -> Void] = []
+
+            fileprivate init(name: String) {
+                self.name = name
+                let wish = LampWish.shared
+                for (id, value) in wish.items(in: name) { if let item = Self.decode(value, id: id, in: name) { byID[id] = item } }
+                items = byID.keys.sorted().compactMap { byID[$0] }
+                wish.onItems(in: name) { [weak self] changed, from in self?.heard(changed, from: from) }
+            }
+
+            /// Adds the item, or replaces the one with the same id, here and on every copy.
+            @discardableResult func put(_ item: T) -> Bool { put([item]) }
+
+            @discardableResult func put(_ items: [T]) -> Bool {
+                LampWish.shared.putItems(in: name, items.compactMap { item in Self.encode(item).map { ("\(item.id)", $0) } })
+            }
+
+            /// Makes the items this copy put exactly these: each put, and each it put before that isn't among them deleted.
+            @discardableResult func publish(_ items: [T]) -> Bool {
+                LampWish.shared.publishItems(in: name, items.compactMap { item in Self.encode(item).map { ("\(item.id)", $0) } })
+            }
+
+            func delete(_ id: T.ID) { LampWish.shared.putItems(in: name, [("\(id)", nil)]) }
+            func get(_ id: T.ID) -> T? { byID["\(id)"] }
+            func all() -> [T] { items }
+            var count: Int { items.count }
+
+            /// Hears each change: the item's id, the item (nil when deleted), and which app made it (`LampWish.shared.me`
+            /// for this app's own copies, this one included).
+            func onChange(_ handler: @escaping (_ id: String, _ item: T?, _ from: String) -> Void) { listeners.append(handler) }
+
+            private func heard(_ changed: [(String, Any?)], from: String) {
+                var said: [(String, T?)] = []
+                for (id, value) in changed {
+                    let item = value.flatMap { Self.decode($0, id: id, in: name) }
+                    byID[id] = item
+                    said.append((id, item))
+                }
+                items = byID.keys.sorted().compactMap { byID[$0] }
+                for (id, item) in said { for listener in listeners { listener(id, item, from) } }
+            }
+
+            private static func encode(_ item: T) -> Any? {
+                LampStore.encode(item).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8), options: .fragmentsAllowed) }
+            }
+
+            private static func decode(_ value: Any, id: String, in name: String) -> T? {
+                guard let data = try? JSONSerialization.data(withJSONObject: [value]) else { return nil }
+                do { return try LampStore.decoder.decode([T].self, from: data).first } catch {
+                    fputs("LampStore.shared(\"\(name)\"): skipped the item \"\(id)\", which couldn't be read; it's kept as it is. Make the type decode it (add new properties as optionals). Error: \(error)\n", stderr)
+                    return nil
+                }
+            }
+        }
+
+        /// Files the app keeps the same on every copy of it: what a copy that can read them (a Mac's photo album) puts here
+        /// reaches every other copy, which keeps the bytes on its device, including copies that open later.
+        ///
+        ///     @ObservedObject var photos = LampStore.sharedFiles("photos")
+        ///     photos.put("IMG_0042.jpg", data, type: "image/jpeg")   // the same bytes again change nothing
+        ///     photos.files                     // [SharedFile]: .name, .size, .type, .isHere (its bytes are on this device)
+        ///     photos.get("IMG_0042.jpg")       // Data, once it's here
+        ///     photos.url("IMG_0042.jpg")       // its file on this device, once it's here
+        ///     photos.delete("IMG_0042.jpg")
+        ///     photos.onChange { name, from in … }
+        ///
+        /// A file is at most 64 MB, all of them `LampWish.sharedFilesLimit` (256 MB). With `wish: true` the files are the
+        /// wish's own, kept by every app of it, as `shared(_:of:wish:)`'s are.
+        @MainActor static func sharedFiles(_ name: String, wish: Bool = false) -> SharedFiles {
+            let key = wish ? "wish:" + name : name
+            if let existing = sharedFolders[key] { return existing }
+            let folder = SharedFiles(name: key)
+            sharedFolders[key] = folder
+            return folder
+        }
+
+        struct SharedFile: Identifiable, Equatable {
+            let name: String
+            let size: Int
+            let type: String
+            /// Its bytes are on this device.
+            let isHere: Bool
+            var id: String { name }
+        }
+
+        @MainActor final class SharedFiles: ObservableObject {
+            let name: String
+            @Published private(set) var files: [SharedFile] = []
+            private var listeners: [(String, String) -> Void] = []
+            private var key: String { "files:" + name }
+
+            fileprivate init(name: String) {
+                self.name = name
+                LampWish.shared.onItems(in: "files:" + name) { [weak self] changed, from in
+                    guard let self else { return }
+                    self.reload()
+                    for (id, _) in changed { for listener in self.listeners { listener(id, from) } }
+                }
+                reload()
+            }
+
+            @discardableResult func put(_ name: String, _ data: Data, type: String) -> Bool {
+                LampWish.shared.putFile(in: key, id: name, data: data, type: type)
+            }
+            func get(_ name: String) -> Data? { url(name).flatMap { try? Data(contentsOf: $0) } }
+            func url(_ name: String) -> URL? { LampWish.shared.fileURL(in: key, id: name) }
+            func delete(_ name: String) { LampWish.shared.putItems(in: key, [(name, nil)]) }
+
+            /// Hears each change: the file's name, and which app made it. Heard again when its bytes arrive here.
+            func onChange(_ handler: @escaping (_ name: String, _ from: String) -> Void) { listeners.append(handler) }
+
+            private func reload() {
+                let wish = LampWish.shared
+                files = wish.items(in: key).map { id, value in
+                    let meta = value as? [String: Any] ?? [:]
+                    return SharedFile(name: id, size: meta["size"] as? Int ?? 0, type: meta["type"] as? String ?? "", isHere: wish.fileURL(in: key, id: id) != nil)
+                }
+            }
         }
     }
 
@@ -13851,7 +18069,7 @@ enum Template {
         }
 
         private func arm() {
-            guard running == nil else { return }
+            guard running == nil, !LampShowcase.isOn else { return }
             timer?.invalidate()
             let delay = max(0, due.timeIntervalSinceNow)
             timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in self?.fire() }
@@ -13936,7 +18154,7 @@ enum Template {
         }
 
         private func arm() {
-            guard running == nil else { return }
+            guard running == nil, !LampShowcase.isOn else { return }
             timer?.invalidate()
             let delay = max(0, due.timeIntervalSinceNow)
             timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
@@ -13947,17 +18165,23 @@ enum Template {
 
         /// The run counts once it's finished: one iOS cut short is still due, and runs again at the next wake.
         /// While it runs nothing starts another (`running`).
-        @discardableResult private func fire() -> Task<Void, Never> {
-            if let running { return running }
-            let task = Task { @MainActor [weak self] in
+        /// Starts a run, unless one is going: `running` is the task either way. Shaped as the Mac's is (the task
+        /// assigned, nothing returned): a function that made a task and returned it read, to Swift before 6.4, as a
+        /// closure of the task's own optional type, and failed.
+        private func fire() {
+            guard running == nil else { return }
+            running = Task { @MainActor [weak self] in
                 guard let self else { return }
-                await work()
-                UserDefaults.standard.set(Date(), forKey: lastRunKey)
-                running = nil
-                arm()
+                await self.run()
             }
-            running = task
-            return task
+        }
+
+        /// One run: the work, the time it finished, and the next one armed.
+        private func run() async {
+            await work()
+            UserDefaults.standard.set(Date(), forKey: lastRunKey)
+            running = nil
+            arm()
         }
 
         /// Coming back to the front catches up; going to the back asks iOS for time when the next one is due.
@@ -13997,7 +18221,8 @@ enum Template {
             askForTime()
             var runs: [Task<Void, Never>] = []
             for schedule in all.values {
-                if let running = schedule.running { runs.append(running) } else if schedule.due <= Date() { runs.append(schedule.fire()) }
+                if schedule.running == nil, schedule.due <= Date() { schedule.fire() }
+                if let running = schedule.running { runs.append(running) }
             }
             for run in runs { await run.value }
             askForTime()
@@ -14096,10 +18321,12 @@ enum Template {
                             .background(Color.accentColor.opacity(0.08)).allowsHitTesting(false)
                     }
                 }
+                #if !os(tvOS)
                 .onDrop(of: [.fileURL, .image, .url], isTargeted: $targeted) { providers in
                     LampDrop.load(providers) { urls in if !urls.isEmpty { handler(urls) } }
                     return true
                 }
+                #endif
         }
     }
 
@@ -14196,6 +18423,8 @@ enum Template {
 
     #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The person's calendar, reminders and contacts, through the accounts already set up on the device (iCloud,
     /// Google, Exchange: whatever the system's Internet Accounts has). No sign-in or API key: the system asks the
     /// person once, the first time an app uses each one. All on the device, instant and free.
@@ -14275,7 +18504,10 @@ enum Template {
             try store.remove(event, span: .thisEvent, commit: true)
         }
     }
+    #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     enum LampReminders {
         struct Reminder: Identifiable {
             let id: String
@@ -14332,7 +18564,10 @@ enum Template {
             try store.save(reminder, commit: true)
         }
     }
+    #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     enum LampContacts {
         struct Contact: Identifiable {
             let id: String
@@ -14388,6 +18623,7 @@ enum Template {
                     note: nil)
         }
     }
+    #endif
 
     #if os(macOS)
     // Mac only: Mail.
@@ -14673,6 +18909,8 @@ enum Template {
     }
     #endif
 
+    // Apple TV shows no notifications of an app's.
+    #if !os(tvOS)
     /// Notifications. Asks permission the first time.
     ///
     ///     LampNotifications.send("Export finished", body: "Saved 12 files to Documents")
@@ -14737,6 +18975,11 @@ enum Template {
 
         static func send(_ title: String, body: String = "", sound: Bool = true, at date: Date? = nil, id: String? = nil,
                          actions: [String] = [], timeSensitive: Bool = false) {
+            // A reel shows what would arrive now; what's planned for later days isn't part of it.
+            if LampShowcase.isOn {
+                if (date ?? Date()).timeIntervalSinceNow < 60 { LampShowcase.note("notification", title, body) }
+                return
+            }
             let center = UNUserNotificationCenter.current()
             if center.delegate == nil { center.delegate = presenter }
             let id = id ?? UUID().uuidString
@@ -14794,6 +19037,7 @@ enum Template {
             }
         }
     }
+    #endif
 
     /// What people sent this app from another app's share sheet (a link from Safari, photos, text, files), through
     /// its share extension (the Share/ folder). The extension leaves each share in the folder the two have in
@@ -14911,6 +19155,8 @@ enum Template {
         }
     }
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The app's own things in Spotlight (notes, recipes, places, people): a search there finds them, and a tap
     /// opens the app on the one tapped.
     ///
@@ -14942,7 +19188,9 @@ enum Template {
             CSSearchableIndex.default().deleteAllSearchableItems { _ in }
         }
     }
+    #endif
 
+    #if !os(tvOS)
     extension View {
         /// Called with the id of what was tapped in Spotlight (`LampSpotlight.index`), when it opens the app or
         /// brings it to the front.
@@ -14952,6 +19200,7 @@ enum Template {
             }
         }
     }
+    #endif
 
     #if os(macOS)
     /// The whole app, when a widget is all the person asked for. macOS has no widget without an app to carry
@@ -16572,7 +20821,7 @@ enum Template {
     /// final that something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal`
     /// reads, and the copy is made without that step from then on (`no-final`), as spares are (`no-spares`).
     static let livePerl = ##"""
-    use strict; use warnings;
+    use strict; use warnings; use Digest::MD5 qw(md5_hex);
     local $/;
     my $modifier = qr/(?:func|var|let|subscript|override|class|final|open|public|internal|private|fileprivate|package|static|dynamic|required|convenience|nonisolated|lazy|weak|unowned|optional|indirect|init|deinit)\b/;
     if (($ARGV[0] // '') eq 'scan') {
@@ -16580,14 +20829,23 @@ enum Template {
         # Lamp's own files (`-own=LampSupport.swift,…`) are scanned for names like the rest, but what they do with
         # raw memory is their own business, never a reason to keep the app's structs from their spares.
         my %own = map { $_ => 1 } split /,/, (($ARGV[0] // '') =~ /^-own=(.*)/ ? do { shift @ARGV; $1 } : '');
-        my (%names, %alias, %nospare, %equatable, %reflects, $raw, $mirrors);
+        # Lamp's list of the structs the app reads as bytes (`LiveSlots.noteByteStructs`), when it has made one.
+        my $bytes = ($ARGV[0] // '') =~ /^-bytes=(.*)/ ? do { shift @ARGV; $1 } : '';
+        my (%names, %alias, %nospare, %equatable, %reflects, %bodies, @appTexts, $raw, $mirrors);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
             # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal, an array's or a value's own bytes)
             # must stay the size it's written with, and the one read may be declared in another file: so no struct gets
             # a spare in such an app. Which of `withUnsafeBytes`'s receivers holds structs isn't in the text, so any counts.
+            push @appTexts, $s if !$own{(split m#/#, $file)[-1]};
             $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
             $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
+            # Each struct's body, for which structs one read as bytes holds (below).
+            while ($s =~ /\bstruct\s+(\w+)[^{;]*\{/g) {
+                my ($name, $at, $depth) = ($1, pos($s), 1); my $i = $at;
+                while ($i < length($s) && $depth) { my $c = substr($s, $i++, 1); $depth++ if $c eq '{'; $depth-- if $c eq '}' }
+                $bodies{$name} .= substr($s, $at, $i - $at);
+            }
             # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
             # protocol's `init(rawValue:)`, which a spare's parameter would unfit. One made BitwiseCopyable can hold
             # nothing a spare is.
@@ -16608,14 +20866,31 @@ enum Template {
             while ($s =~ /\bwhere\b(?!\s*:)([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
         }
         for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
+        # With Lamp's list for these very files, only the structs read as bytes, and those they hold, go without a spare;
+        # without it (none made, a stale one, or `*`), none get one in such an app.
+        my $byteList;
+        if ($raw && $bytes ne '' && open(my $list, '<', $bytes)) {
+            my @read = split /\n/, <$list>; close($list);
+            if (@read && $read[0] eq 'md5 ' . md5_hex(join("\n", sort map { md5_hex($_) } @appTexts)) && !grep { $_ eq '*' } @read) {
+                ($byteList, $raw) = (1, 0);
+                my (@todo, %seen) = @read[1 .. $#read];
+                while (defined(my $n = shift @todo)) {
+                    next if $seen{$n}++;
+                    $nospare{$n} = 1;
+                    my $body = $bodies{$n} // next;
+                    push @todo, grep { !$seen{$_} && $body =~ /\b\Q$_\E\b/ } keys %bodies;
+                }
+            }
+        }
         # The names, then what the spares step is told: `-raw`, and `-nospare:Name` for each.
-        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), ($mirrors ? '-nomirror' : ()), (map { "-nospare:$_" } sort keys %nospare),
+        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), ($byteList ? '-bytes' : ()), ($mirrors ? '-nomirror' : ()), (map { "-nospare:$_" } sort keys %nospare),
             (map { "-equatable:$_" } sort keys %equatable), map { "-reflects:$_" } sort keys %reflects), "\n";
         exit 0;
     }
     my ($count, $subclassed, $flags, @files) = @ARGV;
     my %subclassed = map { (split /\./)[-1] => 1 } grep { !/^-/ } split ' ', $subclassed;
     my $rawAll = $subclassed =~ /(?:^|\s)-raw(?:\s|$)/;
+    my $bytesKnown = $subclassed =~ /(?:^|\s)-bytes(?:\s|$)/;
     my %nospare = map { substr($_, 9) => 1 } grep { /^-nospare:/ } split ' ', $subclassed;
     my %equatable = map { substr($_, 11) => 1 } grep { /^-equatable:/ } split ' ', $subclassed;
     my %reflects = map { substr($_, 10) => 1 } grep { /^-reflects:/ } split ' ', $subclassed;
@@ -16653,9 +20928,12 @@ enum Template {
         return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
         if ($header =~ /\bView\b/) {
             return $whole if $equatable{$name} || $header =~ /\b(?:Equatable|Hashable)\b/;
-            # Its state's box, a place for new parameters, and its environment, which a new `@Environment(\.key)` reads:
-            # private, so the initializer Swift makes is the same.
-            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();${pad}private var __lampSpare_${name} = LampSpare(nil);${pad}\@Environment(\\.self) private var __lampEnv_${name};";
+            # Its state's box, a place for new parameters, and its environment, which a new `@Environment(\.key)` reads.
+            # The place isn't private: a private stored property with a starting value makes the initializer Swift
+            # writes for the struct private on the Swift Apple ships now (6.4 leaves such a property out of it instead),
+            # so a view made in another file wouldn't build. As a struct's, the place is one more argument with a
+            # default, which a call never notices.
+            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();${pad}var __lampSpare_${name} = LampSpare(nil);${pad}\@Environment(\\.self) private var __lampEnv_${name};";
         }
         return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/;
         my $mirrored = !$noMirror && !$reflects{$name} && $header !~ /\bCustomReflectable\b|~\s*(?:Copyable|Escapable)/ ? conform($whole, $name) : undef;
@@ -16664,7 +20942,7 @@ enum Template {
     }
     for my $file (@files) {
         open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        my $raw = $rawAll || !$bytesKnown && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
         @skip = spans($s);
@@ -16723,7 +21001,7 @@ enum Template {
     \(livePerl)
     LAMPLIVE
       # The names something may subclass, so every other class can be final.
-      SUBCLASSED=$(perl "$LIVE/live.pl" scan -own=LampSupport.swift,\(sceneSupportFile) Sources/**/*.swift(N) 2>/dev/null || true)
+      SUBCLASSED=$(perl "$LIVE/live.pl" scan -own=LampSupport.swift,\(sceneSupportFile) -bytes="$LIVE/\(LiveSlots.byteStructsFile)" Sources/**/*.swift(N) 2>/dev/null || true)
       # The pass is kept for each file with what it was made from, and taken again only when any of that changed:
       # over LampSupport.swift, which hardly ever does, it takes a second or more, and every change waited for it.
       KEY="\(LiveSlots.count)|$(cksum < "$LIVE/live.pl")|$SUBCLASSED"
@@ -16818,6 +21096,8 @@ enum Template {
     {{MAC_USAGE}}
     </dict></plist>
     PLIST
+    # The app's own files (LampAssets). A live build reads them from the app's folder.
+    if [[ -d Assets && "${LAMP_LIVE:-}" != 1 ]]; then rm -rf "$APP/Contents/Resources/Assets"; mkdir -p "$APP/Contents/Resources"; cp -R Assets "$APP/Contents/Resources/Assets"; fi
     intents {{EXE}} "$APP" "{{BUNDLE}}" Sources
     codesign --force -s - "$APP"
     echo "Built $APP"

@@ -33,7 +33,7 @@ extension ChatLook {
                 }
             }
             .padding(14)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+            .background(Paper.card, in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Paper.rule))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
         }
 
@@ -42,10 +42,10 @@ extension ChatLook {
             return HStack(alignment: .center, spacing: 12) {
                 Image(systemName: done ? "checkmark" : symbol)
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(done ? Color.white : Paper.onInk)
                     .frame(width: 40, height: 40)
                     .background(shape.fill(LinearGradient(colors: done ? [Color.green.opacity(0.85), Color.green]
-                                                          : [Color.accentColor.opacity(0.85), Color.accentColor],
+                                                          : [Paper.ink.opacity(0.85), Paper.ink],
                                                           startPoint: .top, endPoint: .bottom)))
                     .overlay(shape.strokeBorder(.black.opacity(0.08)))
                     .frame(width: 44, height: 44)
@@ -60,13 +60,13 @@ extension ChatLook {
 
     /// A line offering one thing to do, like Draw Icon: a symbol, what's so, and the button. Laid out as a status
     /// line is (`StatusLine`): its symbol in the steps' column and its words in their size, in line with the agent's
-    /// bubbles, "Worked for…" and Undo Last Change around it.
+    /// bubbles and "Worked for…" around it.
     public struct ActionLine: View {
         let symbol: String
         let text: String
         let button: String
         let disabled: Bool
-        /// The one thing to do next (Reload, for a change waiting on it): the button in the accent colour.
+        /// The one thing to do next (Reload, for a change waiting on it): the button in the accent color.
         let prominent: Bool
         let action: () -> Void
 

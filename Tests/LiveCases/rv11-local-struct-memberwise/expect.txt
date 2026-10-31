@@ -1,7 +1,7 @@
-VERDICT 1: REOPEN (Shelf.pick().Answer in Model.swift changed what it holds (Shelf.pick().Answer in Model.swift.spicy: Bool); Shelf.pick().Answer is declared inside a function, where Lamp can't give it back the initializer a property kept in a spare leaves)
+VERDICT 1: REOPEN (Shelf.pick().Answer in Model.swift changed what it holds (Shelf.pick().Answer in Model.swift.spicy: Bool); Answer (inside Shelf.pick()) is declared inside a function, where Lamp can't give it back the initializer (or the coding) a property kept in a spare leaves)
 == run
 before: rice
-RELOAD 1: REOPEN Shelf.pick().Answer@Model.swift changed what it holds (Shelf.pick().Answer@Model.swift.spicy: Bool); Shelf.pick().Answer is declared inside a function, where Lamp can't give it back the initializer a property kept in a spare leaves
+RELOAD 1: REOPEN Shelf.pick().Answer@Model.swift changed what it holds (Shelf.pick().Answer@Model.swift.spicy: Bool); Answer (inside Shelf.pick()) is declared inside a function, where Lamp can't give it back the initializer (or the coding) a property kept in a spare leaves
 after1 (want "rice true"): rice
 before: rice true
 RELOAD 1: in the restart

@@ -1,0 +1,47 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "cleanMachine": true,
+  "steps": [
+    {
+      "wait": 2
+    },
+    {
+      "action": "click",
+      "target": "Google Calendar"
+    },
+    {
+      "wait": 1.5
+    },
+    {
+      "action": "click",
+      "target": "Gmail"
+    },
+    {
+      "wait": 1.5
+    },
+    {
+      "action": "click",
+      "target": "YouTube"
+    },
+    {
+      "wait": 1.5
+    },
+    {
+      "action": "click",
+      "target": "Reddit"
+    },
+    {
+      "wait": 1.5
+    },
+    {
+      "action": "click",
+      "target": "Facebook"
+    },
+    {
+      "wait": 3
+    }
+  ]
+}

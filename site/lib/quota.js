@@ -29,8 +29,9 @@ return 1
 `;
 
 export function redis(env) {
-  const url = env.UPSTASH_REDIS_REST_URL;
-  const token = env.UPSTASH_REDIS_REST_TOKEN;
+  // The names BUG_REPORTS.md has set by hand, else the ones the Upstash integration gives a project it's connected to.
+  const url = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
+  const token = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
   if (!url || !token || new URL(url).protocol !== "https:") throw new Error("Limiter unavailable");
   const scope = env.VERCEL_ENV === "production" ? "production" : "preview";
   return { url, token, prefix: `lamp:first-idea:{${scope}}`, ipHash: (ip) => createHmac("sha256", token).update(ip).digest("hex") };

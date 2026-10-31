@@ -17,26 +17,25 @@ struct ContentView: View {
             if !onboarded && !store.welcomeFinished {
                 OnboardingView().ignoresSafeArea()
             } else {
-                Group {
-                    // Only Apple's tools missing (say, still installing after the welcome): Lamp stays usable,
-                    // and anything asked for waits in its chat until they're in.
-                    if store.setup.checked && !store.setup.ready && !(store.setup.hasBuilder && store.setup.hasAgent) {
-                        SetupView()
-                    } else {
-                        main
-                    }
-                }
-                .frame(minWidth: 760, minHeight: 480)
+                // Nothing set up, the desk still opens and its wishes run: what's missing is asked for in the chat when a
+                // change needs it, and the request waits there until it's done.
+                main
+                    .frame(minWidth: 760, minHeight: 480)
             }
         }
         .modifier(StoreDialogs(active: store.selection == nil))
-        .background(WindowKeyWatcher { store.selection = nil })
+        .background(WindowKeyWatcher(became: {
+            store.selection = nil
+            DeskPick.shared.deskIsKey = true
+        }, resigned: { DeskPick.shared.deskIsKey = false }))
+        .background(DeskWindowMarker())
         .onAppear { LampWindows.open = openWindow }
     }
 
     private var main: some View {
         VStack(spacing: 0) {
-            if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
+            // While they install, or while a request waits for them: games and screens are made without them.
+            if store.setup.checked && !store.setup.hasBuildTools && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) { BuildToolsBanner() }
             WishDesk()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -241,12 +240,14 @@ struct AppMenu: View {
 
     var body: some View {
         let busy = store.busy.contains(project.id)
-        Button("Open") { store.openPrepared(project) }
+        // The whole wish, as Play and Stop are: each app's own menu in the toolbar is for that app alone. Open and Remix
+        // are the desk's own, above it (`DeskWishMenu`).
         Button("Rebuild & Open") { store.runPrepared(project) }
             .disabled(busy)
-        Button("Quit") { Task { await store.quitApp(project) } }
-            .disabled(!store.isOpen(project))
-        if project.platform.hasIOS || project.platform == .android || project.platform == .tv || project.platform == .device {
+        Button("Quit") { Task { await store.quitWish(project) } }
+            .disabled(!store.isWishOpen(project))
+        // A wish whose apps are all in folders has only the way to one more app here (`TryOnMenu`).
+        if TryOnMenu.make(for: project, store: store) != nil {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)
@@ -255,8 +256,6 @@ struct AppMenu: View {
         Button("Rename…") { store.renaming = project }
             // Still being found: the wish it becomes names it. A device's setup is never named.
             .disabled(busy || project.makesNoApp)
-        Button("Duplicate") { Task { await store.duplicate(project) } }
-            .disabled(busy || !project.scaffolded || project.untitled)
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
         // Only once there's an app to show: a wish not yet made has nothing in Finder.
@@ -278,862 +277,28 @@ struct AppMenu: View {
     }
 }
 
-struct ProjectView: View {
-    @EnvironmentObject private var store: Store
-    let project: LampProject
-    @State private var draft = ""
-    @State private var hasMicrophone = true
-    @State private var attachments: [URL] = []
-    /// What was pointed at in the app, on its own card in the message box.
-    @State private var pointed: PointedAt?
-    @State private var composerHeight = Composer.lineHeight
-    @State private var focusRequest = 0
-    @State private var dropTargeted = false
-    @StateObject private var dictation = Dictation()
-    @State private var dictationUndo = Composer.DictationUndo()
-    @AppStorage("showDetails") private var showDetails = false
-    @AppStorage("showInfo") private var showInfo = false
-    @State private var iconPreview: URL?
-    @AppStorage("showVersions") private var showVersions = false
-    @State private var suggestion: String?
-    @State private var dismissedSuggestion: String?
-    /// The request taken back into the message box, to change and send again. It and everything after it
-    /// are out of sight meanwhile; they only leave the chat, and the app only goes back, when it's sent.
-    @State private var replacing: UUID?
-    /// What was in the message box before that, put back if the request isn't sent again after all. Kept
-    /// with the draft, so it's still there after looking at another app.
-    @State private var setAside: Store.Draft?
-    /// Lamp's line in the chat saying a request couldn't be sent again. It comes after the lines that are
-    /// out of sight, so it's shown with what's left: otherwise Send would seem to do nothing.
-    @State private var sendProblem: UUID?
-    /// Keep the submitted words and files fixed while setup decides whether they can be sent.
-    private var submissionPending: Bool { store.pendingSubmissions.contains(store.current(project)?.id ?? project.id) }
-    /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
-    @State private var sendingAgain: UUID?
-    /// How many lines before the latest request the chat reaches back for. Scrolling up towards the earliest
-    /// of them raises it.
-    @State private var reach = LogLine.recentCount
-    /// The chat's scrolling is being watched, so earlier messages come in by themselves.
-    @State private var earlierOnScroll = false
-    /// Whether the chat is at its end, and so follows what's added there.
-    @State private var follow = ChatFollow()
-    /// Goes up with each message sent from here, which takes the chat to it (see `pinned`).
-    @State private var sends = 0
-    /// The request sent from here, held at the top of the chat with room below it for the answer, as long
-    /// as it's the latest one. Only one sent from here: a chat opens on its end, as ever.
-    @State private var pinned: UUID?
-    /// A message was sent from here and its request isn't in the chat yet: the next request to arrive after
-    /// `pinAfter` (the latest one when it was sent) is pinned.
-    @State private var pinWanted = false
-    @State private var pinAfter: UUID?
-    /// The chat is gliding up to a request just pinned. Nothing else moves it meanwhile: following the end
-    /// would go to the same place at once, cutting the glide short.
-    @State private var gliding = false
-    /// Goes up to start a glide (see `EarlierOnScroll`).
-    @State private var glides = 0
-    /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
-    @State private var history: History?
-
-    /// Worked out once per body (see `body`): it filters the whole chat, and body runs on every streamed token.
-    private var lines: [LogLine] {
-        let all = store.logs[project.id] ?? []
-        let hidden = (replacing ?? sendingAgain).flatMap { id in all.firstIndex { $0.id == id } }
-        guard let hidden else { return LogLine.visible(all, details: showDetails) }
-        let problem = all[hidden...].last { $0.id == sendProblem }
-        return LogLine.visible(Array(all[..<hidden]) + (problem.map { [$0] } ?? []), details: showDetails)
-    }
-    private var busy: Bool { store.busy.contains(project.id) }
-    /// How much of its latest message the agent has written so far: a message being written grows without
-    /// adding a line, and the chat follows it down.
-    private func written(_ lines: [LogLine]) -> Int { busy ? lines.last?.text.count ?? 0 : 0 }
-    /// The chat area has to be about twice the build card's height before the card is pinned.
-    private static let roomToPinCard: CGFloat = 560
-    /// The build card's steps are open: the card is as tall as they make it, so it isn't pinned, or the ones past
-    /// the window's height could never be reached and the card would cover the chat under it.
-    @State private var cardStepsOpen = false
-    /// Space above a request held at the top of the chat.
-    private static let pinMargin: CGFloat = 16
-
-    /// The first turn of a new app, while it's still running.
-    private var building: TurnProgress? {
-        store.progress[project.id].flatMap { $0.newApp && $0.finished == nil ? $0 : nil }
-    }
-    private var queued: [QueuedMessage] { store.queued[project.id] ?? [] }
-    /// The finished agent turn a suggestion follows up on. Nil while working, so none shows mid-turn.
-    private var suggestionTurn: UUID? { busy ? nil : NextStep.turn(in: store.logs[project.id] ?? []) }
-    private var shownSuggestion: String? {
-        guard suggestionTurn != nil, let suggestion, suggestion != dismissedSuggestion else { return nil }
-        return suggestion
-    }
-
-    /// What was pointed at in the app, going with the next message, as its pill in the message box.
-    private func pointedPill(_ pointed: PointedAt) -> some View {
-        ChatLook.PointedPill(title: pointed.title, detail: pointed.detail,
-                             chooseAgain: store.canPoint(in: project) ? { MagicPanel.shared.pointAgain(in: project) } : nil,
-                             remove: removePointed)
-    }
-
-    /// Lets what was pointed at go, and says so to the chat beside the app at once: words typed here are saved
-    /// without telling it, but a pill it still showed would be sent from there as if it were still wanted.
-    private func removePointed() {
-        pointed = nil
-        saveDraft()
-        if let current = store.current(project) { store.announceDraft(of: current) }
-    }
-
-    /// The files going with the next message, above the message box.
-    private var pendingAttachments: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(attachments, id: \.self) { url in
-                    AttachmentChip(url: url, siblings: attachments) {
-                        attachments.removeAll { $0 == url }
-                        saveDraft()
-                    }
-                }
-            }
-        }
-        .padding(.top, 2)
-    }
-
-    /// The chat itself, scrolled to its end. Kept out of `body`, like the rows and the message box, because
-    /// as one expression the whole view is more than the compiler can type-check in reasonable time.
-    private func chat(_ lines: [LogLine]) -> some View {
-        // Only the end of a long chat is shown until more is asked for (see `LogLine.recentStart`).
-        let start = LogLine.recentStart(in: lines, atLeast: reach)
-        let shown = start > 0 ? Array(lines[start...]) : lines
-        let latestRequest = lines.last { $0.kind == .user }?.id
-        let pin = pinned(latestRequest)
-        return ScrollViewReader { proxy in
-            GeometryReader { area in
-                following(scroll(shown, all: lines, start: start, pin: pin, proxy: proxy, area: area), lines, pin: pin, proxy: proxy)
-            }
-        }
-    }
-
-    /// The chat's scroll view and what's in it. Apart from `chat` and `following`: together they're more than
-    /// the compiler will type-check in reasonable time.
-    private func scroll(_ shown: [LogLine], all lines: [LogLine], start: Int, pin: UUID?, proxy: ScrollViewProxy,
-                        area: GeometryProxy) -> some View {
-        ScrollView {
-            // Every row shown is laid out, not only the ones in view. A stack that makes its rows as
-            // they scroll into view has to guess the height of the rest, and during a turn that
-            // guessing could go round without ever settling, with Lamp stuck for good.
-            // With the end in view, the pinned request's bubble is a margin below the top of the chat.
-            ChatStack(fill: area.size.height - Self.pinMargin, end: 16) {
-                // Earlier messages come in as the chat is scrolled up towards them (see `earlier`).
-                // The button is only for when that can't be watched for.
-                if start > 0, !earlierOnScroll {
-                    Button("Show Earlier Messages") {
-                        guard let top = shown.first?.id else { return }
-                        showEarlier(lines, from: start)
-                        // They come in above what's being read, which stays where it is.
-                        Task { @MainActor in
-                            await Task.yield()
-                            proxy.scrollTo(top, anchor: .top)
-                        }
-                    }
-                    .buttonStyle(.link)
-                    .font(.callout)
-                    .frame(maxWidth: .infinity)
-                    .padding(.bottom, 24)
-                }
-                // While a new app is being built, its card stays in view above the steps, if there's
-                // room: in a short window a pinned card would fill the chat and hide everything else.
-                chatRows(shown, pin: pin, height: area.size.height,
-                         cardPinned: building != nil && !cardStepsOpen && area.size.height >= Self.roomToPinCard)
-                // Room for the answer to a request just sent. The answer fills it as it comes; once
-                // there's more, the chat follows it down as ever.
-                Color.clear.id("bottom").layoutValue(key: ChatStack.Room.self, value: true)
-            }
-            .background(EarlierOnScroll(more: start > 0, follow: follow, glides: glides, glided: {
-                gliding = false
-                followEnd(proxy, lines, pin: pin)
-            }, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
-            // A readable line length; wide windows get margins instead of longer lines.
-            .frame(maxWidth: 640)
-            // Only at the top: the margin at the bottom is the room's (see `ChatStack.end`).
-            .padding(.horizontal, 20).padding(.top, 16)
-            .frame(maxWidth: .infinity)
-            // At least as tall as the chat area, so a short chat still sits at the top.
-            .frame(minHeight: area.size.height, alignment: .top)
-        }
-    }
-
-    /// How the chat keeps to its end, or to a request just sent, as things are added.
-    private func following(_ content: some View, _ lines: [LogLine], pin: UUID?, proxy: ScrollViewProxy) -> some View {
-        // Undo Last Change comes a moment after the turn ends, once Lamp knows it can be offered. (Apart from the
-        // rest: as one expression it's more than the type checker will take on in reasonable time.)
-        content.onChange(of: undoChange) { followEnd(proxy, lines, pin: pin) }
-        // A chat opens on its latest messages: the scroll view starts at the bottom, with
-        // no scrolling to get there.
-        // It stays at its end as the chat grows, except while a request just sent glides to the top
-        // (it would be at the end at once) and while the agent's questions wait.
-        .modifier(OpensAtEnd(holdsEnd: !gliding && pin == pinned && Talk.open(in: lines) == nil))
-        // The chat follows what's added at its end, but only from the end: scrolled up to read
-        // something earlier, it stays there. A message sent goes to the top, with room below for the answer.
-        // The agent's questions come into view whole as they arrive, and then the chat holds still
-        // until they're answered: following anything added meanwhile would slide the answers out
-        // from under the pointer.
-        .onChange(of: Talk.open(in: lines)?.id) { _, waiting in
-            // Answered, by a click or in words: the chat goes back to following its end, where the
-            // reply is about to be. It stopped following while the card waited, so it may not be there.
-            if waiting == nil { follow.followThroughSettling() }
-            // After this pass: the card isn't laid out yet, and the end is still where it was.
-            if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
-        }
-        .onChange(of: lines.count) { followEnd(proxy, lines, pin: pin) }
-        .onChange(of: written(lines)) { followEnd(proxy, lines, pin: pin) }
-        .onChange(of: queued.count) { followEnd(proxy, lines, pin: pin) }
-        .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines, pin: pin) }
-        .onChange(of: sends) {
-            follow.atEnd = true
-            followEnd(proxy, lines, pin: pin)
-        }
-    }
-
-    /// The request held at the top: the one pinned, or one sent from here that has just arrived. Worked out
-    /// as the chat is drawn, so a request arrives with its room already below it.
-    private func pinned(_ latestRequest: UUID?) -> UUID? {
-        guard let latestRequest else { return nil }
-        if pinWanted, latestRequest != pinAfter { return latestRequest }
-        return latestRequest == pinned ? latestRequest : nil
-    }
-
-    /// Goes to the end if the chat is following it. With a request pinned, the end is where the request
-    /// is at the top, so a request just arrived goes there, gently. Not while the agent's questions wait.
-    private func followEnd(_ proxy: ScrollViewProxy, _ lines: [LogLine], pin: UUID?) {
-        if let pin, pin != pinned {
-            pinned = pin
-            pinWanted = false
-            follow.atEnd = true
-            gliding = true
-            glides += 1
-            return
-        }
-        guard follow.atEnd, !gliding, Talk.open(in: lines) == nil else { return }
-        proxy.scrollTo("bottom", anchor: .bottom)
-    }
-
-    /// Reaches one more lot back. From what's shown, not from what was asked for: a long turn can take the
-    /// chat further back than that, and the next lot has to start beyond it.
-    private func showEarlier(_ lines: [LogLine], from start: Int) {
-        reach = LogLine.reach(in: lines, from: start) + LogLine.recentCount
-    }
-
-    /// The chat's rows: the intro for a new app, the transcript with its build card or activity, and the
-    /// messages waiting their turn.
-    @ViewBuilder
-    private func chatRows(_ lines: [LogLine], pin: UUID?, height: CGFloat, cardPinned: Bool) -> some View {
-        if lines.isEmpty && queued.isEmpty {
-            // In the middle of the chat area: less the scroll view's own padding.
-            NewAppIntro(project: project, draft: draftBinding)
-                .frame(minHeight: height - 32)
-        }
-        if let card = store.progress[project.id], card.newApp,
-           let request = lines.firstIndex(where: { $0.kind == .user }) {
-            // The build card goes straight after the request that began the app, and stays there through
-            // the agent's questions and their answers; what the agent says and does follows it.
-            transcript(Array(lines[...request]), busy: false, pin: pin)
-            BuildCard(project: project, progress: card, lines: Array(lines[(request + 1)...]), stepsOpen: $cardStepsOpen)
-                .padding(.top, 16).padding(.bottom, 12)
-                .background(ChatLook.paper)
-                // Pinned: once it reaches the top of the chat it stays there, over the steps going by.
-                .visualEffect { content, geometry in
-                    content.offset(y: cardPinned ? max(0, -geometry.frame(in: .scrollView).minY) : 0)
-                }
-                .zIndex(1)
-            // While its questions wait, the steps above them stay as they are: hidden in the card's line and then shown
-            // when the turn's summary arrives would move the answers under the pointer.
-            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy && Talk.open(in: lines) == nil, pin: pin)
-        } else {
-            // No line of activity under the agent's questions: it would go away when the turn ends a moment
-            // later, and the card above it would move.
-            // Nor until the request it's working on is in: the turn starts a moment before, and the line would
-            // show up under the last answer and then jump below the request.
-            let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
-            let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
-            transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
-            if let progress { ActivityRow(progress: progress, lines: lines, dir: project.dir).padding(.top, 12) }
-        }
-        if let change = undoChange {
-            ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)
-        }
-        if store.notResponding[project.id] != nil {
-            ChatLook.UnresponsiveNotice(text: ErrorMessages.notResponding(project.name)) { store.forceQuit(project) }.padding(.top, 12)
-        }
-        let queued = Talk.drawnWaiting(queued, in: lines)
-        let places = ChatLook.QueuedPlace.places(sending: queued.map(\.sendNow))
-        let canSendNow = store.canSendNow(in: project)
-        ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
-            let place = places[index]
-            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready,
-                               waitingForReload: store.queueWaitsForReload(in: project), sending: message.sendNow, place: place,
-                               onRemove: { store.unqueue(message, from: project) },
-                               sendNow: !message.sendNow && place.last && canSendNow ? { store.sendNow(in: project, latest: message.id) } : nil) {
-                if let pointed = message.pointed {
-                    ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
-                }
-                ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
-            }
-                // A group's messages sit close together; the group stands apart from the chat above it.
-                .padding(.top, lines.isEmpty && index == 0 ? 0 : place.first ? 32 : 8)
-        }
-    }
-
-    /// The message box with the buttons around it, floating at the foot of the chat in the chat's own column.
-    private func composerRow(_ lines: [LogLine]) -> some View {
-        // A request sent again starts from the app as it was, so it can't wait behind other work.
-        let canSend = !(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty && pointed == nil || replacing != nil && busy)
-        return ChatLook.MessageBar(busy: busy, canSend: canSend,
-                                   attachHelp: "Attach files. You can also paste or drop images and files here.",
-                                   attach: chooseFiles,
-                                   // Pointing at part of the app, while it's open here with something to point at.
-                                   point: store.canPoint(in: project) ? { MagicPanel.shared.point(in: project, fromLamp: true) } : nil,
-                                   send: send, stop: { store.stop(project) },
-                                   focus: { focusRequest += 1 }) {
-            Composer(text: shownDraft, height: $composerHeight,
-                     placeholder: ChatLook.placeholder(busy: busy, empty: lines.isEmpty),
-                     // No suggestion while a request from the chat is in the box: it would be about a turn
-                     // that's on its way out, and Escape, which dismisses one, puts the request back instead.
-                     suggestion: replacing == nil ? shownSuggestion : nil,
-                     onDismissSuggestion: { dismissedSuggestion = suggestion },
-                     onEscape: replacing == nil ? nil : putBack,
-                     isEnabled: true, focusRequest: focusRequest, dictationUndo: dictationUndo,
-                     onDictationUndo: { dictation.cancel() },
-                     onSubmit: send, onFiles: attach)
-                .frame(height: composerHeight)
-        } above: {
-            if let pointed { pointedPill(pointed).padding(.top, 4) }
-            if !attachments.isEmpty { pendingAttachments }
-        } inside: {
-            // Once something's typed the person has chosen the keyboard; while it listens, it's how dictation stops.
-            if hasMicrophone, dictation.isListening || shownDraft.wrappedValue.isEmpty {
-                ChatLook.MicButton(listening: dictation.isListening, action: toggleDictation)
-                    .disabled(submissionPending)
-            }
-        }
-        // Lined up with the chat above it (see `chat`).
-        .frame(maxWidth: 640)
-        .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 16)
-        .frame(maxWidth: .infinity)
-    }
-
-    struct History: Equatable {
-        /// Undo has a version to go back to, or a stopped turn's changes to discard.
-        var undoable: Bool
-        /// Something has been made: the app is no longer the empty one Lamp starts with. Until then there's
-        /// nothing to open, share or look back on. Read from the app's files, not its versions' messages: a
-        /// request is saved in its own words, which can look like one of Lamp's own notes ("Rename to …").
-        var made: Bool
-        /// There's more saved than the version the app started as. Apart from `made`: an Undo back to the
-        /// empty app keeps the build it undid, and Versions is how to get it back.
-        var saved: Bool
-
-        static func read(_ project: LampProject) async -> History {
-            let versions = await Versions.list(project)
-            let made = !Template.isScaffold(project)
-            let undoable = Versions.undoTarget(in: versions) != nil
-            return History(undoable: undoable ? true : await Versions.hasUnsavedChanges(project), made: made,
-                           saved: made || versions.count > 1)
-        }
-    }
-    /// The change Undo Last Change is offered under, at the end of the chat: not while anything waits to go after it.
-    private var undoChange: String? { busy || !queued.isEmpty ? nil : store.undoOffers[project.id] }
-    /// The history is read again whenever a turn starts or ends and whenever the chat changes (a rename, an Undo).
-    private var historyKey: String { "\(project.id) \(busy) \(store.logs[project.id]?.count ?? 0)" }
-    private var undoable: Bool { history?.undoable ?? true }
-    private var made: Bool { history?.made ?? true }
-    private var saved: Bool { history?.saved ?? true }
-    /// Not for a wish not yet told, whose toolbar has no toggle to close it: the choice is kept for the next app.
-    private var inspectorShown: Binding<Bool> {
-        Binding(get: { !untold && (showInfo || (showVersions && saved)) }, set: { if !$0 { showInfo = false; showVersions = false } })
-    }
-
-    private func chrome(_ lines: [LogLine]) -> some View {
-        VStack(spacing: 0) {
-            chat(lines)
-            if let approval = store.approvals[project.id] {
-                ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation?.look,
-                             request: approval.request, whyAsked: approval.whyAsked,
-                             onAllow: { store.answerApproval(for: project, allow: true) },
-                             onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
-                             onDeny: { store.answerApproval(for: project, allow: false) })
-                    // Each request starts with How to Decide closed, even when one follows another.
-                    .id(approval.id)
-                    .frame(maxWidth: 640)
-                    .padding(.horizontal, 20).padding(.top, 8)
-                    .frame(maxWidth: .infinity)
-            }
-            composerRow(lines)
-        }
-        .overlay {
-            if dropTargeted {
-                RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 3).padding(4)
-                    .allowsHitTesting(false)
-            }
-        }
-        .onDrop(of: Attachments.dropTypes, isTargeted: $dropTargeted) { providers in
-            Attachments.load(providers) { attach($0) }
-            return true
-        }
-        .background(ChatLook.paper)
-        .inspector(isPresented: inspectorShown) {
-            Group {
-                if showVersions && saved { VersionsView(project: project) } else { AppInfoView(project: project) }
-            }
-            .inspectorColumnWidth(min: 300, ideal: 340, max: 460)
-        }
-        .navigationTitle(project.title)
-        .navigationSubtitle(usageSummary)
-        .toolbarTitleMenu {
-            Button("Rename…") { store.renaming = project }
-                .disabled(busy || project.makesNoApp)
-        }
-        .toolbar { toolbar }
-    }
-
-    // Split in two: as one expression the body is more than the type checker will take on in reasonable time.
-    private func observing(_ content: some View) -> some View {
-        content
-        .task { await store.linkOldRequests(project) }
-        .onAppear {
-            focusRequest += 1
-            loadDraft()
-            // A wish made on the desk: its words are in the draft, and go now, as if sent from here.
-            if store.sendWhenShown == project.id {
-                store.sendWhenShown = nil
-                send()
-            }
-        }
-        .onChange(of: store.draftUpdates[store.current(project)?.id ?? project.id]) { loadDraft() }
-        .onChange(of: project.platform) { PhoneSetup.shared.refreshIfVisible() }
-        .onChange(of: draft) { saveDraft() }
-        .onChange(of: attachments) { saveDraft() }
-        .onChange(of: pointed) { saveDraft() }
-        .onChange(of: replacing) { saveDraft() }
-        .onAppear { hasMicrophone = Dictation.hasMicrophone }
-        // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
-        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
-        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
-    }
-
-    var body: some View {
-        observing(chrome(lines))
-        .onDisappear { dictation.cancel() }
-        .alert(dictation.problem?.title ?? "Dictation",
-               isPresented: Binding(get: { dictation.problem != nil }, set: { if !$0 { dictation.problem = nil } }),
-               presenting: dictation.problem) { problem in
-            if let url = problem.settingsURL {
-                Button(problem.settingsButton) { NSWorkspace.shared.open(url) }
-                Button("Not Now", role: .cancel) {}
-            } else {
-                Button("OK") {}
-            }
-        } message: { problem in
-            Text(problem.message)
-        }
-        .onChange(of: store.chatFocusRequest) { if store.selection == project.id { focusRequest += 1 } }
-        .task(id: historyKey) {
-            // A read can outlast the change that started it (the git commands it runs finish even when it's
-            // cancelled), so one started before a turn ended mustn't land after the read that followed.
-            store.refreshUndoOffer(project)
-            let read = await History.read(project)
-            guard !Task.isCancelled else { return }
-            history = read
-        }
-        .task(id: suggestionTurn) {
-            suggestion = nil
-            guard suggestionTurn != nil else { return }
-            suggestion = await NextStep.suggest(for: project, lines: store.logs[project.id] ?? [])
-        }
-    }
-
-    private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false, pin: UUID? = nil) -> some View {
-        Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
-            Task { await store.restore(project, toVersionOf: line, before: before) }
-        }, sendAgain: self.busy || submissionPending ? nil : takeBack, retryPhone: project.device != nil ? { udid in
-            Task { await store.retryPhone(project, udid: udid) }
-        } : nil, pinned: pin)
-    }
-
-    /// Persist writes synchronously so a check finishing in this event cycle sees the newest input,
-    /// including writes from a newly-created chat view after navigation.
-    private var draftBinding: Binding<String> {
-        Binding(get: { draft }, set: { draft = $0; saveDraft() })
-    }
-
-    /// The message box: the draft, or as much of an arriving wish as has been written in (`Wish.Arrival`).
-    /// The draft is the whole wish throughout, so that is what Send sends; typing ends the writing.
-    private var shownDraft: Binding<String> {
-        Binding(get: { store.arrivals[project.id]?.text(over: draft) ?? draft }, set: { typed in
-            if let arrival = store.arrivals[project.id] {
-                guard typed != arrival.text(over: draft) else { return }
-                store.endArrival(for: project.id)
-            }
-            draft = typed
-            saveDraft()
-        })
-    }
-
-    private func loadDraft() {
-        let saved = store.draft(for: store.current(project) ?? project)
-        draft = saved.text
-        attachments = saved.attachments
-        pointed = saved.pointed
-        replacing = saved.replacing
-        setAside = saved.replacing == nil ? nil
-            : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments, pointed: saved.setAsidePointed)
-    }
-
-    private func saveDraft() {
-        guard let current = store.current(project) else { return }
-        store.saveDraft(Store.Draft(text: draft, attachments: attachments, pointed: pointed, replacing: replacing,
-                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [],
-                                    setAsidePointed: setAside?.pointed),
-                        for: current)
-    }
-
-    /// Takes a request out of the chat and into the message box, with the files it was sent with.
-    private func takeBack(_ line: LogLine) {
-        guard !submissionPending else { return }
-        if replacing == nil { setAside = Store.Draft(text: draft, attachments: attachments, pointed: pointed) }
-        dictation.cancel()
-        sendProblem = nil
-        draft = line.text
-        (attachments, pointed) = line.draftAttachments(in: project)
-        replacing = line.id
-        focusRequest += 1
-    }
-
-    /// Not sending it again after all: the chat is as it was, and so is the message box.
-    /// Escape in the message box does this. Emptying the box doesn't: that's how someone starts the request
-    /// over in new words.
-    private func putBack() {
-        guard !submissionPending else { return }
-        replacing = nil
-        sendProblem = nil
-        draft = setAside?.text ?? ""
-        attachments = setAside?.attachments ?? []
-        pointed = setAside?.pointed
-        setAside = nil
-    }
-
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        if #available(macOS 26, *) {
-            ToolbarItem(placement: .navigation) { titleIcon }
-                .sharedBackgroundVisibility(.hidden)
-        } else {
-            ToolbarItem(placement: .navigation) { titleIcon }
-        }
-        // A wish not yet told, or still being found, has nothing to open, undo, share or look into: only its
-        // icon, until it does.
-        if !untold && !project.makesNoApp { appTools }
-    }
-
-    /// Nothing asked yet: a new wish, with no app behind it.
-    private var untold: Bool { !project.scaffolded && (store.logs[project.id] ?? []).isEmpty && !busy }
-
-    @ToolbarContentBuilder
-    private var appTools: some ToolbarContent {
-        ToolbarItem {
-            // One button: Play while the app is closed, Stop while it's open, where Try On points (an app for
-            // both can be open on this Mac and in a simulator at once).
-            if store.isOpen(project) {
-                Button { Task { await store.quitApp(project) } } label: {
-                    Label("Quit", systemImage: "stop.fill")
-                }
-                .help("Quit \(project.name)")
-            } else {
-                Button { store.openPrepared(project) } label: {
-                    Label("Use", systemImage: "play.fill")
-                }
-                .disabled(!made)
-                .help(made ? "Use \(project.name) (right-click it on the desk to rebuild)" : "Lamp opens it once it's made")
-            }
-        }
-        if project.platform.hasIOS || project.platform == .android || project.platform == .tv || project.platform == .device {
-            ToolbarItem {
-                // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
-                Menu {
-                    TryOnChoices(project: project)
-                } label: {
-                    let device = store.devices.first { $0.udid == project.device }
-                    Label(store.tryOnName(project), systemImage: project.onDevice ? Device.Kind.other.symbol : project.onTV ? "tv" : project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
-                }
-                .disabled(busy)
-                .help(project.platform == .device ? "Where it opens: which of your \(DeviceApps.integration(for: project)?.name ?? "devices") it goes on"
-                      : project.platform == .tv ? "Where it opens: the TV preview on this Mac, or one of your TVs"
-                      : project.platform == .android ? "Where it opens: the emulator, or your own Android phone or tablet"
-                      : project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
-                      : "Where it opens: a simulator, or your own iPhone or iPad")
-            }
-        }
-        gap
-        ToolbarItemGroup {
-            Button { Task { await store.undo(project) } } label: {
-                Label("Undo Last Change", systemImage: "arrow.uturn.backward")
-            }
-            .disabled(busy || !undoable)
-            .help(undoable ? "Go back to the version before this one" : "Nothing to undo yet")
-            Button { store.deleting = project } label: {
-                Label("Delete Wish", systemImage: "trash")
-            }
-            .help("Delete this wish")
-            if store.canShare(project) {
-                Menu {
-                    Button("Copy Wish File") { store.copyAppFile(project) }
-                    Button { Sharing.share(project, from: .toolbar) } label: {
-                        Label("Share…", systemImage: "square.and.arrow.up")
-                    }
-                    Button("Export…") { store.chooseExport(project) }
-                } label: {
-                    Label("Share Wish", systemImage: "square.and.arrow.up")
-                }
-                .disabled(!made)
-                .help(made ? "Send this wish to someone with Lamp" : "Nothing to share until it's made")
-                .background(ShareAnchor(origin: .toolbar))
-            }
-        }
-        gap
-        ToolbarItemGroup {
-            Toggle(isOn: $showDetails) {
-                Label("Agent Details", systemImage: "chevron.left.forwardslash.chevron.right")
-            }
-            .help("Agent details")
-            // Versions and Wish Info share the side panel: showing one hides the other.
-            Toggle(isOn: Binding(get: { showVersions && saved }, set: { showVersions = $0; if $0 { showInfo = false } })) {
-                Label("Versions", systemImage: "clock.arrow.circlepath")
-            }
-            .disabled(!saved)
-            .help(saved ? "See earlier versions of this wish, name them, and go back to one" : "No versions yet: each change Lamp makes is saved as one")
-            Toggle(isOn: Binding(get: { showInfo }, set: { showInfo = $0; if $0 { showVersions = false } })) {
-                Label("Wish Info", systemImage: "info.circle")
-            }
-            .help("Show usage, cost and models for this wish")
-        }
-    }
-
-    /// Separates the toolbar's groups. macOS 26 has a native spacer; earlier versions get a little blank space.
-    @ToolbarContentBuilder
-    private var gap: some ToolbarContent {
-        if #available(macOS 26, *) {
-            ToolbarSpacer(.fixed)
-        } else {
-            ToolbarItem { Color.clear.frame(width: 8, height: 1) }
-        }
-    }
-
-    private var titleIcon: some View {
-        Button { Task { iconPreview = await Icons.largePreview(project) } } label: {
-            AppIcon(project: project, size: 30)
-        }
-        .buttonStyle(.plain)
-        .help("Show \(project.title)'s icon")
-        .quickLookPreview($iconPreview)
-    }
-
-    private var usageSummary: String { store.usageSummary(project) ?? "" }
-
-    /// Dictated words are appended to whatever was already typed.
-    private func toggleDictation() {
-        if dictation.isListening { return dictation.stop() }
-        let typed = draft
-        let separator = typed.isEmpty || typed.last!.isWhitespace ? "" : " "
-        focusRequest += 1
-        Task {
-            guard !submissionPending else { return }
-            await dictation.start { heard, before in
-                guard !submissionPending else { return }
-                dictationUndo = .init(phrase: dictation.phrase, restoring: before.isEmpty ? typed : typed + separator + before)
-                draft = typed + separator + heard
-            }
-        }
-    }
-
-    private func send() {
-        guard !submissionPending, !draft.trimmed.isEmpty || !attachments.isEmpty || pointed != nil else { return }
-        let replaced = replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
-        guard replaced == nil || !busy else { return }
-        dictation.cancel()
-        let submitted = Store.Draft(text: draft, attachments: attachments, pointed: pointed, replacing: replacing,
-                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [],
-                                    setAsidePointed: setAside?.pointed)
-        guard let token = store.beginSubmission(project) else { return }
-        store.endArrival(for: project.id)
-        // Decided now: sending makes the app busy at once, so by the time the chat hears of it, it can't tell
-        // a request that starts from one that waits, which joins the queue at the end.
-        pinWanted = !busy
-        pinAfter = lines.last { $0.kind == .user }?.id
-        sends += 1
-        store.saveDraft(submitted, for: project)
-        PhoneSetup.shared.perform(for: project, in: store, cancelled: {
-            finishSubmission(token, captured: submitted, sent: false)
-        }) { current in
-            sendPrepared(submitted, replacing: replaced, to: current, token: token)
-        }
-    }
-
-    private func sendPrepared(_ submitted: Store.Draft, replacing replaced: LogLine?, to current: LampProject, token: UUID) {
-        let text = submitted.text.trimmed
-        let files = submitted.attachments
-        guard let replaced else {
-            store.send(text, attachments: files, pointed: submitted.pointed, to: current)
-            finishSubmission(token, captured: submitted, sent: true)
-            return
-        }
-        sendingAgain = replaced.id
-        sendProblem = nil
-        Task {
-            // Nothing was sent: the words go back in the box, so they aren't lost with it, and the chat
-            // keeps saying why.
-            let sent = await store.sendAgain(replaced, as: text, attachments: files, pointed: submitted.pointed, in: current)
-            if !sent { sendProblem = store.logs[current.id]?.last { $0.kind == .error }?.id }
-            sendingAgain = nil
-            finishSubmission(token, captured: submitted, sent: sent)
-        }
-    }
-
-    private func finishSubmission(_ token: UUID, captured: Store.Draft, sent: Bool) {
-        if !sent { pinWanted = false }
-        if let current = store.current(project) {
-            let kept = store.draft(for: current).afterSubmission(captured, sent: sent)
-            store.updateDraft(kept, for: current)
-        }
-        store.endSubmission(token)
-        // The box takes what's left now, in the same event as the send. Left to the chat hearing of the change
-        // (`draftUpdates`), the sent words stay in it until the chat next draws, and a Return pressed meanwhile
-        // finds them there, with nothing on its way any more, and sends them again.
-        loadDraft()
-    }
-
-    private func attach(_ files: [URL]) {
-        store.attach(files, to: project)
-    }
-
-    private func chooseFiles() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.message = "Attach screenshots, mockups, images, data or documents"
-        guard panel.runModal() == .OK else { return }
-        let files = panel.urls
-        // Changing the composer here can re-enter the chat's lazy layout while AppKit closes the panel.
-        DispatchQueue.main.async { attach(files) }
-    }
-}
-
-/// A label and its value on one row when they fit, else the value under the label, both left-aligned: the
-/// info panel is narrow, and a value squeezed to the right edge in two lines is hard to read.
-private struct InfoRow<Value: View>: View {
-    let title: String
-    let value: Value
-
-    init(_ title: String, @ViewBuilder value: () -> Value) {
-        self.title = title
-        self.value = value()
-    }
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                Spacer(minLength: 12)
-                value.fixedSize()
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                value
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-extension InfoRow where Value == Text {
-    init(_ title: String, value: String) {
-        self.init(title) { Text(value).foregroundStyle(.secondary) }
-    }
-}
-
-/// The info panel: what an app has cost, which models it uses, and where it lives.
-struct AppInfoView: View {
-    @EnvironmentObject private var store: Store
-    let project: LampProject
-    /// This app's own model choices, from an earlier Lamp that let it make them; nil fields follow Settings.
-    @State private var models: AppModels
-
-    init(project: LampProject) {
-        self.project = project
-        _models = State(initialValue: AppModels.load(project))
-    }
-    /// Bumped when Settings changes, so the defaults shown are current.
-    @State private var settingsRevision = 0
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @Environment(\.openSettings) private var openSettings
-    // What the AI rows resolve from, besides Settings: the models on this Mac (text, decisions, pictures).
-    @ObservedObject private var local = LocalModels.shared
-    @ObservedObject private var images = ImageModels.shared
-
-    private var lastBuilt: Date? {
-        try? project.installedURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-    }
-
-    var body: some View {
-        Form {
-            Section {
-                VStack(spacing: 8) {
-                    AppIcon(project: project, size: 64)
-                    Text(project.title).font(.headline)
-                    if let lastBuilt {
-                        Text("Built \(lastBuilt, format: .relative(presentation: .named))")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-            }
-            let _ = settingsRevision
-            ForEach(Self.sections(for: project, models: models, store: store)) { section in
-                Section {
-                    ForEach(section.rows, id: \.label) { row in
-                        if let value = row.value {
-                            InfoRow(row.label) { Text(value).foregroundStyle(.secondary).textSelection(.enabled) }
-                        } else {
-                            InfoRow(row.label) { NotReadyBadge() }
-                        }
-                    }
-                } header: {
-                    if let title = section.title { Text(title) }
-                } footer: {
-                    if !section.buttons.isEmpty {
-                        HStack {
-                            ForEach(section.buttons, id: \.action) { button in
-                                Button(button.title) { perform(button.action) }
-                            }
-                        }
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
-            settingsRevision += 1
-        }
-        // Keys and this app's own choices change what answers it too.
-        .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in settingsRevision += 1 }
-        .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in models = AppModels.load(project) }
-        .onChange(of: project.id) { models = AppModels.load(project) }
-    }
-
-    private func perform(_ action: String) {
-        if action == Self.useSettingsChoices { models = AppModels() }
-        Self.perform(action, for: project) { tab in settingsTab = tab; openSettings() }
-    }
-
+/// The wish's info (Wish Info in the chat's bar): what it has cost, what answers its AI, how Lamp builds it and where it
+/// lives, as plain rows the chat's info panel draws (`InfoPanel`). It chooses nothing: its buttons lead to where things
+/// are chosen.
+enum AppInfoView {
     static let useSettingsChoices = "settingsChoices"
+    static let basedOnPage = "basedOnPage"
+    static let remixedFromPage = "remixedFromPage"
+    static let updateFromRepository = "updateFromRepository"
+    static let startAgain = "startAgain"
+
+    /// Where the wish came from, when that's a repository on GitHub: the chain's last link naming one that isn't where
+    /// this wish was put (`Credits.origin`), a starter's link filled in for a copy made before starters named theirs
+    /// (`Starters.located`).
+    static func origin(of project: LampProject) -> Credits.Remix? {
+        located(Credits.load(project)).origin(own: GitHubRepo.kept(for: project)?.url)
+    }
+
+    static func located(_ credits: Credits) -> Credits {
+        var credits = credits
+        credits.remixOf = credits.remixOf.map(Starters.located)
+        return credits
+    }
 
     /// A button of the panel's, here or in the chat beside the app: Settings opened at its tab, the app or its code
     /// shown in Finder, or this app's own model choices undone.
@@ -1143,13 +308,30 @@ struct AppInfoView: View {
         case useSettingsChoices: AppModels().save(project)
         case "showApp": NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         case "showSource": NSWorkspace.shared.activateFileViewerSelecting([project.dir])
+        case basedOnPage:
+            if let page = Credits.load(project).basis?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+        case remixedFromPage:
+            if let page = origin(of: project)?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+        case updateFromRepository:
+            // Check for Updates… asks; Review Update…, once there is one, brings it in (`AppUpdates`): a wish in a
+            // repository through the same review as the first time, a wish made from someone's project by the agent.
+            if Store.shared.updateAvailability(of: project)?.reviews == true {
+                Store.shared.reviewUpdate(project)
+            } else {
+                Store.shared.checkForUpdates(project)
+            }
+        case startAgain:
+            // From the chat, which is open already.
+            Task { await Store.shared.startAgain(project, opening: false) }
         default: break
         }
     }
 
     /// What the panel says, as plain rows (a nil value is Not Ready) and the buttons under them: drawn here and in
     /// the chat beside the app (`SidebarServer`) from this one list, so the two never say different things.
-    @MainActor static func sections(for project: LampProject, models: AppModels, store: Store) -> [SidebarInfoSection] {
+    /// `changedFromOriginal` is whether the wish has changed since it arrived, as last read (`Store.original(toStartAgain:)`).
+    @MainActor static func sections(for project: LampProject, models: AppModels, store: Store,
+                                    changedFromOriginal: Bool = false) -> [SidebarInfoSection] {
         let usage = store.usage[project.id] ?? AppUsage()
         let requests = (store.logs[project.id] ?? []).filter { $0.kind == .user }.count
         var sections = [SidebarInfoSection(title: "Usage", rows: [
@@ -1162,11 +344,11 @@ struct AppInfoView: View {
         func answer(_ title: String, _ resolution: Resolution) -> SidebarInfoRow {
             SidebarInfoRow(label: title, value: resolution.tier == .none ? nil : short(resolution.answer ?? ""))
         }
-        var ai = Capability.allCases.filter { $0 != .browser }.map { answer($0.title, AppAI.resolve($0, for: project)) }
-        if project.platform.hasIOS {
+        var ai = Capability.allCases.map { answer($0.title, AppAI.resolve($0, for: project)) }
+        if project.hasIOS {
             // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
             if Provider.hasKey {
-                ai += Capability.allCases.filter { $0 != .browser }.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
+                ai += Capability.allCases.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
             } else {
                 ai.append(SidebarInfoRow(label: "Away from this Mac", value: nil))
             }
@@ -1175,6 +357,9 @@ struct AppInfoView: View {
         // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
         if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }
         sections.append(SidebarInfoSection(title: "AI inside this app", rows: ai, buttons: aiButtons))
+        if let credits = creditsSection(located(Credits.load(project)), own: GitHubRepo.kept(for: project)?.url,
+                                        update: store.updateAvailability(of: project),
+                                        changedFromOriginal: changedFromOriginal) { sections.insert(credits, at: 0) }
         var building = [SidebarInfoRow(label: "Agent", value: Builder.engine.title)]
         if Builder.engine == .claude || Builder.engine == .codex {
             let model = Builder.engineModel(Builder.engine)
@@ -1188,6 +373,11 @@ struct AppInfoView: View {
         }
         sections.append(SidebarInfoSection(title: "Building", rows: building,
                                            buttons: [SidebarInfoButton(title: "Building Settings…", action: "building")]))
+        // Of the app in the wish's own folder: a wish whose apps are all in folders of their own has only its code.
+        guard project.holdsApp else {
+            sections.append(SidebarInfoSection(title: "App", rows: [], buttons: [SidebarInfoButton(title: "Show Source Code in Finder", action: "showSource")]))
+            return sections
+        }
         var app: [SidebarInfoRow] = []
         if let stamp = store.stamps[project.id] { app.append(SidebarInfoRow(label: "Built with", value: stamp.summary)) }
         app.append(SidebarInfoRow(label: "Bundle ID", value: project.bundleID))
@@ -1196,6 +386,65 @@ struct AppInfoView: View {
             SidebarInfoButton(title: "Show Source Code in Finder", action: "showSource"),
         ]))
         return sections
+    }
+
+    /// Where the wish came from, first, since it's the one thing here that's about someone else: the work it's based on
+    /// and its license, anything else it uses, and the wishes it was remixed from. A wish with no credits has none.
+    /// `own` is where this wish was put on GitHub, which isn't where it came from.
+    /// `update` is what was last heard of an update (`AppUpdates`): a row of its own, and the button that checks or
+    /// reviews it, for a wish with somewhere to be updated from.
+    /// `changedFromOriginal` says so in a row, with the button that starts over from the original (`Store.startAgain`).
+    static func creditsSection(_ credits: Credits, own: String?, update: AppUpdates.Availability? = nil,
+                               changedFromOriginal: Bool = false) -> SidebarInfoSection? {
+        guard !credits.isEmpty else { return nil }
+        var rows: [SidebarInfoRow] = []
+        // The work it's based on and its license, each a row; anything else it uses a row of its own, named after it, with
+        // who made it and its license when that's a plain id (terms of its own, `LicenseRef-`, would make the row too long
+        // for the panel's one line; they're in the About window). Every row's label is its own: the panel tells rows apart
+        // by their labels.
+        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from", "Updates", "Your copy"]
+        for (index, source) in credits.basisFirst.enumerated() {
+            if index == 0, credits.basis != nil {
+                rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
+                rows.append(SidebarInfoRow(label: "License", value: source.license ?? "None given"))
+                continue
+            }
+            var label = source.name
+            while !labels.insert(label).inserted { label += " " }
+            let license = source.license.map { $0.hasPrefix("LicenseRef-") ? nil : $0 } ?? "no license"
+            rows.append(SidebarInfoRow(label: label, value: [source.author, license].compactMap { $0 }.joined(separator: " · ")))
+        }
+        if !credits.generated.isEmpty {
+            rows.append(SidebarInfoRow(label: "Made with AI", value: credits.generated.count == 1 ? "1 picture" : "\(credits.generated.count) pictures"))
+        }
+        if !credits.remixOf.isEmpty {
+            // The same wish at two places (opened from one repository, put on another) is one name here.
+            var names: [String] = []
+            for remix in credits.remixOf {
+                let name = remix.name + (remix.starter != nil ? " (Lamp)" : "")
+                if names.last != name { names.append(name) }
+            }
+            rows.append(SidebarInfoRow(label: "Remixed from", value: names.joined(separator: " → ")))
+        }
+        let route = AppUpdates.route(for: credits, own: own)
+        if route != nil, let update { rows.append(SidebarInfoRow(label: "Updates", value: update.line)) }
+        if changedFromOriginal { rows.append(SidebarInfoRow(label: "Your copy", value: "Changed from the original")) }
+        var buttons: [SidebarInfoButton] = []
+        if let source = credits.basis, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
+        // The wish this one was most directly remixed from, where it lives (its repository on GitHub, not the one this
+        // wish was put on).
+        if let remix = credits.origin(own: own) {
+            buttons.append(SidebarInfoButton(title: "Visit \(remix.name) on GitHub", action: remixedFromPage))
+        }
+        // The same button whichever way the wish came: it checks, and once there's an update, it brings it in.
+        // A starter's copy takes the starter Lamp ships with no review: it's Lamp's own.
+        if route != nil {
+            let starter = credits.origin(own: own)?.starter != nil
+            let title = update?.reviews == true ? (starter ? "Update from the Original" : "Review Update…") : "Check for Updates…"
+            buttons.append(SidebarInfoButton(title: title, action: updateFromRepository))
+        }
+        if changedFromOriginal { buttons.append(SidebarInfoButton(title: "Start Over", action: startAgain)) }
+        return SidebarInfoSection(title: "Credits", rows: rows, buttons: buttons)
     }
 
     /// A model's name without the description Settings shows: "Fast & cheap (Claude Haiku)" → "Claude Haiku",
@@ -1219,14 +468,14 @@ struct AppInfoView: View {
     private static func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 }
 
-/// While Apple's tools install, above everything: what's happening, and that requests wait for it.
+/// While Apple's tools install, above everything: what's happening, and that the requests that need them wait for it.
 struct BuildToolsBanner: View {
     @EnvironmentObject private var store: Store
 
     var body: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
-            Text("Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.")
+            Text("Installing Apple's app-building tools. Apps that need them start as soon as they're in.")
                 .font(.callout)
             Spacer()
             Button(store.setup.installRequested ? "Show Installer" : "Install…") {
@@ -1237,90 +486,6 @@ struct BuildToolsBanner: View {
         .padding(.horizontal, 16).padding(.vertical, 8)
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
-    }
-}
-
-/// An app's empty chat: its icon, its name (editable), and what to do next.
-struct NewAppIntro: View {
-    @EnvironmentObject private var store: Store
-    let project: LampProject
-    @Binding var draft: String
-    @State private var name = ""
-    @State private var fresh = false   // nothing built yet (not, say, an imported app)
-    /// Drawn once when the chat first shows, so they don't change under the reader or when a draft is cleared.
-    @State private var ideas: [Idea] = []
-    @FocusState private var editingName: Bool
-
-    private var busy: Bool { store.busy.contains(project.id) }
-
-    var body: some View {
-        VStack(spacing: 14) {
-            // Catches the light once the reveal has passed it.
-            AppIcon(project: project, size: 112).shine(delay: 0.4)
-            if project.untitled && !project.fromWish {
-                // Nothing to name yet: what's asked is what the person wants, a chore taken off their hands or
-                // something fun, not what to make. Lamp names what it makes.
-                Text("What would make your day easier, or more fun?")
-                    .font(.title.weight(.semibold))
-                    .multilineTextAlignment(.center)
-            } else {
-            // A wish reads as a title; a name typed here is the app's, and Lamp names it otherwise.
-            TextField("Name", text: $name, prompt: !project.untitled ? Text(project.name)
-                      : project.fromWish ? Text("") : Text("Name it, or Lamp will"))
-                .textFieldStyle(.plain)
-                .font(.title.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .focused($editingName)
-                .onSubmit(commit)
-                .disabled(busy)
-                .frame(maxWidth: 360)
-                .overlay {
-                    // A hint is drawn gray whatever it's told; a wish's title is drawn as one, and steps
-                    // back while a name is being typed over it.
-                    if project.untitled && project.fromWish && name.isEmpty {
-                        Text(project.title).font(.title.weight(.semibold))
-                            .opacity(editingName ? 0.3 : 1)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .help("Rename this wish")
-            }
-            Text(project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
-                 : project.untitled
-                 ? "Say it in your own words: a chore to take off your hands, a habit to keep, a game to play. Lamp makes it for you."
-                 : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 400)
-            if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
-                StarterIdeas(ideas: ideas) { wish in
-                    draft = wish
-                    store.chatFocusRequest += 1
-                }
-                .padding(.top, 18)
-                .padding(.horizontal, 24)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .sparkleReveal()
-        .onAppear {
-            name = project.untitled ? "" : project.name
-            fresh = Template.isScaffold(project)
-            if ideas.isEmpty { drawIdeas() }
-        }
-        .onChange(of: editingName) { if !editingName { commit() } }
-    }
-
-    private func drawIdeas() {
-        let others = store.projects.filter { $0.id != project.id && !$0.untitled }
-        ideas = Ideas.starters(made: others.map(\.name))
-    }
-
-    private func commit() {
-        let typed = name.trimmed
-        guard !typed.isEmpty, typed != project.name || project.untitled else { return }
-        Task { await store.rename(project, to: typed) }
     }
 }
 
@@ -1361,9 +526,9 @@ struct ImportReviewView: View {
 
     var body: some View {
         ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
-                         review: pending.review, existing: pending.existing?.name, room: room,
+                         review: pending.review, existing: pending.existing?.name, changedHere: pending.changedHere, room: room,
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
-                         android: pending.package.platform == .android)
+                         android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
@@ -1394,12 +559,16 @@ struct ImportReviewCard: View {
     let review: ImportReview?
     /// The name of the wish already here that this file is another version of, if any.
     let existing: String?
+    /// That wish was changed here since it arrived: Update merges the new code into those changes, keeping them.
+    var changedHere = false
     var room = CGFloat.infinity
     let cancel: () -> Void
     let open: () -> Void
     let update: () -> Void
     /// An Android app's reach is the phone's, not the Mac's.
     var android = false
+    /// An update Lamp prepared in a copy of `existing` (`AppUpdates`): nobody shared it, and Update puts that copy in place.
+    var prepared = false
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -1407,20 +576,36 @@ struct ImportReviewCard: View {
     private enum Part { case name, summary, existing, buttons }
     /// The height of Things to consider as laid out in full; nil when there's nothing to consider.
     @State private var considering: CGFloat?
-    /// What the two scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's
-    /// padding (48) and a 16-point gap after each part but the last (the fixed ones, and the two that scroll).
-    private var budget: CGFloat {
-        let scrolling: CGFloat = considering == nil ? 1 : 2
-        return room - fixed.values.reduce(0, +) - 48 - 16 * (CGFloat(fixed.count) + scrolling - 1)
+    /// The height of the features under What it does as laid out in full; nil when the reviewer named none.
+    @State private var featuring: CGFloat?
+    private var heights: Heights {
+        Self.heights(room: room, fixed: Array(fixed.values), considering: considering, featuring: featuring)
     }
-    /// The two share what's left and never take more between them, whatever the screen: Things to consider is
-    /// shown whole when it fits, and otherwise scrolls, leaving what the app can do a few rows, or half when
-    /// there isn't room for that. A long list of concerns never pushes the buttons off the screen, and Lamp's
-    /// verdict, its first lines, is what stays in view. Below 48 points nothing could be read, so that's the floor.
-    private var shared: CGFloat { max(48, budget) }
-    private var considerLimit: CGFloat { min(considering ?? 0, max(shared - 120, shared / 2)) }
-    /// How tall what the app can do may be: the height a long review always stopped at, or what's left.
-    private var limit: CGFloat { min(460, shared - (considering == nil ? 0 : considerLimit)) }
+
+    /// How tall each part that scrolls may be.
+    struct Heights: Equatable {
+        var considering: CGFloat
+        var featuring: CGFloat
+        var capabilities: CGFloat
+    }
+
+    /// What the scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's padding (48)
+    /// and a 16-point gap after each part but the last (8 above the features, which go on from the summary). They
+    /// never take more between them, whatever the screen: Things to consider is shown whole when it fits, and
+    /// otherwise scrolls, leaving the rest a few rows, or half when there isn't room for that; the features then
+    /// take what they need of that the same way, and what the app can do the rest. A long list of concerns or
+    /// features never pushes the buttons off the screen, and Lamp's verdict, its first lines, is what stays in view.
+    /// Below 48 points nothing could be read, so that's the floor.
+    static func heights(room: CGFloat, fixed: [CGFloat], considering: CGFloat?, featuring: CGFloat?) -> Heights {
+        let scrolling = 1 + (considering == nil ? 0 : 1) + (featuring == nil ? 0 : 1)
+        let budget = room - fixed.reduce(0, +) - 48 - 16 * CGFloat(fixed.count + scrolling - 1) + (featuring == nil ? 0 : 8)
+        let shared = max(48, budget)
+        func part(_ height: CGFloat?, of room: CGFloat) -> CGFloat { min(height ?? 0, max(room - 120, room / 2)) }
+        let consider = part(considering, of: shared)
+        let feature = part(featuring, of: shared - consider)
+        // What the app can do: the height a long review always stopped at, or what's left.
+        return Heights(considering: consider, featuring: feature, capabilities: min(460, shared - consider - feature))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1435,10 +620,10 @@ struct ImportReviewCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     // The name is the sender's: shown as written, never as formatting, and on one line whose
                     // end (the closing quote and the question mark) stays in view however long it is.
-                    Text(verbatim: "Open “\(name)”?").font(.title2.bold())
+                    Text(verbatim: prepared ? "Your update is ready" : "Open “\(name)”?").font(.title2.bold())
                         .lineLimit(1).truncationMode(.middle)
                     // The sender's words, said to be theirs.
-                    if let description {
+                    if let description, !prepared {
                         Text(verbatim: "Described by the person who shared it with you as: \(description)")
                             .font(.callout).foregroundStyle(.secondary).lineLimit(5)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1457,7 +642,29 @@ struct ImportReviewCard: View {
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.summary] = $0 }
                 }
-                let considerations = Self.considerations(review)
+                if !review.capabilities.isEmpty {
+                    // What the reviewer saw it do for the person: features, said with what the app is, not as
+                    // permissions beside what Lamp's own checks found in the code. Up to eight, so they scroll.
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(review.capabilities, id: \.self) { feature in
+                                Label {
+                                    Text(verbatim: feature).lineLimit(2).fixedSize(horizontal: false, vertical: true).help(feature)
+                                } icon: {
+                                    // A plain mark: what's listed is what the app does, not something Lamp approved.
+                                    Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(.secondary)
+                                }
+                                .font(.callout)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { featuring = $0 }
+                    }
+                    .frame(maxHeight: heights.featuring)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, review.summary.isEmpty ? 0 : -8)
+                }
+                let considerations = Self.considerations(review, prepared: prepared)
                 if !considerations.isEmpty {
                     ScrollView {
                         section("Things to consider") {
@@ -1468,7 +675,7 @@ struct ImportReviewCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { considering = $0 }
                     }
-                    .frame(maxHeight: considerLimit)
+                    .frame(maxHeight: heights.considering)
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 ScrollView {
@@ -1476,7 +683,7 @@ struct ImportReviewCard: View {
                     section(android ? "What it can do" : "What it can do on your Mac") { capabilities(review) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: limit)
+                .frame(maxHeight: heights.capabilities)
                 .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
             } else {
                 HStack(spacing: 10) {
@@ -1489,7 +696,12 @@ struct ImportReviewCard: View {
             if let existing {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
-                    Text(verbatim: "You already have this wish\(existing == name ? "" : ", as “\(existing)”"). Updating keeps your data, and you can go back if you change your mind.")
+                    Text(verbatim: prepared
+                         ? "Update puts it in place of “\(existing)” and keeps your data, and you can go back if you change your mind. Keep Both keeps it as a separate app."
+                         : "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
+                         + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself"
+                                        : ". Updating keeps your data")
+                         + ", and you can go back if you change your mind.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
@@ -1557,14 +769,24 @@ struct ImportReviewCard: View {
         var id: String { text }
     }
 
+    static let partlyChecked = "AI didn't check all of its code. Open only if you trust the sender"
+
     /// The verdict first, unless it's an all-clear (said by nothing being here), then each concern.
-    static func considerations(_ review: ImportReview) -> [Consideration] {
+    /// `prepared` is an update Lamp prepared for an app here: there's no sender to trust, only the update to look at.
+    static func considerations(_ review: ImportReview, prepared: Bool = false) -> [Consideration] {
         var list: [Consideration] = []
         switch review.verdict {
+        case .risky where prepared:
+            list.append(Consideration(text: "Looks risky. Don't update unless you expected this", weight: .warning, icon: "xmark.octagon.fill"))
+        case .partlyChecked where prepared:
+            list.append(Consideration(text: "AI didn't check all of its code. Update only if you trust where the app came from", weight: .caution))
         case .risky: list.append(Consideration(text: "Looks risky. Don't open unless you trust the sender", weight: .warning, icon: "xmark.octagon.fill"))
         case .sensitive: list.append(Consideration(text: "Does sensitive things. Open only if you expected that", weight: .warning, icon: "exclamationmark.octagon.fill"))
-        case .partlyChecked: list.append(Consideration(text: "Only partly checked. Open only if you trust the sender", weight: .caution))
+        case .partlyChecked: list.append(Consideration(text: Self.partlyChecked, weight: .caution))
         case .powerful: list.append(Consideration(text: "Powerful. Check it's what you expect", weight: .caution))
+        case .checkedInParts:
+            list.append(Consideration(text: prepared ? "AI checked its code in parts. Update only if you trust where the app came from"
+                                                     : "AI checked its code in parts. Open only if you trust the sender", weight: .caution))
         case .checkedOnThisMac: list.append(Consideration(text: "Nothing worrying found, but not by a check Lamp can vouch for", weight: .caution))
         case .unchecked: list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
         case .safe: break
@@ -1573,6 +795,10 @@ struct ImportReviewCard: View {
         // in red, that no AI read it, and why.
         if review.risk == nil, review.verdict != .unchecked, review.asked || review.note != nil {
             list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
+        }
+        // A worse verdict leads, and unread code is still said, once.
+        if review.partial, review.risk != nil, review.verdict != .partlyChecked {
+            list.append(Consideration(text: "AI didn't check all of its code", weight: .caution))
         }
         // A high rating makes each reason for it as serious as the rating.
         let weight: Consideration.Weight = review.risk == .high ? .warning : .caution
@@ -1600,12 +826,11 @@ struct ImportReviewCard: View {
     }
 
     /// One row per thing the app can do, like the permissions list in System Settings: what Lamp's own checks
-    /// found in the code, worst first, then what the AI noticed beyond them, each an icon in a tinted square and
-    /// a line in plain words.
+    /// found in the code, worst first, each an icon in a tinted square and a line in plain words. What the AI saw it
+    /// do for the person is under What it does.
     private func capabilities(_ review: ImportReview) -> some View {
         let found = review.detected.sorted { $0.level > $1.level }
         let rows = found.map { Row(icon: $0.icon, tint: tint(for: $0.level), text: $0.label) }
-            + review.capabilities.map { Row(icon: "sparkle.magnifyingglass", tint: .purple, text: $0) }
         return VStack(spacing: 0) {
             if rows.isEmpty {
                 // Says what the checks found, not what the app can't do.
@@ -1655,251 +880,35 @@ struct ImportReviewCard: View {
     }
 }
 
-/// Wishes to start from, under a new app's empty chat: what someone might want, in their own words, one from
-/// each part of life (`Idea.Kind`), never an app's name. Choosing one puts the wish in the message box (it isn't sent) so the person can
-/// make it theirs; what to make of it is the agent's to ask about. It opens on the six it's given; Show Me
-/// Others pages on from there.
-struct StarterIdeas: View {
-    let choose: (String) -> Void
-    @StateObject private var deck: IdeaDeck
-    @State private var hovered: String?
 
-    init(ideas: [Idea], choose: @escaping (String) -> Void) {
-        self.choose = choose
-        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas))
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Need inspiration?").font(.callout).foregroundStyle(.secondary)
-                Spacer()
-                Button(action: deck.more) {
-                    HStack(spacing: 5) {
-                        Image(systemName: IdeaDeck.moreSymbol)
-                        Text("Show me others")
-                    }
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
-                ForEach(Array(deck.ideas.enumerated()), id: \.element.id) { index, example in
-                    Button { choose(example.blurb) } label: {
-                        HStack(alignment: .top, spacing: 8) {
-                            IdeaIcon(symbol: example.symbol, hue: example.hue, size: 22, lit: hovered == example.title)
-                            // The wish alone. Every tile keeps room for three lines, so the grid doesn't change
-                            // height when the ideas change (another page, another kind).
-                            Text(example.blurb).font(.subheadline)
-                                .lineLimit(3, reservesSpace: true)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        // Just an outline, so the ideas stay quieter than what the user is writing.
-                        .overlay(RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.primary.opacity(hovered == example.title ? 0.2 : 0.1), lineWidth: 1))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovered = $0 ? example.title : (hovered == example.title ? nil : hovered) }
-                    .help("Puts this in the message box so you can change it before sending")
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.94)).animation(.spring(response: 0.5, dampingFraction: 0.8).delay(Double(index) * 0.04)),
-                        removal: .opacity.animation(.easeOut(duration: 0.15))))
-                }
-            }
-        }
-        .frame(maxWidth: 600)
-        .onAppear { deck.prefetch() }
-    }
-}
-
-/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones, by its exact model.
-/// The simulator choice is the family the agent builds and looks at; a phone is where Play puts the app.
+/// The Try On choices in a wish's menu on the desk: the one list the chat's bar draws too (`TryOnMenu`).
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
-    @Environment(\.openSettings) private var openSettings
-    @AppStorage("settingsTab") private var settingsTab = "building"
     let project: LampProject
-    @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
-        if project.platform == .device {
-            deviceChoices
-        } else if project.platform == .tv {
-            tvChoices
-        } else if project.platform == .android {
-            androidChoices
-        } else {
-            appleChoices
+        if let menu = TryOnMenu.make(for: project, store: store) {
+            ForEach(Array(menu.sections.enumerated()), id: \.offset) { index, section in
+                if index > 0, !section.submenu { Divider() }
+                if let title = section.title, section.submenu {
+                    Menu(title) { items(section) }
+                } else if let title = section.title {
+                    Section(title) { items(section) }
+                } else {
+                    items(section)
+                }
+            }
+            .onAppear { store.refreshDevices(); store.refreshSimulators() }
         }
     }
 
-    /// A TV app's places: the preview on this Mac, where it's tried, and the person's TVs, each by its model and what it
-    /// still needs. A TV that isn't set up is set up when it's chosen.
-    @ViewBuilder private var tvChoices: some View {
-        let tvs = store.devices.filter { $0.kind.isTV }
-        Picker("Preview", selection: Binding(get: { project.device == nil ? "preview" : nil }, set: { if $0 != nil { store.setTVDevice(project, nil) } })) {
-            Label("TV Preview", systemImage: "tv").tag(Optional("preview"))
-        }
-        .pickerStyle(.inline)
-        Picker("Your TVs", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setTVDevice(project, id) } })) {
-            ForEach(tvs) { tv in
-                let step = tv.setup() == .ready ? "" : " (\(tv.setup().words))"
-                let model = "\(tv.maker) \(tv.model)"
-                Label((tv.name == model ? tv.name : "\(tv.name) · \(model)") + step, systemImage: "tv").tag(Optional(tv.udid))
+    @ViewBuilder private func items(_ section: TryOnMenu.Section) -> some View {
+        ForEach(section.items) { item in
+            Toggle(isOn: Binding(get: { item.checked }, set: { _ in store.tryOn(project, item.id) })) {
+                Label(item.title, systemImage: item.symbol)
             }
-            if let chosen = project.device, !tvs.contains(where: { $0.udid == chosen }) {
-                Label("Chosen TV (not on the network)", systemImage: "tv").tag(Optional(chosen))
-            }
+            .disabled(item.disabled)
         }
-        .pickerStyle(.inline)
-        if tvs.isEmpty {
-            Text("No Samsung or LG TV found on this network. Turn one on, then look again.")
-        }
-        Divider()
-        ForEach(tvs.filter { $0.setup() != .ready }) { tv in
-            Button("Set Up \(tv.name)…") { TVSetup.shared.show(tv.udid) }
-        }
-        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
-        Button("Look for Devices Again") { store.refreshDevices() }
-            .onAppear { store.refreshDevices() }
-    }
-
-    /// A device app's places: the person's devices its integration finds, each by its model and what it still needs. One
-    /// not set up is set up when it's chosen, in its setup window.
-    @ViewBuilder private var deviceChoices: some View {
-        let name = DeviceApps.integration(for: project)?.name ?? "device"
-        let mine = store.devices.filter { $0.integration != nil && $0.integration == project.integration }
-        Picker("Your \(name)s", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
-            ForEach(mine) { device in
-                let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
-                Label((device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step, systemImage: device.kind.symbol)
-                    .tag(Optional(device.id))
-            }
-            if let chosen = project.device, !mine.contains(where: { $0.id == chosen }) {
-                Label("Chosen \(name) (not on the network)", systemImage: Device.Kind.other.symbol).tag(Optional(chosen))
-            }
-        }
-        .pickerStyle(.inline)
-        if mine.isEmpty {
-            Text("No \(name) found on this network. Turn one on, then look again.")
-        }
-        Divider()
-        ForEach(mine.filter { $0.setup() != .ready }) { device in
-            Button("Set Up \(device.name)…") { DeviceSetupWindow.show(device) }
-        }
-        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
-        Button("Look for Devices Again") { store.refreshDevices() }
-            .onAppear { store.refreshDevices() }
-    }
-
-    /// An Android app's places: the emulator Lamp made, and the person's Android devices adb can see.
-    @ViewBuilder private var androidChoices: some View {
-        let devices = store.devices.filter { $0.kind == .android }
-        Picker("Emulator", selection: Binding(get: { project.device == nil ? "emulator" : nil }, set: { if $0 != nil { store.setAndroidDevice(project, nil) } })) {
-            Label(AndroidTools.avdName, systemImage: "smartphone").tag(Optional("emulator"))
-        }
-        .pickerStyle(.inline)
-        Picker("Your Devices", selection: Binding(get: { project.device }, set: { if let serial = $0 { store.setAndroidDevice(project, serial) } })) {
-            ForEach(devices) { device in
-                let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
-                Label("\(device.name)\(step)", systemImage: "smartphone").tag(Optional(device.udid))
-            }
-            if let chosen = project.device, !devices.contains(where: { $0.udid == chosen }) {
-                Label("Chosen device (not connected)", systemImage: "smartphone").tag(Optional(chosen))
-            }
-        }
-        .pickerStyle(.inline)
-        if devices.isEmpty {
-            Text("No Android device found. Plug one in with USB debugging on, then look again.")
-        }
-        Divider()
-        Button("Check Android Setup…") { AndroidSetup.shared.show(device: project.device) }
-        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
-        Button("Look for Devices Again") { store.refreshDevices() }
-            .onAppear { store.refreshDevices() }
-    }
-
-    @ViewBuilder private var appleChoices: some View {
-        if project.platform == .universal {
-            // An app for both: this Mac is a place to open it too, beside the simulators and phones.
-            Picker("This Mac", selection: Binding(get: { project.onIOS ? nil : Destination.mac },
-                                                  set: { if $0 != nil { store.setMac(project) } })) {
-                Label("My Mac", systemImage: "laptopcomputer").tag(Optional(Destination.mac))
-            }
-            .pickerStyle(.inline)
-        }
-        Picker("Simulator", selection: Binding(get: { project.device == nil && project.onIOS && project.simulator == nil ? project.family : nil },
-                                               set: { if let family = $0 { store.setSimulator(project, family) } })) {
-            Label("iPhone", systemImage: "iphone").tag(Optional(DeviceFamily.iphone))
-            Label("iPad", systemImage: "ipad").tag(Optional(DeviceFamily.ipad))
-        }
-        .pickerStyle(.inline)
-        // A particular model, for what only some have (a Dynamic Island, an iPad's size). Listed once the
-        // simulators installed on this Mac are known.
-        if !store.simulators.isEmpty {
-            Menu("Choose Simulator") {
-                Picker("Choose Simulator", selection: Binding(get: { project.device == nil && project.onIOS ? project.simulator : nil },
-                                                              set: { udid in
-                    if let choice = store.simulators.first(where: { $0.udid == udid }) { store.setSimulator(project, choice) }
-                })) {
-                    ForEach(store.simulators) { choice in
-                        Label(choice.label, systemImage: choice.family == .ipad ? "ipad" : "iphone").tag(Optional(choice.udid))
-                    }
-                }
-                .pickerStyle(.inline)
-            }
-        }
-        do {
-            // The person's phones, each by its exact model, and what it still needs before Play can put the app
-            // on it. A watch isn't a place of its own: its app goes with the iPhone's, so it's listed in Settings.
-            let phones = store.devices.filter { $0.kind.isPhone }
-            let paired = phones.filter(\.paired), unpaired = phones.filter { !$0.paired }
-            Picker("Your Devices", selection: Binding(get: { project.onIOS ? project.device : nil }, set: { chosen in
-                store.choosePreparedDevice(project, chosen)
-            })) {
-                ForEach(paired) { device in
-                    let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
-                    Label("\(device.name) · \(device.model)\(step)", systemImage: device.kind.symbol)
-                        .tag(Optional(device.udid))
-                }
-                if let chosen = project.device, !paired.contains(where: { $0.udid == chosen }) {
-                    Label("Chosen phone (not paired)", systemImage: "iphone.slash").tag(Optional(chosen))
-                }
-            }
-            .pickerStyle(.inline)
-            // A phone that's plugged in but hasn't trusted this Mac yet: pairing puts the question on it.
-            ForEach(unpaired) { device in
-                Button(store.pairing.contains(device.udid) ? "Pairing with \(device.name)…" : "Pair \(device.name) (\(device.model))…") {
-                    store.pairDevice(device, for: project)
-                }
-                .disabled(store.pairing.contains(device.udid))
-            }
-            ForEach(olderPhones.filter { old in !phones.contains(where: { $0.udid == old.id }) }) { phone in
-                Button("\(phone.name) (needs iOS \(PhoneTools.minimumIOS))…") {
-                    PhoneSetup.shared.show(family: phone.family, phone: phone.id)
-                }
-            }
-            if phones.isEmpty && olderPhones.isEmpty {
-                Text("No iPhone or iPad found. Plug one in with a cable and unlock it, then look again.")
-            }
-        }
-        Divider()
-        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
-        // Every device Lamp knows, with where its setup stands, is in Settings → Building.
-        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
-        Button("Look for Devices Again") { refresh() }
-            .onAppear { refresh() }
-    }
-
-    private func refresh() {
-        store.refreshDevices()
-        store.refreshSimulators()
-        Task { olderPhones = await PhoneTools.olderPhones() }
     }
 }
 
@@ -1907,6 +916,7 @@ extension Store {
     /// What the app's AI has cost, under its name in the toolbar ("AI: 3 calls · $0.02"); nil before it's used any.
     func usageSummary(_ project: LampProject) -> String? {
         guard let usage = usage[project.id], usage.calls > 0 else { return nil }
-        return String(format: "AI: %d call%@ · $%.2f", usage.calls, usage.calls == 1 ? "" : "s", usage.cost)
+        let calls = "AI: \(usage.calls) call\(usage.calls == 1 ? "" : "s")"
+        return usage.cost < 0.005 ? calls : calls + String(format: " · $%.2f", usage.cost)
     }
 }

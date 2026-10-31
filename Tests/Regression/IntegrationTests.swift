@@ -72,6 +72,13 @@ final class IntegrationTests: XCTestCase {
         XCTAssertTrue(problems { json in
             step(0, &json) { $0["check"] = [["http": ["port": 80, "path": "/x@evil.example"]]] }
         }.contains { $0.contains("not an address") })
+        // A setting changed for a sequence and put back after is a change: a PUT or POST with a body.
+        XCTAssertTrue(problems { json in
+            step(0, &json) { $0["check"] = [["http": ["port": 80, "path": "/settings/x", "restore": "Value"]]] }
+        }.contains { $0.contains("restore is for a PUT or POST") })
+        XCTAssertTrue(problems { json in
+            step(0, &json) { $0["check"] = [["http": ["method": "PUT", "port": 80, "path": "/settings/x", "body": "{}", "restore": "Value"]]] }
+        }.contains { $0.contains("a check only asks") })
         // A misspelt key isn't passed over quietly.
         XCTAssertTrue(problems { $0["fnd"] = [] }.contains { $0.contains("fnd isn't part of an integration") })
         // A program that isn't Lamp's needs its checksum.
@@ -118,11 +125,13 @@ final class IntegrationTests: XCTestCase {
     // MARK: http
 
     func testRequestsGoOnlyToTheDeviceOnThePersonsNetwork() throws {
-        for address in ["192.168.1.20", "10.0.0.5", "172.20.1.1", "169.254.3.4", "fd12::1", "fe80::1"] {
+        for address in ["192.168.1.20", "10.0.0.5", "172.20.1.1", "169.254.3.4", "fd12::1", "fe80::1:2:3:4"] {
             XCTAssertTrue(DeviceAddress.isPrivate(address), address)
         }
-        // Never this Mac (Lamp's gateway is there), the internet, or a name that could lead anywhere.
-        for address in ["127.0.0.1", "::1", "8.8.8.8", "172.32.0.1", "roku.local", "example.com", "0.0.0.0", "::ffff:127.0.0.1"] {
+        // Never this Mac (Lamp's gateway is there), by loopback or by its own address on the network, the internet, or a
+        // name that could lead anywhere.
+        let own = DeviceAddress.thisMac().filter { $0.count == 4 }.map { $0.map(String.init).joined(separator: ".") }
+        for address in ["127.0.0.1", "::1", "8.8.8.8", "172.32.0.1", "roku.local", "example.com", "0.0.0.0", "::ffff:127.0.0.1"] + own {
             XCTAssertFalse(DeviceAddress.isPrivate(address), address)
             XCTAssertThrowsError(try DeviceHTTP.url(address: address, port: 80, path: "/"), address)
         }
@@ -170,6 +179,33 @@ final class IntegrationTests: XCTestCase {
         XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", digest), address: "192.168.1.20", digest: nil, tried: false))
     }
 
+    /// A look makes one ssdp:all search: an integration's own target, and where its description is, come from the
+    /// answers to it, so no integration searches again.
+    func testAnIntegrationFindsItsDeviceInTheLooksOneScan() async throws {
+        let xbox = """
+        {
+          "id": "xbox-test", "name": "Xbox", "maker": "Microsoft",
+          "find": [{ "ssdp": "urn:schemas-upnp-org:device:MediaRenderer:1", "contains": "UPnP-Device-Host" }],
+          "identity": { "os": "Xbox OS", "id": { "description": true, "xml": "device/UDN" },
+                        "model": { "description": true, "xml": "device/modelName", "contains": "Xbox" } },
+          "steps": []
+        }
+        """
+        let integration = try JSONDecoder().decode(Integration.self, from: Data(xbox.utf8))
+        func answer(_ address: String, _ target: String, _ server: String, _ location: String) -> DeviceProbe.SSDPAnswer {
+            DeviceProbe.answer("HTTP/1.1 200 OK\r\nST: \(target)\r\nSERVER: \(server)\r\nLOCATION: \(location)\r\n", from: address)
+        }
+        let scan = Integrations.Scan(answers: [
+            answer("192.168.1.30", "upnp:rootdevice", "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0", "http://192.168.1.30:1/root.xml"),
+            answer("192.168.1.30", "urn:schemas-upnp-org:device:mediarenderer:1", "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0",
+                   "http://192.168.1.30:10247/renderer.xml"),
+            answer("192.168.1.40", "urn:schemas-upnp-org:device:MediaRenderer:1", "Linux UPnP/1.0 Sonos/86.10", "http://192.168.1.40:1400/xml"),
+        ])
+        let addresses = await Integrations.addresses(for: integration, scan: scan)
+        XCTAssertEqual(addresses, ["192.168.1.30"])
+        XCTAssertEqual(Integrations.describedAt("192.168.1.30", by: integration, scan: scan), Request(port: 10247, path: "/renderer.xml"))
+    }
+
     func testValuesAreReadFromJSONAndXML() {
         let xml = Data("<device-info><serial-number>X01</serial-number><developer-enabled>true</developer-enabled></device-info>".utf8)
         XCTAssertEqual(DeviceHTTP.xml("developer-enabled", in: xml), "true")
@@ -209,5 +245,95 @@ final class IntegrationTests: XCTestCase {
         var changed = action
         changed.ssh?.command += " ; reboot"
         XCTAssertFalse(DeviceApprovals.isApproved(DeviceApprovals.subject(of: changed)!, on: device))
+    }
+    /// A device that turns the password away has said so: the step fails with words to fix it instead of waiting on
+    /// the device for ever, and the same step still passes once the device lets Lamp in.
+    func testARejectedSignInFailsTheStepAndAnAcceptedOnePassesIt() async throws {
+        let roku = try JSONDecoder().decode(Integration.self, from: Data(roku.utf8))
+        let step = roku.steps[1]
+        var device = Device(id: "roku:TEST", kind: .other, maker: "Roku", model: "Roku Ultra", modelID: "4800X",
+                            name: "Test Roku", os: "Roku OS", osVersion: "14.0", reach: .network)
+        device.address = "192.168.1.20"
+        func runner(answering status: Int) -> IntegrationRunner {
+            var runner = IntegrationRunner(integration: roku, device: device)
+            runner.send = { _, _, _, _ in DeviceHTTP.Answer(status: status, body: Data()) }
+            return runner
+        }
+
+        let rejected = await runner(answering: 401).check(step)
+        XCTAssertFalse(rejected.passed)
+        XCTAssertTrue(rejected.failed, "a rejected sign-in is shown as a failure, not as waiting with a spinner")
+        XCTAssertEqual(rejected.why, "The device rejected the sign-in. Check the user name and password, then try again.")
+
+        let accepted = await runner(answering: 200).check(step)
+        XCTAssertTrue(accepted.passed)
+        XCTAssertFalse(accepted.failed)
+    }
+
+    /// An Xbox says an install is done before the app can be opened: Lamp waits until the console lists the package,
+    /// asks again while it refuses the launch, and launches again while the app isn't seen running.
+    func testAnXboxAppIsWaitedForUntilItsInstalledAndLaunchedUntilItRuns() async throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Devices/xbox-one.json")
+        let xbox = try JSONDecoder().decode(Integration.self, from: Data(contentsOf: file))
+        let bridge = try XCTUnwrap(xbox.bridge)
+        var device = Device(id: "xbox-one:TEST", kind: .other, maker: "Microsoft", model: "Xbox Series X", modelID: "",
+                            name: "Test Xbox", os: "Xbox OS", osVersion: "10.0", reach: .network)
+        device.address = "192.168.1.30"
+        let extra = ["packageFullName": "Lamp.test_1.0.0.0_x64__abc", "appUserModelID": "Lamp.test_abc!App"]
+        func listing(_ key: String, has: Bool) -> DeviceHTTP.Answer {
+            let names = (has ? [extra["packageFullName"]!] : []) + ["Other.app_1.0.0.0_x64__xyz"]
+            return DeviceHTTP.Answer(status: 200, body: try! JSONSerialization.data(withJSONObject: [key: names.map { ["PackageFullName": $0] }]))
+        }
+        /// A made-up console answering each path from its own script, in turn, the last answer over and over.
+        final class Console: @unchecked Sendable {
+            var script: [String: [DeviceHTTP.Answer]] = [:]
+            var asked: [String: Int] = [:]
+            func answer(_ path: String) -> DeviceHTTP.Answer {
+                let key = String(path.split(separator: "?")[0])
+                asked[key, default: 0] += 1
+                guard var answers = script[key], !answers.isEmpty else { return DeviceHTTP.Answer(status: 200, body: Data("{}".utf8)) }
+                let next = answers.count > 1 ? answers.removeFirst() : answers[0]
+                script[key] = answers
+                return next
+            }
+        }
+        func runner(_ console: Console) -> IntegrationRunner {
+            var runner = IntegrationRunner(integration: xbox, device: device)
+            runner.send = { request, _, _, _ in console.answer(request.path) }
+            runner.pause = { _ in }
+            return runner
+        }
+
+        // Installed: the state says so, and the package is listed on the second ask.
+        let installed = Console()
+        installed.script["/api/app/packagemanager/state"] = [DeviceHTTP.Answer(status: 200, body: Data(#"{"Success":true}"#.utf8))]
+        installed.script["/api/app/packagemanager/packages"] = [listing("InstalledPackages", has: false), listing("InstalledPackages", has: true)]
+        _ = try await runner(installed).run(Array(try XCTUnwrap(bridge.install).suffix(2)), extra: extra)
+        XCTAssertEqual(installed.asked["/api/app/packagemanager/packages"], 2)
+
+        // Refused twice with the console's 0x8D160120, then opened and running.
+        let refused = Console()
+        let failed = DeviceHTTP.Answer(status: 400, body: Data(#"{"ErrorMessage":"Failed to launch the application.","ErrorCode":-1927937760}"#.utf8))
+        refused.script["/api/taskmanager/app"] = [failed, failed, DeviceHTTP.Answer(status: 200, body: Data())]
+        refused.script["/api/resourcemanager/processes"] = [listing("Processes", has: true)]
+        try await runner(refused).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra)
+        XCTAssertEqual(refused.asked["/api/taskmanager/app"], 3)
+
+        // Taken, but not running through the whole check, so launched again; then running.
+        let notReady = Console()
+        notReady.script["/api/resourcemanager/processes"] = Array(repeating: listing("Processes", has: false), count: 5) + [listing("Processes", has: true)]
+        try await runner(notReady).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra)
+        XCTAssertEqual(notReady.asked["/api/taskmanager/app"], 2)
+
+        // Never running: said, not claimed open.
+        let never = Console()
+        never.script["/api/resourcemanager/processes"] = [listing("Processes", has: false)]
+        do {
+            try await runner(never).open(try XCTUnwrap(bridge.launch), running: bridge.running, extra: extra, tries: 3)
+            XCTFail("an app never seen running isn't open")
+        } catch let notOpened as IntegrationRunner.NotOpened {
+            XCTAssertTrue(notOpened.launched)
+        }
     }
 }

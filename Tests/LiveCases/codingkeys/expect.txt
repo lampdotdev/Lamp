@@ -1,8 +1,5 @@
-VERDICT 1: REOPEN (Item changed what it holds (Item.note: String); Item is Codable and gained note, which has to be stored to be encoded and decoded)
+VERDICT 1: RELOAD (Added Item.note)
 == run
 before: id=1 title=a {"id":1,"title":"a"}
-RELOAD 1: REOPEN Item changed what it holds (Item.note: String); Item is Codable and gained note, which has to be stored to be encoded and decoded
-after: id=1 title=b {"id":1,"title":"b"}
-before: id=1 title=a note= {"id":1,"note":"","title":"a"}
-RELOAD 1: in the restart
+RELOAD 1 (whole): ok
 after: id=1 title=b note=n {"id":1,"note":"n","title":"b"}

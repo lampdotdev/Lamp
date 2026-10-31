@@ -12,7 +12,7 @@ final class TVKitTests: XCTestCase {
         XCTAssertTrue(ids.package.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) })
         XCTAssertEqual(ids.app, ids.package + ".TVClock")
         XCTAssertEqual(TVTemplate.tizenIDs(for: project).package, ids.package, "the same app keeps the same package id")
-        let manifest = try XMLDocument(xmlString: TVTemplate.tizenConfig(for: project))
+        let manifest = try XMLDocument(xmlString: TVTemplate.tizenConfig(for: project, guarded: nil))
         XCTAssertEqual(try manifest.nodes(forXPath: "//*[local-name()='name']").first?.stringValue, "TV Clock & Co")
         XCTAssertTrue(TVTemplate.webOSID(for: project).hasSuffix("tv-clock"))
     }

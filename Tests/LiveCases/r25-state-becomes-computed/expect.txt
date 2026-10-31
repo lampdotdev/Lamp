@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: total=2
+RELOAD 1 (whole): ok
+after1 (want it live: @State total becomes a computed property of the same name, total=5): total=5

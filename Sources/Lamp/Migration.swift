@@ -7,7 +7,8 @@ import Security
 /// support library by its old names.
 enum Migration {
     static func fromForge() {
-        guard !Edition.isDev else { return }   // the development build has its own folders; nothing to move
+        // Only Lamp itself: the development build and Lamp Nightly have folders of their own, and Forge's belong to Lamp.
+        guard !Edition.isDev, !Edition.isNightly else { return }
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         // Apps still running under their old ids would keep their old folder open.
@@ -36,7 +37,8 @@ enum Migration {
 
         imageMarkers()
         let apps = home.appendingPathComponent("Library/Application Support/Lamp/Apps")
-        for dir in (try? fm.contentsOfDirectory(at: apps, includingPropertiesForKeys: nil)) ?? [] {
+        // A wish a newer Lamp laid out is past this migration, and isn't this Lamp's to rewrite or commit.
+        for dir in (try? fm.contentsOfDirectory(at: apps, includingPropertiesForKeys: nil)) ?? [] where NewerWish.read(at: dir) == nil {
             normalize(dir)
             appData(dir.lastPathComponent)
         }

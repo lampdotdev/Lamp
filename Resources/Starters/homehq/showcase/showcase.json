@@ -1,0 +1,46 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "steps": [
+    {
+      "wait": 2
+    },
+    {
+      "action": "click",
+      "target": "Show me an example"
+    },
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "target": "Calendar"
+    },
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "target": "Chores"
+    },
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "target": "Shopping"
+    },
+    {
+      "wait": 3
+    },
+    {
+      "action": "click",
+      "target": "Today"
+    },
+    {
+      "wait": 2
+    }
+  ]
+}

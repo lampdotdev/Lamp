@@ -9,15 +9,28 @@ Tools if needed.
 `release.sh` runs `build.sh` with a Developer ID identity, which switches signing to hardened runtime with
 a secure timestamp. Nested code is signed first:
 
-- llama.cpp's server and libraries (`Resources/llama/`)
+- llama.cpp's server and libraries: not in the app any more. `build.sh` signs them and zips them into `dist/assets`
+  (`Lamp-llama-<build>-<version>.zip`), `release.sh` notarizes that zip on its own, and it goes up on the release
+  beside the DMG; the bundle pins its address, size and SHA-256 (`Resources/llama.json`), and Lamp fetches it the first
+  time a local model needs it, checking each program and library for Lamp's own signature before running it
+  (`LlamaInstall.swift`). A build from source does the same with its own zip (`build/assets`, by file), kept in
+  `.build/llama` while the llama.cpp build and the signing identity are the same.
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
   JIT needs `allow-jit` and friends under hardened runtime
-- the starters Lamp ships, already built: `build.sh` has the new Lamp build each one as a person's Mac would
-  (`PrebuiltStarters.swift`), signs it and zips it beside the starter's files, so a new person's starters open at
-  once, before Apple's build tools are installed. This adds about five minutes to a release and about 30 MB to Lamp.
-  A development build leaves them out (a Lamp Dev without them builds the starters on first launch, out of sight);
-  `PREBUILD_STARTERS=1 ./build.sh` builds them too, reusing the ones in `.build/prebuilt-starters` while what
-  they're made from is unchanged.
+- Lamp's player (`Resources/LampPlayer.bundle`), the Mac app every game and screen is a copy of: `build.sh` compiles
+  it afresh for a release, before the starters, and each copy is signed again as its own app when Lamp makes it
+- the starters' prebuilt apps: `build.sh` has the new Lamp build each starter as a person's Mac would
+  (`PrebuiltStarters.swift`), signs it and zips it into `dist/assets` (`Lamp-Starter-<starter>-<version>.zip`,
+  `Lamp-Nightly-Starter-…` for a nightly), which goes up on the release beside the DMG, so a new person's starters open
+  at once, before Apple's build tools are installed. Lamp's bundle carries none of them: it pins each one's address,
+  size and SHA-256 (the starter's `listing/prebuilt.json`), and Lamp fetches it with the starter's tree when the
+  starter is first opened, checking its signature as Lamp's own before using it (`StarterDownloads`, "Starters are
+  fetched when they're first opened" in docs/development/desk.md). This adds about five minutes to a release. So a
+  release's assets must be on it before anyone opens a starter: the workflows upload them with the DMG. A development
+  build leaves them out (a Lamp Dev without them builds a starter once it's opened, out of sight);
+  `PREBUILD_STARTERS=1 ./build.sh` builds them too, into `build/assets`, which its listing points at by file, reusing
+  the ones in `.build/prebuilt-starters` while what they're made from is unchanged. The starters' trees are never in
+  the bundle either: each is fetched from its public repository at the pinned commit, checked against that commit.
 - `Lamp.app`, with `Resources/Lamp.entitlements` (microphone, for dictation)
 
 Releases build into `dist/`, so they never replace the `build/Lamp.app` you run day to day. Release builds
@@ -66,7 +79,7 @@ starting from nothing, because a new public key has to ship in a release people 
 
 ```bash
 ./release.sh 0.2.0
-gh release create v0.2.0 dist/Lamp-0.2.0.dmg --title "Lamp 0.2.0" --notes-file notes.md
+gh release create v0.2.0 dist/Lamp-0.2.0.dmg dist/assets/* --title "Lamp 0.2.0" --notes-file notes.md
 ```
 
 The notes are what people read in the update window: write the version's section in `RELEASE_NOTES.md`
@@ -101,17 +114,23 @@ tag itself, `0.3.1+6` six commits later. Without git or without the tags fetched
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
+It builds with the Xcode named in `.github/xcode-version`, which `.github/workflows/mac-build.yml` builds and tests
+every pull request with too, so code only a newer Xcode accepts fails on the pull request rather than at release.
+Both run on GitHub's `xcode-27` runner image (macOS 27 with Xcode 27, a preview image for now): the Xcode the team
+builds with, and the one generated apps are compiled with on their Macs. Raise the file when that image gets a newer
+Xcode, and move both workflows together when GitHub makes a newer image.
+
 The signing secrets live in the repo's **`release` environment**, which only `v*` tags can use. A ruleset
 ("Protect release tags") lets only repo admins create, move or delete `v*` tags, so nobody else can
 trigger a signed build. The certificate owner adds the secrets once. Run these yourself; each prompts
 for its value or reads the file:
 
 ```bash
-gh secret set MACOS_CERT_P12_BASE64 --env release --repo RooCodeInc/Lamp < <(base64 -i ~/Desktop/DeveloperID.p12)
-gh secret set MACOS_CERT_PASSWORD   --env release --repo RooCodeInc/Lamp   # the .p12 export password
-gh secret set NOTARY_APPLE_ID       --env release --repo RooCodeInc/Lamp
-gh secret set NOTARY_TEAM_ID        --env release --repo RooCodeInc/Lamp
-gh secret set NOTARY_PASSWORD       --env release --repo RooCodeInc/Lamp   # the app-specific password
+gh secret set MACOS_CERT_P12_BASE64 --env release --repo lampdotdev/Lamp < <(base64 -i ~/Desktop/DeveloperID.p12)
+gh secret set MACOS_CERT_PASSWORD   --env release --repo lampdotdev/Lamp   # the .p12 export password
+gh secret set NOTARY_APPLE_ID       --env release --repo lampdotdev/Lamp
+gh secret set NOTARY_TEAM_ID        --env release --repo lampdotdev/Lamp
+gh secret set NOTARY_PASSWORD       --env release --repo lampdotdev/Lamp   # the app-specific password
 ```
 
 Then move `DeveloperID.p12` into 1Password and delete it from the Desktop.
@@ -121,6 +140,28 @@ Re-run a release (e.g. to rebuild the DMG) against its tag:
 ```bash
 gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 ```
+
+## Nightlies
+
+`.github/workflows/nightly.yml` builds, signs, notarizes and publishes **Lamp Nightly** from every push to `main` (and
+on demand with `gh workflow run nightly.yml`): a separate app from Lamp, with its own name, icon, bundle id, folders and
+update feed ("Lamp Nightly" in docs/development/lamp-dev-and-instances.md), so people who want every change early run
+it beside the Lamp they rely on. It's one rolling pre-release, tagged `nightly`: the tag moves to the commit, the
+release's `sparkle.json`, title and notes are replaced each time and `Lamp-Nightly-<version>.dmg` is added with the
+assets that version fetches (`dist/assets`, each named by the version), so the
+release is published once and only edited after that, and whatever listens for releases (the Slack subscription) hears
+of it once. The release keeps its newest three DMGs, and the assets of its newest twenty versions (an installed nightly
+fetches them for as long as it runs), and the feed names the one it signed
+(`/download/nightly/<file>`): the feed is cached for a quarter of an hour and an update window may stay open longer,
+and the DMG an offer names must still be there to verify. The version is the last release plus the commits since it as `build.sh` names a build from source
+(`0.24.0+37`), and the build number `0.24.0.37`, so Sparkle orders the nightlies among themselves. A push that is a
+release tag itself makes no nightly. The notes list the commits since the last release.
+
+Lamp Nightly updates from `https://updates.lamp.dev/nightly/appcast.xml`, which lists that release alone
+(`updates/api/appcast.js`, `?stream=nightly`); Lamp's feed and the website's Download never see a nightly. The workflow
+uses the `release` environment's secrets, which `main` may use as `v*` tags may; `main` is protected (pull requests and
+passing checks only), so a nightly is always a reviewed change. To make one by hand: `FLAVOR=nightly ./release.sh
+0.24.0+37`.
 
 ## Trying the first run
 
@@ -139,12 +180,14 @@ shows everything, and is worth doing once for a release that changes setup.
 
 Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.org) 2. Once a day, and from **Lamp → Check for Updates…**, Lamp reads the update feed at `https://updates.lamp.dev/appcast.xml`. When there's a newer release, Sparkle shows its standard window with the release notes and an **Install** button. Builds from source, which have no Apple Team ID, don't check for updates.
 
-- **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. A local backup of the private key is in `~/Library/Application Support/Lamp/Signing/sparkle-private-key` on Matt's Mac; keep a copy in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
-- **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team, served at `updates.lamp.dev`; `lamp.dev` itself is kept for the site) that keeps the repo private:
+- **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. The private key is kept in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
+- **The feed:** `updates/` is a small Vercel app (project `lamp-updates` on the Roo Code team, served at `updates.lamp.dev`; `lamp.dev` itself is kept for the site) that keeps the repo private:
   - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
   - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG; `/download/latest`
-    picks the newest published release, which is where the website's Download button points.
-  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Lamp` only.
+    picks the newest published release, which is where the website's Download button points. `/download/<tag>/<file>`
+    does the same for a named DMG and for what a Lamp fetches from its own release when it needs it (a starter's
+    prebuilt app, `isFetchedName`), since the repository is private.
+  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `lampdotdev/Lamp` only.
   - It deploys itself: the Vercel project is connected to this repo with `updates` as its root directory, so a push to `main` that touches `updates/` goes to production and a branch gets a preview, like the website in `site/`. `cd updates && vercel deploy --prod --scope roo-code` still works for a deploy by hand.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.
 
@@ -152,7 +195,7 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 
 `site/` is the page at `lamp.dev`: one static Astro page styled with Tailwind, in its own Vercel project
 (`lamp-site` on the Roo Code team). `lamp.dev` is registered through Vercel on that team, with its DNS there
-too, and `updates.lamp.dev` belongs to `forge-updates`. The page has nothing release-specific: its Download
+too, and `updates.lamp.dev` belongs to `lamp-updates`. The page has nothing release-specific: its Download
 button goes to `https://updates.lamp.dev/download/latest`, so a new release needs nothing done here.
 
 - Run it locally with `cd site && npm install && npm run dev`, or `npm run build && npx astro preview` for

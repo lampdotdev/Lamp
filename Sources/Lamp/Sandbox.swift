@@ -28,10 +28,11 @@ enum Sandbox {
     /// folder is the agent's to write, build.sh included at any moment between Lamp writing it and running it, so
     /// whatever runs there runs as the agent's commands do, never as Lamp: with Lamp's keys, sign-ins and the
     /// other apps out of reach.
-    static func run(_ command: String, for project: LampProject, cwd: URL? = nil, env: [String: String] = [:],
+    static func run(_ command: String, for project: LampProject, cwd: URL? = nil, env: [String: String] = [:], opening folders: [String] = [],
+                    reading: [String] = [], offline: Bool = false,
                     started: (@MainActor (Process) -> Void)? = nil,
                     onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
-        guard let confined = wrap("/bin/zsh -c " + quoted(command), for: project) else {
+        guard let confined = wrapEngine("/bin/zsh -c " + quoted(command), for: project, opening: folders, reading: reading, offline: offline) else {
             await onLine("Lamp couldn't set up the sandbox for \(project.name), so nothing was run.")
             return unconfined
         }
@@ -149,9 +150,10 @@ enum Sandbox {
     }
 
     /// A whole run of a program, confined to the app with what it needs opened as well: `opening` for reading
-    /// and writing, `reading` for reading. Nil when the profile can't be written.
-    static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = []) -> String? {
-        guard let file = writeProfile(for: project, opening: folders, reading: reading) else { return nil }
+    /// and writing, `reading` for reading. `offline`: with no network at all, for a command that has no need of one. Nil
+    /// when the profile can't be written.
+    static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = [], offline: Bool = false) -> String? {
+        guard let file = writeProfile(for: project, opening: folders, reading: reading, offline: offline) else { return nil }
         return launch(command, profile: file)
     }
 
@@ -165,9 +167,9 @@ enum Sandbox {
     nonisolated(unsafe) private static var cleared = Date.distantPast
     private static let lock = NSLock()
 
-    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = []) -> URL? {
+    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = [], offline: Bool = false) -> URL? {
         let fm = FileManager.default
-        let text = profile(for: project, opening: folders, reading: reading)
+        let text = profile(for: project, opening: folders, reading: reading) + (offline ? "\n(deny network*)\n" : "")
         let digest = SHA256.hash(data: Data(text.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
         let file = folder.appendingPathComponent("\(project.id)-\(digest).sb")
         lock.lock()
@@ -219,6 +221,11 @@ enum Sandbox {
         if let tmp = ProcessInfo.processInfo.environment["TMPDIR"], !tmp.isEmpty {
             lines.append("(allow file-read* file-write* (subpath \(quotedPath(real(tmp)))))")
         }
+        // The Xcode in use, read only, wherever it is: one kept on another disk (under /Volumes, or a link from
+        // /Applications into one) is closed above, and every compile would find no SDK.
+        for folder in developerFolders() {
+            lines.append("(allow file-read* (subpath \(quotedPath(folder))))")
+        }
         // Both Lamps' folders (keys, sign-ins, every other app) stay closed; the app's own folder opens.
         for name in Edition.lampFolderNames {
             lines.append("(deny file-read* file-write* (subpath \(quotedPath(support + "/" + name))))")
@@ -236,7 +243,7 @@ enum Sandbox {
             // since the emulator's control interface listens on the network too. Nor may a command listen there in
             // their place, for Lamp to take it for its own server or emulator.
             if let ports = Edition.androidPorts(folder: name) {
-                let numbers = [ports.server, ports.console, ports.bridge, ports.control]
+                let numbers = ports.all
                 lines.append("(deny network-outbound " + numbers.map { "(remote tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
                 lines.append("(deny network-bind " + numbers.map { "(local tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
             }

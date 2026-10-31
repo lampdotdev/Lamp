@@ -15,7 +15,7 @@ final class StepNamesTests: XCTestCase {
         let events = Agent.parseClaude(Self.claudeBash)
         guard case .naming(let words)? = events.first else { return XCTFail("no name: \(events)") }
         XCTAssertEqual(words, "Count lines in each Swift file")
-        guard case .tool(let text, _, _)? = events.last else { return XCTFail("no tool call") }
+        guard case .tool(let text, _, _, _, _)? = events.last else { return XCTFail("no tool call") }
         XCTAssertEqual(ToolCall(text).action, .run)
     }
 
@@ -24,7 +24,7 @@ final class StepNamesTests: XCTestCase {
         let events = Agent.parse(Self.piBash, engine: .pi)
         guard case .naming(let words)? = events.first else { return XCTFail("no name: \(events)") }
         XCTAssertEqual(words, "Counting code lines and listing recent versions")
-        guard case .tool(let text, _, _)? = events.last else { return XCTFail("no tool call") }
+        guard case .tool(let text, _, _, _, _)? = events.last else { return XCTFail("no tool call") }
         XCTAssertEqual(ToolCall(text).action, .run)
     }
 

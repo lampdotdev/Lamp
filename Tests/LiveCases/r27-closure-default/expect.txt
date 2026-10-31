@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Stage.onReview)
+== run
+before: stage
+RELOAD 1 (whole): ok
+after1 (want it live: a new callback starting as { n in … } runs its default): stage default xy

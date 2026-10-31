@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: row Milk 2 liters expanded=false, row Milk 2 liters expanded=true
+RELOAD 1 (whole): ok
+after1 (want it in, expanded=true kept: a row loses a @State it no longer uses, keeping the other): row Milk 2 liters expanded=true kept
+RELOAD 2 (whole): ok
+after2 (want it in, Milk expanded=true kept: then a parameter its parent no longer passes): row Milk expanded=true kept

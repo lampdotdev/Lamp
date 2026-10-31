@@ -88,7 +88,7 @@ enum Provider {
 
     /// What went wrong with a call, as far as the person can do something about it.
     enum FailureKind: Equatable {
-        case authentication, quota, busy, unreachable, outdated, other
+        case authentication, quota, busy, connection, unreachable, outdated, other
 
         init?(status: Int, code: String?) {
             switch status {
@@ -107,6 +107,7 @@ enum Provider {
         case .authentication: ErrorMessages.authenticationFailed(name)
         case .quota: ErrorMessages.quotaExceeded(name)
         case .busy: ErrorMessages.providerBusy
+        case .connection: ErrorMessages.connectionFailed
         case .unreachable: ErrorMessages.localServerUnreachable
         case .outdated: "\(name) needs updating: \(raw.prefix(160))"
         case .other: ErrorMessages.aiFailed(String(raw.prefix(160)))
@@ -124,6 +125,11 @@ enum Provider {
         }
         if text.contains("429") || text.contains("rate limit") {
             return .busy
+        }
+        // Before the local server's check: an engine's "Unable to connect to API (ECONNREFUSED)" is about its
+        // provider, which no setting of the local server would help.
+        if text.contains("unable to connect") || text.contains("connection error") {
+            return .connection
         }
         if text.contains("connection refused") || text.contains("econnrefused") {
             return .unreachable
@@ -144,7 +150,7 @@ enum Provider {
 /// which shared this folder until Lamp Dev got its own) moves its keys into the Keychain and removes it.
 /// Keys are read once per launch.
 enum KeyStore {
-    /// Serialises the Keychain and file work; `cacheLock` guards only the cache, so a look at it never waits
+    /// Serializes the Keychain and file work; `cacheLock` guards only the cache, so a look at it never waits
     /// behind a Keychain prompt.
     private static let lock = NSLock()
     private static let cacheLock = NSLock()

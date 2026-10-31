@@ -4,7 +4,7 @@ import SwiftUI
 /// is the one place that says which answers now, how well, and what would make it better: the gateway, the
 /// chat's setup card, Settings, the agent's status line and the keys a phone takes away all read it.
 enum Capability: String, CaseIterable, Codable, Identifiable {
-    case text, decisions, pictures, browser
+    case text, decisions, pictures
 
     var id: String { rawValue }
 
@@ -13,7 +13,6 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
         case .text: "Text"
         case .decisions: "Decisions"
         case .pictures: "Pictures"
-        case .browser: "Chrome sidebar"
         }
     }
 
@@ -22,7 +21,6 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
         case .text: "text.bubble"
         case .decisions: "checklist"
         case .pictures: "photo.on.rectangle.angled"
-        case .browser: "sidebar.right"
         }
     }
 }
@@ -45,7 +43,9 @@ enum Upgrade: Hashable, Identifiable {
     /// Drawing each app's icon by hand in Image Playground (`Icons.byHand`): for icon artwork only, and
     /// only on a Mac that has it.
     case drawIcons
-    case browserExtension
+    /// Choosing what answers instead, for one app (`app`, its id) or, with none, for every app in Settings: the
+    /// route's id and how it's named.
+    case useText(route: String, label: String, app: String?)
 
     var id: String {
         switch self {
@@ -54,7 +54,7 @@ enum Upgrade: Hashable, Identifiable {
         case .decisionModel: "decisionModel"
         case .signIn(let engine): "signIn:\(engine.rawValue)"
         case .drawIcons: "drawIcons"
-        case .browserExtension: "browserExtension"
+        case .useText(let route, _, let app): "useText:\(route):\(app ?? "")"
         }
     }
 }
@@ -98,22 +98,13 @@ extension AppAI {
     /// are made where they're dispatched (`route(for:)`, `pictureRoute`, `decisionModels`); this says what they
     /// amount to, so nothing else has to work that out again.
     @MainActor static func resolve(_ capability: Capability, for project: LampProject? = nil, in context: AIContext = .mac) -> Resolution {
-        if capability == .browser {
-            let available = BrowserBridge.enabled && project?.platform.hasMac != false && context == .mac
-            let connected = available && BrowserSetup.shared.connected
-            return Resolution(capability: .browser, tier: connected ? .best : .none,
-                              answer: connected ? "Lamp in Chrome" : nil, provider: connected ? "browser" : nil,
-                              note: connected ? nil : "Connect Lamp to Chrome to use an app beside a website.",
-                              upgrades: available ? [.browserExtension] : [])
-        }
         let models = project.map(AppModels.load) ?? AppModels()
         switch (capability, context) {
         // Only pictures are asked for an icon; the others are answered as for the app on this Mac.
-        case (.text, .mac), (.text, .icon): return resolveText(choice: models.text)
+        case (.text, .mac), (.text, .icon): return resolveText(choice: models.text, app: project?.id)
         case (.decisions, .mac), (.decisions, .icon): return resolveDecisions(choice: models.decision, text: models.text)
         case (.pictures, .mac): return resolvePictures(choice: models.image, text: models.text)
         case (.pictures, .icon): return resolveIconArt()
-        case (.browser, _): preconditionFailure("Browser resolution is handled before AI routes")
         case (_, .phoneAway): return resolveAway(capability, models: models)
         }
     }
@@ -132,31 +123,23 @@ extension AppAI {
 
     // MARK: Each capability
 
-    @MainActor private static func resolveText(choice: String?) -> Resolution {
+    @MainActor private static func resolveText(choice: String?, app: String? = nil) -> Resolution {
         let route = route(for: choice)
-        guard route.available else {
-            return Resolution(capability: .text, tier: .none, answer: nil, provider: nil,
-                              note: "Nothing on this Mac can answer apps yet.", upgrades: textUpgrades)
-        }
         // What was asked for: the app's own choice, else Settings'. A choice that can't answer right now (its
-        // key or model went) is why the route is a stand-in.
+        // key or model went) is why the route is a stand-in. A model on this Mac that was chosen and then removed
+        // is in no list of routes; it's still what was chosen.
         let wanted = (choice ?? UserDefaults.standard.string(forKey: "appModel")).map(canonicalRoute)
-        if let wanted, wanted != route.id, let missing = allTextRoutes.first(where: { $0.id == wanted }) {
-            var upgrades: [Upgrade] = []
-            var why = "."
-            switch missing.kind {
-            case .openRouter:
-                upgrades.append(.key("openrouter"))
-                why = " without an OpenRouter key."
-            case .engine(let engine, _) where engine != .pi && EngineInstall.path(for: engine) != nil:
-                upgrades.append(.signIn(engine))
-                why = " until you sign in to \(engine.title) again."
-            default: break
+        let missing = wanted.flatMap { id in id == route.id ? nil : AppAct.wanted(id, among: allTextRoutes) }
+        guard route.available else {
+            // Nothing answers. A removed model on this Mac that was chosen is said to be why.
+            let gone = missing.flatMap { route -> String? in
+                guard case .localModel = route.kind else { return nil }
+                return "\(route.name) isn't on this Mac any more. Install it again in Settings, or set up another AI below."
             }
-            return Resolution(capability: .text, tier: .works, answer: route.label, provider: provider(of: route),
-                              note: "\(missing.name) can't answer right now\(why)",
-                              upgrades: upgrades)
+            return Resolution(capability: .text, tier: .none, answer: nil, provider: nil,
+                              note: gone ?? "Nothing on this Mac can answer apps yet.", upgrades: textUpgrades)
         }
+        if let missing { return standIn(for: missing, answering: route, app: choice == nil ? nil : app) }
         // A sign-in that answers because nothing was chosen works, but a key is quicker for small calls and
         // goes with an app to a phone. Chosen on purpose, it's what the person wants.
         if wanted == nil, case .engine = route.kind, !Provider.hasKey {
@@ -165,6 +148,30 @@ extension AppAI {
                               upgrades: [.key("openrouter")])
         }
         return Resolution(capability: .text, tier: .best, answer: route.label, provider: provider(of: route), note: nil, upgrades: [])
+    }
+
+    /// A choice that can't answer, with `route` answering in its place: why, and what would bring the choice back.
+    /// For a model on this Mac that was removed, that's installing it again in Settings, or choosing what answers now
+    /// for good: for the app when the choice was the app's own (`app`), else in Settings. The card offers no download
+    /// of its own: what one installs is named by the files in the cache (a repository holding several quants names
+    /// each with its quant), so it can't promise to bring back the very choice that went missing.
+    @MainActor static func standIn(for missing: TextRoute, answering route: TextRoute, app: String?) -> Resolution {
+        var upgrades: [Upgrade] = []
+        var why = "."
+        switch missing.kind {
+        case .openRouter:
+            upgrades.append(.key("openrouter"))
+            why = " without an OpenRouter key."
+        case .engine(let engine, _) where engine != .pi && EngineInstall.path(for: engine) != nil:
+            upgrades.append(.signIn(engine))
+            why = " until you sign in to \(engine.title) again."
+        case .localModel:
+            upgrades.append(.useText(route: route.id, label: route.label, app: app))
+            why = " because it isn't on this Mac any more. Install it again in Settings, or choose another AI for \(app == nil ? "your apps" : "this app")."
+        default: break
+        }
+        return Resolution(capability: .text, tier: .works, answer: route.label, provider: provider(of: route),
+                          note: "\(missing.name) can't answer right now\(why)", upgrades: upgrades)
     }
 
     /// What would let apps' text answer when nothing can: a key, then signing in to Claude Code or Codex where
@@ -251,7 +258,6 @@ extension AppAI {
                               note: "Apps on your phone can use AI only near this Mac.", upgrades: [.key("openrouter")])
         }
         switch capability {
-        case .browser: return resolve(.browser, in: .phoneAway)
         case .text:
             return Resolution(capability: .text, tier: .best, answer: "\(awayModel(for: models.away).label) via OpenRouter",
                               provider: "openrouter", note: nil, upgrades: [])
@@ -272,6 +278,27 @@ extension AppAI {
         return "\("AEIOU".contains(name.prefix(1)) ? "an" : "a") \(name) key"
     }
 
+    /// Where a capability's answer is worked out, for an app to tell the person: `onDevice` for a model on this Mac,
+    /// `remote` for a service. A Claude Code or Codex run starts on this Mac but sends what it's given to its company, so
+    /// it's remote too.
+    @MainActor static func processing(of provider: String?) -> String {
+        guard let provider else { return "unknown" }
+        if provider == Builder.localProvider || provider == "local" { return "onDevice" }
+        if provider == "openrouter" || provider.hasPrefix("engine:") { return "remote" }
+        return "unknown"
+    }
+
+    /// One capability as `LampAI.status` reads it: whether it answers, what answers and where, and why not. Added
+    /// beside `/ai/status`'s booleans, which older apps still read.
+    @MainActor static func details(_ resolution: Resolution) -> [String: Any] {
+        let answers = resolution.tier != .none
+        var details: [String: Any] = ["available": answers, "where": answers ? processing(of: resolution.provider) : "unknown"]
+        if let answer = resolution.answer { details["route"] = answer }
+        if let why = answers ? resolution.explanation : resolution.note { details["reason"] = why }
+        if !answers { details["setup"] = "lamp" }
+        return details
+    }
+
     /// The Providers row behind a text route.
     @MainActor static func provider(of route: TextRoute) -> String {
         switch route.kind {
@@ -285,6 +312,19 @@ extension AppAI {
 
 // MARK: - The setup offer in the chat
 
+extension KeyedDecodingContainer {
+    /// A chat line's offer (`LogLine.offer`), read so that one for a capability Lamp no longer has is left off
+    /// the line rather than costing the whole line: chats saved while Lamp could offer to connect Chrome hold
+    /// that card (`"browser"`). Any other offer that doesn't read still fails as before.
+    func decodeIfPresent(_ type: SetupOffer.Type, forKey key: Key) throws -> SetupOffer? {
+        guard contains(key), try !decodeNil(forKey: key) else { return nil }
+        if let retired = try? nestedContainer(keyedBy: SetupOffer.RetiredKey.self, forKey: key),
+           let capability = try? retired.decode(String.self, forKey: .capability),
+           SetupOffer.retiredCapabilities.contains(capability) { return nil }
+        return try decode(SetupOffer.self, forKey: key)
+    }
+}
+
 /// A setup offer in an app's chat: which capability, and whether it's about the app on a phone away from
 /// the Mac. Kept on the chat line (`LogLine.offer`).
 struct SetupOffer: Codable, Equatable, Hashable {
@@ -295,6 +335,10 @@ struct SetupOffer: Codable, Equatable, Hashable {
     var icon: Bool? = nil
 
     var context: AIContext { away == true ? .phoneAway : icon == true ? .icon : .mac }
+
+    /// Capabilities Lamp once offered and no longer has, whose saved cards are dropped as they're read.
+    static let retiredCapabilities: Set<String> = ["browser"]
+    enum RetiredKey: String, CodingKey { case capability }
 
     /// One card per capability per app, on this Mac or away, whatever raised it: an app whose icon card is
     /// in the chat isn't given another when it tries to make a picture, so `icon` is no part of which offer
@@ -315,6 +359,14 @@ struct SetupOffer: Codable, Equatable, Hashable {
         return project.map { declined.contains("\($0.id) \(key)") } ?? declined.contains(key)
     }
 
+    /// The person asked for this setup in this app themselves: their earlier "Not Now" here no longer holds. What
+    /// they said for every app stays, so Lamp still doesn't raise it by itself elsewhere.
+    func undecline(in project: LampProject) {
+        var declined = Set(UserDefaults.standard.stringArray(forKey: Self.declinedKey) ?? [])
+        guard declined.remove("\(project.id) \(key)") != nil else { return }
+        UserDefaults.standard.set(Array(declined).sorted(), forKey: Self.declinedKey)
+    }
+
     func decline(in project: LampProject) {
         var declined = Set(UserDefaults.standard.stringArray(forKey: Self.declinedKey) ?? [])
         declined.insert(key)
@@ -331,27 +383,30 @@ struct SetupOffer: Codable, Equatable, Hashable {
 /// per conversation and again only when it changes, so most requests carry nothing.
 enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
-        // A TV app has none of Lamp's AI building blocks, so none of this applies to it.
-        if project.platform == .tv { return "- None: a TV app has no AI building blocks from Lamp." }
-        if project.platform == .device { return "- None: an app for a device Lamp reaches through its integration has no AI building blocks from Lamp." }
-        var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.platform.hasMac) }.map { capability in
+        // A device app whose integration takes none of Lamp's building blocks has no AI of Lamp's.
+        if let none = project.platform.target.guidance.noAI(project) { return none }
+        var lines = Capability.allCases.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
             if resolution.tier != .best, offered.contains(SetupOffer(capability: capability)) { line += "; Lamp has offered the person a way to set it up" }
             return line
         }
-        if project.platform.hasIOS {
-            let away = AppAI.resolve(.text, for: project, in: .phoneAway)
-            lines.append("- On the person's phone away from this Mac: \(away.tier == .none ? "no AI" : "text, pictures and decisions through OpenRouter")")
+        // Actions (`LampActSession`, lamp.js's `act`) are the app's text route with one more rule, so they're said apart.
+        let act = AppAct.status(appModel: AppModels.load(project).text)
+        if act["available"] as? Bool == true {
+            let place = act["where"] as? String == "onDevice" ? "on this Mac" : "sent to a service"
+            lines.append("- Actions: \(act["route"] as? String ?? ""), \(place)")
+        } else {
+            lines.append("- Actions: none, \(act["reason"] as? String ?? "nothing can answer yet")")
         }
-        if project.platform == .android {
-            // An Android device reaches AI only through this Mac, in the emulator or over the same Wi‑Fi.
-            lines.append("- On the person's Android device: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI")
-        }
+        // What it has where it runs away from this Mac: a phone away from it, a device on the same Wi‑Fi.
+        if let elsewhere = project.platform.target.guidance.elsewhere(project) { lines.append(elsewhere) }
         return lines.joined(separator: "\n")
     }
 
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, offered: Set<SetupOffer>) -> String {
+        // Said of the app in the wish's own folder; a wish whose apps are all in folders of their own has none.
+        guard project.holdsApp else { return "" }
         let now = line(for: project, offered: offered)
         switch note.telling(now, for: project, engine: engine, session: session) {
         case .fresh: return "\n\n---\nAI this app can use right now (from Lamp, not part of the request above):\n\(now)"

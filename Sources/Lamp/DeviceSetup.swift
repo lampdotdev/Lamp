@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import SwiftUI
 import LampSidebarKit
@@ -23,19 +24,60 @@ final class DeviceSetupModel: ObservableObject {
 
     static func existing(_ deviceID: String) -> DeviceSetupModel? { models[deviceID] }
 
+    /// Lets go of a device's setup as it stands in this Lamp, for Forget: its watch stops, a command waiting for the
+    /// person's yes is turned down, and what waited for it to be ready isn't run. Found again, it starts afresh.
+    static func discard(_ deviceID: String) {
+        // Its window shows this model: closed, so a setup started again opens on a fresh one.
+        DeviceSetupWindow.close(deviceID)
+        guard let model = models.removeValue(forKey: deviceID) else { return }
+        model.stopWatching()
+        model.guided.cancel()
+        if model.approval != nil { model.decide(false) }
+        model.then = nil
+    }
+
     @Published var device: Device
     @Published private(set) var passed: [String] = []
     @Published var typed = ""
     @Published private(set) var state: DeviceStepCard.State = .idle
     /// A command or tool waiting for the person's yes.
     @Published private(set) var approval: DeviceCommandApproval?
+    /// The device showed another certificate than the one Lamp kept (`DeviceTLS`): nothing goes to it until the person
+    /// reconnects it. Shown in place of a step's card, wherever the device's setup is.
+    @Published private(set) var certificateChanged = false
+    /// The test run's stages while it runs, and after (`IntegrationProbe`).
+    @Published private(set) var trial: [IntegrationProbe.Stage] = []
     private var answer: CheckedContinuation<Bool, Never>?
     private var watching: Task<Void, Never>?
+    /// Counts the watch's stops: a look begun before one is dropped when it answers.
+    private var looks = 0
+    /// Counts the checks the person asked for, so one that's dropped puts the card back only while it's the latest.
+    private var asked = 0
     /// What asked for the setup, run once the device is ready.
     var then: (() -> Void)?
+    /// Do It for Me: the steps of the skill that says it does the device's next step, run for this device. While they
+    /// run they alone talk to the device; the watch below is stopped until they hand it back.
+    let guided = GuidedSetup()
+    private var following: AnyCancellable?
+
+    /// The integration its steps come from, the skills its guides are read from and how its requests are answered, when a
+    /// test gives them for a made-up device; otherwise the device's own, Lamp's, and the network.
+    private var given: Integration?
+    private var skills = Skills.all
+    private var testSend: ((Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer)?
+
+    init(testing device: Device, integration: Integration, skills: [String: Skills.Skill],
+         send: @escaping (Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer) {
+        self.device = device
+        given = integration
+        self.skills = skills
+        testSend = send
+        following = guided.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+    }
 
     private init(device: Device) {
         self.device = device
+        following = guided.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         passed = Integrations.kept(device.id)?.passed ?? []
         // A card may show Lamp's public key, which is made the first time it's needed: made now, the card is drawn again.
         if let runner, runner.needsSSHKey, DeviceSSH.publicKey == nil {
@@ -46,16 +88,69 @@ final class DeviceSetupModel: ObservableObject {
         }
     }
 
-    var integration: Integration? { device.integration.flatMap(Integrations.integration) }
+    var integration: Integration? { given ?? device.integration.flatMap(Integrations.integration) }
+
+    /// Whether a test run can start: the device is set up, its integration makes apps, and none is running.
+    var canTry: Bool { ready && integration?.app?.declared != nil && !trial.contains { $0.state == .running } }
+
+    /// Puts a test app on the device and back off, at the person's press.
+    func tryIt() {
+        guard canTry, let integration else { return }
+        let device = device
+        Task { await IntegrationProbe.run(integration, on: device) { [weak self] in self?.trial = $0 } }
+    }
+
+    /// The bridge's mark from a test run that passed, in the person's words.
+    var worked: String? {
+        guard let known = integration?.bridge?.known, let model = known.model else { return nil }
+        return "Apps worked on \(model)" + (known.version.map { ", \($0)" } ?? "")
+    }
     var steps: [Integration.Step] { integration?.steps ?? [] }
     var next: Integration.Step? { steps.first { !passed.contains($0.id) } }
     var ready: Bool { integration != nil && next == nil }
 
     private var runner: IntegrationRunner? {
         guard let integration else { return nil }
-        return IntegrationRunner(integration: integration, device: device, approve: { [weak self] approval in
+        var runner = IntegrationRunner(integration: integration, device: device, approve: { [weak self] approval in
             await self?.ask(approval) ?? false
         })
+        if let testSend { runner.send = testSend }
+        return runner
+    }
+
+    /// The steps Do It for Me follows for the device's next step, when a skill does that step for its integration and
+    /// its steps can be followed here.
+    var guide: SetupSteps? {
+        guard let integration, let step = next,
+              case .success(let steps)? = SetupGuides.find(step.id, in: .init(row: integration.id, system: device.os, steps: Set(steps.map(\.id)),
+                                                                       fields: Set(steps.compactMap { $0.field?.key }), integration: true),
+                                                       skills: skills)
+        else { return nil }
+        return steps
+    }
+
+    func doItForMe() {
+        guard let step = next, let steps = guide, let runner, !state.isBusy, approval == nil else { return }
+        stopWatching()
+        state = .idle
+        let device = device
+        guided.start(steps, name: device.name, step: step.id, connect: {
+            steps.connection == SetupConnections.http ? HTTPSetupConnection(runner: runner, reach: steps.reach)
+                : SetupConnections.socket(steps.connection, address: device.address ?? "", id: device.id)
+        }, onFinish: { [weak self] in self?.handedBack() })
+    }
+
+    /// Back to the step in words: the guide stops, and the step's own check is watched again.
+    func doItMyself() {
+        guided.cancel()
+        watch()
+    }
+
+    /// The guide's steps ended: the step is checked again by its own check, what passes is kept, and the step left to
+    /// do is shown. Nothing the guide said counts toward it.
+    private func handedBack() {
+        guard let step = next, let runner else { return }
+        Task { await checkOnce(step, runner: runner, keepWatching: step.wait == true) }
     }
 
     /// The card's content for the step the device is at.
@@ -88,7 +183,7 @@ final class DeviceSetupModel: ObservableObject {
 
     /// Looks at the step's check, and for a step done on the device keeps looking every few seconds while it's shown.
     func watch() {
-        guard let step = next, step.wait == true, watching == nil, let runner else { return }
+        guard let step = next, step.wait == true, watching == nil, !guided.holdsDevice, let runner else { return }
         watching = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, self.next == step else { break }
@@ -103,31 +198,81 @@ final class DeviceSetupModel: ObservableObject {
         }
     }
 
+    /// The setup window closed: its watch and guide stop, and a command waiting for the person's yes is turned down.
+    /// Opened again, it watches afresh (`DeviceSetupWindow.show`).
+    func windowClosed() {
+        stopWatching()
+        // A check the person asked for is dropped with the window (`looks`): the card goes back to its button now,
+        // rather than checking for good, and a check asked for later is its own.
+        if state == .checking {
+            state = .idle
+            asked += 1
+        }
+        guided.cancel()
+        if approval != nil { decide(false) }
+    }
+
     func stopWatching() {
         watching?.cancel()
         watching = nil
+        looks += 1
     }
 
     private func checkOnce(_ step: Integration.Step, runner: IntegrationRunner, keepWatching: Bool, quietly: Bool = false) async {
         // The watch's look every few seconds leaves the card as it is: only a check the person asked for shows as
         // checking, so nothing on the card blinks while they're at the device.
-        if !quietly, !state.isBusy || state == .checking { state = .checking }
+        var mine: Int?
+        if !quietly, !state.isBusy || state == .checking {
+            state = .checking
+            asked += 1
+            mine = asked
+        }
+        let look = looks
         let (ok, why, read, failed) = await runner.check(step)
-        guard next == step else { return }
+        // A look the watch began before it was stopped (a guide took the device, the window closed) answers too late to
+        // count: the step may have moved on, and what it found isn't the guide's to have overwritten. A check the person
+        // asked for that's still showing as checking goes back to the step's button; a newer one is left alone.
+        guard next == step, look == looks, !guided.holdsDevice else {
+            if let mine, mine == asked, state == .checking { state = .idle }
+            return
+        }
         if ok {
             runner.passed(step, read: read)
             passed = Integrations.kept(device.id)?.passed ?? passed + [step.id]
             state = .idle
+            // A guide stays on screen only while the step it was for is still the one to do.
+            if guided.step != next?.id { guided.cancel() }
             Store.shared.refreshDevices()
             if ready { then?(); then = nil } else { watch() }
         } else if failed {
             // Waiting won't mend it: the card says why, and nothing goes on checking.
+            if why == DeviceTLS.Refusal.changed.localizedDescription { certificateChanged = true }
             state = .failed(why ?? "\(device.name) can't be checked.")
             stopWatching()
         } else {
             state = .waiting(why ?? "Waiting for \(device.name)…")
             if keepWatching { watch() }
         }
+    }
+
+    /// Lamp refused the device's certificate outside a setup step (putting an app on it): the reconnect card shows.
+    func noteCertificateChanged() { certificateChanged = true }
+
+    /// The person's Reconnect: the certificate kept for the device is let go and its setup starts again from the first
+    /// step, so the sign-in it asks for goes only to the device whose new certificate the first request keeps. Only a
+    /// click does this; a changed certificate never makes Lamp trust the new one by itself.
+    func reconnect() {
+        DeviceTLS.Pins(deviceID: device.id).forget()
+        // Its SSH host key too, which a reset device changes as it does its certificate.
+        try? FileManager.default.removeItem(at: DeviceFolder.of(device.id).appendingPathComponent("known_hosts"))
+        Integrations.startOver(device.id)
+        guided.cancel()
+        passed = []
+        typed = ""
+        state = .idle
+        certificateChanged = false
+        Store.shared.refreshDevices()
+        watch()
     }
 
     private func ask(_ approval: DeviceCommandApproval) async -> Bool {
@@ -153,6 +298,7 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
     private static var windows: [String: NSWindow] = [:]
     private static var delegates: [String: DeviceSetupWindow] = [:]
     private let model: DeviceSetupModel
+    private var resizing: AnyCancellable?
 
     private init(model: DeviceSetupModel) { self.model = model }
 
@@ -167,12 +313,9 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
     static func show(_ model: DeviceSetupModel) {
         let id = model.device.id
         if windows[id] == nil {
-            let content = NSHostingController(rootView: DeviceSetupView(model: model))
-            content.sizingOptions = [.preferredContentSize]
-            let window = NSWindow(contentViewController: content)
-            window.styleMask = [.titled, .closable]
-            window.isReleasedWhenClosed = false
+            let (window, resizing) = FittedWindow.make(DeviceSetupView(model: model), following: model.objectWillChange)
             let delegate = DeviceSetupWindow(model: model)
+            delegate.resizing = resizing
             window.delegate = delegate
             delegates[id] = delegate
             window.center()
@@ -184,9 +327,11 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
         model.watch()
     }
 
+    /// Closes a device's setup window, for Forget.
+    static func close(_ deviceID: String) { windows[deviceID]?.close() }
+
     func windowWillClose(_ notification: Notification) {
-        model.stopWatching()
-        if model.approval != nil { model.decide(false) }
+        model.windowClosed()
         Self.windows[model.device.id] = nil
         Self.delegates[model.device.id] = nil
     }
@@ -199,7 +344,13 @@ struct DeviceSetupView: View {
         let conversation = Store.shared.projects.first { $0.deviceSetup == model.device.id }
         DeviceSetupPage(device: model.device, steps: model.steps, passed: model.passed, content: model.content, typed: $model.typed,
                         approval: model.approval, act: model.act, decide: model.decide,
-                        ask: conversation.map { project in { Store.shared.showChat(project.id) } })
+                        ask: conversation.map { project in { Store.shared.showChat(project.id) } },
+                        reconnect: model.certificateChanged ? { model.reconnect() } : nil,
+                        trial: model.trial, tryIt: model.integration?.app?.declared != nil ? { model.tryIt() } : nil,
+                        canTry: model.canTry, worked: model.worked,
+                        guide: model.guided.started ? model.guided.state : nil, handedBack: model.guided.handedBack,
+                        offer: model.guide.map { $0.offer ?? "" }, doItForMe: { model.doItForMe() },
+                        confirm: { model.guided.confirm() }, retry: { model.guided.retry() }, doItMyself: { model.doItMyself() })
     }
 }
 
@@ -216,11 +367,27 @@ struct DeviceSetupPage: View {
     let decide: (Bool) -> Void
     /// Back to the device's setup conversation, where a step that doesn't work is talked through.
     var ask: (() -> Void)? = nil
+    /// Set while the device's certificate has changed: the reconnect card takes the step card's place.
+    var reconnect: (() -> Void)? = nil
+    /// Once it's set up, for a device that takes apps: a test run's stages, its button, and how its bridge is known.
+    var trial: [IntegrationProbe.Stage] = []
+    var tryIt: (() -> Void)? = nil
+    var canTry = true
+    var worked: String? = nil
+    /// Do It for Me: the guide's state once started, whether it has handed the device back to the step, and, before it
+    /// starts, its line (set when the step has a guide).
+    var guide: SetupGuideView.State? = nil
+    var handedBack = false
+    var offer: String? = nil
+    var doItForMe: () -> Void = {}
+    var confirm: () -> Void = {}
+    var retry: () -> Void = {}
+    var doItMyself: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: device.kind.symbol).font(.system(size: 30, weight: .light)).foregroundStyle(.secondary).frame(width: 44)
+                Image(systemName: device.symbol).font(.system(size: 30, weight: .light)).foregroundStyle(.secondary).frame(width: 44)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Set up \(device.name)").font(.title2.weight(.semibold))
                     Text(device.line).foregroundStyle(.secondary)
@@ -248,12 +415,21 @@ struct DeviceSetupPage: View {
                 }
             }
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-            if let approval {
+            if let reconnect {
+                DeviceReconnectCard(device: device.name, reconnect: reconnect).padding(.top, 16)
+            } else if let approval {
                 DeviceCommandCard(approval: approval, allow: { decide(true) }, deny: { decide(false) }).padding(.top, 16)
             } else if let content {
-                DeviceStepCard(content: content, typed: $typed, act: act).padding(.top, 16)
+                if let guide {
+                    SetupGuideView(state: guide, confirm: confirm, retry: retry, doItMyself: handedBack ? nil : doItMyself).padding(.top, 16)
+                } else if let offer {
+                    DoItForMeRow(offer: offer.isEmpty ? nil : offer, start: doItForMe).disabled(content.state.isBusy).padding(.top, 16)
+                }
+                // The step's own card, once the guide has handed the device back to it: its field, its button, its check.
+                if guide == nil || handedBack { DeviceStepCard(content: content, typed: $typed, act: act).padding(.top, 16) }
             } else if !steps.isEmpty {
                 Label("\(device.name) is set up.", systemImage: "checkmark.circle.fill").foregroundStyle(.green).padding(.top, 16)
+                if let tryIt { DeviceTrialCard(device: device.name, stages: trial, worked: worked, enabled: canTry, tryIt: tryIt).padding(.top, 12) }
             }
         }
         .padding(20)
@@ -391,6 +567,35 @@ extension DeviceStepCard.Content {
     }
 }
 
+/// A device whose certificate isn't the one Lamp kept: what happened, what the person accepts by reconnecting, and the
+/// one button. Lamp keeps the certificate a device first shows so nothing else on the network can pose as it and be sent
+/// its password; resetting a device, or turning its developer mode on again, gives it a new one, which only the person
+/// can tell from an impostor.
+struct DeviceReconnectCard: View {
+    let device: String
+    let reconnect: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("\(device) looks different").font(.headline)
+            Text("Lamp knows \(device) by the certificate it first showed. It shows another now, which happens when it's reset or its developer mode is turned on again.")
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("What you accept").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Label("Lamp will trust the device at this address from now on. Do this only if you changed \(device) yourself.",
+                      systemImage: "exclamationmark.triangle").font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Reconnect", action: reconnect).cardButtons().buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+    }
+}
+
 /// A command for the device, or a tool for this Mac, the first time it runs on a device: the command, what it's for
 /// in the integration's words, and what the person accepts in Lamp's. Allowed, that exact text runs on that device from
 /// then on without asking; changed, it asks again.
@@ -421,22 +626,10 @@ struct DeviceCommandCard: View {
 
 // MARK: - In the chat
 
-/// The device's next step in a wish's chat, when the wish needs it set up: the same card as the setup window, sharing
-/// its state. Once the device is set up it folds to one line.
-struct DeviceStepLine: View {
-    let deviceID: String
-    @EnvironmentObject private var store: Store
-
-    var body: some View {
-        if let device = store.devices.first(where: { $0.id == deviceID }), device.integration != nil {
-            DeviceStepChat(model: DeviceSetupModel.for(device))
-        } else {
-            Label(Integrations.kept(deviceID).map { "\($0.name) isn't on the network now." } ?? "That device isn't on the network now.",
-                  systemImage: "dot.radiowaves.left.and.right").foregroundStyle(.secondary)
-        }
-    }
-
-    /// The line the sidebar's chat shows for it, where the card's own controls can't go: setup happens in Lamp's window.
+/// The device's next step in a wish's chat, when the wish needs it set up: a line with Set Up…, which opens the setup
+/// window (`DeviceSetupWindow`) with the step's card. Once the device is set up it says so.
+enum DeviceStepLine {
+    /// The line the chat shows for it: the card's own controls are in the setup window.
     @MainActor static func text(_ deviceID: String) -> (text: String, done: Bool) {
         guard let device = Store.shared.devices.first(where: { $0.id == deviceID }) ?? Integrations.kept(deviceID).map({ Integrations.device(from: $0, onNetwork: false) }) else {
             return ("Set up the device", false)
@@ -446,21 +639,49 @@ struct DeviceStepLine: View {
     }
 }
 
-private struct DeviceStepChat: View {
-    @ObservedObject var model: DeviceSetupModel
+
+/// A set-up device's test run: Lamp puts a test app on it, tries it, and takes it off (`IntegrationProbe`). Each stage
+/// ticks as it goes, with the device's words where one failed; a run that passed leaves the bridge's mark.
+struct DeviceTrialCard: View {
+    let device: String
+    let stages: [IntegrationProbe.Stage]
+    let worked: String?
+    let enabled: Bool
+    let tryIt: () -> Void
 
     var body: some View {
-        Group {
-            if let approval = model.approval {
-                DeviceCommandCard(approval: approval, allow: { model.decide(true) }, deny: { model.decide(false) })
-            } else if let content = model.content {
-                DeviceStepCard(content: content, typed: $model.typed, act: model.act)
-            } else {
-                // Folded, it's one of the chat's status lines, drawn and indented as they are.
-                ChatLook.StatusLine("\(model.device.name) is set up.", running: false)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Lamp puts a test app on \(device), tries it with the remote, then takes it off.").foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !stages.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(stages) { stage in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            symbol(stage.state).frame(width: 16)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(stage.id).opacity(stage.state == .skipped || stage.state == .waiting ? 0.5 : 1)
+                                if case .failed(let why) = stage.state { Text(why).font(.callout).foregroundStyle(.secondary).lineLimit(4) }
+                            }
+                        }
+                    }
+                }
+            }
+            HStack {
+                if let worked { Label(worked, systemImage: "checkmark.seal").font(.callout).foregroundStyle(.secondary) }
+                Spacer()
+                Button(stages.isEmpty ? "Try It on \(device)" : "Try Again", action: tryIt).disabled(!enabled)
             }
         }
-        .onAppear { model.watch() }
+        .padding(14)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder private func symbol(_ state: IntegrationProbe.Stage.State) -> some View {
+        switch state {
+        case .running: ProgressView().controlSize(.small)
+        case .passed: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+        case .waiting, .skipped: Image(systemName: "circle").foregroundStyle(.tertiary)
+        }
     }
 }

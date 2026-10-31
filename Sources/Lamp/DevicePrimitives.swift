@@ -12,9 +12,17 @@ import Network
 // MARK: - The device's address
 
 enum DeviceAddress {
-    /// A private or link-local address: where a device in the person's home is. Never this Mac itself (loopback),
-    /// which would reach Lamp's own gateway and the apps' ports, and never a name, which could be made to lead anywhere.
+    /// A private or link-local address: where a device in the person's home is. Never this Mac itself, by loopback or
+    /// by any of its own addresses on the network, which would reach Lamp's own gateway (it listens on the network
+    /// while a device app needs it) and the apps' ports; and never a name, which could be made to lead anywhere.
     static func isPrivate(_ address: String) -> Bool {
+        guard onNetwork(address) else { return false }
+        let raw = IPv4Address(address).map { $0.rawValue } ?? IPv6Address(address).map { $0.rawValue }
+        return raw.map { !thisMac().contains($0) } ?? false
+    }
+
+    /// A private or link-local address, this Mac's own included.
+    static func onNetwork(_ address: String) -> Bool {
         if let v4 = IPv4Address(address) {
             let b = [UInt8](v4.rawValue)
             switch (b[0], b[1]) {
@@ -34,6 +42,25 @@ enum DeviceAddress {
         return false
     }
 
+    /// This Mac's own addresses on every interface, read each time: they change as it moves between networks.
+    static func thisMac() -> Set<Data> {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return [] }
+        defer { freeifaddrs(list) }
+        var own: Set<Data> = []
+        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard let address = pointer.pointee.ifa_addr else { continue }
+            switch Int32(address.pointee.sa_family) {
+            case AF_INET:
+                own.insert(address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin_addr) { Data($0) } })
+            case AF_INET6:
+                own.insert(address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin6_addr) { Data($0) } })
+            default: continue
+            }
+        }
+        return own
+    }
+
     struct NotOnNetwork: LocalizedError {
         let address: String
         var errorDescription: String? { "Lamp only talks to devices on your own network, and \(address) isn't one." }
@@ -44,7 +71,8 @@ enum DeviceAddress {
 
 /// A request to a device, as an integration may make it.
 enum DeviceHTTP {
-    /// Answers are cut off here: a device's answers are small, and a picture is a few megabytes.
+    /// Answers are cut off here: a device's answers are small, and a picture is a few megabytes. What Lamp sends a
+    /// device, an app's package, has its own limit (`DeviceApps.packageLimit`).
     static let limit = 16 << 20
 
     struct Failure: LocalizedError {
@@ -55,6 +83,10 @@ enum DeviceHTTP {
     struct Answer {
         let status: Int
         let body: Data
+        /// The cookies the device set (a CSRF token), by name, for `{cookie:<name>}` later in the same sequence.
+        var cookies: [String: String] = [:]
+        /// The certificate the device showed, over HTTPS (DER).
+        var certificate: Data?
         var ok: Bool { (200..<300).contains(status) }
         var text: String { String(decoding: body, as: UTF8.self) }
     }
@@ -75,15 +107,17 @@ enum DeviceHTTP {
 
     /// Makes the request with Lamp's values filled in. No redirect is followed, a sign-in goes only to the device's own
     /// challenge, and the answer is cut off at `limit`. Over HTTPS, `pins` holds the device to the certificate it showed
-    /// the first time; without them (while a device is only being found and read) nothing secret is sent.
+    /// the first time; without them (while a device is only being found and read) nothing secret is sent. A look for
+    /// devices waits `timeout` for each answer, much less than an install does: a device that answered the scan but
+    /// not its port would otherwise hold up the whole look.
     static func send(_ request: Request, to address: String, values: [String: String], files: [String: URL] = [:],
-                     pins: DeviceTLS.Pins? = nil) async throws -> Answer {
+                     pins: DeviceTLS.Pins? = nil, timeout: TimeInterval = 30) async throws -> Answer {
         let https = request.https == true
         if https, pins == nil, carriesSecret(request) {
             throw Failure(message: "Lamp sends a password over HTTPS only to a device whose certificate it keeps.")
         }
         let path = try Placeholders.fill(request.path, values, in: .path)
-        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: 30)
+        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: timeout)
         urlRequest.httpMethod = (request.method ?? "GET").uppercased()
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.httpShouldHandleCookies = false
@@ -91,14 +125,19 @@ enum DeviceHTTP {
             urlRequest.setValue(try Placeholders.fill(value, values, in: .header), forHTTPHeaderField: name)
         }
         if let body = request.body { urlRequest.httpBody = Data(try Placeholders.fill(body, values, in: .body).utf8) }
+        // Some devices refuse a POST that says nothing of its length (Device Portal answers 411), so an empty one says 0.
+        if request.body == nil, request.form == nil, ["POST", "PUT"].contains(urlRequest.httpMethod ?? "") { urlRequest.httpBody = Data() }
         if let form = request.form {
             let boundary = "lamp-" + UUID().uuidString
             var data = Data()
             for (name, value) in form.sorted(by: { $0.key < $1.key }) {
                 data.append(Data("--\(boundary)\r\n".utf8))
-                if value == "@{package}" {
-                    guard let file = files["package"], let contents = try? Data(contentsOf: file) else { throw Failure(message: "There's no package to send yet.") }
-                    data.append(Data("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(file.lastPathComponent)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
+                if value == "@{package}" || value == "@{certificate}" {
+                    let key = String(value.dropFirst(2).dropLast())
+                    guard let file = files[key], let contents = try? Data(contentsOf: file) else { throw Failure(message: "There's no \(key) to send yet.") }
+                    // A field named like a file ("app.msix") is sent under that name: some devices go by the file's name.
+                    let filename = name.contains(".") ? name : file.lastPathComponent
+                    data.append(Data("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
                     data.append(contents)
                 } else {
                     data.append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
@@ -129,7 +168,12 @@ enum DeviceHTTP {
             body.append(byte)
             if body.count > limit { throw Failure(message: "The device's answer was bigger than Lamp takes.") }
         }
-        return Answer(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: body)
+        var cookies: [String: String] = [:]
+        if let http = response as? HTTPURLResponse, let url = http.url {
+            let fields = http.allHeaderFields.reduce(into: [String: String]()) { if let k = $1.key as? String, let v = $1.value as? String { $0[k] = v } }
+            for cookie in HTTPCookie.cookies(withResponseHeaderFields: fields, for: url) { cookies[cookie.name] = cookie.value }
+        }
+        return Answer(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: body, cookies: cookies, certificate: guardian.certificate)
     }
 
     /// Whether a request carries what the person typed or a sign-in, which goes only where Lamp knows the device.
@@ -150,6 +194,8 @@ enum DeviceHTTP {
         private var tried = false
         /// Why the device's certificate wasn't taken, when it wasn't.
         private(set) var refusal: DeviceTLS.Refusal?
+        /// The certificate the device showed, once taken.
+        private(set) var certificate: Data?
         init(address: String, credential: (user: String, password: String, digest: Bool)?, https: Bool = false, port: Int = 0,
              pins: DeviceTLS.Pins? = nil) {
             self.address = address
@@ -174,13 +220,15 @@ enum DeviceHTTP {
                     completionHandler(.cancelAuthenticationChallenge, nil)
                     return
                 }
-                let fingerprint = DeviceTLS.fingerprint(SecCertificateCopyData(leaf) as Data)
+                let der = SecCertificateCopyData(leaf) as Data
+                let fingerprint = DeviceTLS.fingerprint(der)
                 // Kept and compared in one step; without pins (a read while finding) nothing secret is in the request.
-                if let refused = pins?.admit(fingerprint, port: port) {
+                if let refused = pins?.admit(fingerprint, port: port, certificate: der) {
                     refusal = refused
                     completionHandler(.cancelAuthenticationChallenge, nil)
                     return
                 }
+                certificate = der
                 completionHandler(.useCredential, URLCredential(trust: trust))
                 return
             }
@@ -210,6 +258,27 @@ enum DeviceHTTP {
             else if let array = value as? [Any], let index = Int(part), array.indices.contains(index) { value = array[index] }
             else { return nil }
         }
+        return text(of: value)
+    }
+
+    /// Every value at a JSON path whose `*` stands for each element of a list ("InstalledPackages.*.PackageFullName");
+    /// without one, the one value `json` reads.
+    static func jsonValues(_ path: String, in data: Data) -> [String] {
+        guard path.split(separator: ".").contains("*") else { return json(path, in: data).map { [$0] } ?? [] }
+        guard let root = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return [] }
+        var values: [Any] = [root]
+        for part in path.split(separator: ".").map(String.init) {
+            values = values.flatMap { value -> [Any] in
+                if part == "*" { return value as? [Any] ?? [] }
+                if let object = value as? [String: Any], let next = object[part] { return [next] }
+                if let array = value as? [Any], let index = Int(part), array.indices.contains(index) { return [array[index]] }
+                return []
+            }
+        }
+        return values.compactMap(text(of:))
+    }
+
+    private static func text(of value: Any) -> String? {
         switch value {
         case let text as String: return text
         case let number as NSNumber:
@@ -297,7 +366,37 @@ enum DeviceProbe {
 
     /// An SSDP search of the local network for a search target ("ssdp:all" for everything), for a couple of seconds.
     static func ssdp(_ target: String, seconds: Double = 2) async -> [SSDPAnswer] {
-        await Task.detached { search(target, seconds: seconds) }.value
+        await search(target, seconds: seconds).answers
+    }
+
+    /// The same search, and whether macOS refused it: Lamp isn't allowed on the local network (Privacy & Security →
+    /// Local Network), or hasn't been answered yet. A refused search only hears nothing, so a look that heard nothing
+    /// asks Network.framework why (`localNetworkDenied`).
+    static func search(_ target: String, seconds: Double) async -> (answers: [SSDPAnswer], refused: Bool) {
+        async let denied = localNetworkDenied()
+        let answers = await Task.detached { search(target, seconds: seconds) }.value
+        return (answers, await denied && answers.isEmpty)
+    }
+
+    /// Whether macOS refuses Lamp the local network now. A send it refuses still succeeds where Lamp makes it, so a
+    /// connection to the SSDP group is asked why its path can't be used, and closed at once.
+    static func localNetworkDenied() async -> Bool {
+        let connection = NWConnection(host: "239.255.255.250", port: 1900, using: .udp)
+        return await withCheckedContinuation { continuation in
+            let once = Once()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready, .waiting, .failed:
+                    guard once.take() else { return }
+                    let denied = connection.currentPath?.unsatisfiedReason == .localNetworkDenied
+                    connection.cancel()
+                    continuation.resume(returning: denied)
+                default: break
+                }
+            }
+            connection.start(queue: .global())
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if once.take() { connection.cancel(); continuation.resume(returning: false) } }
+        }
     }
 
     private static func search(_ target: String, seconds: Double) -> [SSDPAnswer] {
@@ -341,17 +440,21 @@ enum DeviceProbe {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(fd, &buffer, buffer.count, 0, $0, &length) }
             }
             guard got > 0 else { continue }
-            let ip = String(cString: inet_ntoa(from.sin_addr))
-            var headers: [String: String] = [:]
-            for line in String(decoding: buffer[0..<got], as: UTF8.self).split(separator: "\r\n") {
-                guard let colon = line.firstIndex(of: ":") else { continue }
-                headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            }
-            let answer = SSDPAnswer(address: ip, server: headers["server"] ?? "", location: headers["location"],
-                                    searchTarget: headers["st"] ?? "", usn: headers["usn"] ?? "")
+            let answer = answer(String(decoding: buffer[0..<got], as: UTF8.self), from: String(cString: inet_ntoa(from.sin_addr)))
             if !answers.contains(answer) { answers.append(answer) }
         }
         return answers
+    }
+
+    /// One SSDP answer's headers, as the device at `address` sent them.
+    static func answer(_ text: String, from address: String) -> SSDPAnswer {
+        var headers: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        return SSDPAnswer(address: address, server: headers["server"] ?? "", location: headers["location"],
+                          searchTarget: headers["st"] ?? "", usn: headers["usn"] ?? "")
     }
 
     /// The devices offering a Bonjour service on the local network, by name and address, browsed for a few seconds.
@@ -462,6 +565,9 @@ enum DeviceFields {
     static func save(_ value: String, as key: String, device: String) -> Bool {
         AppSecrets.save(Data(value.utf8), as: key, app: owner(device), in: place)
     }
+
+    /// Everything typed for a device, for Forget.
+    static func forget(device: String) { AppSecrets.forget(app: owner(device), in: place) }
 }
 
 // MARK: - show, qr

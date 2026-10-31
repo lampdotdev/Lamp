@@ -3,7 +3,7 @@ import LampSidebarKit
 
 /// Offers a way to set up a kind of AI where it's first wanted: in the chat of the app that wanted it, put
 /// there by Lamp when an app hit something nothing here can do, or by the agent with `offer_setup`. Built
-/// like the build card above it in the chat (an icon, a headline and a status line, then rows), and
+/// as a card (an icon, a headline and a status line, then rows), and
 /// what it offers comes from `AppAI.resolve`, as Settings' does, so the two always agree. Once that capability
 /// is set up (here or in Settings) it folds down to its header, saying what answers now.
 struct SetupCard: View {
@@ -13,7 +13,6 @@ struct SetupCard: View {
     let dir: URL
     @ObservedObject private var local = LocalModels.shared
     @ObservedObject private var images = ImageModels.shared
-    @ObservedObject private var browser = BrowserSetup.shared
     @State private var revision = 0
     @State private var declined = false
 
@@ -79,7 +78,7 @@ struct SetupCard: View {
         .onReceive(Store.shared.$icons) { _ in revision += 1 }
     }
 
-    /// What's being offered, on a tile the size of the build card's app icon. Not the app's own icon: it's
+    /// What's being offered, on a tile the size of an app icon. Not the app's own icon: it's
     /// Lamp asking, not the app.
     static func symbol(_ offer: SetupOffer) -> String {
         offer.context == .phoneAway ? "iphone.radiowaves.left.and.right" : offer.capability.symbol
@@ -94,7 +93,7 @@ struct SetupCard: View {
             return (title(offer), byHand ? "All set. Image Playground creates each app's icon with AI, and you pick the one you like." : doneText(offer, resolution.answer ?? ""), true)
         }
         if offer.declined(in: project) {
-            return (title(offer), offer.capability == .browser ? "No problem. You can connect Chrome any time in Lamp’s Settings, under Experimental." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.", false)
+            return (title(offer), "No problem. You can set this up any time in Lamp's Settings, under AI Providers.", false)
         }
         return (title(offer), reason, false)
     }
@@ -121,7 +120,6 @@ struct SetupCard: View {
         case .text: "Use AI in your apps"
         case .decisions: "Let your apps make quick judgments"
         case .pictures: "Make pictures with AI"
-        case .browser: "Use your app in Chrome"
         }
     }
 
@@ -133,7 +131,6 @@ struct SetupCard: View {
         case .text: "All set. Your apps' AI now runs on \(answer)."
         case .decisions: "All set. Your apps' judgments are now made by \(answer)."
         case .pictures: "All set. Pictures are now made by \(answer)."
-        case .browser: "All set. Lamp is connected to Chrome."
         }
     }
 
@@ -147,7 +144,7 @@ struct SetupCard: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
         } else if declined {
-            Text(offer.capability == .browser ? "No problem. You can connect Chrome any time in Lamp’s Settings, under Experimental." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.")
+            Text("No problem. You can set this up any time in Lamp's Settings, under AI Providers.")
         } else {
             Text(reason)
         }
@@ -190,7 +187,7 @@ struct UpgradeView: View {
         case .key(let provider): return Provider.keyProvider(provider) != nil
         case .signIn: return true
         case .drawIcons: return Icons.playgroundAvailable
-        case .browserExtension: return BrowserBridge.enabled
+        case .useText: return true
         }
     }
 
@@ -206,8 +203,8 @@ struct UpgradeView: View {
             SignInUpgrade(engine: engine, compact: compact, onChange: onChange)
         case .drawIcons:
             DrawIconsUpgrade(compact: compact)
-        case .browserExtension:
-            BrowserConnectionUpgrade(compact: compact)
+        case .useText(let route, let label, let app):
+            UseTextUpgrade(route: route, label: label, app: app, compact: compact, onChange: onChange)
         }
     }
 }
@@ -380,6 +377,33 @@ private struct DecisionModelUpgrade: View {
     }
 }
 
+/// What answers now, kept as the choice: for one app, or in Settings for every app.
+private struct UseTextUpgrade: View {
+    let route: String
+    let label: String
+    let app: String?
+    let compact: Bool
+    let onChange: () -> Void
+
+    var body: some View {
+        OptionRow(symbol: "arrow.triangle.swap", title: "Use \(label) instead",
+                  detail: app == nil ? "For every app, as Settings' choice. What they send goes to it."
+                                     : "For this app. What it sends goes to it.",
+                  compact: compact) {
+            Button("Use It") {
+                if let app, let project = Store.shared.projects.first(where: { $0.id == app }) {
+                    var models = AppModels.load(project)
+                    models.text = route
+                    models.save(project)
+                } else {
+                    UserDefaults.standard.set(route, forKey: "appModel")
+                }
+                onChange()
+            }
+        }
+    }
+}
+
 private struct SignInUpgrade: View {
     let engine: Engine
     let compact: Bool
@@ -421,83 +445,127 @@ private struct DrawIconsUpgrade: View {
     }
 }
 
-/// The line in the chat that offers to draw an app's icon, for someone who chose to draw icons themselves:
-/// what's so, and the button that opens Image Playground. It's shown only while it has something to offer
-/// (`Icons.awaitsDrawing`).
-struct DrawIconLine: View {
-    let project: LampProject
-
+/// The line in the chat that offers to draw an app's icon, for someone who chose to draw icons themselves: what's so,
+/// and Draw Icon…, which opens Image Playground in Lamp's setup sheet (`SetupSheet`). It's shown only while it has
+/// something to offer (`Icons.awaitsDrawing`).
+enum DrawIconLine {
     static func text(_ app: String) -> String { "\(app) has a plain icon for now." }
+}
 
-    var body: some View {
-        ChatLook.ActionLine(symbol: "paintbrush.pointed", text: Self.text(project.name), button: "Draw Icon…") {
-            Store.shared.iconFromPlayground(project)
-        }
+/// The chat's line asking for what builds, for a request waiting there (`Store.askForSetup`): Claude Code or Codex, where
+/// one is on this Mac and signed in, to take with a click, and the rest in Lamp's sheet (`SetupView`), since the chat beside
+/// an app can't hold a key. Its text is the engines offered, found after the line is put there.
+enum BuilderLine {
+    static let title = "Choose what builds your apps"
+    static let others = "Other Ways…"
+    /// What's offered, in the order the setup sheet lists them.
+    private static let order: [Engine] = [.claude, .codex]
+
+    static func choice(_ engine: Engine) -> String { "Use \(engine.title)" }
+
+    static func status(_ offered: [Engine]) -> String {
+        offered.isEmpty ? "Your request starts as soon as this is done." : "Uses your signed-in account."
+    }
+
+    static func offers(installed: (Engine) -> Bool, signedIn: (Engine) -> Bool) -> [Engine] {
+        order.filter { installed($0) && signedIn($0) }
+    }
+
+    static func text(_ offered: [Engine]) -> String { offered.map(\.rawValue).joined(separator: " ") }
+
+    static func engines(in text: String) -> [Engine] {
+        let saved = text.split(separator: " ").compactMap { Engine(rawValue: String($0)) }
+        return order.filter(saved.contains)
+    }
+
+    /// Asked for while nothing builds and a request waits for it. In the gallery it has no wish, and shows.
+    @MainActor static func shows(for project: LampProject?) -> Bool {
+        guard let project else { return true }
+        let store = Store.shared
+        return !(store.setup.hasBuilder && store.setup.hasAgent) && !(store.queued[project.id] ?? []).isEmpty
     }
 }
 
-/// A first request that read as an iPhone app, made for the Mac because this Mac can't build one yet. The
-/// button opens the iPhone setup; once it's done, the app is asked to be made for the iPhone as well (or
-/// instead), as the person would ask, so the change goes through the agent like any other.
-struct IPhoneSetupLine: View {
-    let project: LampProject
-    let wanted: Platform
-    @ObservedObject private var asked = Asked.shared
-    @ObservedObject private var store = Store.shared
+/// A first request that read as an iPhone app, made for the Mac because this Mac can't build one yet; or one of a
+/// wish's other apps that this Mac can't build yet (`part`: the wish keeps it on its list, `WishApp`). The button opens
+/// the kind's setup; once it's done, the app is asked to be made for the iPhone as well (or instead), or the wish's
+/// other app to be added, as the person would ask, so the change goes through the agent like any other.
+enum IPhoneSetupLine {
+    /// The line's text in the chat (`LogLine.text`): the kind wanted, and "part" for one of a wish's other apps.
+    static func lineText(_ kind: Platform, part: Bool) -> String { kind.rawValue + (part ? " part" : "") }
+    /// What a line's text says, as `lineText` wrote it; a kind Lamp no longer has reads as the iPhone's.
+    static func wanted(from text: String) -> (kind: Platform, part: Bool) {
+        let words = text.split(separator: " ")
+        return (words.first.flatMap { Platform(rawValue: String($0)) } ?? .iphone, words.count > 1 && words[1] == "part")
+    }
 
     /// Apps whose setup is under way: one click per app, so a second can't queue the same conversion again.
     /// Once setup is done the conversion is a request of the app's, waiting or running, which keeps the button
     /// off until it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try
     /// again. Any other turn leaves it on: the line shows during the app's first build, and neither Apple's setup
     /// nor the conversion, which waits its turn, needs that build to be over.
-    static func text(_ app: String, android: Bool = false) -> String {
-        android ? "\(app) is a Mac app for now. This Mac needs a few things from Google to make Android apps."
-            : "\(app) is a Mac app for now. This Mac needs a few things from Apple to make iPhone apps."
+    static func text(_ app: String, wanted: Platform = .iphone, part: Bool = false) -> String {
+        let later = setup(for: wanted)
+        if part { return "\(app) should have \(Parts.name(of: wanted)) too. This Mac needs \(later.needs) to make \(later.apps)." }
+        return "\(app) is a Mac app for now. This Mac needs \(later.needs) to make \(later.apps)."
     }
 
+    /// The kind's setup, or the iPhone's for a line about a kind that has none.
+    static func setup(for wanted: Platform) -> SetupLater { wanted.target.setup.later ?? Target.iphone.setup.later! }
+
+    /// The setups under way, one per app and, for a wish's other app, per kind: a wish waiting for an iPhone app and
+    /// an Android app follows each setup on its own.
     @MainActor final class Asked: ObservableObject {
         static let shared = Asked()
         @Published var ids: Set<String> = []
     }
 
-    var body: some View {
-        ChatLook.ActionLine(symbol: wanted == .android ? "smartphone" : "iphone", text: Self.text(project.name, android: wanted == .android), button: "See What's Needed…",
-                            disabled: asked.ids.contains(project.id) || Self.isOff(for: project),
-                            action: setUp)
+    /// What a setup under way is kept as: the app, and for one of a wish's other apps its kind too.
+    static func key(_ project: LampProject, wanted: Platform, part: Bool) -> String { part ? project.id + "." + wanted.rawValue : project.id }
+
+    /// What the button asks of the agent once setup is done, for each kind: made for it, or added as the wish's other app.
+    static var requests: [String] { Targets.all.compactMap(\.setup.later?.request) + Parts.partKinds.map(Parts.request(for:)) }
+
+    /// Whether a wish still waits for one of its other apps of this kind: what its line is for.
+    @MainActor static func stillWaits(_ project: LampProject, for kind: Platform) -> Bool {
+        let store = Store.shared
+        return Parts.waiting(in: project, parts: store.parts(of: project)).contains { Parts.group($0.kind) == Parts.group(kind) }
     }
 
-    /// What the button asks of the agent once setup is done.
-    static let requests = ["Make it work on my iPhone too.", "Make it an iPhone app instead.", "Make it an Android app instead."]
+    /// Whether a line with this text (`lineText`) still has something to offer: the app is still only a Mac app, or
+    /// the wish still waits for the other app the line is about.
+    @MainActor static func shows(_ text: String, for project: LampProject?) -> Bool {
+        let (kind, part) = wanted(from: text)
+        guard let project else { return false }
+        return part ? stillWaits(project, for: kind) : project.platform == .mac
+    }
 
     /// Whether the button is off for this app: its setup is under way, or the conversion it asked for is
-    /// waiting or running. The in-app chat's line asks the same.
-    @MainActor static func isOff(for project: LampProject) -> Bool {
+    /// waiting or running.
+    @MainActor static func isOff(for project: LampProject, wanted: Platform = .iphone, part: Bool = false) -> Bool {
         let store = Store.shared
-        return Asked.shared.ids.contains(project.id)
+        return Asked.shared.ids.contains(key(project, wanted: wanted, part: part))
             || (store.queued[project.id] ?? []).contains { requests.contains($0.text) }
             || (store.busy.contains(project.id) && requests.contains { store.isRunning($0, for: project) })
     }
 
-    private func setUp() {
-        let id = project.id, both = wanted == .universal
-        asked.ids.insert(id)
-        if wanted == .android {
-            AndroidSetup.shared.perform(device: nil, cancelled: { Asked.shared.ids.remove(id) }) {
-                Asked.shared.ids.remove(id)
-                guard let current = Store.shared.current(project), current.platform == .mac else { return }
-                Store.shared.send(Self.requests[2], to: current)
-            }
-            return
+    /// Opens the kind's setup and, once it's done, asks for the app: the button's click, and also what Lamp does when it
+    /// opens the setup itself for one of a wish's other apps (`Store.recordNeeds`), so finishing the setup there adds
+    /// the app without a click in the chat. One at a time per app.
+    @MainActor static func follow(_ project: LampProject, wanted: Platform, part: Bool) {
+        let later = setup(for: wanted), id = key(project, wanted: wanted, part: part)
+        guard !Asked.shared.ids.contains(id) else { return }
+        Asked.shared.ids.insert(id)
+        // Asked again each time: an app that's gone, no longer only a Mac app, or a wish that has the app by now, has
+        // nothing to set up for, and the setup lets go of the request rather than hold up the ones behind it.
+        let stillWanted = { @MainActor in
+            guard let current = Store.shared.current(project) else { return false }
+            return part ? stillWaits(current, for: wanted) : current.platform == .mac
         }
-        // Resolved again each time: an app that's gone, or no longer only a Mac app, has nothing to set up for,
-        // and the setup lets go of the request rather than hold up the ones behind it.
-        PhoneSetup.shared.perform(resolve: {
-            guard let current = Store.shared.current(project), current.platform == .mac else { return nil }
-            return PhoneSetup.Context(family: .iphone, requiresTeam: both)
-        }, cancelled: { Asked.shared.ids.remove(id) }) {
+        later.open(stillWanted, { Asked.shared.ids.remove(id) }) {
             Asked.shared.ids.remove(id)
-            guard let current = Store.shared.current(project), current.platform == .mac else { return }
-            Store.shared.send(both ? Self.requests[0] : Self.requests[1], to: current)
+            guard let current = Store.shared.current(project), stillWanted() else { return }
+            if part { Store.shared.retryWaitingApp(wanted, of: current) } else { Store.shared.send(later.request, to: current) }
         }
     }
 }
@@ -528,18 +596,5 @@ struct CapabilityNote: View {
         .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in revision += 1 }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in revision += 1 }
         }
-    }
-}
-
-struct BrowserConnectionUpgrade: View {
-    var compact = false
-    @ObservedObject private var browser = BrowserSetup.shared
-    @State private var showGuide = false
-    var body: some View {
-        OptionRow(symbol: "sidebar.right", title: browser.connected ? "Connected to Chrome" : "Connect Lamp to Chrome",
-                  detail: browser.connected ? "Click Lamp in Chrome’s toolbar beside a page." : (browser.bridgeInstalled ? "Add the Lamp extension in Chrome." : "Add Lamp to Chrome to use apps beside pages."), compact: compact) {
-            Button(browser.connected ? "Open…" : "Set Up…") { showGuide = true }
-        }
-        .sheet(isPresented: $showGuide) { BrowserSetupGuide() }
     }
 }

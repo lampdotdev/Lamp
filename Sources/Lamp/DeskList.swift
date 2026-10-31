@@ -1,0 +1,726 @@
+import SwiftUI
+import AppKit
+import LampSidebarKit
+
+/// What the desk's list says about a wish, read from its files away from the main thread: its line, who made it, where
+/// it runs, when it last changed and, for a remix made here, which wish it's a remix of.
+struct DeskEntry: Equatable, Sendable {
+    let id: String
+    /// What it is, in a line (`AppDescription`).
+    var about: String?
+    /// The author of the work it's made from, for a wish that came with Lamp ("Mr.doob"), else nil.
+    var author: String?
+    var isStarter = false
+    /// It came from someone else: a shared file or a repository, with no original of it on this desk.
+    var arrived = false
+    /// It's a remix made here (`Store.remixedHereMark`): the person's, whether or not its original is still on the desk.
+    var remixedHere = false
+    var license: String?
+    var places: [Destination] = []
+    var changed: Date?
+    /// Its identity (`Sharing.identity`), and the identity of the wish it was remixed from, the last link of its chain.
+    var identity: String?
+    var original: String?
+    var picture: URL?
+    /// When the picture was last written: an app saves a new one under the same name each time it opens.
+    var pictureDate: Date?
+    /// The changes its starter suggests, as the change box's ideas.
+    var ideas: [String] = []
+    /// It came from a repository on GitHub and can offer its changes there (`Contribute.canContribute`).
+    var sendsBack = false
+    /// It arrived from somewhere (a starter, GitHub, a shared file) and has been changed in place since: Start Over
+    /// takes it back (`Store.original(toStartAgain:)`). Read after the rest, since it asks git.
+    var changedFromOriginal = false
+    /// A copy of a starter this Lamp ships, which New Copy of the Original makes another of (`Starters.shipped`).
+    var shipsOriginal = false
+    /// The folder of that starter, which says which entry under Starter apps an untouched copy stands for.
+    var starter: String?
+    /// The icon a starter not yet copied ships with (`DeskList.Fresh`): a copy's is the store's.
+    var icon: URL?
+    /// This Lamp ships a newer version of the starter it's a copy of: Update from the Original brings it in (`Starters.newer`).
+    var newerOriginal = false
+
+    nonisolated static func read(_ project: LampProject, apps: [LampProject]) -> DeskEntry {
+        let credits = Credits.load(project)
+        // The work it's made from: the one marked so, else the first named, which a starter lists first.
+        let adapted = credits.upstream.first { $0.adapted == true } ?? credits.upstream.first
+        let fm = FileManager.default
+        // The last version saved is the last change: the wish's history moves with each one.
+        let history = project.dir.appendingPathComponent(".git/logs/HEAD")
+        let changed = (try? fm.attributesOfItem(atPath: fm.fileExists(atPath: history.path) ? history.path : project.dir.path))?[.modificationDate] as? Date
+        let preview = Runtime.previewURL(project)
+        // A starter no one has changed yet shows the picture it shipped with: a game's own, taken as it opens, can be of
+        // its window before anything is drawn in it.
+        let versions = (try? String(contentsOf: history, encoding: .utf8))?.split(separator: "\n").count ?? 0
+        let shipped = Starters.isStarter(project) && versions <= 1 ? Starters.shippedPreview(of: project) : nil
+        let picture = shipped ?? (fm.fileExists(atPath: preview.path) ? preview : Starters.shippedPreview(of: project))
+        var places: [Destination] = []
+        for app in apps.isEmpty ? [project] : apps { for place in app.openPlaces where !places.contains(place) { places.append(place) } }
+        let starter = Starters.isStarter(project) ? Starters.shipped(of: project)?.folder.lastPathComponent : nil
+        return DeskEntry(id: project.id, about: AppDescription.description(of: project), author: adapted?.author,
+                         isStarter: Starters.isStarter(project), arrived: !credits.remixOf.isEmpty,
+                         remixedHere: fm.fileExists(atPath: project.dir.appendingPathComponent(Store.remixedHereMark).path),
+                         license: adapted?.license, places: places, changed: changed,
+                         identity: Sharing.identity(of: project, create: false), original: credits.remixOf.last?.wish,
+                         picture: picture,
+                         pictureDate: picture.flatMap { (try? fm.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date },
+                         ideas: Starters.starter(of: project)?.tweaks.map(\.title) ?? [],
+                         sendsBack: Contribute.canContribute(project),
+                         shipsOriginal: starter != nil, starter: starter,
+                         newerOriginal: Starters.newer(for: project) != nil)
+    }
+}
+
+/// The desk's wishes as the list shows them, in two sections: Yours, the person's own (a starter's copy among them once
+/// it's changed), and Starter apps, every starter this Lamp ships, each as its untouched copy or, with none on the desk,
+/// as the starter itself, copied only once it's opened or remixed. Remixes made here sit under their original.
+struct DeskList {
+    enum Column: String, CaseIterable {
+        case name = "Name", madeBy = "Made by", runsOn = "On your", changed = "Changed"
+    }
+
+    struct Row: Identifiable {
+        let project: LampProject
+        let entry: DeskEntry?
+        let madeBy: String
+        /// It's a remix of the row above it, or of another remix of that one.
+        let nested: Bool
+        var id: String { project.id }
+    }
+
+    /// A starter this Lamp ships with no untouched copy on the desk (the person changed theirs, or deleted it, or it
+    /// came with a later Lamp): listed under Starter apps all the same, and put on the desk only once it's opened or
+    /// remixed (`Store.open(starter:)`), so no second copy waits on disk for it.
+    struct Fresh: Identifiable {
+        let starter: Starters.Starter
+        let entry: DeskEntry
+        var id: String { entry.id }
+        var title: String { starter.name }
+        var madeBy: String { entry.author ?? "Lamp" }
+
+        /// Its id in the list, apart from any wish's: a wish's is its folder's name, which has no colon.
+        static func id(of folder: String) -> String { "starter:" + folder }
+
+        /// What the list says of it, read from what the bundle lists it by (its tree once fetched, `Starters.listed`) as
+        /// `DeskEntry.read` reads a copy.
+        nonisolated static func read(_ starter: Starters.Starter) -> Fresh {
+            let folder = starter.folder.lastPathComponent
+            let credits = Credits.read(Starters.listed(.credits, of: starter))
+            let adapted = credits?.upstream.first { $0.adapted == true } ?? credits?.upstream.first
+            let target = starter.kind.target
+            let fm = FileManager.default
+            let preview = Starters.preview(of: starter), icon = Starters.listed(.icon, of: starter)
+            return Fresh(starter: starter, entry: DeskEntry(
+                id: id(of: folder), about: Starters.about(starter), author: adapted?.author, isStarter: true,
+                license: adapted?.license, places: target.startsAt ?? target.places,
+                picture: fm.fileExists(atPath: preview.path) ? preview : nil, ideas: starter.tweaks.map(\.title),
+                shipsOriginal: true, starter: folder, icon: fm.fileExists(atPath: icon.path) ? icon : nil))
+        }
+    }
+
+    /// One line of the list: a wish, or a starter not on the desk yet.
+    enum Item: Identifiable {
+        case wish(Row)
+        case fresh(Fresh)
+
+        var id: String {
+            switch self { case .wish(let row): row.id; case .fresh(let fresh): fresh.id }
+        }
+        var title: String {
+            switch self { case .wish(let row): row.project.title; case .fresh(let fresh): fresh.title }
+        }
+        var madeBy: String {
+            switch self { case .wish(let row): row.madeBy; case .fresh(let fresh): fresh.madeBy }
+        }
+        var entry: DeskEntry? {
+            switch self { case .wish(let row): row.entry; case .fresh(let fresh): fresh.entry }
+        }
+        var project: LampProject? {
+            if case .wish(let row) = self { return row.project }
+            return nil
+        }
+    }
+
+    struct Sections {
+        /// The person's own: what they made, remixed or opened, and every starter's copy they've changed.
+        var yours: [Row]
+        /// Every starter this Lamp ships, once each: its untouched copy, else the starter itself.
+        var starters: [Item]
+        /// The untouched copies standing for their starters: tidied away by collapsing the section, never deleted.
+        var kept: Set<String>
+    }
+
+    /// The two sections, each sorted by `column`. A starter's copy stays under Starter apps until it's changed from the
+    /// original (`DeskEntry.changedFromOriginal`: its files differ from the version it arrived as), and then it's the
+    /// person's, in Yours, and the starter is listed afresh beside the others. Where the person has two untouched copies
+    /// of one starter (New Copy of the Original makes one), the first stands for it and the other is theirs.
+    static func sections(_ projects: [LampProject], entries: [String: DeskEntry], starters: [Fresh], by column: Column,
+                         ascending: Bool) -> Sections {
+        let shipped = Set(starters.compactMap(\.entry.starter))
+        var kept: [String: LampProject] = [:]
+        for project in projects.sorted(by: { $0.id.localizedStandardCompare($1.id) == .orderedAscending }) {
+            guard let entry = entries[project.id], entry.isStarter, !entry.changedFromOriginal, !entry.remixedHere,
+                  let folder = entry.starter, shipped.contains(folder), kept[folder] == nil else { continue }
+            kept[folder] = project
+        }
+        let keptIDs = Set(kept.values.map(\.id))
+        let yours = rows(projects.filter { !keptIDs.contains($0.id) }, entries: entries, by: column, ascending: ascending,
+                         alsoHere: projects)
+        let copies = rows(Array(kept.values), entries: entries, by: column, ascending: ascending, alsoHere: projects)
+        let items = copies.map(Item.wish) + starters.filter { kept[$0.entry.starter ?? ""] == nil }.map(Item.fresh)
+        let order = sorter(by: column, ascending: ascending)
+        return Sections(yours: yours, starters: items.sorted { order(($0.title, $0.madeBy, $0.entry), ($1.title, $1.madeBy, $1.entry)) },
+                        kept: keptIDs)
+    }
+
+    /// Who made it, as the list says: "You" for what was made or remixed here, its author for a wish that came with
+    /// Lamp (Lamp's own when it names none), "Shared" for one that came from someone else. A remix made before Lamp
+    /// marked them has only its original on the desk to say so.
+    static func madeBy(_ entry: DeskEntry?, hasOriginalHere: Bool) -> String {
+        guard let entry else { return "" }
+        if entry.remixedHere || hasOriginalHere { return "You" }
+        if entry.isStarter { return entry.author ?? "Lamp" }
+        return entry.arrived ? "Shared" : "You"
+    }
+
+    /// Whether one line goes before another, sorted by `column`, by name where they're alike.
+    private static func sorter(by column: Column, ascending: Bool)
+        -> ((title: String, madeBy: String, entry: DeskEntry?), (title: String, madeBy: String, entry: DeskEntry?)) -> Bool {
+        { a, b in
+            let order: ComparisonResult
+            switch column {
+            case .name: order = a.title.localizedStandardCompare(b.title)
+            case .madeBy: order = a.madeBy.localizedStandardCompare(b.madeBy)
+            case .runsOn:
+                let (x, y) = (a.entry?.places.count ?? 0, b.entry?.places.count ?? 0)
+                order = x == y ? .orderedSame : x < y ? .orderedAscending : .orderedDescending
+            case .changed:
+                let (x, y) = (a.entry?.changed ?? .distantPast, b.entry?.changed ?? .distantPast)
+                order = x == y ? .orderedSame : x < y ? .orderedAscending : .orderedDescending
+            }
+            if order == .orderedSame { return a.title.localizedStandardCompare(b.title) == .orderedAscending }
+            return ascending ? order == .orderedAscending : order == .orderedDescending
+        }
+    }
+
+    /// The rows in order: sorted by `column`, each wish followed by its remixes (sorted the same way), as deep as they go.
+    /// `alsoHere` is the whole desk, when `projects` is one section of it: an original in the other section still says
+    /// a remix is the person's, though the remix isn't nested under it.
+    static func rows(_ projects: [LampProject], entries: [String: DeskEntry], by column: Column, ascending: Bool,
+                     alsoHere: [LampProject] = []) -> [Row] {
+        let ids = Set(projects.map(\.id))
+        let byIdentity = Dictionary((projects + alsoHere).compactMap { project in entries[project.id]?.identity.map { ($0, project.id) } },
+                                    uniquingKeysWith: { first, _ in first })
+        func original(_ project: LampProject) -> String? {
+            entries[project.id]?.original.flatMap { byIdentity[$0] }.flatMap { $0 == project.id ? nil : $0 }
+        }
+        func parent(_ project: LampProject) -> String? { original(project).flatMap { ids.contains($0) ? $0 : nil } }
+        func made(_ project: LampProject) -> String { madeBy(entries[project.id], hasOriginalHere: original(project) != nil) }
+        let order = sorter(by: column, ascending: ascending)
+        func before(_ a: LampProject, _ b: LampProject) -> Bool {
+            order((a.title, made(a), entries[a.id]), (b.title, made(b), entries[b.id]))
+        }
+        let children = Dictionary(grouping: projects.filter { parent($0) != nil }, by: { parent($0)! })
+        var result: [Row] = []
+        var seen = Set<String>()
+        func add(_ project: LampProject, nested: Bool) {
+            guard seen.insert(project.id).inserted else { return }
+            result.append(Row(project: project, entry: entries[project.id], madeBy: made(project), nested: nested))
+            for child in (children[project.id] ?? []).sorted(by: before) { add(child, nested: true) }
+        }
+        for project in projects.filter({ parent($0) == nil }).sorted(by: before) { add(project, nested: false) }
+        // A loop of remixes (one the other's original) has no top: each still gets its row.
+        for project in projects.sorted(by: before) { add(project, nested: false) }
+        return result
+    }
+
+    /// When it last changed, as the list says it: "Today", "Yesterday", or the day.
+    static func when(_ date: Date?) -> String {
+        guard let date else { return "" }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: .now)
+        return date.formatted(sameYear ? .dateTime.month(.abbreviated).day() : .dateTime.month(.abbreviated).day().year())
+    }
+
+    /// Open's symbol, alone on a row's button and beside its word in the side panel.
+    static let openSymbol = "arrow.up.right"
+
+    static func symbol(_ place: Destination) -> String {
+        switch place {
+        case .mac: "laptopcomputer"
+        case .ios: "iphone"
+        case .android: "candybarphone"
+        case .androidTV, .tv: "tv"
+        case .device: "gamecontroller"
+        }
+    }
+}
+
+/// The list's header: each column's name, a click sorting by it, and again the other way.
+struct DeskListHeader: View {
+    @Binding var column: DeskList.Column
+    @Binding var ascending: Bool
+    /// Too narrow for every column: only the name, as the rows have (`DeskListRow.compact`).
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            sorter(.name).padding(.leading, DeskListRow.pictureWidth + 12).frame(maxWidth: .infinity, alignment: .leading)
+            if !compact {
+                sorter(.madeBy).frame(width: DeskListRow.madeByWidth, alignment: .leading)
+                sorter(.runsOn).frame(width: DeskListRow.placesWidth, alignment: .leading)
+                sorter(.changed).frame(width: DeskListRow.changedWidth, alignment: .leading)
+            }
+            Color.clear.frame(width: DeskListRow.buttonsWidth, height: 1)
+        }
+        .padding(.horizontal, 10).padding(.bottom, 7)
+        .overlay(alignment: .bottom) { Paper.rule.frame(height: 1) }
+    }
+
+    private func sorter(_ which: DeskList.Column) -> some View {
+        Button {
+            if column == which { ascending.toggle() } else { column = which; ascending = which != .changed }
+        } label: {
+            HStack(spacing: 4) {
+                Text(which.rawValue.uppercased())
+                if column == which { Image(systemName: ascending ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .heavy)) }
+            }
+            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .tracking(0.8)
+            .foregroundStyle(column == which ? Paper.ink : Paper.muted)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Sort by \(which.rawValue.lowercased())")
+        .accessibilityAddTraits(column == which ? .isSelected : [])
+    }
+}
+
+/// One wish in the desk's list: its picture, name and line, who made it, where it runs, when it changed, and Open
+/// with the wish's menu (⋯) beside it. A remix sits under its original, joined to it by the stripes' line. A row under
+/// Starter apps has Open alone, whether its copy is on the desk or not: a starter is opened or remixed, and once changed
+/// it's in Yours with the whole menu. One not on the desk yet is copied as it opens.
+struct DeskListRow: View {
+    @EnvironmentObject private var store: Store
+    let item: DeskList.Item
+    /// An untouched starter's copy standing for its starter under Starter apps: Open alone, and no Delete by the Trash.
+    var kept = false
+    let selected: Bool
+    /// In a narrow window only the icon, the name and the buttons fit: who made it, where it runs and when it changed
+    /// are in the side panel.
+    var compact = false
+    let select: () -> Void
+    /// Opens it from the desk: a starter not on the desk yet is copied first (`Store.open(starter:)`).
+    let open: () -> Void
+    @State private var hovered = false
+
+    /// The icon that anchors a row: narrower than a picture, and easier to find again down a list. Its picture is in
+    /// the side panel.
+    static let pictureWidth: CGFloat = 36
+    static let madeByWidth: CGFloat = 96
+    static let placesWidth: CGFloat = 84
+    static let changedWidth: CGFloat = 76
+    static let buttonsWidth: CGFloat = 72
+    static let nest: CGFloat = 30
+    /// The list's width below which a row shows only its icon, name and buttons.
+    static let compactBelow: CGFloat = 600
+
+    private var project: LampProject? { item.project }
+    private var nested: Bool { if case .wish(let row) = item { row.nested } else { false } }
+    /// A starter clicked before Lamp had built it, or fetched it, which opens by itself once it's ready: the one wait
+    /// the desk shows.
+    private var opening: Bool {
+        if let project { return store.openWhenReady.contains(project.id) }
+        return fresh.map { store.fetchingStarters.contains($0) } ?? false
+    }
+    /// The folder of the starter a row not on the desk yet stands for.
+    private var fresh: String? { if case .fresh(let fresh) = item { fresh.starter.folder.lastPathComponent } else { nil } }
+    /// Why the last try to get that starter failed (no connection, mostly): said in its line, with Try Again.
+    private var fetchFailed: String? { fresh.flatMap { store.starterFetchFailed[$0] } }
+
+    var body: some View {
+        drawn
+            .contextMenu {
+                if let project, !kept {
+                    DeskWishMenu(project: project, entry: item.entry, withOpen: true)
+                } else {
+                    Button("Open", action: open)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(item.title)
+            .accessibilityValue(status)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            // Picked as a click picks it, and opened as a double click opens it.
+            .accessibilityAction { select() }
+            .accessibilityAction(named: "Open", open)
+    }
+
+    @ViewBuilder private var icon: some View {
+        if let project {
+            AppIcon(project: project, size: Self.pictureWidth)
+        } else {
+            StarterIcon(url: item.entry?.icon, title: item.title, size: Self.pictureWidth)
+        }
+    }
+
+    private var drawn: some View {
+        HStack(spacing: 0) {
+            if nested { line }
+            HStack(spacing: 12) {
+                icon
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(item.title).font(.system(size: 14.5, weight: .bold)).lineLimit(1)
+                        if !opening, let project, store.unread.contains(project.id) { ReadyDot(size: 8) }
+                    }
+                    if opening {
+                        DeskStatusLine().frame(maxWidth: .infinity, alignment: .leading)
+                    } else if let fetchFailed {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            Text(fetchFailed).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.tail)
+                            Button("Try Again", action: open).buttonStyle(.link)
+                        }
+                        .font(.system(size: 12.5))
+                    } else if let about = item.entry?.about {
+                        Text(about).font(.system(size: 12.5)).foregroundStyle(Paper.muted).lineLimit(1).truncationMode(.tail)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if !compact {
+                    Text(item.madeBy).font(.system(size: 13)).lineLimit(1).frame(width: Self.madeByWidth, alignment: .leading)
+                    HStack(spacing: 4) {
+                        ForEach(item.entry?.places ?? [], id: \.self) { place in
+                            Image(systemName: DeskList.symbol(place)).help(GameKit.placeName(place))
+                        }
+                    }
+                    .font(.system(size: 13))
+                    .foregroundStyle(Paper.ink.opacity(0.75))
+                    .frame(width: Self.placesWidth, alignment: .leading)
+                    Text(DeskList.when(item.entry?.changed)).font(.system(size: 13)).foregroundStyle(Paper.muted)
+                        .frame(width: Self.changedWidth, alignment: .leading)
+                }
+                HStack(spacing: 6) {
+                    // While it's fetched or built for its first opening, a spinner takes Open's place: the line under
+                    // its name says so too, but a wait is looked for where the click was.
+                    if opening {
+                        ProgressView().controlSize(.small)
+                            .frame(width: 30, height: 30)
+                            .help("Getting \(item.title) ready")
+                    } else {
+                        Button(action: open) { Label("Open", systemImage: DeskList.openSymbol) }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(PaperButtonStyle(.ink, square: true))
+                            .help("Open \(item.title)")
+                    }
+                    // A starter is opened or remixed, nothing else: once changed it's in Yours, with the whole menu. Its
+                    // place is kept, so Open lines up with every other row's.
+                    if let project, !kept {
+                        DeskWishMore(project: project, entry: item.entry)
+                    } else {
+                        Color.clear.frame(width: 30, height: 1)
+                    }
+                }
+                .frame(width: Self.buttonsWidth, alignment: .trailing)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                if selected { RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1) }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2, perform: open)
+        .onTapGesture(perform: select)
+        .onHover { hovered = $0 }
+        .background {
+            // Dragged out of Lamp it's the wish's shared file, or the app itself in the Dock or the Applications folder.
+            if let project {
+                ShareAnchor(origin: .app(project.id))
+                WishDrag(project: project, deletable: !kept)
+            }
+        }
+    }
+
+    /// What's going on with it, for VoiceOver: on screen the status line and the dot say it.
+    private var status: String {
+        if opening { return "Opening…" }
+        if let fetchFailed { return fetchFailed }
+        guard let project else { return "" }
+        if store.preparing.contains(project.id) { return "" }
+        if store.busy.contains(project.id) { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
+        if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
+        if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
+        if project.finding { return "Finding a wish" }
+        if store.unread.contains(project.id) { return "Ready" }
+        return ""
+    }
+
+    private var background: Color {
+        selected ? Paper.card : hovered ? Paper.ink.opacity(0.04) : .clear
+    }
+
+    /// The stripes' line from the original's icon down to the remix, turning in to meet the remix's.
+    private var line: some View {
+        // Under the middle of the original's icon, which starts at the row's padding.
+        let x = 10 + Self.pictureWidth / 2 - 1.5
+        return ZStack(alignment: .topLeading) {
+            LinearGradient(gradient: Paper.stripeGradient, startPoint: .top, endPoint: .bottom)
+                .frame(width: 3, height: 32)
+                .clipShape(Capsule())
+                .offset(x: x)
+            Paper.stripes[5].frame(width: Self.nest + 10 - x - 2, height: 3).clipShape(Capsule())
+                .offset(x: x, y: 29)
+        }
+        .frame(width: Self.nest, height: 32, alignment: .topLeading)
+        .padding(.top, -6)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The wish picked in the list, beside it: its picture and what it is, a few facts, Open with the wish's menu, and a box
+/// to remix it, which sends the change to this wish in its chat: a remix changes the wish itself. A new copy is the menu's
+/// Duplicate…. A starter not on the desk yet shows the same, and is copied as it opens or its remix is sent.
+struct DeskDetail: View {
+    @EnvironmentObject private var store: Store
+    let item: DeskList.Item
+    var kept = false
+    let remixes: [LampProject]
+    /// Opens it from the desk, asking the change written in the box when there is one (`Store.change(_:asking:)`).
+    let open: (_ asking: String) -> Void
+    @State private var change = ""
+    @State private var picture: NSImage?
+    @FocusState private var focused: Bool
+
+    private var row: DeskList.Item { item }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                // Filled into a box of the panel's width: the picture sits over it, so its own width never widens the
+                // panel past the room it's given.
+                Paper.ink
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 160)
+                    .overlay {
+                        if let picture { Image(nsImage: picture).resizable().interpolation(.high).antialiased(true).aspectRatio(contentMode: .fill) }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(item.title).font(.system(size: 23, weight: .heavy)).tracking(-0.8)
+                    if let about = row.entry?.about {
+                        Text(about).font(.system(size: 14)).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
+                    fact("Made by", [row.madeBy, row.entry?.license].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                    fact("On your", (row.entry?.places ?? []).map(GameKit.placeName).joined(separator: ", "))
+                    if !remixes.isEmpty { fact("Remixes", remixes.map(\.title).joined(separator: ", ")) }
+                }
+                .font(.system(size: 13))
+                // A newer original, then changed in place since it arrived: said where it's seen, with what to do beside it.
+                if let project, row.entry?.newerOriginal == true {
+                    HStack(spacing: 8) {
+                        Text("A newer original is available").font(.system(size: 13)).foregroundStyle(Paper.muted)
+                        Button("Update") { store.updateFromOriginal(project) }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 26))
+                            .disabled(store.busy.contains(project.id))
+                            .help(row.entry?.changedFromOriginal == true ? "Bring in the newer \(project.title), keeping your changes."
+                                  : "Bring in the newer \(project.title). Undo takes it back.")
+                    }
+                }
+                if let project, row.entry?.changedFromOriginal == true {
+                    HStack(spacing: 8) {
+                        Text("Changed from the original").font(.system(size: 13)).foregroundStyle(Paper.muted)
+                        Button("Start Over") { Task { await store.startAgain(project) } }
+                            .buttonStyle(PaperButtonStyle(.outline, height: 26))
+                            .disabled(store.busy.contains(project.id))
+                            .help("Go back to the original \(project.title). Undo brings your changes back.")
+                    }
+                }
+                HStack(spacing: 6) {
+                    // Using it comes first; Remix, under it, is the second thing to do.
+                    Button { open("") } label: { Label("Open", systemImage: DeskList.openSymbol) }
+                        .buttonStyle(PaperButtonStyle(.ink, height: 34))
+                    if let project, !kept {
+                        DeskWishMore(project: project, entry: row.entry, request: change, height: 34) { change = "" }
+                    }
+                }
+                Paper.rule.frame(height: 1)
+                changeBox
+            }
+            .foregroundStyle(Paper.ink)
+            .padding(18)
+        }
+        .background(Paper.card)
+        // Again when the picture is rewritten, not only when it's another file.
+        .task(id: [row.entry?.picture?.path, row.entry?.pictureDate?.description]) {
+            guard let url = row.entry?.picture else { picture = nil; return }
+            picture = await Task.detached { NSImage(contentsOf: url) }.value
+        }
+        .onChange(of: item.id) { change = "" }
+    }
+
+    private var changeBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Remix it").font(.system(size: 15, weight: .heavy))
+            TextField("What would you change?", text: $change, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .lineLimit(2...5)
+                .focused($focused)
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(Paper.page, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
+                .onSubmit(send)
+            if !(row.entry?.ideas ?? []).isEmpty {
+                IdeaChips(ideas: row.entry?.ideas ?? []) { idea in
+                    change = idea
+                    focused = true
+                }
+            }
+            Button(action: send) { Label("Remix", systemImage: "shuffle") }
+                .buttonStyle(PaperButtonStyle(.outline, height: 34))
+                .help(change.trimmed.isEmpty ? "Open \(item.title) with its chat" : "Ask for this change in \(item.title)'s chat")
+        }
+    }
+
+    private func send() {
+        let asked = change
+        change = ""
+        open(asked)
+    }
+
+    private var project: LampProject? { item.project }
+
+    @ViewBuilder private func fact(_ label: String, _ value: String) -> some View {
+        if !value.isEmpty {
+            GridRow {
+                Text(label).foregroundStyle(Paper.muted)
+                Text(value).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// The wish's menu behind ⋯, beside Open on a row and in the side panel: the same as a row's right-click.
+struct DeskWishMore: View {
+    let project: LampProject
+    let entry: DeskEntry?
+    /// What's in the side panel's box, which a remix asks of the new copy.
+    var request = ""
+    var height: CGFloat = 30
+    var sent: () -> Void = {}
+
+    var body: some View {
+        Menu {
+            DeskWishMenu(project: project, entry: entry, request: request, sent: sent)
+        } label: {
+            Label("More", systemImage: "ellipsis")
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .labelStyle(.iconOnly)
+        .buttonStyle(PaperButtonStyle(.outline, height: height, square: true))
+        .fixedSize()
+        .help("More for \(project.title)")
+    }
+}
+
+/// What can be done with a wish from the desk. Changing it is Open and the side panel's box; a new copy, going back to
+/// the original and sending changes back are here, each only where it applies, then the wish's own menu (`AppMenu`).
+/// Open leads only the right-click: behind ⋯ it's the button beside it, and first under the pointer it would open the
+/// wish on a click meant for the menu.
+struct DeskWishMenu: View {
+    @EnvironmentObject private var store: Store
+    let project: LampProject
+    let entry: DeskEntry?
+    var request = ""
+    var sent: () -> Void = {}
+    var withOpen = false
+
+    var body: some View {
+        let busy = store.busy.contains(project.id)
+        if withOpen {
+            Button("Open") { store.open(fromDesk: project) }
+            Divider()
+        }
+        Button("Duplicate…") {
+            let asked = request.trimmed
+            sent()
+            Task { await store.remix(project, change: asked.isEmpty ? nil : asked) }
+        }
+        .disabled(!store.canDuplicate(project))
+        // A fresh copy beside this one, changed or not: only a starter's, whose original this Lamp ships.
+        if entry?.shipsOriginal == true {
+            Button("New Copy of the Original") { store.duplicateOriginal(of: project) }
+        }
+        if entry?.newerOriginal == true {
+            Button("Update from the Original") { store.updateFromOriginal(project) }
+                .disabled(busy)
+        }
+        if entry?.changedFromOriginal == true {
+            Button("Start Over") { Task { await store.startAgain(project) } }
+                .disabled(busy)
+        }
+        // Only once there's something of the person's to send.
+        if entry?.sendsBack == true, entry?.changedFromOriginal == true {
+            Button("Send Changes Back…") { store.sendChangesBack(project) }
+        }
+        Button("Wish Info") { store.showInfo(project) }
+            .disabled(project.untitled)
+        Divider()
+        AppMenu(project: project)
+    }
+}
+
+/// The changes a starter suggests, as small buttons that put one in the change box.
+private struct IdeaChips: View {
+    let ideas: [String]
+    let choose: (String) -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { chips }
+            VStack(alignment: .leading, spacing: 6) { chips }
+        }
+    }
+
+    private var chips: some View {
+        ForEach(ideas, id: \.self) { idea in
+            Button { choose(idea) } label: {
+                Text(idea).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+                    .padding(.horizontal, 10).frame(height: 27)
+                    .overlay(Capsule().strokeBorder(Paper.rule, lineWidth: 1))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+/// The icon a starter not on the desk yet ships with, read once it's drawn: a copy's is the store's (`AppIcon`).
+struct StarterIcon: View {
+    let url: URL?
+    let title: String
+    let size: CGFloat
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().interpolation(.high)
+            } else {
+                BlueprintIcon(letter: title.first ?? "A", size: size, ground: BlueprintTile.gray)
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: url) {
+            guard let url else { return }
+            image = await Task.detached { NSImage(contentsOf: url) }.value
+        }
+    }
+}

@@ -11,7 +11,8 @@ import CryptoKit
 enum LiveReload {
     /// Whether the app is built live: a Mac app, or the Mac half of an app for both while Try On points at this Mac.
     @MainActor static func eligible(_ project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS
+        // An app of Lamp's own around a page (a game, a screen) is opened again: the page is the agent's, the app Lamp's.
+        project.holdsApp && project.hasMac && !project.onIOS && !project.platform.target.hostedByLamp
     }
 
     static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/live") }
@@ -162,8 +163,15 @@ enum LiveReload {
     /// A whole build running after a change went in early (`Store.reloadBeforeBuilding`), kept on disk: if Lamp
     /// quits before it's done, nothing says the open app's change was ever built, so at the next launch what Lamp
     /// knows of the open app is dropped and the next change takes the usual build.
+    /// The marker holds the fingerprint of the sources being built (`buildingFrom`).
     private static func buildingURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("building") }
-    static func startedBuilding(_ project: LampProject) { try? AppFolder.write(Data(), to: buildingURL(project), in: project.dir) }
+    static func startedBuilding(_ project: LampProject, from fingerprint: String) {
+        try? AppFolder.write(fingerprint, to: buildingURL(project), in: project.dir)
+    }
+    /// What the whole build under way after an early change is building, while it runs.
+    static func buildingFrom(_ project: LampProject) -> String? {
+        AppFile.text(buildingURL(project), in: project).flatMap { $0.isEmpty ? nil : $0 }
+    }
     static func finishedBuilding(_ project: LampProject) { AppFolder.remove(buildingURL(project), in: project.dir) }
     /// At launch: a build that was still going when Lamp quit.
     /// A folder in the marker's place is no marker: an earlier build.sh kept the sources it compiled there, and left
@@ -320,16 +328,37 @@ enum LiveReload {
     /// What the code read only at launch calls (`buildMenu()` from an app delegate, a model's initializer from the
     /// App), as far down as that goes, as one launch entry: it ran once, so a change to it shows only when the app
     /// opens again. Not what its actions call (a menu command's button), which runs each time it's chosen.
-    static func launchCalls(_ launch: [String], _ declarations: SwiftSource.Declarations) -> [String] {
+    static func launchCalls(_ launch: [String], _ declarations: SwiftSource.Declarations, layout: [String] = []) -> [String] {
         let names = Group.launchNames(in: launch)
         let ranges = declarations.types.filter { names.contains(bare($0.key)) }.map(\.value) + names.flatMap { declarations.extensions[$0] ?? [] }
         guard !ranges.isEmpty else { return [] }
         var files: [String: SwiftSource.Text] = [:]
+        // Not into a SwiftUI view or an observable model: what their initializers and starting values make is the state
+        // SwiftUI draws from, kept by a live change like every view's and model's, and drawn again with the new code
+        // (the window's view and the model the App holds load and change live). A controller's (an `NSMenu` built once)
+        // is followed: what it made is AppKit's, which the new code doesn't build again.
+        let conformed = conformances(inLayout: layout)
+        let observed = Set(byType(layout).filter { $0.value.contains { $0.contains("\t_$observationRegistrar") } }.map(\.key))
+        let stateTypes = conformed.of.filter { !$0.value.isDisjoint(with: ["View", "ObservableObject"]) }.map(\.key) + observed
+        // Only what makes their state, their initializers and stored properties' starting values: a method of theirs
+        // that launch code calls (a delegate's `model.installMenu()`) runs once like any other.
+        let scopes = stateTypes.filter { !names.contains(bare($0)) }.flatMap { type in
+            (declarations.types[type].map { [$0] } ?? []) + (declarations.extensions[bare(type)] ?? [])
+        }
+        let initializer = try! NSRegularExpression(pattern: #"^\s*(?:@\w+\s+|\w+\s+)*init\b"#)
+        let initializers = declarations.bodies.filter { body in
+            scopes.contains { SwiftSource.within(body.start, $0) }
+                && SwiftSource.text(of: body, files: &files).map { initializer.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil } == true
+        }
+        let startingValues = declarations.bindings.filter { binding in scopes.contains { SwiftSource.within(binding.start, $0) } }
+            .flatMap { $0.entries.compactMap(\.initial) }
+        let stateRanges = initializers + startingValues
         // Into what an initializer makes as it starts (`let menu = makeMenu()`), the one the compiler wrote included:
         // the code those starting values call, not the values themselves, which are state like any object's (a model
         // the App holds may gain a property as any other).
-        let called = SwiftSource.called(fromAll: ranges, in: declarations, files: &files, members: true, listingMembers: false, skipping: declarations.actions)
-            .filter { range in !ranges.contains { SwiftSource.within(range.start, $0) } }
+        let called = SwiftSource.called(fromAll: ranges, in: declarations, files: &files, members: true, listingMembers: false,
+                                        skipping: declarations.actions + stateRanges)
+            .filter { range in !ranges.contains { SwiftSource.within(range.start, $0) } && !stateRanges.contains { SwiftSource.within(range.start, $0) } }
             .compactMap { SwiftSource.text(of: $0, files: &files) }
         guard !called.isEmpty else { return [] }
         return [Group.launch.entry("the code it calls: " + SwiftSource.digest(Set(called).sorted().joined(separator: "\n")))]
@@ -1460,7 +1489,7 @@ enum LiveReload {
         SwiftSource.walk(dump) { line in plain.take(line); held.take(line); declared.take(line); launch.take(line); old.take(line) }
         let declarations = declared.finish()
         let launched = launch.finish(folder: folder)
-        let made = (layout: plain.finish() + launched + launchCalls(launched, declarations) + SwiftSource.constantEntries(declarations),
+        let made = (layout: plain.finish() + launched + launchCalls(launched, declarations, layout: plain.finish()) + SwiftSource.constantEntries(declarations),
                     held: held.finish(), declarations: declarations, oldCode: old.finish())
         // Kept only when the code didn't change while it was read.
         if Analyses.digest(of: folder, module: module, macOS: macOS) == digest {
@@ -1989,7 +2018,10 @@ enum LiveReload {
         let spares = Set(LiveSlots.mapping(project).flatMap { type, slots in slots.filter { $0.value.retired != true }.keys.map { type + "\t" + $0 } })
         var check = layoutProblem(before: before, after: after, freeOpaque: free, spared: spares)
         // A constant made from an enum that grew (`Mood.allCases`) keeps the value the open app made: remade too.
-        let grownEarly = before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? []
+        // Not the CodingKeys the compiler makes for a Codable struct: only its own coding uses them, and a struct that
+        // gained a property has that coding written out (`LiveSlots.codingExtensions`), so the change has none.
+        func grownOwn(_ grown: [String]) -> [String] { grown.filter { !($0.hasSuffix(".CodingKeys") && declarations.types[$0] == nil) } }
+        let grownEarly = grownOwn(before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? [])
         // The system types Lamp can't judge from the code that the constants a change remakes are made of, and which
         // of them hold no object at all.
         var plain = Set<String>()
@@ -2097,7 +2129,7 @@ enum LiveReload {
         // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
         // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
         // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
-        if let before, let layout = check.layout, case let grown = grownEnums(before: before, after: layout), !grown.isEmpty {
+        if let before, let layout = check.layout, case let grown = grownOwn(grownEnums(before: before, after: layout)), !grown.isEmpty {
             // A generic enum's values are laid out by the runtime for each type it's used at, from the cases it had
             // when the open app first asked: there's no one metadata to point at the change's.
             if let generic = grown.first(where: { name in Group.shape.parts(in: layout).contains { $0.first == name && $0.last?.contains(" generic") == true } }) {
@@ -2262,6 +2294,12 @@ enum LiveReload {
             // A compiler error is the compiler's words; anything else (the change's types couldn't be made the app's)
             // is a reason already.
             guard let problem, problem.contains("error:") else { return .reopen(why: problem ?? "the change didn't compile on its own") }
+            // A property kept in a spare set in its type's own initializer before the stored ones all are: Lamp's
+            // rewrite, said as such.
+            if let plan, ["used before all stored properties are initialized", "before 'super.init' call", "used before being initialized"].contains(where: problem.contains),
+               let moved = plan.slots.flatMap({ type, slots in slots.keys.map { (type, $0) } }).first(where: { declarations.assigned.contains($0.0 + "\t" + $0.1) }) {
+                return .reopen(why: "\(spoken(moved.0)).\(moved.1) is set in its own initializer before the stored properties are all set, where a property kept in a spare can't be set yet")
+            }
             // An error in a constant Lamp rewrote to take its new value (one made by the type's main-actor code, say)
             // is Lamp's, said as such rather than in the compiler's words about code the agent never wrote.
             if let match = problem.range(of: ##"error:[^\n]*\n(?:[^\n]*\n){0,8}?[^\n]*LampConstants\.value\("[^"#]+#"##, options: .regularExpression),
@@ -2318,7 +2356,7 @@ enum LiveReload {
             return "make such changes last, after the ones that can go in live have gone in, or in a request of their own."
         }
         if w.contains("initializer") || w.contains("method table") || w.contains("subclass") || w.contains("final") {
-            return "add a method to a class nothing subclasses, or put the new behaviour in a free function or a struct."
+            return "add a method to a class nothing subclasses, or put the new behavior in a free function or a struct."
         }
         if w.contains("swiftdata") || w.contains("@model") { return "keep SwiftData model files as they are, and change what reads them." }
         if w.contains("typealias") || w.contains("returns a") || w.contains("returns another") || w.contains("protocol") {
@@ -2657,6 +2695,100 @@ enum LiveSlots {
         }
     }
 
+    /// Which of the app's structs its code reads as bytes, for the copy step (`byte-structs` in the live folder): those
+    /// must stay the size they're written with, so they get no spare. Without the list the copy step gives no struct a
+    /// spare in an app with any raw-memory code, a socket's `MemoryLayout<sockaddr_in>` or a `Data`'s `withUnsafeBytes`
+    /// included, which made every new stored property of such an app reopen it, and code like that arriving mid-session
+    /// take every struct's spare away from under the open app. Read off the compiler's printout of the plain sources:
+    /// each raw call names the types it reads (`MemoryLayout<Vertex>`, `load(as: Packet.self)`, an array or a value
+    /// handed over as a pointer), and a struct one of those holds is read with it, by the compiler's resolved field types
+    /// (aliases followed, inferred types included). A raw call through a generic parameter (`upload<T>(_ items: [T])`), or an
+    /// `@frozen` struct, can't be followed, and is written as `*`, which is the old rule. The list starts with a digest
+    /// of the app's files (`rawDigest`, made the same way by the copy step), so it's worked out again only when one of
+    /// them changes, and isn't used once it's stale.
+    static let byteStructsFile = "byte-structs"
+    static func noteByteStructs(_ project: LampProject) async {
+        let sources = project.realDir.appendingPathComponent("Sources")
+        let url = LiveReload.folder(project).appendingPathComponent(byteStructsFile)
+        let files = LiveReload.swiftFiles(in: sources).filter { !LiveReload.ownFiles.contains(($0.key as NSString).lastPathComponent) }
+        let all = files.values.compactMap { AppFile.read($0, in: project) }
+        let raw = all.filter(readsMemory)
+        guard !raw.isEmpty else { try? FileManager.default.removeItem(at: url); return }
+        // Over every file of the app's, not only those with raw-memory code: which types a raw call is handed (a
+        // helper's return type) and what a struct holds (a field's type, an alias) may be written anywhere.
+        let digest = rawDigest(all)
+        if AppFile.text(url, in: project)?.split(separator: "\n").first.map(String.init) == "md5 " + digest { return }
+        let names: [String]
+        if raw.contains(where: { String(decoding: $0, as: UTF8.self).contains("@frozen") }) { names = ["*"] }
+        else if let dump = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: Template.macMinimum(project)) {
+            names = byteStructs(inDump: dump)
+        } else {
+            // It doesn't type-check now: the copy step goes by the old rule until it does.
+            try? FileManager.default.removeItem(at: url); return
+        }
+        try? AppFolder.write((["md5 " + digest] + names).joined(separator: "\n") + "\n", to: url, in: project.dir)
+    }
+
+    /// The copy step's test for a file with raw-memory code, the same pattern as its `-raw`.
+    static func readsMemory(_ data: Data) -> Bool {
+        String(decoding: data, as: UTF8.self).range(of: #"MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|@frozen"#,
+                                                    options: .regularExpression) != nil
+    }
+
+    /// The digest the copy step checks the list by: each of the app's files' bytes' MD5, sorted, joined by newlines, MD5'd.
+    static func rawDigest(_ files: [Data]) -> String {
+        func hex(_ data: Data) -> String { Insecure.MD5.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+        return hex(Data(files.map(hex).sorted().joined(separator: "\n").utf8))
+    }
+
+    /// The app's structs a printout reads as bytes (above), or `["*"]` when a raw call goes through a generic parameter.
+    static func byteStructs(inDump dump: String) -> [String] {
+        var structs = Set<String>(), generics: Set<String> = ["Self"], named = Set<String>()
+        // Not `\b`: Swift's regex takes Unicode's word rules, by which `extension.withUnsafeBytes` is one word.
+        let rawCall = #/(?:^|[^A-Za-z0-9_])(?:withUnsafe\w*|withContiguous\w*|MemoryLayout|unsafeBitCast|load(?:Unaligned)?\(|storeBytes|bindMemory|assumingMemoryBound|withMemoryRebound|initializeMemory)/#
+        let pointee = #/(?:Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|MemoryLayout)<([^>]*)>/#
+        func words(_ text: Substring) -> [String] { text.matches(of: #/[A-Za-z_]\w*/#).map { String($0.0) } }
+        func attribute(_ name: String, in line: Substring) -> Substring? {
+            guard let start = line.range(of: " " + name + "=\"") else { return nil }
+            return line[start.upperBound...].prefix { $0 != "\"" }
+        }
+        var conversion = false, aliases: [String: [String]] = [:]
+        for line in dump.split(separator: "\n") {
+            let trimmed = line.drop { $0 == " " }
+            if trimmed.hasPrefix("(struct_decl"), let name = trimmed.firstMatch(of: #/ "(\w+)"/#) { structs.insert(String(name.1)) }
+            if trimmed.hasPrefix("(typealias"), let name = trimmed.firstMatch(of: #/ "(\w+)"/#), let type = attribute("type", in: line) {
+                aliases[String(name.1), default: []] += words(type)
+            }
+            // A generic declaration's parameters (`"<T, U>"`), which a raw call reading `[T]` can't be followed through.
+            if let list = trimmed.firstMatch(of: #/ "<([\w, ]+)>"/#) { generics.formUnion(words(list.1)) }
+            if conversion { named.formUnion(attribute("type", in: line).map(words) ?? []); conversion = false }
+            if trimmed.hasPrefix("(array_to_pointer") || trimmed.hasPrefix("(inout_to_pointer") { conversion = true }
+            if let decl = attribute("decl", in: line), decl.hasPrefix("Swift.") || decl.hasPrefix("Foundation."), decl.contains(rawCall) {
+                // What the call is given: each replacement in its substitution map (`T -> Vertex`), not the API's own names.
+                for given in decl.drop(while: { $0 != "[" }).matches(of: #/\w+ -> ([^,)\]]+)/#) { named.formUnion(words(given.1)) }
+                named.formUnion(attribute("type", in: line).map(words) ?? [])
+            }
+            if let type = attribute("type", in: line) { for match in type.matches(of: pointee) { named.formUnion(words(match.1)) } }
+        }
+        if !named.isDisjoint(with: generics) { return ["*"] }
+        // And what each of those holds, by the compiler's resolved field types (an inferred one, an alias followed),
+        // through enums and tuples too: a struct inside one read as bytes is read with it.
+        var holds: [String: [String]] = [:]
+        for entry in LiveReload.members(inDump: dump) {
+            let parts = entry.split(separator: "\t", maxSplits: 1)
+            // A private type is keyed with its file (`Vertex@Model.swift`), taken off before its last part is read.
+            guard parts.count == 2, let owner = LiveReload.bare(String(parts[0])).split(separator: ".").last.map(String.init),
+                  let colon = parts[1].range(of: ": ") else { continue }
+            holds[owner, default: []] += words(parts[1][colon.upperBound...])
+        }
+        var read = Set<String>(), pending = Array(named)
+        while let name = pending.popLast() {
+            guard read.insert(name).inserted else { continue }
+            pending += (aliases[name] ?? []) + (holds[name] ?? [])
+        }
+        return read.intersection(structs).sorted()
+    }
+
     /// The file the spares need beside them: every struct the copy step gave a spare has its memberwise initializer
     /// written again, in an extension, without the spare's parameter. A reference to the initializer as a value
     /// (`.map(Item.init)`) and one a protocol requires (`init(rawValue:)`) match by their whole signature, which the
@@ -2811,8 +2943,15 @@ enum LiveSlots {
         case refused(String?)
     }
 
-    static func fitting(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations,
+    static func fitting(_ project: LampProject, before: [String], after given: [String], declarations: SwiftSource.Declarations,
                         constants: [String] = [], plain: Set<String> = []) -> Fit {
+        // Stored properties taken out of a type the open app has stay in the live copy as private fields nothing reads,
+        // at their places, so the type holds what the open app's values do (`keptFields`); the rest is judged with them.
+        let kept: [Kept], after: [String]
+        switch keptFields(before: before, after: given, declarations: declarations, oldSources: { oldSources(of: project) }) {
+        case .refused(let why): return .refused(why)
+        case .kept(let fields, let layout): (kept, after) = (fields, layout)
+        }
         let old = LiveReload.byType(before), new = LiveReload.byType(after)
         var map = whole(project)
         var cases: [String: Set<String>] = [:]
@@ -2828,7 +2967,26 @@ enum LiveSlots {
         var moved = Set<String>()
         // Where views are made again at every draw, found once and only when a view gains a parameter.
         var made: [(start: SwiftSource.Position, last: SwiftSource.Position)]?
-        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !LiveReload.isGroup(type) {
+        // The Codable structs whose coding is written out, with the properties they gained.
+        var coded = Set<String>()
+        // The CodingKeys the compiler makes for a Codable type (none written in its code): only coding uses them. A
+        // struct that gains a property has its coding written out with keys of Lamp's, so they're used by no code, or
+        // only by a half the type writes itself (its own decoder), which still reads them: then only while their number
+        // of cases holds, which is the room their values take and what the open app's generic coding lays out by.
+        var compilerKeys = Set<String>()
+        for (type, members) in old where type.hasSuffix(".CodingKeys") && declarations.types[type] == nil {
+            guard let current = new[type], current != members else { continue }
+            let owner = String(type.dropLast(".CodingKeys".count))
+            let written = handWrittenCoding(owner, in: after)
+            func caseCount(_ entries: [String]) -> Int { entries.filter { $0.contains("\tcase ") }.count }
+            // Cases added at the end too: no grown enum's metadata is brought up to date for these keys, so a type's own
+            // coding would meet the open app's count (its optional's nil among them).
+            if written.decodes || written.encodes, caseCount(members) != caseCount(current) {
+                return .refused("\(LiveReload.spoken(owner))'s own coding reads the keys Swift makes for it, which would number other than the open app's")
+            }
+            compilerKeys.insert(type)
+        }
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !LiveReload.isGroup(type) && !compilerKeys.contains(type) {
             guard let current = new[type] else { continue }
             guard current != members, !casesAdded(type, members, current) else { continue }
             // Only additions, with what was there still there, in order.
@@ -2850,9 +3008,13 @@ enum LiveSlots {
                 holder = .value
             } else if extras.contains(where: { $0.dropFirst(type.count + 1).hasPrefix("case ") }) {
                 // An enum keeps no spare: a case added anywhere but at the end, or one that carries values, lays its values out anew.
+                // So does a second case added to one with one, which takes no room at all.
+                if members.filter({ $0.contains("\tcase ") }).count == 1 {
+                    return .refused("\(type) had one case, which takes no room, and with another its values take room the open app's don't")
+                }
                 return .refused("\(type) gained a case that carries values or isn't at the end, which lays out its values anew")
             } else {
-                return .refused("\(type) has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct in a file that lays memory out by hand gets none)")
+                return .refused("\(type) has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct the app reads as bytes, or holds in one, gets none)")
             }
             // Every index in use, the retired ones' included: their values are still in them.
             var taken = Set((map[type] ?? [:]).values.map(\.index))
@@ -2921,10 +3083,18 @@ enum LiveSlots {
                 case .parameter:
                     break
                 }
-                // A property in a Codable type's CodingKeys, written or made by the compiler, stays a field: moved into a
-                // spare, it would drop out of what's encoded and decoded.
+                // A property in a Codable type's CodingKeys, written or made by the compiler, would drop out of what's
+                // encoded and decoded once moved into a spare: a struct's coding is written out beside it instead
+                // (`codingExtensions`), as the compiler would have made it, with the property in it. Coding the type's own
+                // code writes needs nothing; a class's decoding initializer can only be written in the class itself.
                 if cases[type + ".CodingKeys"]?.contains(name) == true {
-                    return .refused("\(LiveReload.spoken(type)) is Codable and gained \(name), which has to be stored to be encoded and decoded")
+                    let written = handWrittenCoding(type, in: after)
+                    if !(written.decodes && written.encodes) {
+                        guard holder == .value, declarations.types[type] != nil else {
+                            return .refused("\(LiveReload.spoken(type)) is Codable and gained \(name), which has to be stored to be encoded and decoded (a struct's coding is written out for it; a class's can't be)")
+                        }
+                        coded.insert(type)
+                    }
                 }
                 // What a computed property kept in a spare can't do: observers, `lazy`, a weak or unowned reference,
                 // or being set in an initializer the type writes, before the stored properties are all set.
@@ -2932,9 +3102,17 @@ enum LiveSlots {
                 if kind.contains("some ") { return .refused("\(type).\(name)'s type is opaque (\(kind)), which a property kept in a spare can't have") }
                 // A struct or view declared inside a function can't be extended, and a property moved out of one takes its
                 // initializer's argument with it, which only an extension could give back.
-                if holder != .object, type.contains("().") { return .refused("\(LiveReload.bare(type)) is declared inside a function, where Lamp can't give it back the initializer a property kept in a spare leaves") }
+                if holder != .object, type.contains("().") { return .refused("\(LiveReload.spoken(type)) is declared inside a function, where Lamp can't give it back the initializer (or the coding) a property kept in a spare leaves") }
                 if variable.special { return .refused("\(type).\(name) has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be") }
-                if declarations.assigned.contains(type + "\t" + name) || declarations.assigned.contains(type + "\t_" + name) { return .refused("\(type).\(name) is set in \(type)'s own initializer, where a property kept in a spare can't be set") }
+                // Set in an initializer the type writes: the open app's values were made by the old one and would read the
+                // property's starting value where a fresh launch's had what the new one sets. Except in a decoder
+                // (`init(from:)`) whose value for a missing key is that starting value (`decodeIfPresent(…) ?? 0` for
+                // `= 0`): the open app's values were decoded from data saved before the property existed (below). A
+                // view's state seeded there (`_draft = State(…)`) never can be, its box being made after the initializer.
+                let setInInit = declarations.assigned.contains(type + "\t" + name)
+                if declarations.assigned.contains(type + "\t_" + name) || setInInit && (holder == .view || holder == .parameter) {
+                    return .refused("\(type).\(name) is set in \(type)'s own initializer, where a property kept in a spare can't be set")
+                }
                 // A spare is observed: a property marked ignored changes while views draw, and observed would redraw them again.
                 if variable.attributes.contains(where: { $0.name == "ObservationIgnored" }) { return .refused("\(type).\(name) is @ObservationIgnored, and a property kept in a spare is observed") }
                 // A @Published property's `$name` publisher has no spare to come from.
@@ -2959,6 +3137,9 @@ enum LiveSlots {
                     if holder == .parameter { return .refused("\(type).\(name) has no starting value, and a view's new parameter needs one unless it's an optional, a number, text, a collection or an action") }
                     if holder == .view, !field.hasPrefix("_") { return .refused("\(type).\(name) has no starting value, and \(unplaced), which a new parameter of it can't reach") }
                     return .refused("\(type).\(name) has no starting value, which a property kept in a spare needs")
+                }
+                if setInInit, !decodesToStart(type + "\t" + name, initial: initial, declarations: declarations) {
+                    return .refused("\(type).\(name) is set in \(type)'s own initializer, which the open app's \(LiveReload.spoken(type)) values were made without, so they'd read \(initial) where a fresh launch gives what it sets")
                 }
                 if holder == .view, !field.hasPrefix("_"), !(isLiteral(initial) || isLiteral(variable, in: declarations)) {
                     return .refused("\(type).\(name) starts as \(initial), and \(unplaced), so a new property of it goes in only as a literal, which it then always is")
@@ -3009,7 +3190,7 @@ enum LiveSlots {
             }
         }
         // Every type the open app doesn't have is the library's to lay out; one it has that changed must be fitted.
-        guard !planned.isEmpty || !constants.isEmpty else { return .refused(nil) }
+        guard !planned.isEmpty || !constants.isEmpty || !kept.isEmpty else { return .refused(nil) }
 
         // Each declaration rewritten in its file, the last first so the earlier places stay where they are.
         var byFile: [String: [(binding: Int, items: [(type: String, name: String, slot: Slot, published: Bool, isNew: Bool)], constant: String?)]] = [:]
@@ -3054,6 +3235,11 @@ enum LiveSlots {
             }
         }
         for file in stateRanges.keys where byFile[file] == nil { byFile[file] = [] }
+        for field in kept where byFile[field.at.file] == nil { byFile[field.at.file] = [] }
+        guard let codings = codingExtensions(for: coded, moved: Set(planned.map { $0.type + "\t" + $0.name }), layout: new, after: after, cases: cases, declarations: declarations) else {
+            return .refused("\(coded.sorted().map(LiveReload.spoken).joined(separator: ", ")) is Codable, and Lamp can't write its coding out (a generic type, or a property kept by a wrapper)")
+        }
+        for file in codings.keys where byFile[file] == nil { byFile[file] = [] }
         var written: [(path: String, text: String)] = []
         for (file, edits) in byFile {
             guard let original = SwiftSource.Text(path: file) else { return .refused(nil) }
@@ -3112,8 +3298,35 @@ enum LiveSlots {
                 let at = shifted(offset)
                 bytes.replaceSubrange(at..<(at + name.utf8.count + 1), with: Array(("__lampBinding_" + name).utf8))
             }
+            // The fields kept in their places, from the last: each place in the original, moved by what the rewrites and
+            // the `$name`s before it changed.
+            let grew = "__lampBinding_".utf8.count - 1
+            // Several at one place go in last first, so they end up in the open app's order.
+            for field in kept.filter({ $0.at.file == file }).sorted(by: { ($0.at.line, $0.at.column, $0.order) > ($1.at.line, $1.at.column, $1.order) }) {
+                guard var offset = field.after ? original.tokenEnd(field.at) : original.offset(field.at) else { return .refused(nil) }
+                // Before the whole declaration, its modifiers (`private`, `static`) included.
+                if !field.after { offset = declarationStart(offset, in: original) }
+                // Never inside a comment or a string, read as the compiler reads them (nested comments, raw strings): a
+                // field put there wouldn't be one, while the layout judged would say it is.
+                if insideTrivia(offset, in: original) {
+                    return .refused("\(LiveReload.spoken(field.type)) lost a field beside a comment Lamp can't read its way around, so it can't put it back in its place")
+                }
+                let at = shifted(offset) + places.keys.filter { $0 < offset }.count * grew
+                var insert: String
+                if field.after {
+                    insert = "; " + field.text
+                } else {
+                    // On a line of its own when the field it goes before starts its line, indented as it is.
+                    var lineStart = offset
+                    while lineStart > 0, original.bytes[lineStart - 1] != UInt8(ascii: "\n") { lineStart -= 1 }
+                    let lead = original.slice(lineStart, offset)
+                    insert = lead.allSatisfy({ $0 == " " || $0 == "\t" }) ? field.text + "\n" + lead : field.text + "; "
+                }
+                bytes.insert(contentsOf: Array(insert.utf8), at: at)
+            }
             var text = String(decoding: bytes, as: UTF8.self)
             text += initializers[file] ?? ""
+            text += codings[file] ?? ""
             written.append((file, text))
         }
         for item in planned {
@@ -3131,7 +3344,8 @@ enum LiveSlots {
         for file in written { try? file.text.write(toFile: file.path, atomically: true, encoding: .utf8) }
         let earlier = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: constantsURL(project)))) ?? []
         return .plan(Plan(added: planned.filter(\.isNew).map { $0.type + "." + $0.name },
-                          layout: after.filter { !moved.contains($0) },
+                          layout: after.filter { entry in !moved.contains(entry) && !compilerKeys.contains { entry.hasPrefix($0 + "\t") } }
+                            + compilerKeys.sorted().flatMap { old[$0] ?? [] },
                           files: written.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }.map { $0.hasPrefix(base) ? String($0.dropFirst(base.count)) : $0 },
                           constants: constants.filter { !earlier.contains($0) }.map(displayName), slots: map, allConstants: constants))
     }
@@ -3164,8 +3378,9 @@ enum LiveSlots {
                     guard label.hasPrefix("__lamp") else { return "\(label): \(label)" }
                     return initial(label).map { "\(label): \($0)" }
                 }
-                // A view's spare is private, so no initializer Swift makes takes it; the first of these takes a moved
-                // parameter with no default, which a call to Swift's own never passes, so the two are told apart anyway.
+                // A view's spare is an argument of Swift's own too, as a struct's is; and the first of these takes a
+                // moved parameter with no default, which a call to Swift's own never passes, so the two are told apart
+                // either way.
                 guard kept.contains(where: { $0.hasPrefix("__lamp") }) || views.contains(type) else { continue }
                 let order = made.labels.filter(names.contains)
                 // One the app declares itself with the same labels and types is the app's: a second would be a
@@ -3190,6 +3405,338 @@ enum LiveSlots {
                         + "        self.init(\(kept.joined(separator: ", ")))\n" + set + "    }\n}\n"
                 }
             }
+        }
+        return out
+    }
+
+    /// Where a declaration starts, its modifiers included: back from its keyword (or first attribute) over the modifier
+    /// words before it on its line, and over lines above that hold nothing but modifiers (`private` on a line of its
+    /// own). Only those words: a comment or anything else stops it, so nothing goes inside a comment.
+    private static let modifierWords: Set<String> = ["private", "fileprivate", "internal", "public", "open", "static", "class",
+        "final", "lazy", "weak", "unowned", "nonisolated", "override", "dynamic", "required", "convenience", "mutating", "nonmutating"]
+    static func declarationStart(_ offset: Int, in text: SwiftSource.Text) -> Int {
+        let bytes = text.bytes
+        func isWord(_ b: UInt8) -> Bool { b == UInt8(ascii: "_") || (b >= 48 && b <= 57) || (b | 0x20 >= 97 && b | 0x20 <= 122) }
+        func isSpace(_ b: UInt8) -> Bool { b == UInt8(ascii: " ") || b == UInt8(ascii: "\t") }
+        var start = offset
+        // The modifier words just before it on its line, over block comments between them (`private /* … */ var`).
+        var scan = start
+        while true {
+            var end = scan
+            while end > 0, isSpace(bytes[end - 1]) { end -= 1 }
+            if end >= 2, bytes[end - 1] == UInt8(ascii: "/"), bytes[end - 2] == UInt8(ascii: "*") {
+                var open = end - 2
+                while open >= 2, !(bytes[open - 2] == UInt8(ascii: "/") && bytes[open - 1] == UInt8(ascii: "*")), bytes[open - 1] != UInt8(ascii: "\n") { open -= 1 }
+                guard open >= 2, bytes[open - 2] == UInt8(ascii: "/") else { break }
+                scan = open - 2
+                continue
+            }
+            var from = end
+            while from > 0, isWord(bytes[from - 1]) { from -= 1 }
+            guard from < end, modifierWords.contains(text.slice(from, end)) else { break }
+            start = from
+            scan = from
+        }
+        // Lines above of modifiers alone, while nothing but space comes before the declaration on its line.
+        while true {
+            var lineStart = start
+            while lineStart > 0, bytes[lineStart - 1] != UInt8(ascii: "\n") { lineStart -= 1 }
+            guard lineStart > 0, text.slice(lineStart, start).allSatisfy({ $0 == " " || $0 == "\t" }) else { break }
+            var previous = lineStart - 1
+            while previous > 0, bytes[previous - 1] != UInt8(ascii: "\n") { previous -= 1 }
+            // Its code: before a `//` comment, without `/* … */` ones.
+            var code = text.slice(previous, lineStart - 1)
+            if let comment = code.range(of: "//") { code = String(code[..<comment.lowerBound]) }
+            code = code.replacingOccurrences(of: #"/\*.*?\*/"#, with: " ", options: .regularExpression)
+            let words = code.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard !words.isEmpty, words.allSatisfy(modifierWords.contains) else { break }
+            start = previous
+            while start < lineStart - 1, isSpace(bytes[start]) { start += 1 }
+        }
+        return start
+    }
+
+    /// Whether a place falls inside a comment or a string literal (its start is outside), read as `SwiftText.skip` reads them.
+    static func insideTrivia(_ offset: Int, in text: SwiftSource.Text) -> Bool {
+        let chars = Array(text.string)
+        var index = 0, byte = 0
+        while index < chars.count, byte < offset {
+            if let end = SwiftText.skip(chars, at: index), end > index {
+                let after = byte + chars[index..<end].reduce(0) { $0 + String($1).utf8.count }
+                if offset > byte, offset < after { return true }
+                byte = after
+                index = end
+                continue
+            }
+            byte += String(chars[index]).utf8.count
+            index += 1
+        }
+        return false
+    }
+
+    /// A stored property taken out of the code, kept in the live copy: its declaration, and where it goes (before the
+    /// field the open app has after it, or after the one before it when it was the last).
+    struct Kept {
+        var type: String
+        var text: String
+        var at: SwiftSource.Position
+        var after: Bool
+        /// Its place among the type's fields in the open app: kept fields at one place go in in this order.
+        var order: Int
+    }
+    enum KeptFields {
+        case kept([Kept], layout: [String])
+        case refused(String?)
+    }
+
+    /// The stored properties the new code takes out of types the open app has, each kept as a private field nothing
+    /// reads, so the type holds what the open app's values hold: the field the open app keeps there stays theirs, and
+    /// the new code goes on without it. Private with a starting value (its type's empty value: it's never read), so it's
+    /// no argument of the initializer Swift makes. A wrapper's storage is kept with its wrapper (`@State`, `@Published`,
+    /// an `@Observable` class's tracked property). Not for a type whose own synthesized code reads every field (it
+    /// compares, hashes or saves them, which the kept one would take part in), nor one whose name the new code uses for
+    /// something else; with the layout as the live copy will have it, the kept fields in their places.
+    static func keptFields(before: [String], after: [String], declarations: SwiftSource.Declarations,
+                           oldSources: () -> [String] = { [] }) -> KeptFields {
+        let old = LiveReload.byType(before), new = LiveReload.byType(after)
+        let structs = Set(LiveReload.Group.shape.parts(in: before).compactMap { $0.count == 2 && $0[1].hasPrefix("struct") ? $0[0] : nil })
+        let conformed = LiveReload.conformances(inLayout: after)
+        var kept: [Kept] = [], keptEntries: [(type: String, entry: String)] = []
+        func fieldName(_ entry: String) -> String? {
+            let parts = entry.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2, !parts[1].hasPrefix("case "), let colon = parts[1].range(of: ": ") else { return nil }
+            return String(parts[1][..<colon.lowerBound]).replacingOccurrences(of: "weak ", with: "")
+        }
+        // A field's declaration in the new code, by the name the layout gives its storage.
+        func variable(_ type: String, _ name: String) -> SwiftSource.Variable? {
+            declarations.variables[type + "\t" + name] ?? declarations.variables[type + "\t" + String(name.dropFirst())]
+                ?? declarations.variables[type + "\t" + String(name.dropFirst(2))]
+        }
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !LiveReload.isGroup(type) {
+            guard let current = new[type] else { continue }
+            let currentNames = Set(current.compactMap(fieldName))
+            // Only a field whose name is gone altogether: one of the same name with another type changed what it holds.
+            // A field Lamp kept under its own name at an earlier change is kept again, as any other.
+            let removed = members.filter { entry in fieldName(entry).map { !currentNames.contains($0) && (!$0.contains("__lamp") || $0.hasPrefix(keptPrefix)) } ?? false }
+            guard !removed.isEmpty else { continue }
+            let spoken = LiveReload.spoken(type)
+            let protocols = (conformed.of[type] ?? []).union(conformed.of[LiveReload.bare(type)] ?? [])
+            if let reads = ["Equatable", "Hashable", "Comparable", "Codable", "Encodable", "Decodable"].first(where: protocols.contains) {
+                return .refused("\(spoken) lost \(fieldName(removed[0]) ?? "a field"), and it's \(reads), whose own code reads every field it holds, a field kept in its place included")
+            }
+            let observable = members.contains { $0.hasPrefix(type + "\t_$observationRegistrar") }
+            for entry in removed {
+                let field = String(entry.dropFirst(type.count + 1))
+                guard let colon = field.range(of: ": "), !field.hasPrefix("unowned ") else { return .refused(nil) }
+                let weak = field.hasPrefix("weak ")
+                let name = String(field[..<colon.lowerBound]).replacingOccurrences(of: "weak ", with: "")
+                var kind = String(field[colon.upperBound...])
+                // The property as written, and the attribute its storage needs.
+                var base = name, attribute = ""
+                func unwrap(_ wrapper: String, underscores: Int, writes: String) -> Bool {
+                    guard name.hasPrefix(String(repeating: "_", count: underscores)), kind.hasPrefix(wrapper + "<"), kind.hasSuffix(">") else { return false }
+                    base = String(name.dropFirst(underscores)); kind = String(kind.dropFirst(wrapper.count + 1).dropLast()); attribute = writes + " "
+                    return true
+                }
+                // A struct's fields are laid out by their order and types, never their names, and its metadata stays the
+                // open app's: so a field kept in a struct may go by a name of Lamp's, where the new code uses the old one
+                // for something else, and a wrapper's storage may be kept as a plain field of the wrapper's type. Not a
+                // class's, whose stored properties' accessors are in its method table by name.
+                let isStruct = structs.contains(type)
+                var given: String?, renamed = false
+                if name.hasPrefix(keptPrefix) {
+                    base = String(name.dropFirst(keptPrefix.count)); renamed = true
+                    if kind.hasPrefix("Environment<") || kind.hasPrefix("Binding<") {
+                        guard let value = keptWrapper(base, kind: kind, in: LiveReload.bare(type), oldSources: oldSources) else { return .refused(nil) }
+                        given = value
+                    }
+                } else if unwrap("LazyState", underscores: 2, writes: "@State") || unwrap("State", underscores: 1, writes: "@State")
+                    || unwrap("Published", underscores: 1, writes: "@Published") {
+                } else if name.hasPrefix("_"), observable {
+                    base = String(name.dropFirst())
+                } else if name.hasPrefix("_"), isStruct, let value = keptWrapper(String(name.dropFirst()), kind: kind, in: LiveReload.bare(type), oldSources: oldSources) {
+                    base = String(name.dropFirst()); given = value
+                } else if name.hasPrefix("_") {
+                    return .refused("\(spoken) lost \(name.dropFirst()), kept by a wrapper (\(kind.prefix { $0 != "<" })) Lamp can't put back in its place")
+                }
+                if base.hasPrefix(keptPrefix) { base = String(base.dropFirst(keptPrefix.count)); renamed = true }
+                var storage = base
+                if declarations.variables[type + "\t" + base] != nil || given != nil || renamed {
+                    guard isStruct else {
+                        return .refused("\(spoken).\(base) isn't stored any more but is still declared, and can't share its name with the field the open app keeps")
+                    }
+                    storage = keptPrefix + base
+                }
+                // Its starting value: never read, so any of its type; the empty one, or an enum of the app's first case.
+                let firstCase = old[LiveReload.bare(kind)].flatMap { $0.first { $0.contains("\tcase ") && !$0.contains("(") } }
+                    .flatMap { entry in entry.components(separatedBy: "\tcase ").last.map { String($0.prefix { $0 != ":" }) } }
+                guard let initial = given ?? (weak ? "nil" : emptyValue(kind) ?? firstCase.map({ "." + $0 })) else {
+                    return .refused("\(spoken) lost \(base), and Lamp has no value of \(kind) to keep in its place")
+                }
+                let text = attribute + "private " + (weak ? "weak " : "") + "var \(storage): \(kind) = \(initial)"
+                // Its place: before the next field the open app has that the new code still declares, else after the last.
+                guard let index = members.firstIndex(of: entry) else { return .refused(nil) }
+                let following = members[(index + 1)...].compactMap { $0 == entry ? nil : current.contains($0) ? fieldName($0).flatMap { variable(type, $0) } : nil }.first
+                let preceding = members[..<index].reversed().compactMap { current.contains($0) ? fieldName($0).flatMap { variable(type, $0) } : nil }.first
+                // A field declared in one list with others (`var a = 1, b = 2`) gives no place between them.
+                if let anchor = following ?? preceding, declarations.bindings[anchor.binding].entries.count > 1 {
+                    return .refused("\(spoken) lost \(base) beside fields declared in one list, where Lamp can't put it back in its place")
+                }
+                if let next = following {
+                    let binding = declarations.bindings[next.binding]
+                    let start = ([binding.start] + next.attributes.map(\.start)).min { ($0.line, $0.column) < ($1.line, $1.column) }!
+                    kept.append(Kept(type: type, text: text, at: start, after: false, order: index))
+                } else if let last = preceding {
+                    kept.append(Kept(type: type, text: text, at: declarations.bindings[last.binding].last, after: true, order: index))
+                } else {
+                    return .refused(nil)
+                }
+                keptEntries.append((type, entry))
+            }
+        }
+        guard !kept.isEmpty else { return .kept([], layout: after) }
+        // The layout with each kept field where the open app has it: before the next of its type's fields that's there.
+        var layout = after
+        for (type, entry) in keptEntries {
+            guard let members = old[type], let index = members.firstIndex(of: entry) else { continue }
+            let next = members[(index + 1)...].first { layout.contains($0) }
+            if let next, let at = layout.firstIndex(of: next) { layout.insert(entry, at: at) }
+            else if let last = layout.lastIndex(where: { $0.hasPrefix(type + "\t") }) { layout.insert(entry, at: last + 1) }
+        }
+        return .kept(kept, layout: layout)
+    }
+
+    /// A value for a wrapper's storage kept in a struct as a plain field (above): a binding to a constant of its value's
+    /// empty value, or an environment value read by the key path the open app's code reads it by (`@Environment(\.colorScheme)`),
+    /// found in that code inside the type's own declaration. SwiftUI keeps either up to date as it would the wrapper's,
+    /// and nothing reads it. Nil for any other wrapper, whose value Lamp can't make.
+    static let keptPrefix = "__lampKept_"
+    static func keptWrapper(_ name: String, kind: String, in type: String, oldSources: () -> [String]) -> String? {
+        guard let open = kind.firstIndex(of: "<"), kind.hasSuffix(">") else { return nil }
+        let wrapper = kind[..<open], value = String(kind[kind.index(after: open)..<kind.index(before: kind.endIndex)])
+        if wrapper == "Binding" { return emptyValue(value).map { ".constant(\($0))" } }
+        guard wrapper == "Environment", let simple = type.split(separator: ".").last else { return nil }
+        let escaped = NSRegularExpression.escapedPattern(for: name)
+        for text in oldSources() {
+            guard let start = text.range(of: #"\bstruct\s+"# + NSRegularExpression.escapedPattern(for: String(simple)) + #"\b[^{]*\{"#, options: .regularExpression) else { continue }
+            var depth = 1, end = start.upperBound
+            while end < text.endIndex, depth > 0 {
+                if text[end] == "{" { depth += 1 } else if text[end] == "}" { depth -= 1 }
+                end = text.index(after: end)
+            }
+            let body = String(text[start.upperBound..<end])
+            // As the app's code wrote it, or as Lamp kept it at an earlier change.
+            for pattern in [#"@Environment\(\s*(\\[\w.]+)\s*\)[^\n]*?\bvar\s+"# + escaped + #"\b"#,
+                            #"\bvar\s+"# + NSRegularExpression.escapedPattern(for: keptPrefix) + escaped + #"\s*:[^=\n]*=\s*Environment\((\\[\w.]+)\)"#] {
+                if let match = body.firstMatch(of: try! Regex(pattern)), let path = match.output[1].substring { return "Environment(\(path))" }
+            }
+        }
+        return nil
+    }
+
+    /// The code the open app runs, file by file, as text: where a kept wrapper's key path is read from.
+    static func oldSources(of project: LampProject) -> [String] {
+        LiveReload.swiftFiles(in: LiveReload.running(project)).values.compactMap { AppFile.text($0, in: project) }
+    }
+
+    /// Whether every place a type's own initializers set this property is a decoder giving it its starting value for a
+    /// missing key: `decodeIfPresent(…)` alone for a starting value of nil, or `decodeIfPresent(…) ?? <starting value>`.
+    static func decodesToStart(_ key: String, initial: String, declarations: SwiftSource.Declarations) -> Bool {
+        guard let places = declarations.assignments[key], !places.isEmpty, let name = key.split(separator: "\t").last else { return false }
+        // One shape only, its own key and nothing else: `try c.decodeIfPresent(T.self, forKey: .name)`, then `?? <starting
+        // value>` or (for a starting value of nil) nothing. A chain or another key could read something else when it's missing.
+        let pattern = #"^try\s+\w+\.decodeIfPresent\(\s*[\w.<>\[\]: ?]+\.self\s*,\s*forKey:\s*(?:CodingKeys)?\.\#(NSRegularExpression.escapedPattern(for: String(name)))\s*\)\s*(?:\?\?\s*(.+))?$"#
+        guard let shape = try? NSRegularExpression(pattern: pattern) else { return false }
+        var files: [String: SwiftSource.Text] = [:]
+        return places.allSatisfy { place in
+            guard place.decoder, let text = SwiftSource.text(of: (place.start, place.last), files: &files),
+                  let equals = text.firstIndex(of: "=") else { return false }
+            let value = text[text.index(after: equals)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let match = shape.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) else { return false }
+            guard let fallback = Range(match.range(at: 1), in: value) else { return initial == "nil" }
+            let rest = value[fallback].trimmingCharacters(in: .whitespaces)
+            return rest == initial && !rest.contains("??") && !rest.contains("decode")
+        }
+    }
+
+    /// Which halves of its coding a type's own code writes (`init(from:)`, `encode(to:)`), by the declarations the
+    /// layout lists: the compiler's own aren't listed.
+    static func handWrittenCoding(_ type: String, in layout: [String]) -> (decodes: Bool, encodes: Bool) {
+        let declared = LiveReload.Group.declared.parts(in: layout).compactMap(\.first)
+        return (declared.contains { $0.hasPrefix(type + ".init(from:)") }, declared.contains { $0.hasPrefix(type + ".encode(to:)") })
+    }
+
+    /// A Codable struct's coding written out beside it, in an extension in its file, as the compiler makes it: every
+    /// stored property of the new code's (those moved into the spare included, set after the rest), under its
+    /// CodingKeys when the code writes them and by its own name otherwise; an optional decoded if present and encoded
+    /// if not nil, a `let` with a starting value encoded and never decoded. Only the halves the type's code doesn't
+    /// write, and only those its conformance asks for. By file; nil when one can't be written (a wrapped property).
+    static func codingExtensions(for types: Set<String>, moved: Set<String>, layout new: [String: [String]], after: [String], cases: [String: Set<String>],
+                                 declarations: SwiftSource.Declarations) -> [String: String]? {
+        var out: [String: String] = [:]
+        let conformed = LiveReload.conformances(inLayout: after)
+        let generic = Set(LiveReload.Group.shape.parts(in: after).filter { $0.count == 2 && $0[1].contains("generic") }.map { $0[0] })
+        for type in types.sorted() {
+            // A generic one may be Codable only where its parameters are, which an extension would have to repeat.
+            guard let declaredAt = declarations.types[type], let entries = new[type], !generic.contains(type) else { return nil }
+            var fields: [(name: String, type: String, optional: Bool, fixed: Bool)] = []
+            for entry in entries {
+                let field = entry.dropFirst(type.count + 1)
+                guard !field.hasPrefix("case "), let colon = field.range(of: ": ") else { continue }
+                let name = String(field[..<colon.lowerBound])
+                if name.hasPrefix("__lamp") { continue }
+                guard !name.hasPrefix("_"), let variable = declarations.variables[type + "\t" + name] else { return nil }
+                // Through a typealias (`typealias Note = String?`) to what it names: an optional is coded only if present.
+                var kind = variable.type
+                for _ in 0..<8 { guard let target = conformed.aliased(kind) else { break }; kind = target }
+                let optional = kind.hasSuffix("?") || kind.hasPrefix("Optional<")
+                if kind.hasSuffix("?") { kind.removeLast() } else if kind.hasPrefix("Optional<"), kind.hasSuffix(">") { kind = String(kind.dropFirst(9).dropLast()) }
+                let fixed = declarations.lets.contains(type + "\t" + name) && initialText(of: variable, in: declarations) != nil
+                fields.append((name, kind, optional, fixed))
+            }
+            // Its keys: the CodingKeys its code writes, which may leave a property out or name it otherwise; else each
+            // property's own name. Where the type writes one half itself with the keys Swift makes (its own decoder),
+            // Swift makes none once the other half is written here, so they're written too, with the cases the compiler
+            // would have given them, in its order, and both halves use them.
+            let written = handWrittenCoding(type, in: after)
+            let madeKeys = declarations.types[type + ".CodingKeys"] == nil && (written.decodes || written.encodes)
+                ? new[type + ".CodingKeys"].map { $0.compactMap { entry in entry.components(separatedBy: "\tcase ").dropFirst().first.map { String($0.prefix { $0 != ":" && $0 != " " }) } } }
+                : nil
+            let ownKeys = declarations.types[type + ".CodingKeys"] != nil || madeKeys != nil
+            let keyed = madeKeys.map { names in fields.filter { names.contains($0.name) } }
+                ?? (ownKeys ? fields.filter { cases[type + ".CodingKeys"]?.contains($0.name) == true } : fields)
+            func key(_ name: String) -> String { ownKeys ? "CodingKeys.\(name)" : "__LampCodingKey(\"\(name)\")" }
+            let keyType = ownKeys ? "CodingKeys" : "__LampCodingKey"
+            let protocols = (conformed.of[type] ?? []).union(conformed.of[LiveReload.bare(type)] ?? [])
+            let only = protocols.contains("Codable") ? nil : protocols.contains("Encodable") && !protocols.contains("Decodable") ? "encode"
+                : protocols.contains("Decodable") && !protocols.contains("Encodable") ? "decode" : nil
+            var body = ""
+            if let madeKeys {
+                body += "    private enum CodingKeys: CodingKey { case \(madeKeys.joined(separator: ", ")) }\n"
+            }
+            if !ownKeys {
+                body += "    private struct __LampCodingKey: CodingKey {\n        var stringValue: String\n        var intValue: Int? { nil }\n"
+                    + "        init(_ name: String) { stringValue = name }\n        init?(stringValue: String) { self.stringValue = stringValue }\n"
+                    + "        init?(intValue: Int) { nil }\n    }\n"
+            }
+            if !written.decodes, only != "encode" {
+                // The stored properties first, then those in the spare, which can only be set once the rest are.
+                let stored = keyed.filter { !$0.fixed && !moved.contains(type + "\t" + $0.name) }
+                let spared = keyed.filter { field in !field.fixed && moved.contains(type + "\t" + field.name) }
+                body += "    init(from decoder: Decoder) throws {\n        let container = try decoder.container(keyedBy: \(keyType).self)\n"
+                for field in stored + spared {
+                    body += "        self.\(field.name) = try container.\(field.optional ? "decodeIfPresent" : "decode")(\(field.type).self, forKey: \(key(field.name)))\n"
+                }
+                body += "    }\n"
+            }
+            if !written.encodes, only != "decode" {
+                body += "    func encode(to encoder: Encoder) throws {\n        var container = encoder.container(keyedBy: \(keyType).self)\n"
+                for field in keyed {
+                    body += "        try container.\(field.optional ? "encodeIfPresent" : "encode")(self.\(field.name), forKey: \(key(field.name)))\n"
+                }
+                body += "    }\n"
+            }
+            out[declaredAt.start.file, default: ""] += "\n\nextension \(LiveReload.bare(type)) {\n" + body + "}\n"
         }
         return out
     }
@@ -3570,6 +4117,8 @@ enum LiveSlots {
             let literal = isLiteral(initial) || isLiteral(variable, in: declarations)
             let first = !literal ? "let v: \(declared) = \(initial); \(place) = LampSpare(v); return v" : "return \(initial)"
             let getter = "get { if let p = \(place) { \(read("p.value")) }; \(first) }"
+            // A `let` its own initializer sets has a setter for that.
+            let isLet = isLet && !declarations.assigned.contains(type + "\t" + name)
             let setter = isLet ? "" : " set { \(announces ? "LampSpare.announce(self); " : "")\(place) = LampSpare(newValue) }"
             // Final, so it's in no method table: a class something subclasses keeps the table the open app laid out.
             return ["final var \(name): \(declared) { \(getter)\(setter) }"]
@@ -3580,6 +4129,7 @@ enum LiveSlots {
             let place = place(in: type, holder: .value)
             let getter = "get { if \(place).has(\"\(key)\") { \(read("\(place).field(\"\(key)\")")) }; return \(initial) }"
             // Set back to its starting value, it's as if never set, so two values alike compare alike.
+            let isLet = isLet && !declarations.assigned.contains(type + "\t" + name)
             let setter = isLet ? "" : " set { \(place) = LampSpare.setting(\"\(key)\", to: newValue, initial: { () -> \(declared) in \(initial) }(), in: \(place)) }"
             return ["var \(name): \(declared) { \(getter)\(setter) }"]
         case .view:
@@ -3647,6 +4197,12 @@ enum LiveSlots {
     /// the app's own enum's cases (`.sedan`, by the enum's cases in `cases`). Nothing judged by its spelling alone:
     /// `Session()` may make something new each time, and `.shared` or `.now` may be worked out on each read.
     private static func isSteady(_ value: String, type: String, cases: [String: Set<String>], literal: Bool, own: Set<String> = []) -> Bool {
+        // A closure written out as a function's starting value (`{ _ in }`): code, which does the same whenever it's
+        // read, and a function is never compared, so no value the open app holds can tell one read from another.
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Not one with a capture list (`{ [id = UUID()] in id }`), which makes what it captures again at every read.
+        if type.contains("->"), trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
+           !trimmed.dropFirst().drop(while: { $0.isWhitespace }).hasPrefix("[") { return true }
         if literal || isLiteral(value) || value.range(of: #"^(?:\[[\w.<>, :?]+\]|(?:Set|Dictionary|Array|String)(?:<[\w.<>, :?\[\]]+>)?)\(\)$"#, options: .regularExpression) != nil { return true }
         let enumName = enumName(type)
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)
@@ -3657,7 +4213,7 @@ enum LiveSlots {
     }
 
     /// Members of the system's value types that are the same value at every read: their constants, and SwiftUI's
-    /// named colours. Named one by one, since a member like `.now` is made again at each read.
+    /// named colors. Named one by one, since a member like `.now` is made again at each read.
     private static let steadyMembers: [String: Set<String>] = {
         let numbers: Set<String> = ["zero", "infinity", "pi", "greatestFiniteMagnitude", "leastNonzeroMagnitude", "min", "max"]
         let colors: Set<String> = ["red", "orange", "yellow", "green", "mint", "teal", "cyan", "blue", "indigo", "purple", "pink",

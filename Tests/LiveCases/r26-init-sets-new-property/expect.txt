@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Basket changed what it holds (Basket._limit: Int); Basket.limit is set in Basket's own initializer, which the open app's Basket values were made without, so they'd read 0 where a fresh launch gives what it sets)
+== run
+before: items=1
+RELOAD 1: REOPEN Basket changed what it holds (Basket._limit: Int); Basket.limit is set in Basket's own initializer, which the open app's Basket values were made without, so they'd read 0 where a fresh launch gives what it sets
+after1 (want a plain reason: a model gains a property its initializer sets to 3, which the open model was made without): 
+before: items=1 limit=3
+RELOAD 1: in the restart
+after1 (want a plain reason: a model gains a property its initializer sets to 3, which the open model was made without): 

@@ -1,357 +1,346 @@
 ---
-import { Image } from "astro:assets";
-import type { ImageMetadata } from "astro";
+import { Image, getImage } from "astro:assets";
 import Base from "../layouts/Base.astro";
-import DownloadButton from "../components/DownloadButton.astro";
-import QuickLook from "../components/QuickLook.astro";
-import FirstIdea from "../components/FirstIdea.astro";
-import Bento, { type Point } from "../components/Bento.astro";
+import ChangeStory from "../components/ChangeStory.astro";
+import RemixDialog from "../components/RemixDialog.astro";
 import { together } from "../lib/text";
-import MakesTheCall from "../components/visuals/MakesTheCall.astro";
-import DrawsOnDemand from "../components/visuals/DrawsOnDemand.astro";
-import MakesSense from "../components/visuals/MakesSense.astro";
-import FindsTheWords from "../components/visuals/FindsTheWords.astro";
-import UsesYourMac from "../components/visuals/UsesYourMac.astro";
-import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
-import WorksWithYourMac from "../components/visuals/WorksWithYourMac.astro";
-import ChangeItAnyTime from "../components/visuals/ChangeItAnyTime.astro";
-import SignupsWidget from "../components/visuals/SignupsWidget.astro";
-import AppleSilicon from "../components/visuals/AppleSilicon.astro";
-import ShareWithAnyone from "../components/visuals/ShareWithAnyone.astro";
-import icon from "../assets/AppIcon.png";
-import anthropic from "../assets/logos/anthropic.png";
-import openai from "../assets/logos/openai.png";
-import openrouter from "../assets/logos/openrouter.png";
+import { DOWNLOAD_URL } from "../lib/download";
+import type { Sleeve } from "../lib/tapes";
+import { STARTERS } from "../lib/starters";
+import newYork from "../assets/starters/newyork.png";
+import laptopFill from "@phosphor-icons/core/assets/fill/laptop-fill.svg?raw";
+import controllerFill from "@phosphor-icons/core/assets/fill/game-controller-fill.svg?raw";
+import tvFill from "@phosphor-icons/core/assets/fill/television-simple-fill.svg?raw";
+import tabletFill from "@phosphor-icons/core/assets/fill/device-tablet-fill.svg?raw";
+import phone from "@phosphor-icons/core/assets/duotone/device-mobile-duotone.svg?raw";
+import laptop from "@phosphor-icons/core/assets/duotone/laptop-duotone.svg?raw";
+import tv from "@phosphor-icons/core/assets/duotone/television-simple-duotone.svg?raw";
+import tablet from "@phosphor-icons/core/assets/duotone/device-tablet-duotone.svg?raw";
+import controller from "@phosphor-icons/core/assets/duotone/game-controller-duotone.svg?raw";
+import speaker from "@phosphor-icons/core/assets/duotone/speaker-hifi-duotone.svg?raw";
+import picture from "@phosphor-icons/core/assets/duotone/image-duotone.svg?raw";
 
-// A window of an app Lamp built, taken from Lamp Dev with made-up data (see RELEASING.md), beside the chat that
-// changes it.
-import habitStreaks from "../assets/apps/habit-streaks.png";
+// The page sells remixing: start from something someone made, change it while it runs, and put it on what's in
+// the house. It's dressed as home video: tape labels, the stripes on their sleeves, cream paper. Apps and games get
+// the same weight, so it never reads as a site for games only. Every example is a real starter
+// (Resources/Starters), with its own pictures and the changes it suggests.
+const pitch = "Start from scratch or an app/game someone made. Change it live. Run it wherever you want.";
+const description = `Remixable software. ${pitch} No code.`;
 
-// Icons Lamp made for apps it built, in one row under "No localhost shenanigans.", all the same size. The row is centred
-// on the tile and wider than it, so it runs off both edges; at the tile's full width (1104px) the 136px icons
-// and 24px gaps put each edge through the middle of an icon. The order mixes the colours, as several are
-// purple. A name missing from src/assets/icons/ is skipped.
-const icons = import.meta.glob<ImageMetadata>("../assets/icons/*.png", { eager: true, import: "default" });
-const shelf = [
-  "mine-1", "mine-6", "trip-tab", "mine-3", "mine-8", "habit-streaks", "mine-2", "palette-studio", "trail-log",
-  "mine-4", "neon-bricks", "mine-10", "meal-planner", "mine-9", "mine-5", "reading-queue",
-].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
+// The screenshots the 3D sleeves are printed with (lib/tapes.ts), one for each starter.
+const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { eager: true, import: "default" });
+const shot = async (id: string) => (await getImage({ src: pictures[`../assets/starters/${id}.png`], width: 1000, format: "webp" })).src;
+const shots: Record<string, string> = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => [starter.id, await shot(starter.id)])));
 
-// AI as part of what an app does, not only how Lamp builds it: four things it can do inside an app, in two rows
-// split 4/6 and 6/4, each with AI as its subject. Making sense of things leads, as the most everyday; judgment, the
-// one people don't expect, closes. No providers, models or technical words here: which AI answers is the section
-// further down.
-const smarts: Point[] = [
+/** The `d` of each path in one of Phosphor's icons, joined, to draw on a canvas. */
+const iconPath = (svg: string) => [...svg.matchAll(/ d="([^"]+)"/g)].map((match) => match[1]).join(" ");
+
+// Where something plays, as a sleeve's icons show it.
+const PLACES: Record<string, string> = {
+  Mac: iconPath(laptopFill), iPad: iconPath(tabletFill), Xbox: iconPath(controllerFill), TV: iconPath(tvFill),
+};
+const places = (labels: string[]) => labels.map((label) => ({ label, icon: PLACES[label] }));
+
+/** A starter's sleeve: the original's, or, given one of its changes, a remix's, its "Remix me" opening the remix dialog
+ * for the starter (RemixDialog.astro), as a link to the homepage with `?starter=` would, with a remix's change in it. */
+const inks = ["#b8264f", "#1f7a42", "#a8361f"];
+function sleeveOf(id: string, change?: { text: string; ink: string }): Sleeve {
+  const starter = STARTERS.find((starter) => starter.id === id)!;
+  const common = { title: starter.name, kind: starter.kind, shot: shots[id], tweaks: starter.tweaks, places: places(starter.places) };
+  return change
+    ? { ...common, look: "remix", by: `A remix of ${starter.name}`, line: change.text, ink: change.ink, treat: starter.treat,
+        remix: `?starter=${id}&ask=${encodeURIComponent(change.text)}` }
+    : { ...common, look: "original", by: `Made by ${starter.by}`, line: starter.about, remix: `?starter=${id}`, tryIt: `?starter=${id}`, play: starter.page,
+        reel: `https://raw.githubusercontent.com/lampdotdev/${id}/main/.github/showcase/reel.mp4` };
+}
+
+// New York's sleeve in the hero.
+const sleeve: Sleeve = sleeveOf("newyork");
+
+// The shelf: the same sleeves for a few starters, each original with a remix of it under it, and a blank one at the
+// bottom; remixes are written on in the marker colors, in turn.
+const SHELF = ["homehq", "newyork", "fireside", "localcrossings"];
+const shelf: Sleeve[] = [
+  ...SHELF.flatMap((id, i) => {
+    const starter = STARTERS.find((starter) => starter.id === id)!;
+    return [sleeveOf(id), sleeveOf(id, { text: starter.remix, ink: inks[i % inks.length] })];
+  }),
+  // Its back is about Lamp, with a Download for Mac.
   {
-    title: "AI makes sense of anything.",
-    text: "It sums up the long thread, explains the small print, finds what matters in a pile of PDFs.",
-    tile: "bento:col-span-4 bg-linear-to-b from-teal-from to-teal-to text-white",
-    visual: MakesSense,
-  },
-  {
-    title: "AI draws on demand.",
-    text: "It makes pictures for a bedtime story, characters for a game, art for anything.",
-    tile: "bento:col-span-6 bg-linear-to-b from-coral-from to-coral-to text-white",
-    visual: DrawsOnDemand,
-  },
-  {
-    title: "AI finds the words.",
-    text: "It drafts the reply, names the thing, makes it friendlier.",
-    tile: "bento:col-span-6 bg-linear-to-br from-butter-from to-butter-to",
-    visual: FindsTheWords,
-  },
-  {
-    title: "AI makes the call.",
-    text: "It makes quick judgments all day long: which app is slowing your Mac down, and the setting that fixes it.",
-    tile: "bento:col-span-4 bg-linear-to-b from-indigo-from to-indigo-to text-white",
-    visual: MakesTheCall,
+    look: "blank", title: "your idea here…", by: "", kind: "", line: "Remixable software for the things you already own.",
+    tweaks: ["Start from scratch, or from what someone made", "Change it live, while it runs", "Put it on your TV, your phone, your Xbox", "No code, and free"],
+    places: [], download: DOWNLOAD_URL,
   },
 ];
 
-// The rest of the features as a bento box, rows split 6/4, 5/5, 4/6, telling a story: what you get (row one),
-// what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a strong colour of
-// its own, close to the app icons'.
-const points: Point[] = [
-  {
-    title: "Gorgeous by default.",
-    text: "Native controls, proper menus and shortcuts, and an icon of its own. Feels made-in-Cupertino, never made-by-AI.",
-    tile: "bento:col-span-6 bg-linear-to-br from-amber-from to-amber-to",
-    visual: BeautifulByDefault,
-  },
-  {
-    title: "Plugged into your day.",
-    text: "Your calendar, reminders, contacts and notifications, on your Mac and your iPhone. On the Mac, Mail, Notes and Messages too.",
-    tile: "bento:col-span-4 bg-linear-to-b from-sky-from to-sky-to text-white",
-    visual: WorksWithYourMac,
-    below: true,
-  },
-  {
-    title: "Apps that do the clicking.",
-    text: "An app can use your other apps to get things done, your browser included, signed in as you.",
-    tile: "bento:col-span-5 bg-night bg-[radial-gradient(120%_90%_at_80%_0%,#5b4be0_0%,transparent_65%)] text-white",
-    visual: UsesYourMac,
-  },
-  {
-    title: "Smart, and private.",
-    text: "Apps read text in pictures, understand speech and translate, right on your Mac. Lamp can even run the AI on your Mac's own chip.",
-    tile: "bento:col-span-5 bg-graphite-deep bg-[radial-gradient(90%_75%_at_50%_25%,#8f4c0c_0%,transparent_72%)] text-white",
-    visual: AppleSilicon,
-    centre: true,
-  },
-  {
-    title: "Selfish, not stingy.",
-    // A line break in the text starts a new line on the tile.
-    text: "Made for you, but happy to share.\nSend a Mac app by AirDrop, message, email, even Slack. Your friend gets their own copy, and Lamp shows them what it does.",
-    tile: "bento:col-span-6 bg-linear-to-b from-lilac-from to-lilac-to text-white",
-    visual: ShareWithAnyone,
-  },
-  {
-    title: "Try anything. Go back any time.",
-    text: "Lamp saves a version with every change, so nothing you try is a mistake.",
-    tile: "bento:col-span-4 bg-linear-to-b from-mint-from to-mint-to",
-    visual: ChangeItAnyTime,
-    centre: true,
-  },
+// What Lamp can put something on today, as people name their things, from what a visitor most likely has to what
+// they least likely have. Only what a kind of app or a shipped device integration really reaches
+// (Sources/Lamp/Places, Resources/Devices); a device Lamp only reaches in a simulator isn't listed. Each icon's
+// fill is one of the sleeve's colors, as if printed in two colors.
+const devices: { name: string; icon: string; brands?: string }[] = [
+  { name: "iPhone & iPad", icon: phone },
+  { name: "Your Mac", icon: laptop },
+  // Every TV Lamp reaches is one entry: the TVs and the boxes plugged into them, named by their makers.
+  { name: "TVs", icon: tv, brands: "Samsung, LG, Roku, Fire TV, Google TV" },
+  { name: "Android phones & tablets", icon: tablet },
+  { name: "Sonos", icon: speaker },
+  { name: "Xbox", icon: controller },
+  { name: "Photo frames", icon: picture },
 ];
 
-// Signed-in subscriptions first, then a key, then the models that run on the Mac itself, in the app's own
-// order. Lamp's built-in models (Native Mac AI) run on Metal; they get a chip, like the app's Providers tab,
-// since Apple's logo isn't ours to use.
-const providers = [
-  { logo: anthropic, name: "Claude" },
-  { logo: openai, name: "ChatGPT" },
-  { logo: openrouter, name: "OpenRouter" },
-  { name: "Apple Metal" },
-];
-
-// The hero's line under the heading, and with "Little things made just for you." the page's description for search
-// results and link previews.
-const pitch = "Something for your work, one for your hikes, even one to help you learn Italian in time for your sister's\u00a0wedding.";
-const noCode = "For Mac and iOS, no coding needed, with AI you already have.";
-const description = `Little things made just for you. ${pitch} ${noCode}`;
-
-// Things people know with the one part only their owner would want: a reader knows what a dashboard is, and the
-// part after "but" is what no company would ship. They go from the everyday to the wildly particular, so the reader
-// is with them by the time they get strange, and each lives somewhere different (a widget, something that just
-// runs, the iPad, a game), since what Lamp makes isn't only windows; the pictures say where without a word. They're
-// the ideas page's for now, and the widget's is drawn, until each has one of its own.
-const thumbs = import.meta.glob<ImageMetadata>("../assets/ideas/thumbs/*.jpg", { eager: true, import: "default" });
-const buts = [
-  { visual: SignupsWidget, known: "Your analytics dashboard,", but: "but only today's sign-ups against last week's, on your desktop." },
-  { picture: "school-dates", known: "A family calendar,", but: "but it fills itself with every date buried in the school's emails." },
-  { picture: "presenting", known: "Do Not Disturb,", but: "but it also hides your desktop and personal tabs when you share your screen." },
-  { picture: "inbox-invaders", known: "Space Invaders,", but: "but the aliens are the emails you haven't answered." },
-  { picture: "grandma-s-cards", known: "A recipe app,", but: "but it's Grandma's handwritten cards, her notes and all." },
-  { picture: "whose-turn", known: "A chore chart,", but: "but fair over the month, on the old iPad in the kitchen." },
-  { picture: "tooth-fairy-ledger", known: "A budget,", but: "but for the tooth fairy, so the twins never compare notes." },
-  { picture: "has-biscuit-eaten", known: "A pet app,", but: "but just two big buttons by the bowl, so Biscuit stops getting two dinners." },
-  { picture: "bedtime-stories", known: "A storybook,", but: "but a new one every night, starring your daughter Maya and her giraffe Kevin." },
-  { picture: "our-street-the-board-game", known: "Monopoly,", but: "but it's your town, with Auntie Jo's house as Mayfair." },
-  { picture: "campaign-notes", known: "Your D&D campaign notes,", but: "but they know which secrets the party hasn't found yet, and open each session with a dramatic recap." },
-  { picture: "frank-the-snake", known: "Snake,", but: "but the snake is your dachshund, eating the socks he really steals." },
-].map((item) => ({ ...item, image: item.picture ? thumbs[`../assets/ideas/thumbs/${item.picture}.jpg`] : undefined }));
 ---
 
-<Base title="Lamp: turn your wishes into selfish software" description={description} image="/og.jpg">
-  <!--
-    Full-width bands that alternate white and light grey, in the manner of Apple's product pages, each with the
-    content in the same centred column. Tiles take the other shade from the band they sit on.
-  -->
-  <main>
-    <!-- The hero sits in a card of its own across the window, like the tiles below, to set it apart from what
-         follows. -->
-    <div class="px-2 pt-2 sm:px-3 sm:pt-3">
-    <!--
-      Opens like Apple's product pages: the card starts as tall as the window with the icon large in its middle,
-      then the card shrinks to its own height as the icon settles and the words come up under it, and the button
-      appears. Once, on load, and not at all for people who've asked for less motion (global.css). The card stops
-      short of the window's bottom, so the next heading shows under it and it's plain there's more.
-    -->
-    <!-- Opened at a section (the menu bar's AI or Features from another page), the hero is already in place: while
-         the card shrinks, everything under it moves up, and the section the browser went to would slide away. -->
-    <script is:inline>if (location.hash) document.documentElement.classList.add("no-intro");</script>
-    <section class="hero-card hero-sky relative flex flex-col items-center overflow-hidden rounded-[28px] px-6 pt-26 pb-14 text-center sm:pt-28 sm:pb-16">
-      <div class="hero-icon">
-        <Image
-          src={icon}
-          alt=""
-          width={88}
-          height={88}
-          densities={[1, 2]}
-          loading="eager"
-          class="size-18 drop-shadow-[0_10px_22px_rgba(217,122,6,0.28)] sm:size-22"
-        />
+<Base title="Lamp: remixable software" description={description} image="/og.jpg">
+  <main class="tape-page overflow-x-clip bg-paper text-tape">
+    <!-- Hero: plain white type on the sleeve's stripes, run diagonally across the whole window like a film
+         maker's box. The pale bands are kept to the corners, so the words only ever sit on ones they read on. -->
+    <section id="top" class="technicolor overflow-hidden">
+    <div class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-10 px-4 pt-28 pb-12 text-white sm:px-6 sm:pt-28 sm:pb-12">
+      <div class="flex min-w-0 flex-[1_1_32rem] flex-col items-start gap-7">
+        <h1 class="mb-2 text-[clamp(3.25rem,8.4vw,8rem)] leading-[0.9] font-black tracking-[-0.05em]">Remixable software.</h1>
+        <p class="max-w-[30ch] text-2xl leading-[1.4] font-semibold">{together(pitch)}</p>
+        <div class="flex flex-wrap gap-3.5">
+          <a href={DOWNLOAD_URL} data-download-place="hero" class="tape-button tape-button-paper">Download for Mac</a>
+          <a href="#shelf" class="tape-button tape-button-outline-white">See what's on the shelf</a>
+        </div>
       </div>
-      <!-- The name small under the icon, as Apple labels a product, and the promise as the page's heading. -->
-      <div class="hero-words flex flex-col items-center">
-        <p class="mt-3 text-[15px] font-semibold tracking-tight">Lamp</p>
-        <!-- Full size from xl. From md it's always two lines, broken after "software", even where the window is wide
-             enough for one; narrower, the browser balances the lines it needs. -->
-        <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl xl:text-7xl">
-          Lamp makes software<br class="hidden md:inline" /> crafted just for&nbsp;you.
-        </h1>
-        <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)} {together(noCode)}</p>
+
+      <!-- New York's sleeve, in 3D once lib/tapes.ts has drawn it: it leans toward the pointer and turns over when
+           clicked. Until then, and without WebGL, the same sleeve flat, with what's on its back under it; once it's
+           drawn, that flat sleeve stays for screen readers, front and back. -->
+      <div class="tape-host h-[36rem] min-w-0 flex-[1_1_30rem] sm:h-[44rem]" data-tape-sleeve data-sleeve={JSON.stringify(sleeve)}>
+        <div class="tape-fallback flex h-full items-center justify-center">
+          <figure class="flex w-full max-w-[26rem] -rotate-2 flex-col overflow-hidden border-2 border-tape bg-[#f7f2e3] text-tape shadow-[10px_10px_0_var(--color-tape)]">
+            <figcaption class="flex flex-col gap-1 px-7 pt-6 pb-4">
+              <span class="text-[1.375rem] font-extrabold italic">Made by Mr.doob</span>
+              <span class="text-[clamp(2.75rem,6vw,4rem)] leading-[0.9] font-black tracking-[-0.04em]">New York</span>
+            </figcaption>
+            <Image src={newYork} alt="New York: a yellow taxi on a Manhattan avenue at golden hour" widths={[420, 840]} sizes="420px" loading="eager" class="block h-auto w-full border-y-2 border-tape" />
+            <div class="stripe-warm h-20" aria-hidden="true"></div>
+            <p class="px-7 pt-4 text-xl font-extrabold italic">Walk, drive, bike or fly</p>
+            <p class="px-7 pb-2 text-base font-bold">Plays on {sleeve.places.map((place) => place.label).join(", ")}</p>
+            <div id="sleeve-back" class="px-7 pb-5">
+              <p class="font-mono text-xs font-bold text-[#a8361f]">IDEAS FOR YOUR REMIX</p>
+              <ul class="mt-1 font-marker text-lg leading-snug text-[#b8264f]">
+                {sleeve.tweaks.map((tweak) => <li>{tweak}</li>)}
+              </ul>
+            </div>
+          </figure>
+        </div>
+        <div class="sleeve-links">
+          <a href={sleeve.play} target="_blank" rel="noopener" class="tape-button tape-button-paper">Play New York</a>
+          <a href={`/${sleeve.remix}`} data-remix-sleeve class="tape-button tape-button-paper">Remix New York</a>
+        </div>
+        <button type="button" class="tape-control" data-turn aria-pressed="false" aria-controls="sleeve-back">Turn New York's sleeve over</button>
+        <button type="button" class="tape-control" data-watch={sleeve.reel} data-name={sleeve.title}>Watch New York</button>
       </div>
-      <div class="hero-button relative z-10 mt-9">
-        <DownloadButton place="hero">
-          <a
-            slot="beside"
-            href="/ideas"
-            class="inline-flex h-[52px] items-center rounded-full bg-white/70 px-8 text-[17px] font-semibold text-ink shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-black/10 backdrop-blur-sm transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.03] hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite active:scale-[0.98]"
-          >
-            Explore ideas
-          </a>
-        </DownloadButton>
+    </div>
+    </section>
+
+    <!-- Change it live: the app changing as it's asked, on an old television set, with its chat beside it. -->
+    <section id="live" class="bg-tape text-paper">
+      <div class="mx-auto flex max-w-[80rem] flex-col gap-12 px-4 py-28 sm:px-6">
+        <div class="flex flex-col gap-5">
+          <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Change it live.</h2>
+          <p class="max-w-[44ch] text-xl leading-normal text-[#e6dfca]">{together("Small tweak, visual overhaul, major change – ask it and see it change in front of you. No rebuild, no restart, no server to manage.")}</p>
+        </div>
+        <ChangeStory />
       </div>
     </section>
 
-    </div>
-
-    <!--
-      The page goes from the familiar to the new: things people know with something only they'd want, getting
-      stranger as they go, then that they change as they're used, then their own (the first-idea section).
-    -->
-    <section>
-      <div class="mx-auto max-w-6xl px-4 pt-16 pb-14 sm:px-6">
-        <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Real apps. Uniquely&nbsp;yours.</h2>
-        <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-          {together("Lots of little things, each doing things exactly your way.")}
-        </p>
-        <ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <!-- From the shelf: a stack of sleeves, in 3D once lib/tapes.ts has drawn it, the hero's sleeve for each starter,
+         lying flat with its spine out, each original with a remix of it under it. One that's clicked comes out and
+         stands up as the hero's does, its "Remix me" opening the remix dialog. Without WebGL, and for screen readers,
+         the same sleeves as a list, as tall as it needs, each linking to its remix, and the blank one with what's on its
+         back; a keyboard reaches a button for each that opens the remix dialog for it, as its "Remix me" does, and
+         the blank one's Download. -->
+    <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
+      <div class="tape-host order-last min-h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:min-h-[40rem] lg:order-none" data-tape-stack data-sleeves={JSON.stringify(shelf)}>
+        <ul class="tape-fallback flex h-full flex-col justify-center gap-2">
           {
-            buts.map((item) => (
-              <li class="overflow-hidden rounded-[22px] bg-panel">
-                {item.image ? (
-                  <Image
-                    src={item.image}
-                    alt=""
-                    widths={[400, 720]}
-                    sizes="(min-width: 1024px) 360px, (min-width: 640px) 50vw, 100vw"
-                    loading="lazy"
-                    class="aspect-[3/2] w-full object-cover"
-                  />
-                ) : item.visual && <item.visual />}
-                <div class="px-6 pt-4 pb-6">
-                  <p class="text-lg leading-snug font-semibold">
-                    <span class="text-muted">{item.known}</span> {together(item.but)}
-                  </p>
-                </div>
+            shelf.map((item) => (
+              <li class:list={["flex min-h-14 flex-col justify-center px-4 py-2", item.look === "remix" ? "bg-[#f7f2e3] ring-1 ring-tape/20" : "bg-[#26241f] text-paper"]}>
+                {item.remix ? (
+                  <a href={`/${item.remix}`} data-remix-link class:list={["underline-offset-4 hover:underline", item.look === "original" ? "text-lg font-black" : "font-marker text-lg text-[#b8264f]"]}>{item.look === "remix" ? item.line : item.title}</a>
+                ) : (
+                  <span class="font-marker text-lg">{item.title}</span>
+                )}
+                {item.by && <span class="text-[11px] font-bold tracking-wider uppercase">{item.by}</span>}
+                {item.tryIt && (item.play
+                  ? <a href={item.play} target="_blank" rel="noopener" class="text-sm font-bold underline underline-offset-4">Play it</a>
+                  : <a href={`/${item.tryIt}`} data-try-link class="text-sm font-bold underline underline-offset-4">Try it</a>)}
+                {item.download && (
+                  <div class="flex flex-col gap-1 pt-1 text-sm">
+                    <p class="font-bold">{item.line}</p>
+                    <ul class="list-disc pl-5">{item.tweaks.map((point) => <li>{point}</li>)}</ul>
+                    <a href={item.download} data-download-place="shelf" class="font-bold underline underline-offset-4">Download Lamp for Mac</a>
+                  </div>
+                )}
               </li>
             ))
           }
         </ul>
+        {shelf.map((item, i) => item.remix && <button type="button" class="tape-control" data-sleeve={i}>Remix {item.look === "remix" ? `${item.title}: ${item.line}` : item.title}</button>)}
+        {shelf.map((item, i) => item.tryIt && <button type="button" class="tape-control" data-try={i}>{item.play ? "Play" : "Try"} {item.title}</button>)}
+        {shelf.map((item) => item.reel && <button type="button" class="tape-control" data-watch={item.reel} data-name={item.title}>Watch {item.title}</button>)}
+        {shelf.map((item) => item.download && <a href={item.download} data-download-place="shelf" class="tape-control">Download Lamp for Mac</a>)}
+      </div>
+      <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
+        <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>
+        <p class="max-w-[36ch] text-xl leading-normal">{together("Start from scratch, from what someone made, or what a friend shared. Keep your changes and pull their improvements in when you want.")}</p>
       </div>
     </section>
 
-    <section class="bg-panel">
-      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Change it while you're using&nbsp;it.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("Lamp apps are like documents.")}<br />{together("Change them in real time, try things out right on the spot.")}
-      </p>
-      <!--
-        A stand-in until there's a real picture from Lamp: an app's window with the chat that opens beside it, a
-        change already made and the next one under way. Beside the window from sm, against its edge: the picture
-        has room for the window's shadow around it, so the window runs from 4% to 79% of its height and ends at 81%
-        of its width. Under the window on a phone.
-      -->
-      <div aria-hidden="true" class="relative mx-auto mt-10 max-w-5xl sm:ml-[3%] sm:w-[80%]">
-        <Image
-          src={habitStreaks}
-          alt=""
-          widths={[640, 1024, 1600]}
-          sizes="(min-width: 1024px) 780px, 100vw"
-          loading="lazy"
-          class="h-auto w-full"
-        />
-        <div class="mx-4 -mt-4 flex flex-col gap-3 rounded-[22px] bg-white/70 p-4 text-left text-[15px] leading-snug shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] ring-1 ring-black/10 backdrop-blur-xl sm:absolute sm:top-[4%] sm:bottom-[21%] sm:left-[82%] sm:mx-0 sm:mt-0 sm:w-[30%] sm:justify-end">
-          <p class="ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">Make no phone after 10pm count double on weekends.</p>
-          <p class="mr-6 text-ink">Weekends now count double.</p>
-          <p class="ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">And put today's streak in the menu bar.</p>
-          <p class="flex items-center gap-2 text-muted"><span class="size-2 animate-pulse rounded-full bg-[#cf620c]"></span>Changing it…</p>
-          <div class="mt-2 rounded-full bg-white px-4 py-2.5 text-muted ring-1 ring-black/10">Ask for a change</div>
-        </div>
-      </div>
-      </div>
-    </section>
-
-    <FirstIdea heading="So what's yours?" lead="Not sure yet? Answer a couple of questions." class="px-2 pt-16 sm:px-3 sm:pt-20" />
-
-    <section id="ai" class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made with AI&nbsp;inside.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("AI doesn't just make your software.")}<br />{together("It can be part of what it does.")}
-      </p>
-      <div class="mt-10"><Bento points={smarts} /></div>
-    </section>
-
-    <section id="features" class="bg-panel">
-      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <Bento points={points}>
-          <div class="overflow-hidden rounded-[28px] bg-page pt-12 text-center bento:col-span-10 sm:pt-16">
-            <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl"><span class="sm:inline-block">No localhost shenanigans.</span> <span class="sm:inline-block">No subscription. Just&nbsp;there.</span></h3>
-            <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
-              {together("In your Applications folder, your menu bar, your Dock and on your Home Screen.")}
-            </p>
-            <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
-              <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
-                {
-                  shelf.map((icon) => (
-                    <Image
-                      src={icon}
-                      alt=""
-                      width={136}
-                      height={136}
-                      densities={[1, 2]}
-                      class="size-24 drop-shadow-[0_12px_18px_rgba(0,0,0,0.14)] sm:size-34"
-                    />
-                  ))
-                }
-              </div>
-            </div>
-          </div>
-      </Bento>
-      </div>
-    </section>
-
-    <section>
-      <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
-      <h2 class="font-display text-4xl font-bold tracking-tight sm:text-5xl">Use the AI you already&nbsp;have.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">
-        {together("Lamp is free. It builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or a model that runs right on your Mac.")}
-      </p>
-      <ul class="mt-10 flex flex-wrap items-center justify-center gap-x-10 gap-y-6">
+    <!-- What it runs on, like the back of a box. -->
+    <section id="devices" class="mx-auto flex max-w-[80rem] flex-col gap-10 px-4 py-24 sm:px-6">
+      <h2 class="chip-heading max-w-[16ch] text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Runs on what's already yours.</h2>
+      <ul class="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-x-8 gap-y-7">
         {
-          providers.map((provider) => (
-            <li class="flex items-center gap-2.5 text-muted">
-              {
-                provider.logo ? (
-                  <Image src={provider.logo} alt="" width={24} height={24} densities={[1, 2]} class="size-6 opacity-70" />
-                ) : (
-                  <svg aria-hidden="true" viewBox="0 0 24 24" class="size-6 fill-none stroke-current stroke-[1.6] opacity-90">
-                    <rect x="6" y="6" width="12" height="12" rx="2.5" />
-                    <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
-                    <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9H6M2.5 12H6M2.5 15H6M18 9h3.5M18 12h3.5M18 15h3.5" stroke-linecap="round" />
-                  </svg>
-                )
-              }
-              <span class="font-medium">{provider.name}</span>
+          devices.map((device, i) => (
+            <li class="flex items-center gap-4 text-[1.375rem] leading-tight font-extrabold">
+              <span class="device-icon size-14 shrink-0" style={`--tone: var(--stripe-${i % 6})`} aria-hidden="true" set:html={device.icon} />
+              <span class="flex flex-col">
+                {device.name}
+                {device.brands && <span class="text-base leading-snug font-semibold text-[#4a463c]">{device.brands}</span>}
+              </span>
             </li>
           ))
         }
       </ul>
-      </div>
+      <p class="max-w-[52ch] text-xl leading-normal">{together("Lamp makes things not only look good in tons of devices, but makes it easy for you to set it up.")}</p>
     </section>
 
-    <section class="bg-panel">
-      <div class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
-      <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="mx-auto size-24 drop-shadow-[0_12px_24px_rgba(217,122,6,0.25)]" />
-      <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Go on, be&nbsp;selfish.</h2>
-      <div class="mt-9"><DownloadButton place="footer" /></div>
+    <!-- The lamp's light falls across the last section, in the sleeve's stripes, and on through the footer. -->
+    <section id="download" class="relative overflow-hidden bg-tape text-paper">
+      <span class="beam absolute top-0 right-0 h-full w-[46%] [clip-path:polygon(62%_0,82%_0,100%_100%,20%_100%)]" aria-hidden="true"></span>
+      <div class="relative mx-auto flex max-w-[80rem] flex-col items-start gap-6 px-4 py-28 sm:px-6">
+        <h2 class="max-w-[11ch] text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Lamp runs on your Mac.</h2>
+        <p class="max-w-[30ch] text-[1.375rem] text-[#e6dfca]">What you make runs on everything else. Free.</p>
+        <a href={DOWNLOAD_URL} data-download-place="footer" class="tape-button tape-button-lit">Download for Mac</a>
+        <p class="text-sm text-[#cfc8b2]">{together("For Macs with Apple Silicon and macOS 14 Sonoma or later")}</p>
       </div>
     </section>
+    <!-- A remix brought by a link (`?ask=`, with `starter=` or `repo=` when the page it came from names one), opened at
+         once over the page. -->
+    <RemixDialog />
   </main>
-
-  <QuickLook />
-
 </Base>
+
+<script>
+  import { mountSleeve, mountStack, watchReel } from "../lib/tapes";
+  const sleeve = document.querySelector<HTMLElement>("[data-tape-sleeve]");
+  const stack = document.querySelector<HTMLElement>("[data-tape-stack]");
+  if (sleeve) mountSleeve(sleeve);
+  // The sleeve's link and the flat shelf's (for a keyboard, or without WebGL) open the remix dialog in place, as the
+  // printed "Remix me" buttons do.
+  document.querySelectorAll<HTMLAnchorElement>("[data-remix-sleeve], [data-remix-link]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      document.dispatchEvent(new CustomEvent("lamp:remix", { detail: new URL(link.href).search }));
+    });
+  });
+  if (stack) mountStack(stack);
+  document.querySelectorAll<HTMLAnchorElement>("[data-try-link]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      document.dispatchEvent(new CustomEvent("lamp:try", { detail: new URL(link.href).search }));
+    });
+  });
+  // For a keyboard, what the expand button on a sleeve's reel does.
+  document.querySelectorAll<HTMLButtonElement>("[data-watch]").forEach((button) => {
+    button.addEventListener("click", () => watchReel(button.dataset.watch!, button.dataset.name!));
+  });
+</script>
+
+<style>
+  /* The sleeve's colors, green to magenta, and the bands they're printed in, always in that order. No blue or
+     purple: the page keeps to the warm half of the spectrum and the green that ends it. */
+  .tape-page {
+    --stripe-0: #1f8a4a; --stripe-1: #7cbf3a; --stripe-2: #f6b81c; --stripe-3: #f08a1c; --stripe-4: #e2402a;
+    --stripe-5: #d23778;
+    background-image: radial-gradient(rgb(60 40 10 / 0.07) 1px, transparent 1.4px), radial-gradient(rgb(60 40 10 / 0.05) 1px, transparent 1.4px);
+    background-size: 5px 5px, 9px 9px;
+    background-position: 0 0, 3px 4px;
+  }
+  .stripe-warm { background: linear-gradient(180deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
+  .beam { background: linear-gradient(90deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
+
+  /* The hero's field: the stripes on the slant, magenta through to green and round again, wide in the deep magentas
+     and reds that hold white words and narrow in the pale yellow and lime. They drift slowly up the slant, a whole
+     round every three minutes, on a layer larger than the hero that moves exactly one round and starts over, so the loop never
+     shows a seam. When a pale band passes under the words, a soft shadow behind them keeps them readable. */
+  .technicolor { position: relative; isolation: isolate; --round: 90rem; }
+  .technicolor::before {
+    content: ""; position: absolute; inset: calc(-1 * var(--round)); z-index: -1;
+    background: repeating-linear-gradient(150deg,
+      #b8235f 0 10.8rem, var(--stripe-5) 0 23.4rem, #dc3d52 0 36rem, var(--stripe-4) 0 48.6rem, #e5562a 0 59.4rem,
+      var(--stripe-3) 0 68.4rem, var(--stripe-2) 0 77.4rem, var(--stripe-1) 0 83.7rem, var(--stripe-0) 0 var(--round));
+    animation: hero-drift 180s linear infinite;
+  }
+  /* One round back along the stripes' own direction (150deg points across by sin and down by -cos; this goes the
+     other way, up and to the left). */
+  @keyframes hero-drift {
+    to { translate: calc(var(--round) * -0.5) calc(var(--round) * -0.866); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .technicolor::before { animation: none; }
+  }
+  .technicolor :is(h1, p) { text-shadow: 0 1px 2px rgb(60 10 20 / 0.2), 0 2px 24px rgb(60 10 20 / 0.25); }
+
+  /* Headings keep plain ink; the stripes sit above them, as a tab cut from the sleeve. */
+  .chip-heading::before {
+    content: ""; display: block; width: 5.5rem; height: 1.25rem; margin-bottom: 1.5rem;
+    background: linear-gradient(150deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%,
+      var(--stripe-4) 0 83.3%, var(--stripe-5) 0);
+  }
+
+  /* The 3D tapes run past their host's box, letting the pointer through (lib/tapes.ts). Once they're drawn, the flat version stays only for screen readers,
+     and the buttons that turn the tapes over (otherwise unseen) show when a keyboard reaches them. */
+  .tape-host { position: relative; }
+  .tape-host :global(.tape-canvas) { position: absolute; pointer-events: none; }
+  .tape-host.is-3d > .tape-fallback, .tape-control {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .tape-host:not(.is-3d) > .tape-control { display: none; }
+  .tape-control:focus-visible {
+    width: auto; height: auto; clip-path: none; left: 1rem; bottom: 1rem; z-index: 1; padding: 0.5rem 0.875rem;
+    background: var(--color-paper); color: var(--color-tape); font-weight: 800; border-radius: 6px;
+    outline: 3px solid var(--stripe-0); outline-offset: 2px;
+  }
+
+  /* A sleeve's reel, large over the page. */
+  :global(.reel-viewer) {
+    width: min(92vw, 150vh); max-width: none; max-height: none; margin: auto; padding: 0; overflow: visible;
+    background: transparent; border: 0;
+  }
+  :global(.reel-viewer::backdrop) { background: rgb(20 18 14 / 0.88); }
+  :global(.reel-viewer video) { display: block; width: 100%; max-height: 88vh; border-radius: 8px; background: #000; }
+  :global(.reel-viewer button) {
+    display: block; margin: 0.75rem auto 0; padding: 0.5rem 1.25rem; border-radius: 6px; cursor: pointer;
+    background: var(--color-paper); color: var(--color-tape); font-weight: 800;
+  }
+
+  /* An icon's outline in ink, and its fill printed in a color of the sleeve's. */
+  .device-icon :global(svg) { width: 100%; height: 100%; color: var(--color-tape); }
+  .device-icon :global(path[opacity]) { fill: var(--tone); opacity: 1; }
+
+  .tape-button {
+    display: inline-flex; align-items: center; min-height: 3.25rem; padding: 0 1.625rem; border-radius: 6px;
+    background: var(--color-tape); color: var(--color-paper); font-size: 1.125rem; font-weight: 800;
+    transition: translate 0.2s ease;
+  }
+  .tape-button:hover { translate: 0 -2px; }
+  .tape-button:focus-visible { outline: 3px solid var(--stripe-0); outline-offset: 3px; }
+  .tape-button-paper { background: var(--color-paper); color: var(--color-tape); }
+  /* Over the drifting stripes, on a dark wash of its own: white stays readable over the pale bands as they pass. */
+  .tape-button-outline-white { background: rgb(31 28 23 / 0.6); color: #fff; box-shadow: inset 0 0 0 2px #fff; }
+  /* On the dark last section, in the yellow of the lamp's light. */
+  .tape-button-lit { background: var(--stripe-2); color: var(--color-tape); }
+
+  /* The sleeve's links to play and remix it: under the flat sleeve, and once the 3D one is drawn (whose printed buttons
+     do the same), seen only when a keyboard reaches them. */
+  .sleeve-links { position: absolute; bottom: 1rem; left: 50%; translate: -50% 0; z-index: 1; display: flex; gap: 0.5rem; white-space: nowrap; }
+  .tape-host.is-3d > .sleeve-links > a:not(:focus-visible) {
+    position: absolute; width: 1px; height: 1px; padding: 0; min-height: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+</style>

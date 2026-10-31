@@ -54,7 +54,10 @@ Where each field of the device's record is read from its own answers. `os` is sa
 ```
 
 A read has `json` (a dotted path: `device.modelName`, `items.0.id`) or `xml` (an element, or `parent/child`). Reads are
-GETs.
+GETs. In place of `http`, `"description": true` reads the device's UPnP description wherever its SSDP answer points now
+(with `xml`), for a device whose description moves with its mode, as an Xbox's does. `contains` on a read says what the
+value must hold for the device to be this kind (`"contains": "Xbox"` on the model), when other devices answer the same
+search.
 
 ### Requests
 
@@ -69,19 +72,37 @@ Every request goes to the address the device was found at; you give only the por
 `https: true` for a device that only speaks HTTPS with a certificate of its own (Xbox's Device Portal): Lamp
 trusts that certificate the first time and holds the device to it after. `method` (GET, POST, PUT, DELETE), `headers`, `body` or `form` (a value `"@{package}"` sends the package file), `auth`
 (`digest` true or false for basic; the password is always one `{field:…}`), and `keep`: `"picture"` in `bridge.look`
-for the answer that is the screen's picture, `"key"` in a step's `run` for an SSH key the device gives this Mac.
+for the answer that is the screen's picture, `"screen"` in `bridge.screen` for the answer that is the screen as text (the
+tree of what the app shows, where the device describes it), `"log"` in `bridge.log` for the answer that is the app's log, `"key"` in a
+step's `run` for an SSH key the device gives this Mac.
+`poll` (seconds) asks again every two seconds while the device answers 204 (still working on an install), and `expect`
+(`json` or `xml`, with `equals` or `contains`) is what the answer must say for the step to count, else it fails with the
+device's words. In a `json` path, `*` is every element of a list, and the answer counts when any of them says it
+(`"InstalledPackages.*.PackageFullName"`); `equals` and `contains` may hold Lamp's values (`"{packageFullName}"`).
+`until` (seconds, with `expect`) asks again every two seconds until the answer says it: for a device that's done with an
+install a while before the app can be opened, end `install` with a request that waits until the device lists the app. A form value `"@{certificate}"` sends Lamp's certificate for a wrapped package (below).
+`restore` (a JSON field's name) on a PUT or POST that changes a setting only for its sequence: Lamp first reads the
+same path with a GET, takes that field's value, and when the sequence ends (in `bridge.install`, once the app has been
+launched after it), however it ends, sends `{"<field>": "<that value>"}` back the same way. For a device-wide setting an install needs (an Xbox installs a package as a game only while
+`/ext/settings/DefaultUWPContentTypeToGame` is `{"Value":"{isGame}"}`), so the person's own choice is left as it was.
 
 ### Values Lamp fills
 
 Write `{name}`; Lamp fills it, checked to a safe alphabet. You never write a value yourself.
 
 - `{address}` the device's address, `{mac}` this Mac's address on that network, `{deviceID}` the device's id
-- `{package}` the built package's file, `{appID}` the app's id, `{key}` a remote key from `bridge.keys`, `{text}` text to type
+- `{package}` the built package's file, `{appID}` the app's id, `{key}` a remote key from `bridge.keys`, `{text}` one character being typed (only in `bridge.type`, in a path, form or body; in a path Lamp percent-encodes it)
 - `{callback}` the sign-in's address back (only in `vendorSignIn.page`), `{signIn}` what that sign-in returned
 - `{sshKey}` Lamp's public SSH key, for a device that must be told it
 - `{field:<key>}` what the person typed in a step's field: only in a sign-in, a form, a header or a body, never in a path
   or command
 - `{read:<step>}` the value a step's check read
+- `{cookie:<name>}` a cookie the device set earlier in the same sequence, only in a header (a CSRF token: a GET first,
+  then `"X-CSRF-Token": "{cookie:CSRF-Token}"` on the POST)
+- `{packageFullName}` and `{appUserModelID}` a wrapped Windows package's names, and `{base64:<one of Lamp's values>}`
+  any of Lamp's values in base64, as some devices take an id in a query
+- `{isGame}` "true" when the app is a game (Lamp's native games, or `{"game": true}` in the app's capabilities.json or its icon.json),
+  else "false", for a device that installs games differently from apps
 
 ### steps
 
@@ -110,10 +131,14 @@ The setup, in order. Each step is done when its `check` passes, never because an
 - `check`: every condition must hold. Each is one of `http` (answers 2xx; with `json` or `xml`, the value `equals` or
   `contains` something), `tcp` (a port that accepts a connection), `field` (the person typed it), `signedIn` (a
   `vendorSignIn` came back).
+- `model`: `true` when the value the check reads is the device's model, finer than what it says before it's set up
+  (an Xbox's description says Xbox One on every console; Device Portal's `/api/os/info` names the console).
 - Every setting of the device's that the bridge needs is a step of its own, checked on the device, so it's found in
   setup rather than when a builder first uses it: a Roku answers key presses only with Settings → System → Advanced
   system settings → Control by mobile apps set to Enabled, which its device-info says
-  (`{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "ecp-setting-mode", "equals": "enabled"}`).
+  (`{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "ecp-setting-mode", "equals": "enabled"}`; Roku's ECP
+  page doesn't list that field, but Rokus report it: enabled, limited, disabled or permissive). Never ask for a setting
+  looser than the bridge needs (a Roku's Permissive).
 - `accepts`: what doing it may cost, from Lamp's list; Lamp writes the sentences. `account` (an account with the
   maker), `softwareRisk` (it may stop working until reset), `warranty`, `dataWiped`, `updatesStop`, `protectionsOff`,
   `commandRuns` (required by any step that runs `ssh` or a downloaded `tool`).
@@ -144,7 +169,20 @@ to make apps for the device with, and the builder of each app gets it as Lamp's 
 the person presses Play and at every look, `look` for the picture the builder sees, `use` once for each of the
 remote's keys the builder presses (`{key}` is the device's name for it, from `keys`), `logs` read into the app's log
 while it's open. What the device answers to `install` is shown to the builder, so a device that says there what it
-made of the package (a compile error) needs nothing more. Lamp presses `home` when the app is stopped.
+made of the package (a compile error) needs nothing more. `stop` ends the app when the person stops it (Lamp presses
+`home` when there's no `stop`, or the device refuses it), and for a wrapped package it also ends the copy on the device
+before an update goes over it, with the values of the copy that's there. `running` says whether the app `launch` opened
+is running: a request whose `expect` finds it among the device's processes, with `until` a few seconds. Lamp launches
+again, with growing pauses, while the device refuses the launch or the app isn't running, and says so plainly when it
+never opens. `type` types into a keyboard on the device's
+screen, run once per character with `{text}` that character (a Roku's `/keypress/Lit_{text}`). `log` reads a log the app keeps on the device (a file) for the
+builder, for a device with no log to stream. `remove` takes the app off the device when its wish is deleted. With `app`,
+each of `stop`, `remove` and `type` is there or named in `"lacks": ["type"]` when the device has no way to do it, so
+Lamp can tell one forgotten from one that can't be; and every picture the scaffold names is in `files` or `icons`, and
+`rules` names each library in `support`. `known` is Lamp's: once the device is set up, the person can have Lamp try the
+integration on it (a test app put on, opened, pictured, pressed, typed into, stopped, put on again while open, and taken
+off), and a run that passes marks the bridge with the device's model. What the run found comes back to you with the
+next request in the device's setup conversation: fix the integration from the device's own words and send it again.
 
 ```json
 "bridge": {
@@ -158,6 +196,11 @@ made of the package (a compile error) needs nothing more. Lamp presses `home` wh
               { "http": { "port": 80, "path": "/pkgs/dev.jpg", "keep": "picture",
                           "auth": { "digest": true, "user": "rokudev", "password": "{field:password}" } } }],
   "use":     [{ "http": { "method": "POST", "port": 8060, "path": "/keypress/{key}" } }],
+  "type":    [{ "http": { "method": "POST", "port": 8060, "path": "/keypress/Lit_{text}" } }],
+  "stop":    [{ "http": { "method": "POST", "port": 8060, "path": "/exit-app/dev" } }],
+  "remove":  [{ "http": { "method": "POST", "port": 80, "path": "/plugin_install",
+                          "auth": { "digest": true, "user": "rokudev", "password": "{field:password}" },
+                          "form": { "mysubmit": "Delete", "archive": "" } } }],
   "logs":    [{ "stream": { "port": 8085 } }],
   "keys": { "home": "Home", "up": "Up", "down": "Down", "left": "Left", "right": "Right", "select": "Select", "back": "Back" }
 }
@@ -168,20 +211,62 @@ made of the package (a compile error) needs nothing more. Lamp presses `home` wh
 What's built for it: `{"lamp": "tv-web"}` for Lamp's own TV web app, or a kind you declare. A declared kind becomes
 a kind of app people can wish for ("a Roku app that…"): `files` is each new app's scaffold, where `{{NAME}}` is the
 app's name; `rules` is what its builder is told about writing for the device (the language, the layout, the screen,
-how input arrives, where its output is printed), as the only guide they get; `package` is the shell command that
+how input arrives, where its output is printed, and how it plays sound: the device's own way for short effects and
+for music, the formats it plays, and that a game keeps both quiet with a way to turn them off), as the only guide
+they get; `package` is the shell command that
 makes the package from the app's folder, run there in the app's sandbox with the system's own tools (`zip`, `tar`),
 never anything to download; `output` is where it leaves it, which `"@{package}"` sends.
 
 ```json
 "app": { "declared": {
-  "files": { "manifest": "title={{NAME}}\nmajor_version=1\n…", "source/main.brs": "sub Main()\n…\nend sub\n" },
+  "files": { "manifest": "title={{NAME}}\nmajor_version=1\nmm_icon_focus_hd=pkg:/images/icon_focus_hd.png\n…", "source/main.brs": "sub Main()\n…\nend sub\n" },
   "rules": "What a builder needs to know to write apps for it, in a few sentences.",
-  "package": "rm -f build/app.zip && mkdir -p build && zip -r build/app.zip manifest source components images",
-  "output": "build/app.zip"
+  "package": "rm -f build/app.zip && mkdir -p build images && zip -qr build/app.zip manifest source components images",
+  "output": "build/app.zip",
+  "icons": { "images/icon_focus_hd.png": "290x218", "images/icon_focus_fhd.png": "540x405" }
 } }
 ```
 
 The package step runs in the app's sandbox like every build.
+
+`"support"` gives the app Lamp's building blocks (AI through the person's Mac, saved data, the package's own files),
+by library to where they go in the app's folder: `"web": "Web/lamp.js"` for an app that's a web page (a script its
+`index.html` loads before the app's own), `"brightscript": "components/Lamp"` for a Roku channel (a folder its
+components include). Lamp writes them before every build, so keep them out of `files`, and make sure the package step
+takes them into the package. Lamp tells the app where it is and gives it its token on the device itself.
+
+`"icons"` gives the app its icon on the device, wherever the device shows one (a channel's poster on a Roku's home
+screen, a tile, a splash screen, a launcher): by path in the app's folder to its size in pixels,
+`"images/icon_focus_hd.png": "290x218"`, one for each picture the device's manifest names, at the sizes its maker
+documents. Lamp draws the icon it made for the app at each path before every build (a dark tile until there is one), so name those paths in the scaffold's manifest, keep them out of `files`, and make
+sure the package step takes them in. Never draw an icon in the scaffold or the package step. A device that shows no icon
+for an app needs none.
+
+`"support"` may also name `"three"`, three.js (the 3D library, with its light addons), as a folder in the app's web
+folder (`"three": "Web/three"`): for a device whose web view runs WebGL 2 and ES modules and whose apps may be games or 3D
+scenes. Lamp writes it with the others; say in the rules to load it through an import map (`"three"` to
+`./three/three.module.js`, `"three/addons/"` to `./three/addons/`) from a module script.
+
+`"preview": "Web"` is for a web app: the folder whose `index.html` Lamp opens at 1920x1080 in a window on the person's Mac,
+for the builder to look at and try as it works (a TV app's preview), since the device's own screen can only be pictured,
+not played. Play still puts the app on the device. Give one whenever the app is a web page; the rules should then say the
+app must also work with the keyboard (arrows, Enter, Escape for the device's Back), which is how the preview is used.
+
+`"wrap": "msix"` is for a device that takes Windows app packages (an Xbox in Developer Mode, through its Device
+Portal): the package step leaves a `.zip` of the app's files, and Lamp makes the package itself, writing its manifest
+(started at `start`, `index.html` unless said), its logos from the app's icon, and its signature with a certificate of
+Lamp's. Install it with the package and `"@{certificate}"` in one form, and launch it by `{base64:appUserModelID}` and
+`{base64:packageFullName}`. Never write a manifest or sign anything in the package step. With `"host": "webview2"` beside it, the
+pages are shown in Lamp's own host for Chromium's WebView2 rather than the system's older EdgeHTML: much faster, WebGL 2
+and current JavaScript, with the app's console in its log. Use it for a web app on an Xbox; `start` is then `index.html`.
+
+`"purpose"` says in a few words what the kind is for ("an app with menus and pages"), for a device that takes more than
+one kind. The integrations Lamp ships may offer more kinds beside `app` in `kinds` (the Xbox's native 3D games,
+`{"lamp": "native-game"}`); an integration you write has only `app`.
+
+`"runs"`, beside `app`, says in one plain sentence what the device runs ("Only its own channels, written in BrightScript
+and driven by the remote: no web pages, no 3D"). Lamp gives it as the reason when something the device can't run is asked
+of it, so write it for the person, from the device's documentation.
 
 ## Checking it before you send
 

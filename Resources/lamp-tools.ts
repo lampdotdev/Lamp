@@ -16,14 +16,24 @@
  *   in a line what they cover. These open them when a request needs them, and replace them.
  * - `make_art`: asks Lamp to paint a picture for the app in its icon's style and save it in Assets/; the reply
  *   shows it to the agent.
+ * - `assets`: asks Lamp to find free ready-made models, sprites, tiles, icons, textures, sounds and music in its index, or to fetch the
+ *   chosen ones into the app and credit them; Lamp does the fetching, and the reply may show their pictures.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
- * - `make_app_for`: asks Lamp to make the app for the Mac, the iPhone and iPad, or both; the reply says how to
- *   adapt the code.
+ * - `make_app_for`: gives the wish a new app, or changes the one whose folder `app` names, given what it is (a game or
+ *   an app), the devices it's on and whether it's made as a web page or native code; the wish's other apps stay. The
+ *   reply says how to adapt the code and gives a new app's rules.
+ * - `remove_app`: takes one of the wish's apps away, by its folder; its versions keep it.
+ * - `rename_app`: gives the wish the name the person asked for, as Rename on the desk does.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
+ * - `lampify`: gives an app made from someone's project on GitHub its credit at one pinned commit, the project's
+ *   license and notice files and its manifest, and answers with what the Lamp app still lacks.
+ * - `network_devices`: lists the devices on the person's home network as Lamp's own look finds them now, with what
+ *   Lamp already has for each.
  * - `device_integration`: hands Lamp a device's integration as data; Lamp checks it and answers with what's wrong,
  *   or keeps it and finds the device.
+ * - `device_permission`: asks the person, on a card of Lamp's own, whether the agent may change one of their devices.
  * - `ask`, `progress`, `write_wish`: `ask` puts questions in the chat as a card the person answers by clicking,
  *   `progress` puts a short line on how the work is going in the chat, and
  *   `write_wish` writes a found wish into the message box. Lamp draws the card and turns a click into the
@@ -38,7 +48,7 @@
  *   in place of the command (as Claude Code's own Bash has); its edit and write are given a `doing`, which Lamp
  *   shows the same way.
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Lamp reads the
- *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
+ *   list from pi's event stream, shows it as the chat's chapters, and ticks parts as their files are written,
  *   so the tool itself has nothing to do. * - Messages the person sends while the agent works reach it in the same turn: after each of pi's turns (a
  *   reply and the tools it called) this asks Lamp for them and hands them to pi as steering, which pi gives
  *   the model before its next request.
@@ -83,7 +93,7 @@ const lookAtApp = defineTool({
 });
 
 /**
- * Lamp's answer to look_at_app, use_app or make_art: its text, then its pictures (if the model can see them). Lamp
+ * Lamp's answer to look_at_app, use_app, make_art or assets: its text, then its pictures (if the model can see them). Lamp
  * sends the pictures' bytes, read where no link can lead elsewhere; a path read here could have been swapped for a
  * link to any file by then.
  */
@@ -109,18 +119,21 @@ async function pictureReply(response: Response, model: { input: string[] } | und
 }
 
 /**
- * Keeps the pictures in the conversation few enough to send. Every look_at_app, use_app and make_art reply
+ * Keeps the pictures in the conversation few enough to send. Every look_at_app, use_app, make_art and assets reply
  * carries one, and the conversation is sent whole with every request: left in, they add up until the provider
  * refuses the request (Anthropic takes 30 MB of images in one; OpenRouter drops the connection at about 5 MB of
- * body, which pi reports as a connection error). So after each turn the older ones are taken out of what the
- * model is sent, with a line in their place, through pi's context edits: the session file keeps them, and the
- * person's chat never showed them anyway. The newest few stay, within a byte budget, so the model can still
- * compare what it just did with the picture before.
+ * body, which pi reports as a connection error). So the older ones are taken out of what the model is sent, with a
+ * line in their place, through pi's context edits: the session file keeps them, and the person's chat never showed
+ * them anyway. The newest few stay, within a byte budget, so the model can still compare what it just did with the
+ * picture before. In a batch, as Lamp does for Claude Code and Codex (`Conversation.keepPicturesFew`): only once more
+ * than LAMP_TRIM_PICTURES are sent, or they pass the budget, do all but the newest LAMP_KEEP_PICTURES go, since each
+ * change to the conversation's earlier part costs its cached copy at the provider.
  *
  * When a request was refused as too big all the same (a conversation from before this ran, or one with
  * pictures from elsewhere), every picture goes and the request is sent once more.
  */
-const keepPictures = 6;
+const keepPictures = Number(process.env.LAMP_KEEP_PICTURES) || 6;
+const trimAbove = Number(process.env.LAMP_TRIM_PICTURES) || 12;
 const pictureBudget = 2_500_000;   // base64 characters, well under what OpenRouter takes
 const droppedPicture = "(The picture that came with this reply was taken out of the conversation to make room. " +
 	"The newest pictures are still here; look_at_app gives a fresh one.)";
@@ -167,7 +180,7 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 		const error = message.stopReason === "error" ? (message.errorMessage ?? "") : "";
 		const total = pictures.reduce((sum, picture) => sum + picture.bytes, 0);
 		// A connection dropped the moment a picture-heavy request went out is the body's size too.
-		const refused = error !== "" && (isRequestTooLarge(error) || (/connection error/i.test(error) && total > pictureBudget));
+		const refused = error !== "" && (isRequestTooLarge(error) || (/connection error|eproto|econnreset|socket hang up/i.test(error) && total > pictureBudget));
 		const entries = [...(event.entries as unknown[])];
 		if (refused && pictures.length > 0 && !retried) {
 			retried = true;
@@ -176,6 +189,8 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 			if (event.messageEntryId) entries.push({ type: "context_edit", targetId: event.messageEntryId, replacement: null });
 			return { entries, continue: true };
 		}
+		// Nothing changes until there are too many, or too many bytes.
+		if (pictures.length <= trimAbove && total <= pictureBudget) return undefined;
 		// Newest first: keep up to the limit and the budget, drop the rest.
 		let kept = 0;
 		let bytes = 0;
@@ -188,6 +203,23 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 			}
 		}
 		return entries.length > (event.entries as unknown[]).length ? { entries } : undefined;
+	});
+}
+
+/** Compacts the conversation at Lamp's size (`Conversation.compactAt`, in LAMP_COMPACT_TOKENS) rather than near the
+ * model's window, as Claude Code and Codex are told to: a model with a million tokens would otherwise carry every
+ * request's history, and its cost, for days. pi's own compaction does the work, and reports it as it does when it
+ * compacts on its own (`compaction_end`). Once per run: the summary it leaves is far under the line. */
+function compactsEarly(pi: ExtensionAPI) {
+	const limit = Number(process.env.LAMP_COMPACT_TOKENS ?? "");
+	if (!Number.isFinite(limit) || limit <= 0) return;
+	let compacted = false;
+	pi.on("turn_end", (_event, ctx) => {
+		const tokens = ctx.getContextUsage()?.tokens;
+		if (compacted || tokens == null || tokens <= limit) return undefined;
+		compacted = true;
+		ctx.compact({});
+		return undefined;
 	});
 }
 
@@ -302,14 +334,15 @@ const writeWithDoing = () => withWords(createWriteTool(process.cwd()), "doing", 
 
 /** Asks Lamp to approve a shell command: a reason when it isn't approved, else the command to run (Lamp hands
  * it back confined to the app's folder, see Sandbox). */
-async function askLamp(command: string, description: string | undefined, signal?: AbortSignal): Promise<{ reason?: string; command?: string }> {
+async function askLamp(command: string, description: string | undefined, call: string | undefined, signal?: AbortSignal): Promise<{ reason?: string; command?: string }> {
 	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return { reason: "Shell commands need approval in Lamp, and Lamp isn't available." };
 	try {
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
-			body: JSON.stringify({ command, description }),
+			// The call's id ties the command's row in the chat to this call, whose outcome comes back by it.
+			body: JSON.stringify({ command, description, call }),
 			// The user may take a while to answer; Lamp itself never times out on their behalf.
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_600_000)]) : AbortSignal.timeout(3_600_000),
 		});
@@ -538,6 +571,21 @@ const makeArt = defineTool({
 	},
 });
 
+const assets = defineTool({
+	...spec("assets"),
+	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		const url = process.env.LAMP_ASSETS_URL;
+		if (!url) throw new Error("Lamp isn't available to find assets.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
+		});
+		return pictureReply(response, ctx.model, "Lamp couldn't do that with the assets.");
+	},
+});
+
 const offerSetup = defineTool({
 	...spec("offer_setup"),
 	async execute(_toolCallId, params, signal) {
@@ -572,6 +620,40 @@ const makeAppFor = defineTool({
 	},
 });
 
+const removeApp = defineTool({
+	...spec("remove_app"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_REMOVE_URL;
+		if (!url) throw new Error("Lamp isn't available to change that.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
+const renameApp = defineTool({
+	...spec("rename_app"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_RENAME_URL;
+		if (!url) throw new Error("Lamp isn't available to change that.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 const connectors = defineTool({
 	...spec("connectors"),
 	async execute(_toolCallId, params, signal) {
@@ -582,6 +664,40 @@ const connectors = defineTool({
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: JSON.stringify(params),
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
+const lampify = defineTool({
+	...spec("lampify"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_LAMPIFY_URL;
+		if (!url) throw new Error("Lamp isn't available to lampify that.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(660_000)]) : AbortSignal.timeout(660_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
+const networkDevices = defineTool({
+	...spec("network_devices"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_NETWORK_URL;
+		if (!url) throw new Error("Lamp isn't available to look around the network.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
 		});
 		const reply = (await response.json()) as { text?: string; error?: string };
 		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
@@ -641,7 +757,7 @@ export default function (pi: ExtensionAPI) {
 		if (event.toolName !== "bash") return undefined;
 		const input = event.input as { command?: unknown; description?: unknown };
 		const said = typeof input.description === "string" ? input.description : undefined;
-		const answer = await askLamp(String(input.command ?? ""), said, ctx.signal);
+		const answer = await askLamp(String(input.command ?? ""), said, event.toolCallId, ctx.signal);
 		if (answer.reason) return { block: true, reason: answer.reason };
 		if (answer.command) input.command = answer.command;   // the hook may change the input before it runs
 		return undefined;
@@ -650,6 +766,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(editWithDoing());
 	pi.registerTool(writeWithDoing());
 	keepsPicturesFew(pi);
+	compactsEarly(pi);
 	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
@@ -660,11 +777,16 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(nameVersion);
 	pi.registerTool(restoreVersion);
 	pi.registerTool(makeArt);
+	pi.registerTool(assets);
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
+	pi.registerTool(removeApp);
+	pi.registerTool(renameApp);
 	pi.registerTool(connectors);
+	pi.registerTool(lampify);
+	pi.registerTool(networkDevices);
 	pi.registerTool(deviceIntegration);
-	for (const name of ["ask", "progress", "write_wish"]) pi.registerTool(talkTool(name));
+	for (const name of ["ask", "progress", "write_wish", "device_permission"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 	pi.registerTool(readSkill);
 }

@@ -8,7 +8,7 @@ final class AskCardTests: XCTestCase {
         let codex = #"{"type":"item.started","item":{"type":"mcp_tool_call","tool":"ask","arguments":{"questions":[]}}}"#
 
         for line in [claude, codex] {
-            guard case .tool(let label, _, _) = Agent.parse(line, engine: line == claude ? .claude : .codex).first else {
+            guard case .tool(let label, _, _, _, _) = Agent.parse(line, engine: line == claude ? .claude : .codex).first else {
                 return XCTFail("The ask call was not parsed as a tool")
             }
             XCTAssertEqual(label, "ask")
@@ -29,7 +29,7 @@ final class AskCardTests: XCTestCase {
          {"id":"6F3C1D0E-5B0A-4C55-9E57-0B8C6C1F5A04","kind":"ask","text":"","ask":{"questions":[
             {"question":"Who is it for?","options":["Just me","My team"]}],"dismissed":true}},
          {"id":"6F3C1D0E-5B0A-4C55-9E57-0B8C6C1F5A05","kind":"ask","text":"","ask":{"questions":[
-            {"question":"How should deals be organised?","options":["One list","A pipeline board"],"chosen":"One list"}]}}]
+            {"question":"How should deals be organized?","options":["One list","A pipeline board"],"chosen":"One list"}]}}]
         """#.utf8)
 
         let lines = try JSONDecoder().decode([LogLine].self, from: saved)

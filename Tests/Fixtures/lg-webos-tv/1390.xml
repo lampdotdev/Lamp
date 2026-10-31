@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0">
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:Basic:1</deviceType>
+    <friendlyName>[LG] webOS TV NANO80ASA</friendlyName>
+    <manufacturer>LG Electronics</manufacturer>
+    <manufacturerURL>http://www.lge.com</manufacturerURL>
+    <modelDescription></modelDescription>
+    <modelName>LG Smart TV</modelName>
+    <modelURL>http://www.lge.com</modelURL>
+    <modelNumber>65NANO80ASA.BWCDLKR</modelNumber>
+    <serialNumber></serialNumber>
+    <UDN>uuid:11111111-2222-4333-8444-000000001390</UDN>
+    <alwaysOn>not support</alwaysOn>
+    <appCasting>support</appCasting>
+    <bluetoothMac>00:00:5E:00:53:00</bluetoothMac>
+    <platformCode>10</platformCode>
+    <productCode>1</productCode>
+    <supportAppcastingFeatures>mirroring|remote-camera|URLCast</supportAppcastingFeatures>
+    <serviceList>
+      <service>
+        <serviceType>urn:lge-com:service:webos-second-screen:1</serviceType>
+        <serviceId>urn:lge-com:serviceId:webos-second-screen-3000-3001</serviceId>
+        <SCPDURL>/WebOS_SecondScreen/11111111-2222-4333-8444-000000001390/scpd.xml</SCPDURL>
+        <controlURL>/WebOS_SecondScreen/11111111-2222-4333-8444-000000001390/control.xml</controlURL>
+        <eventSubURL>/WebOS_SecondScreen/11111111-2222-4333-8444-000000001390/event.xml</eventSubURL>
+      </service>
+    </serviceList>
+  </device>
+</root>

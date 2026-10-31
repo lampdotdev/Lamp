@@ -1,0 +1,32 @@
+{
+  "window": {
+    "width": 1200,
+    "height": 675
+  },
+  "steps": [
+    {
+      "wait": 2.5
+    },
+    {
+      "action": "click",
+      "target": "Make Invoice"
+    },
+    {
+      "wait": 4
+    },
+    {
+      "action": "click",
+      "target": "By Note"
+    },
+    {
+      "wait": 4
+    },
+    {
+      "action": "click",
+      "target": "Close"
+    },
+    {
+      "wait": 2
+    }
+  ]
+}

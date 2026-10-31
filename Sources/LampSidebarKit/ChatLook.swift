@@ -5,7 +5,7 @@ import AppKit
 /// extension), so the two are drawn by the same code and can't drift apart. Each takes plain values: what a line
 /// says and how it stands, never Lamp's own state.
 public enum ChatLook {
-    /// A request's bubble, on the right, as Messages draws what you sent: white words on the accent colour.
+    /// A request's bubble, on the right, as Messages draws what you sent: white words on the accent color.
     /// A request still waiting its turn is the same bubble, faded.
     public struct UserBubble: View {
         let text: String
@@ -19,10 +19,10 @@ public enum ChatLook {
             Text(text)
                 .textSelection(.enabled)
                 .lineSpacing(2)
-                .foregroundStyle(.white)
-                .tint(.white)
+                .foregroundStyle(Paper.onInk)
+                .tint(Paper.onInk)
                 .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(Bubble(.trailing).fill(Color.accentColor))
+                .background(Bubble(.trailing).fill(Paper.ink))
                 .opacity(waiting ? 0.7 : 1)
                 .padding(.trailing, ChatLook.tailRoom)
         }
@@ -38,7 +38,7 @@ public enum ChatLook {
             self.keep = keep
         }
 
-        /// In a grey bubble on the left, as Messages draws the other person's. Answers run longer than a text
+        /// In a gray bubble on the left, as Messages draws the other person's. Answers run longer than a text
         /// message, so the bubble may take most of the width, leaving room on the right to tell it from a request.
         public var body: some View {
             content
@@ -92,7 +92,7 @@ public enum ChatLook {
                 Divider()
             case .table(let columns, let header, let rows):
                 // Top-aligned: lining cells up by their first baselines cost several times as much to lay out, and
-                // a cell's first line sits level with its neighbours' either way. The cells can't be selected, for
+                // a cell's first line sits level with its neighbors' either way. The cells can't be selected, for
                 // the same cost: a selectable text in each would make a table the slowest thing in the chat.
                 Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 4) {
                     GridRow {
@@ -282,7 +282,7 @@ public enum ChatLook {
         public var body: some View {
             HStack(spacing: 6) {
                 Group {
-                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: "checkmark.circle") }
+                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: ChatLook.stepSymbol(text)) }
                 }
                 .frame(width: 16)
                 Text(text)
@@ -294,7 +294,7 @@ public enum ChatLook {
     }
 
     /// What the agent said about how the work was going ("The layout's in. Now the timer."), once its turn is over
-    /// and the line is among the turn's steps: grey like them. While the turn goes on it's a message like any other
+    /// and the line is among the turn's steps: gray like them. While the turn goes on it's a message like any other
     /// (`AgentText`).
     public struct ProgressLine: View {
         let text: String
@@ -317,11 +317,13 @@ public enum ChatLook {
     /// The progress line's mark, which also tells the sidebar a status line is one (`SidebarLine.symbol`).
     public static let progressSymbol = "ellipsis.bubble"
 
-    /// The agent's steps (what it ran, read, checked) are told in small grey words under its bubbles, as Messages
+    /// The agent's steps (what it ran, read, checked) are told in small gray words under its bubbles, as Messages
     /// says a message was delivered: there, but quieter than what's said.
     public static let stepFont = Font.subheadline
     /// Steps line up with the words in the agent's bubbles.
     public static let stepIndent: CGFloat = tailRoom + 4
+    /// A step's symbol column and the space after it, where its words begin.
+    public static let stepSymbolRoom: CGFloat = 16 + 6
 
     /// A finished turn's steps under one line, "Worked for 2 min 3 s", opened with a click to show each of them.
     /// The steps draw themselves, set in as the agent's steps are.
@@ -382,7 +384,7 @@ public enum ChatLook {
                     withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle").frame(width: 16)
+                        Image(systemName: ChatLook.stepSymbol(said ?? "")).frame(width: 16)
                         Text(said ?? ChatLook.unnamedStep)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
@@ -411,31 +413,42 @@ public enum ChatLook {
     /// A step the agent gave no words of its own.
     public static let unnamedStep = "Did a bit of housekeeping"
 
+    /// What a step that was tried and didn't work says after its words.
+    public static let failedMark = " (failed)"
+
+    /// A done step's tick, or a cross for one that says it failed, so its row never reads as done.
+    public static func stepSymbol(_ words: String) -> String {
+        words.hasSuffix(failedMark) ? "xmark.circle" : "checkmark.circle"
+    }
+
     /// The command in a status line that says one was run, or that one was stopped before it ran ("Not run: …", by
     /// a reviewer or a classifier). A stopped command is the same step, by the name the agent gave it, whatever the
     /// engine: its line was already showing while it was judged, and only opening the step says it didn't run.
     public static func ranCommand(in status: String) -> String? {
         if status.hasPrefix("Ran: ") { return String(status.dropFirst(5)) }
-        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + "  (not run)" }
+        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + notRunMark }
         return nil
     }
 
     /// How a status line says a command was stopped before it ran.
     public static let notRun = "Not run: "
 
+    /// What a stopped command says after it once its step is opened, and keeps when commands of one name are one row.
+    public static let notRunMark = "  (not run)"
+
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
     /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is
-    /// counted from (the turn's start when it isn't known). It starts open, with the steps done since the agent last
-    /// said something above it, oldest first, and itself at the bottom saying what's going on now; a click folds them.
-    /// Steps before that stay where they came, between what was said. The whole turn's time is its "Worked for…": when
-    /// the turn ends, the steps before its answer fold into it (`Worked`), above the answer.
+    /// counted from (the turn's start when it isn't known). The steps done since the agent last said something are
+    /// above it, oldest first, and itself at the bottom saying what's going on now. It doesn't fold: what's going on
+    /// is what's worth seeing, and its steps fold to one line once the agent says something after them
+    /// (`ChatItem.closing`), with the chevron every finished fold has. The whole turn's time is its "Worked for…":
+    /// when the turn ends, the steps before its answer fold into it (`Worked`), above the answer.
     public struct ActivityLine<Steps: View>: View {
         let activity: String
         let started: Date
         let since: Date
         let hasSteps: Bool
         let steps: Steps
-        @State private var expanded = true
         @State private var dim = false
 
         public init(_ activity: String, started: Date, since: Date? = nil, hasSteps: Bool,
@@ -451,43 +464,26 @@ public enum ChatLook {
             VStack(alignment: .leading, spacing: 4) {
                 // What's done reads down in the order it happened, and the line saying what's going on now stays at the
                 // bottom, under all of it: a step that finishes joins the list above the line.
-                if expanded && hasSteps {
+                if hasSteps {
                     VStack(alignment: .leading, spacing: 4) { steps }
                         .transition(.opacity)
                 }
-                Button {
-                    guard hasSteps else { return }
-                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.mini).frame(width: 16)
-                        // It breathes while the agent works, so the line reads as live rather than stuck.
-                        ActivityText(activity, since: since)
-                            .opacity(dim ? 0.5 : 1)
-                            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
-                        if hasSteps {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                // Right when folded and down when open, as every other fold in the chat turns
-                                // (the steps, "Worked for…"), so the line reads as one of them.
-                                .rotationEffect(.degrees(expanded ? 90 : 0))
-                        }
-                    }
-                    .contentShape(Rectangle())
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini).frame(width: 16)
+                    // It breathes while the agent works, so the line reads as live rather than stuck.
+                    ActivityText(activity, since: since)
+                        .opacity(dim ? 0.5 : 1)
+                        .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
                 }
-                .buttonStyle(.plain)
-                .pointingHand()
                 .font(ChatLook.stepFont)
                 .foregroundStyle(.secondary)
                 .padding(.leading, ChatLook.stepIndent)
-                .help(hasSteps ? (expanded ? "Hide the steps" : "Show the steps") : "")
                 .onAppear { dim = true }
             }
         }
     }
 
-    /// The line that ends a turn ("Worked for 8s"), small and centred, the way Messages marks the time between
+    /// The line that ends a turn ("Worked for 8s"), small and centered, the way Messages marks the time between
     /// messages.
     public struct SummaryLine: View {
         let text: String
@@ -586,7 +582,7 @@ public enum ChatLook {
                 // Pressing anywhere in the field, not only on the text, is for typing: the field's padding hands
                 // focus to the text. Behind the text and what's attached, so clicks on those stay theirs.
                 .background {
-                    Self.fieldShape.fill(Color(nsColor: .textBackgroundColor))
+                    Self.fieldShape.fill(Paper.card)
                         .onTapGesture(perform: focus)
                 }
                 .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
@@ -619,7 +615,7 @@ public enum ChatLook {
         static var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: height / 2, style: .continuous) }
     }
 
-    /// A round button beside the message box: the accent colour for Send and Stop, plain for the rest.
+    /// A round button beside the message box: the accent color for Send and Stop, plain for the rest.
     public struct Round: ButtonStyle {
         let prominent: Bool
         @Environment(\.isEnabled) private var isEnabled
@@ -630,14 +626,14 @@ public enum ChatLook {
             let size = MessageBar<EmptyView, EmptyView, EmptyView>.buttonSide
             configuration.label
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(prominent ? (isEnabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
+                .foregroundStyle(prominent ? (isEnabled ? AnyShapeStyle(Paper.onInk) : AnyShapeStyle(.tertiary))
                                            : AnyShapeStyle(.secondary))
                 .frame(width: size, height: size)
                 .background {
                     if prominent {
-                        Circle().fill(isEnabled ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary))
+                        Circle().fill(isEnabled ? AnyShapeStyle(Paper.ink) : AnyShapeStyle(.quaternary))
                     } else {
-                        Circle().fill(Color(nsColor: .textBackgroundColor))
+                        Circle().fill(Paper.card)
                             .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
                     }
                 }
@@ -675,13 +671,9 @@ public enum ChatLook {
         busy ? "Working… describe the next change" : empty ? "Describe what you'd like…" : "Describe a change…"
     }
 
-    /// What the chat sits on: an off-white a touch warm, calmer than a text view's white, so the cards and the
-    /// answers to choose from (still white) stand a little above it. A warm near-black in dark mode.
-    public static let paper = Color(nsColor: NSColor(name: "LampChatPaper") { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
-            : NSColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
-    })
+    /// What the chat sits on: Lamp's paper (`Paper.page`), so the cards and the answers to choose from stand a little
+    /// above it. A warm near-black in dark mode.
+    public static let paper = Paper.page
 
     /// Parsed once per message: parsing markdown on every redraw adds up while an agent is streaming.
     @MainActor private static var proseCache: [String: AttributedString] = [:]

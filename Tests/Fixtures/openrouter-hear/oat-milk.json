@@ -1,0 +1,11 @@
+{
+ "recorded": "2026-10-28",
+ "request": "elevenlabs/scribe-v2, provider.options.elevenlabs.no_verbatim=true, a 16 kHz mono WAV of a synthetic voice saying 'add milk, um, oat milk'",
+ "response": {
+  "text": "Add milk. Oat milk",
+  "usage": {
+   "seconds": 2.0849375,
+   "cost": 0.00012741284722219906
+  }
+ }
+}

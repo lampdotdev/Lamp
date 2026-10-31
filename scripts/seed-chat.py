@@ -28,7 +28,7 @@ requests = [
     "Make the count bigger and put a reset button under it",
     "Add a history of the last 20 counts with the time each happened",
     "Can it keep the count when I quit?",
-    "Use a warmer colour for the background, something like sand",
+    "Use a warmer color for the background, something like sand",
     "Add a keyboard shortcut: space adds one, backspace takes one away",
     "Show a little graph of counts per day",
     "The reset button is too easy to hit by mistake, ask first",
@@ -84,7 +84,7 @@ finals = [
     "The history keeps the last 20 counts, newest at the top, each with its time. It's saved with the count, so it survives a quit.",
     "Space adds one and backspace takes one away. They work whenever the window is in front; the `+` and `−` buttons still work too.",
     "I added a **Goal** field in Settings. When the count reaches it you'll hear a short chime, once per goal:\n\n- set it to 0 to turn it off\n- the chime follows the system volume",
-    "Each counter has its own name and colour now. Use the **+** in the toolbar to add one; right-click a counter to rename or delete it.",
+    "Each counter has its own name and color now. Use the **+** in the toolbar to add one; right-click a counter to rename or delete it.",
 ]
 build_output = """Building for debugging...
 [1/6] Compiling Counter CounterStore.swift

@@ -11,7 +11,7 @@ import CryptoKit
 /// A case is a folder with the app's sources (`Main.swift`, which prints what it sees around each `reload(n)`, with
 /// what's wanted in the print's words, and the rest), one `afterN/` folder per change with the files it rewrites,
 /// and `expect.txt`: the verdicts Lamp gave and what the process printed, which is the record of which side each
-/// change lands on. A difference reads as a change of behaviour, right or wrong.
+/// change lands on. A difference reads as a change of behavior, right or wrong.
 ///
 /// Every case takes a build and a few compiles, so they run only when asked: `LAMP_LIVE_CASES=1` runs them all,
 /// `LAMP_LIVE_CASES=name,name` some; `LAMP_LIVE_CASES_RECORD=1` writes each case's `expect.txt` instead of checking it.
@@ -247,7 +247,9 @@ final class LiveCasesTests: XCTestCase {
         try fm.createDirectory(at: live, withIntermediateDirectories: true)
         let perl = LiveReload.folder(project).appendingPathComponent("live.pl").path
         let files = swiftFiles(in: sources)
-        let names = try await shell("/usr/bin/perl", [perl, "scan", "-own=LampSupport.swift,LampScene.swift"] + files.map { sources.appendingPathComponent($0).path })
+        await LiveSlots.noteByteStructs(project)
+        let bytes = "-bytes=" + LiveReload.folder(project).appendingPathComponent(LiveSlots.byteStructsFile).path
+        let names = try await shell("/usr/bin/perl", [perl, "scan", "-own=LampSupport.swift,LampScene.swift", bytes] + files.map { sources.appendingPathComponent($0).path })
             .trimmingCharacters(in: .whitespacesAndNewlines)
         for file in files {
             let to = live.appendingPathComponent(file)
