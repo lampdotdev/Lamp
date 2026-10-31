@@ -35,7 +35,9 @@ enum AgentEvent {
     case session(String)   // an external engine's conversation id, to resume next turn
     case step(String)      // the model has started on a tool call (its name), or on text ("")
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
+    case compacting        // pi has started summing up the conversation so far
     case compacted         // the engine summed up the conversation so far to make room
+    case compactionFailed(String)   // pi couldn't sum it up, and why: the turn carries on without
     case plan([PlanPart])  // the agent's plan, a new app's chapters in the chat
     case finished          // the engine has answered: a message written to it now would start another answer
     case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
@@ -1079,9 +1081,7 @@ enum Agent {
             "PI_CODING_AGENT_DIR": configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
-            // Lamp's extension compacts pi's conversation here (lamp-tools.ts), as the other engines are told to.
-            "LAMP_COMPACT_TOKENS": String(Conversation.compactAt),
-            // And keeps its pictures few the way Lamp does for the others (`keepsPicturesFew` there).
+            // Lamp's extension keeps pi's pictures few the way Lamp does for the others (`keepsPicturesFew` in lamp-tools.ts).
             "LAMP_KEEP_PICTURES": String(Conversation.keepPictures),
             "LAMP_TRIM_PICTURES": String(Conversation.trimAbove),
         ]
@@ -1163,15 +1163,20 @@ enum Agent {
         }
     }
 
+    /// For asking pi about its models: offline, from its catalog, and OpenRouter's all counted whether or not there's a key.
+    static var catalogEnvironment: [String: String] {
+        let api = Provider.openRouterProvider
+        return ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1", "PI_CODING_AGENT_DIR": configDir,
+                api.envVar: KeyStore.key(for: api.id) ?? "placeholder"]
+    }
+
     /// Models pi can use through OpenRouter, from `pi --list-models` (offline, from pi's catalog).
     static func listModels() async -> [String] {
         guard let pi = executable else { return [] }
         let api = Provider.openRouterProvider
-        let env = ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1", "PI_CODING_AGENT_DIR": configDir,
-                   api.envVar: KeyStore.key(for: api.id) ?? "placeholder"]
         var rows: [String] = []
         _ = await Shell.run("\"$LAMP_PI\" --list-models", cwd: URL(fileURLWithPath: NSTemporaryDirectory()),
-                            env: env.merging(["LAMP_PI": pi.path]) { $1 }) { line in
+                            env: catalogEnvironment.merging(["LAMP_PI": pi.path]) { $1 }) { line in
             let columns = line.split(separator: " ", omittingEmptySubsequences: true)
             guard columns.count >= 2, columns[0] == api.id else { return }
             rows.append(String(columns[1]))
@@ -1224,8 +1229,11 @@ enum Agent {
                 events.append(.failed(message["errorMessage"] as? String ?? "Unknown error"))
             }
             return events
+        case "compaction_start":
+            return [.compacting]
         case "compaction_end":
-            if obj["result"] != nil { return [.compacted] }
+            // A compaction that failed leaves the turn going: the conversation is only as long as it was.
+            return obj["result"] != nil ? [.compacted] : [.compactionFailed(obj["errorMessage"] as? String ?? "stopped")]
         case "auto_retry_end":
             if obj["success"] as? Bool == false { return [.failed(obj["finalError"] as? String ?? "Unknown error")] }
         default:

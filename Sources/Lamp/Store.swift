@@ -871,6 +871,8 @@ final class Store: ObservableObject {
         var answering = 0
         /// What Codex is in the middle of (commands, tool calls, edits, searches), by its ids.
         var codexActing: Set<String> = []
+        /// When the compaction under way began, for how long it took in Lamp's log.
+        var compactingSince: Date?
         /// The messages Codex's run was interrupted to pass on: they start its next run, in the same conversation.
         var codexCut: String?
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
@@ -5121,6 +5123,10 @@ final class Store: ObservableObject {
         }
         // A conversation that took the place of one set aside is told what the wish is (its APP.md).
         let fresh = Conversation.freshNote(for: engine, in: project)
+        if engine == .pi {
+            await PiCompaction.prepare(for: project)
+            guard goesOn() else { return false }
+        }
         var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
@@ -5144,7 +5150,10 @@ final class Store: ObservableObject {
                     }
                 }
                 // Not the engine saying it passed a message of the person's on: that isn't the model answering.
-                if case .raw = event {} else if case .failed = event {} else if case .received = event {} else { answered = true }
+                switch event {
+                case .raw, .failed, .received, .compacting, .compactionFailed: break
+                default: answered = true
+                }
                 // The model carrying on after a failed attempt means the engine recovered from it (pi sends again
                 // after a dropped connection, after compacting a conversation that overflowed, and after its
                 // extension drops the pictures of a request that was too big: lamp-tools.ts), so that attempt is
@@ -5203,9 +5212,18 @@ final class Store: ObservableObject {
                 case .plan(let parts):
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
+                case .compacting:
+                    turn.compactingSince = Date()
+                    Conversation.note(project, engine: engine, "compacting")
                 case .compacted:
                     conversationCompacted(project)
-                    Conversation.note(project, engine: engine, "compacted")
+                    let took = turn.compactingSince.map { " in \(Int(Date().timeIntervalSince($0)))s" } ?? ""
+                    turn.compactingSince = nil
+                    Conversation.note(project, engine: engine, "compacted" + took)
+                case .compactionFailed(let reason):
+                    let took = turn.compactingSince.map { " after \(Int(Date().timeIntervalSince($0)))s" } ?? ""
+                    turn.compactingSince = nil
+                    Conversation.note(project, engine: engine, "compaction failed" + took + ": " + reason)
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
