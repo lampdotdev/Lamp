@@ -145,7 +145,9 @@ with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a
 (`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. The same goes
 for what builds, asked for when a request finds nothing does (`BuilderLine`): the line is in the chat, with a button for
 each of Claude Code and Codex that's on this Mac and signed in (`SidebarLine.choices`), which only a click takes since it
-spends the person's plan, and the key or sign-in in the sheet (`SetupView`). A device's
+spends the person's plan, and the key or sign-in in the sheet (`SetupView`). There, choosing Claude Code or Codex shows how far it has got under
+the choice (`EngineUseRow`: its download, what failed with Try Again, its sign-in), and Try Again goes the whole way
+through (`EngineUse`); the request stays waiting until that's done. A device's
 step opens its setup window, and an iPhone or Android setup line its kind's setup. A new wish's empty chat shows its
 intro (`SidebarIntro`, `ChatLook.Intro`: its icon, its name to change, what to do, and ideas that go into the message
 box), and Apple's tools installing shows above every chat (`SidebarBanner`). A sidebar built by an earlier Lamp reads

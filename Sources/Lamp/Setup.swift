@@ -111,6 +111,95 @@ struct SetupCheck {
     }
 }
 
+/// Choosing Claude or ChatGPT for a request waiting in its chat: Lamp's copy if the Mac has none, then the sign-in, then
+/// setup looks again and the request starts. Stopped, it opens nothing more, however the download it waited on ends.
+struct EngineUse {
+    enum Stage: Equatable { case gettingCopy, checkingSignIn, signingIn, signInFailed }
+
+    var ensure: @MainActor (Engine) async -> Bool = { await EngineDownloads.shared.ensure($0) }
+    var isSignedIn: @MainActor (Engine) async -> Bool? = { await EngineSignIn.isSignedIn($0) }
+    var signIn: @MainActor (Engine) async -> Bool? = { await EngineSignIn.signIn($0) }
+    var recheck: @MainActor () async -> Void = { await Store.shared.recheckSetup() }
+
+    @MainActor
+    func run(_ engine: Engine, show: (Stage?) -> Void) async {
+        let ready = await ensure(engine)
+        guard !Task.isCancelled else { return }
+        // Why is `EngineDownloads.failure`, shown with Try Again, and the request stays waiting.
+        guard ready else { return show(nil) }
+        show(.checkingSignIn)
+        var failed = false
+        if await isSignedIn(engine) == false {
+            guard !Task.isCancelled else { return }
+            show(.signingIn)
+            failed = await signIn(engine) == false   // nil is the person cancelling it: nothing to apologize for
+        }
+        await recheck()
+        guard !Task.isCancelled else { return }
+        show(failed ? .signInFailed : nil)
+    }
+}
+
+/// What's under Claude or ChatGPT in the setup sheet, from plain values so the gallery can draw each state.
+struct EngineUseRow: View {
+    enum Status: Equatable {
+        case use, gettingReady, downloading(Double), checkingSignIn, signingIn, failed(String)
+
+        /// What's being done for it comes first, so Try Again doesn't go on showing the failure it's replacing. A
+        /// download's failure counts only while the engine is missing: a copy may have come since.
+        static func of(stage: EngineUse.Stage?, installed: Bool, downloading: Bool, progress: Double?, failure: String?) -> Status {
+            if downloading { return .downloading(progress ?? 0) }
+            switch stage {
+            case .gettingCopy: return .gettingReady
+            case .checkingSignIn: return .checkingSignIn
+            case .signingIn: return .signingIn
+            case .signInFailed: return .failed("Signing in didn't finish.")
+            case nil: break
+            }
+            if !installed, let failure { return .failed(failure) }
+            return .use
+        }
+    }
+
+    let engine: Engine
+    let status: Status
+    let use: () -> Void
+    let cancelSignIn: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            switch status {
+            case .use:
+                Button("Use \(engine.title)", action: use)
+            case .gettingReady:
+                ProgressView().controlSize(.small)
+                note("Getting \(engine.title) ready…")
+            case .downloading(let progress):
+                ProgressView(value: progress).frame(width: 120)
+                note("Getting \(engine.title) ready…")
+            case .checkingSignIn:
+                ProgressView().controlSize(.small)
+                note("Checking your \(engine.title) sign-in…")
+            case .signingIn:
+                ProgressView().controlSize(.small)
+                note("Finish signing in to \(engine.title) in your browser…")
+                Spacer()
+                Button("Cancel", action: cancelSignIn)
+            case .failed(let failure):
+                Label(failure, systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Try Again", action: use)
+            }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.callout).foregroundStyle(.secondary)
+    }
+}
+
 /// What builds, chosen for a request waiting in its chat, in Lamp's sheet (`SetupSheet`). Apple's tools aren't asked for
 /// here: only what's compiled needs them, and once this is chosen they're asked for if the request does (`recheckSetup`).
 struct SetupView: View {
@@ -121,6 +210,10 @@ struct SetupView: View {
     @State private var checkingKey = false
     @State private var keyProblem: String?
     @State private var choice = "openrouter"
+    @ObservedObject private var downloads = EngineDownloads.shared
+    /// How far choosing the engine picked in `choice` has got, while it's under way or after a sign-in that failed.
+    @State private var useStage: EngineUse.Stage?
+    @State private var using: Task<Void, Never>?
 
     /// The ways to build, in the order shown. Choosing Claude Code or Codex downloads Lamp's copy
     /// when the Mac has none.
@@ -185,7 +278,11 @@ struct SetupView: View {
                         }
                     case "claude", "codex":
                         let engine: Engine = choice == "claude" ? .claude : .codex
-                        Button("Use \(engine.title)") { use(engine) }
+                        EngineUseRow(engine: engine, status: status(of: engine)) {
+                            use(engine)
+                        } cancelSignIn: {
+                            EngineSignIn.cancelSignIn(engine)
+                        }
                     default:
                         Button("Choose a Model…") {
                             // Settings can't come in front of the sheet, which floats over the app.
@@ -205,6 +302,8 @@ struct SetupView: View {
         .frame(width: 600)
         // As tall as what's in it: a sheet would otherwise take all the height it's offered.
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: choice) { old, _ in stopUsing(old) }
+        .onDisappear { stopUsing(choice) }
     }
 
     @Environment(\.openSettings) private var openSettingsAction
@@ -217,14 +316,29 @@ struct SetupView: View {
         openSettingsAction()
     }
 
+    private func status(of engine: Engine) -> EngineUseRow.Status {
+        .of(stage: useStage, installed: EngineInstall.path(for: engine) != nil, downloading: downloads.isDownloading(engine),
+            progress: downloads.progress[engine], failure: downloads.failure[engine])
+    }
+
+    /// Use and Try Again alike: the whole way through, so a download that works this time goes on to the sign-in.
     private func use(_ engine: Engine) {
+        guard using == nil else { return }
         Builder.engine = engine
-        Task {
-            // Lamp's copy downloads first if the Mac has none, then the sign-in opens the browser.
-            await EngineDownloads.shared.ensure(engine)
-            if await EngineSignIn.isSignedIn(engine) == false { _ = await EngineSignIn.signIn(engine) }
-            await store.recheckSetup()
+        useStage = .gettingCopy
+        using = Task {
+            await EngineUse().run(engine) { useStage = $0 }
+            if !Task.isCancelled { using = nil }
         }
+    }
+
+    /// The person moved on from an engine, to another or by closing the sheet. A download goes on out of sight, for
+    /// the next time it's chosen, but no browser opens for it, and one already open for its sign-in is given up.
+    private func stopUsing(_ id: String) {
+        using?.cancel()
+        using = nil
+        if useStage == .signingIn, let engine = Engine(rawValue: id) { EngineSignIn.cancelSignIn(engine) }
+        useStage = nil
     }
 
     /// Checks the key with OpenRouter before saving it, so a typo shows up now rather than at the first build.
