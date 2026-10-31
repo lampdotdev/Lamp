@@ -55,35 +55,50 @@ matchMedia('(orientation: landscape)').addEventListener('change', letGo);
 The game owns what's true; a phone draws what it's told and asks for moves. There's no second state machine on the phone.
 
 - **Views.** Derive each player's view from the game's state in one function, and send it to that player alone (`send(player, view)`, never player 0 for anything private) whenever what it holds changes, not only when the phase does: a wrong attempt changes the view with no change of phase. Send it in `onJoin` too, which also runs for a phone coming back and for a page that opened again, and for phones already joined when the code runs again. The phone keeps nothing it can't get back from its next view. A player with no part in the current view, like one back from a dropped link, is shown that and when they're next in, never an empty screen.
-- **Turns.** Each view carries the phase and a `turn` the game moves on whenever an old screen's move would no longer mean the same thing (a new round, a new turn). A move names the `turn` it was made on.
-- **Moves.** Send the finished move as one bounded message: `pad.send({ move: 'try', turn: view.turn, path: path })`. `pad.axis` is for live movement only: an axis is dropped when the game is behind and late ones are thrown away, so never build a result from them. Collect a path on the phone and send it when it ends.
-- **The game decides.** `f.phones` holds buttons only; axes and messages come by `onAxis` and `onMessage`, between frames, so the game keeps its own queue and empties it in `frame`, never a flag `frame` clears. For each move it checks the player, the phase, the `turn` and the move's size and shape, then accepts it or rejects it and sends the view again. The phone shows a move as sent until a view answers it, and a phone that loses its link forgets it: a pending move is never sent again after a reconnect, since the view it comes back to says what happened.
-- **A gesture that's interrupted is no move.** End it, send nothing and clear what it drew on `pointercancel`, when the page is hidden (`visibilitychange`), when the phone turns, when `onState` leaves `connected`, and when a view arrives with another phase or `turn`. Only the finger's own `pointerup` in the same `turn` submits. Keep `busy` true during a gesture so a newer page waits for it.
+- **Turns.** Each view carries the phase and a `turn` the game moves on whenever an old screen's move would no longer mean the same thing (a new round, a new turn). A move names the `turn` it was made on, and an `id` of its own that only grows, even when the page opens again, since a `turn` can't tell two moves in one turn apart.
+- **Moves.** Send the finished move as one bounded message: `pad.send({ move: 'try', id: id, turn: view.turn, path: path })`. `pad.axis` is for live movement only: an axis is dropped when the game is behind and late ones are thrown away, so never build a result from them. Collect a path on the phone and send it when it ends.
+- **The game decides.** `f.phones` holds buttons only; axes and messages come by `onAxis` and `onMessage`, between frames, so the game keeps its own queue and empties it in `frame`, never a flag `frame` clears. For each move it checks the player, the phase, the `turn` and the move's size and shape, ignores an `id` no newer than the last it answered, then accepts or rejects it, keeps that for the player and sends the view again with it as `answer: { id, ok }`. Views go out for other reasons too, so only an `answer` with this move's `id`, or a view with another phase or `turn`, ends a phone's wait. `send` returning true only means it went out, and a message can be dropped when the game is far behind, so with no answer after a few seconds the phone stops waiting and lets the player try again, as a new move. A phone that loses its link forgets a pending move and never sends it again after a reconnect; the view it comes back to says what happened.
+- **A gesture that's interrupted is no move.** Track the finger's `pointerId` and capture it. End the gesture, send nothing and clear what it drew on that finger's `pointercancel` or `lostpointercapture`, when the page is hidden (`visibilitychange`), when the phone turns, when `onState` leaves `connected`, and when a view arrives with another phase or `turn`. Only that finger's `pointerup` in the same `turn` submits, and it ends the gesture first, so the `lostpointercapture` that follows a normal release finds nothing to cancel. Keep `busy` true during a gesture so a newer page waits for it.
 
 ```js
-var view = null, path = null, sent = false;
-function cancel() { path = null; draw(); }
+var view = null, path = null, finger = null, pending = null, giveUp = null, nextId = Date.now();
+function cancel() { path = null; finger = null; draw(); }
+function settle() { clearTimeout(giveUp); pending = null; }
 var pad = LampController.connect({
   onMessage: function (next) {
-    if (path && (next.turn !== view.turn || next.phase !== view.phase)) path = null;
-    view = next; sent = false; draw();                  // the view is the answer, whatever it says
+    var moved = view && (next.turn !== view.turn || next.phase !== view.phase);
+    if (moved) { path = null; finger = null; }
+    if (moved || (next.answer && next.answer.id === pending)) settle();  // any other view isn't an answer
+    view = next; draw();
   },
-  onState: function (state) { if (state !== 'connected') { path = null; sent = false; } draw(); },
+  onState: function (state) { if (state !== 'connected') { path = null; finger = null; settle(); } draw(); },
   busy: function () { return !!path; }
 });
-lock.addEventListener('pointercancel', cancel);
+lock.addEventListener('pointerdown', function (event) {
+  if (path || pending !== null) return;
+  finger = event.pointerId; lock.setPointerCapture(finger); path = []; draw();
+});
+lock.addEventListener('pointerup', function (event) { if (event.pointerId === finger) finish(); });
+['pointercancel', 'lostpointercapture'].forEach(function (name) {
+  lock.addEventListener(name, function (event) { if (event.pointerId === finger) cancel(); });
+});
 document.addEventListener('visibilitychange', function () { if (document.hidden) cancel(); });
 matchMedia('(orientation: landscape)').addEventListener('change', cancel);
 function finish() {                                     // the finger lifted, or Submit
-  if (path && pad.send({ move: 'try', turn: view.turn, path: path })) sent = true;
-  path = null; draw();
+  var id = nextId++;
+  if (path && pad.send({ move: 'try', id: id, turn: view.turn, path: path })) {
+    pending = id;
+    giveUp = setTimeout(function () { settle(); draw(); }, 4000);
+  }
+  path = null; finger = null; draw();
 }
 
 // In the game: moves wait for the frame, and the state decides.
 var moves = [];
 Lamp.controllers.onMessage(function (player, data) { moves.push({ player: player, data: data }); });
 Lamp.controllers.onJoin(function (player) { sendView(player); });
-// in frame(f): for each of moves.splice(0): check it, change the state, then sendView for whoever's view changed
+// in frame(f): for each of moves.splice(0): check it, change the state, keep { id, ok } for that player for their
+// view's `answer`, then sendView for whoever's view changed
 ```
 
 ### Seeing the page
@@ -142,7 +157,7 @@ The TV sends a phone a file the same way, with `Lamp.controllers.sendFile(player
 
 ## Tilt
 
-The page is plain http, and phones give their motion sensors only to https pages. So make buttons and sticks the controls. Offer tilt only where `LampController.canTilt()` says so, from a tap (a Start button), since the browser asks the person first: `LampController.tilt(pad).then(...).catch(...)` then sends the phone's tilt as axis `'tilt'` (x: left -1 to right 1, y: away -1 to toward 1). Where it can't, the game must still be playable with the buttons. The wake lock and `navigator.vibrate` are extras in the same way: many phones won't give them to this page, so try them, handle their failure, and let nothing depend on them.
+The page is plain http, and phones give their motion sensors only to https pages. So a game's controller is a touch interaction that's usable without tilt, whatever shape the game-ui skill's design gave it. Offer tilt only where `LampController.canTilt()` says so, from a tap (a Start button), since the browser asks the person first: `LampController.tilt(pad).then(...).catch(...)` then sends the phone's tilt as axis `'tilt'` (x: left -1 to right 1, y: away -1 to toward 1). Where it can't, the game must still be fully playable by touch. The wake lock and `navigator.vibrate` are extras in the same way: many phones won't give them to this page, so try them, handle their failure, and let nothing depend on them.
 
 ## The wish's own apps
 
