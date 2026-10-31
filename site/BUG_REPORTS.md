@@ -13,7 +13,7 @@ Use **Production only** for all three variables, with **Sensitive on** for the w
 
 ### Vercel + Upstash
 
-4. Open the **Roo Code → lamp** Vercel project, not **forge-updates**, and go to **Settings → Environment Variables**.
+4. Open the **Roo Code → lamp** Vercel project, not **lamp-updates**, and go to **Settings → Environment Variables**.
 5. Add `LAMP_BUG_REPORT_SLACK_WEBHOOK_URL` with the full URL from Slack’s new webhook row.
 6. In **Storage → Create Database**, choose **Upstash for Redis**, name it **lamp-bug-reports**, select **Free**, and connect it to **lamp** for Production only.
 7. Add `UPSTASH_REDIS_REST_URL` using the database’s `KV_REST_API_URL` value, the HTTPS REST endpoint.

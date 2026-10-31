@@ -1,5 +1,5 @@
 {
-  "name": "forge-updates",
+  "name": "lamp-updates",
   "private": true,
   "description": "Serves Forge's Sparkle update feed and downloads from the private GitHub releases.",
   "type": "module",
