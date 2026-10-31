@@ -21,6 +21,11 @@ enum Gallery {
 
     static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
 
+    private static let useRowStatuses: [EngineUseRow.Status] = [
+        .use, .gettingReady, .downloading(0.4), .failed("Lamp couldn't reach the internet to download it."),
+        .checkingSignIn, .signingIn, .failed("Signing in didn't finish."),
+    ]
+
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
     }
@@ -131,6 +136,15 @@ enum Gallery {
         Entry(group: "Chat screen", name: "The setup sheet") {
             AnyView(SetupCard(offer: SetupOffer(capability: .pictures), reason: "Today wants to make pictures, and nothing on this Mac makes them yet.",
                               dir: wish.dir))
+        },
+        Entry(group: "Chat screen", name: "Choosing Claude or ChatGPT in the setup sheet") {
+            AnyView(VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(useRowStatuses.enumerated()), id: \.offset) { _, status in
+                    EngineUseRow(engine: .claude, status: status, use: {}, cancelSignIn: {})
+                }
+                EngineUseRow(engine: .codex, status: .failed("The download site answered 503."), use: {}, cancelSignIn: {})
+            }
+            .padding(20).frame(width: 524))
         },
         screen("Agent Details", group: "Chat screen", [
             LogLine(kind: .user, text: "add some color"),
