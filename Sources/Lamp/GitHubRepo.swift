@@ -516,7 +516,7 @@ enum GitHubRepo {
                                        name: project.name, about: page.about).utf8)
             .write(to: page.folder.appendingPathComponent("index.html"))
         let pushed = try await Publish.pushPage(page.folder, to: repo, gh: gh, login: login, message: "\(project.name)'s page, from Lamp")
-        try await Publish.servePage(repo, commit: pushed.commit, gh: gh, step: step)
+        try await Publish.servePage(repo, commit: pushed.commit, changed: pushed.changed, gh: gh, step: step)
         record.page = page.url
         return (record, changed || pushed.changed || kept(for: project)?.page != page.url)
     }

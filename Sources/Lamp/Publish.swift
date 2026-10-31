@@ -149,7 +149,8 @@ enum Publish {
         let offer = RemixOffer(name: name, about: about, suggestions: suggestions, shareLink: open.link, origin: open.origin)
         let target: [String: Any] = ["link": open.link?.absoluteString as Any, "origin": open.origin?.json as Any,
                                      "request": RemixLink.request(for: offer, ask: "{ask}")]
-        let targetJSON = (try? JSONSerialization.data(withJSONObject: target)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        // Keys sorted, so the same page is the same file and an unchanged page makes no new commit.
+        let targetJSON = (try? JSONSerialization.data(withJSONObject: target, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let buttons = offer.suggestions.map { "<button type=\"button\" class=\"lamp-remix-pick\">\(escaped($0.text))</button>" }.joined()
         let panel = """
             <div id="lamp-remix" hidden>
@@ -302,10 +303,10 @@ enum Publish {
         return (commit, true)
     }
 
-    /// Turns GitHub Pages on for `repo`'s page branch (or asks for a build when it's on), then waits until GitHub says it
-    /// built `commit`: an earlier build's "built" is the page as it was. Pages set by the person to serve another branch
-    /// are left as they are, and said so.
-    static func servePage(_ repo: String, commit: String, gh: String, step: @escaping @Sendable (String) -> Void) async throws {
+    /// Turns GitHub Pages on for `repo`'s page branch (or asks for a build when it's on and the page `changed`), then
+    /// waits until GitHub says it built `commit`: an earlier build's "built" is the page as it was. Pages set by the
+    /// person to serve another branch are left as they are, and said so.
+    static func servePage(_ repo: String, commit: String, changed: Bool, gh: String, step: @escaping @Sendable (String) -> Void) async throws {
         let url = pageURL(repo)
         step("Turning on GitHub Pages…")
         let existing = await Subprocess.run(gh, ["api", "repos/\(repo)/pages", "--jq", ".source.branch"], mergeErrors: false, timeout: 30)
@@ -316,7 +317,7 @@ enum Publish {
             guard on.ok else { throw Failure(message: "GitHub Pages couldn't be turned on: \(on.output.trimmed.suffix(200))") }
         } else if branch != pageBranch {
             throw Failure(message: "GitHub Pages for \(repo) shows its \(branch.isEmpty ? "own" : branch) branch, not the page. Choose \(pageBranch) in its Pages settings to play it.")
-        } else {
+        } else if changed {
             _ = await Subprocess.run(gh, ["api", "-X", "POST", "repos/\(repo)/pages/builds"], timeout: 30)
         }
         step("Waiting for GitHub to put the page up…")
