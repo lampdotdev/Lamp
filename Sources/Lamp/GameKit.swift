@@ -1141,17 +1141,19 @@ enum GameKit {
         guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
                                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        var lowest = 255, highest = 0
+        // Each channel on its own: red, green and blue shapes are as light as one another, and aren't one color.
+        var lowest = [255, 255, 255], highest = [0, 0, 0]
         // The first rows in memory are the picture's top: the top three of 36 hold the window's buttons and the wand.
         for y in 3..<height {
             for x in 0..<width {
                 let i = (y * width + x) * 4
-                let light = (Int(pixels[i]) + Int(pixels[i + 1]) + Int(pixels[i + 2])) / 3
-                lowest = min(lowest, light)
-                highest = max(highest, light)
+                for channel in 0..<3 {
+                    lowest[channel] = min(lowest[channel], Int(pixels[i + channel]))
+                    highest[channel] = max(highest[channel], Int(pixels[i + channel]))
+                }
             }
         }
-        return highest - lowest < 6
+        return (0..<3).allSatisfy { highest[$0] - lowest[$0] < 6 }
     }
 
     /// Whether the preview's next play will likely wait a while for the game to be built: the chat's step says so.

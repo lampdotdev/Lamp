@@ -141,7 +141,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
             }
             Task { [weak self] in
                 try? await Task.sleep(for: limit)
-                if self?.round == mine, self?.finished != nil { await self?.ranOut() }
+                if self?.round == mine, self?.finished != nil { await self?.ranOut(mine) }
             }
         }
         guard var result, result["again"] as? Bool != false else { return nil }
@@ -186,9 +186,11 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         webView = view
         view.navigationDelegate = self
         view.load(URLRequest(url: URL(string: "lamp-game://app/index.html")!))
+        round += 1
+        let mine = round
         let timeout = Task { [weak self] in
             try? await Task.sleep(for: limit)
-            await self?.ranOut()
+            await self?.ranOut(mine)
         }
         var result = await withCheckedContinuation { finished = $0 }
         timeout.cancel()
@@ -199,9 +201,10 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     }
 
     /// A play past its limit ends with how far it got, read from the page: whether game() had been called, and the
-    /// last lines it logged. A page that doesn't answer within a few seconds is said to have answered nothing.
-    private func ranOut() async {
-        guard finished != nil else { return }
+    /// last lines it logged. A page that doesn't answer within a few seconds is said to have answered nothing. Only
+    /// the play `mine` is ended: one that finished while the page was asked, and the next play begun since, are left be.
+    private func ranOut(_ mine: Int) async {
+        guard round == mine, finished != nil else { return }
         var result: [String: Any] = ["timedOut": Date().timeIntervalSince(began)]
         if let builtIn { result["built"] = builtIn }
         if let webView {
@@ -228,6 +231,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
                 result["logs"] = state["logs"] as? [String] ?? []
             }
         }
+        guard round == mine, finished != nil else { return }
         end(result)
     }
 
