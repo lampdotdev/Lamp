@@ -59,18 +59,20 @@ enum Sharing {
     /// so once, and goes only with Share Anyway. The answer is kept for the wish until it takes in more such work
     /// (`ShareCheck.accepted`), so the same question isn't asked at every copy.
     @MainActor static func askToShare(_ project: LampProject) -> Bool {
-        let credits = Credits.load(project)
-        guard let warning = ShareCheck.warning(of: project, credits: credits), !ShareCheck.accepted(project, credits: credits) else { return true }
-        // Asked from the chat beside an app too, so Lamp comes forward with its question.
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = warning.message
-        alert.informativeText = warning.detail ?? ""
-        alert.addButton(withTitle: "Share Anyway")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return false }
-        ShareCheck.accept(project, credits: credits)
-        return true
+        // Asked again if the wish took in more such work while the question was up: only what was named is agreed to.
+        while true {
+            let credits = Credits.load(project)
+            guard let warning = ShareCheck.warning(of: project, credits: credits), !ShareCheck.accepted(project, credits: credits) else { return true }
+            // Asked from the chat beside an app too, so Lamp comes forward with its question.
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = warning.message
+            alert.informativeText = warning.detail ?? ""
+            alert.addButton(withTitle: "Share Anyway")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            ShareCheck.accept(project, sources: ShareCheck.fingerprint(credits))
+        }
     }
 
     @MainActor static func share(_ project: LampProject, from origin: Origin) {

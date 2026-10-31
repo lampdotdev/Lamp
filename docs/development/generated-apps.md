@@ -112,7 +112,7 @@ Lamp's own widget file, which the mac-widgets skill asks for): a link the app ta
 A Mac app's File ▸ Share… (`LampShareApp`) asks Lamp for the wish's file (`/app/share`, `Store.appShare`), the same
 one Lamp's own Share… makes, and shows the system's share picker from its window. Whatever Lamp would ask or say first is
 said in the app, as Lamp says it: work that came with no license is asked about with Share Anyway, which asks again
-with `anyway`, and a share Lamp refuses shows its headline and what to do. "Open Lamp and try again" is only for a Lamp
+with `anyway` and the work it was shown, and a share Lamp refuses shows its headline and what to do. "Open Lamp and try again" is only for a Lamp
 that doesn't answer.
 This is how a new app is changed from its first build on:
 as soon as a new Mac app's scaffold is built and opened at the start of its first turn (`Store.showEarly`, then

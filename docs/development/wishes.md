@@ -284,7 +284,7 @@ goes, credited and named; with no license it goes too, once the person has been 
 Share…, Copy Wish File, Export… and a drag from the desk ask once with Share Anyway (`Sharing.askToShare`), and the answer
 is kept for the wish until it takes in more such work (`ShareCheck.accepted`, in Lamp's settings rather than the wish's
 folder, where the agent writes); an app's File ▸ Share… gets the same question from `/app/share` and asks again with
-`anyway`; Share Link (with the wish itself ticked), Publish as Web Page… and Put on GitHub… to a public repository say it
+`anyway` and the work it was shown (an answer covers only that, by the wish's `instance`); Share Link (with the wish itself ticked), Publish as Web Page…, Send Changes Back… and Put on GitHub… to a public repository say it
 as a line among their facts, and a private repository says nothing, since nothing is passed on. A license file the
 credits name must still be in the wish. And nothing of the person's goes: what's staged is searched for the person's
 provider keys, the app's secrets and its token for Lamp's gateway (`ShareCheck.keptSecrets`, the values themselves) and

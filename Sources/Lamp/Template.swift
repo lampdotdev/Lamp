@@ -3943,14 +3943,14 @@ enum Template {
         /// Lamp's answer: the file, something to ask first, why it can't be shared, or nothing (Lamp isn't reachable).
         private enum Answer {
             case file([String: Any])
-            case ask(String, String)
+            case ask(String, String, [String])
             case refused(String, String)
             case unreachable
         }
 
         static func share() {
             Task {
-                var answer = await ask(anyway: false)
+                var answer = await ask(anyway: nil)
                 if case .unreachable = answer, NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty,
                    let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
                     let config = NSWorkspace.OpenConfiguration()
@@ -3959,17 +3959,19 @@ enum Template {
                     for _ in 0..<40 {
                         guard case .unreachable = answer else { break }
                         try? await Task.sleep(for: .milliseconds(500))
-                        answer = await ask(anyway: false)
+                        answer = await ask(anyway: nil)
                     }
                 }
-                if case .ask(let message, let detail) = answer {
+                // Asked again when the app took in more such work while the question was up: Lamp holds the answer to
+                // what was shown.
+                while case .ask(let message, let detail, let sources) = answer {
                     let alert = NSAlert()
                     alert.messageText = message
                     alert.informativeText = detail
                     alert.addButton(withTitle: "Share Anyway")
                     alert.addButton(withTitle: "Cancel")
                     guard alert.runModal() == .alertFirstButtonReturn else { return }
-                    answer = await ask(anyway: true)
+                    answer = await ask(anyway: sources)
                 }
                 let found: [String: Any]
                 switch answer {
@@ -4010,17 +4012,21 @@ enum Template {
             alert.runModal()
         }
 
-        /// Asks Lamp for the file; `anyway` once the person chose Share Anyway.
-        private static func ask(anyway: Bool) async -> Answer {
+        /// Asks Lamp for the file; `anyway` once the person chose Share Anyway, with the work they were shown.
+        private static func ask(anyway sources: [String]?) async -> Answer {
             guard let url = URL(string: lampGateway + "/app/share") else { return .unreachable }
             var request = URLRequest(url: url, timeoutInterval: 120)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = Data((anyway ? "{\"anyway\": true}" : "{}").utf8)
+            var body: [String: Any] = [:]
+            if let sources { body = ["anyway": true, "sources": sources] }
+            request.httpBody = (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
             guard let (data, response) = try? await URLSession.shared.data(for: request) else { return .unreachable }
             let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-            if let warning = answer["warning"] as? String { return .ask(warning, answer["detail"] as? String ?? "") }
+            if let warning = answer["warning"] as? String {
+                return .ask(warning, answer["detail"] as? String ?? "", answer["sources"] as? [String] ?? [])
+            }
             guard (response as? HTTPURLResponse)?.statusCode == 200, answer["file"] is String else {
                 return .refused(answer["error"] as? String ?? "This app couldn't be shared", answer["detail"] as? String ?? "")
             }

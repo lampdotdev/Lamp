@@ -949,6 +949,7 @@ enum Gallery {
         contribute("Ready, no fork yet", stage: .ready, fork: false,
                    notes: ["You have no fork of someone/new-york yet: Lamp makes one on your account (else/new-york) first."]),
         contribute("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."]),
+        contribute("Ready, no license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."]),
         contribute("Working", stage: .working("Opening the pull request…")),
         contribute("Couldn't send", stage: .failed("GitHub didn't take it: the connection was lost.")),
         contribute("Nothing to send", stage: .failed("someone/new-york already has everything this wish has: there's nothing to send.")),

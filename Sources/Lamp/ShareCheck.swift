@@ -135,20 +135,26 @@ enum ShareCheck {
 
     /// What the person last agreed to share with no license, for each wish: they're asked once, and again only when the
     /// wish takes in more such work. Kept in Lamp's settings, not the wish's folder, where the agent could write it.
+    /// Kept by the wish's own identity rather than its folder's name, which a later wish may take.
     static func accepted(_ project: LampProject, credits: Credits) -> Bool {
         let wanted = fingerprint(credits)
-        return wanted.isEmpty || (UserDefaults.standard.dictionary(forKey: acceptedKey)?[project.id] as? [String]).map { Set(wanted).isSubset(of: $0) } == true
+        return wanted.isEmpty || (UserDefaults.standard.dictionary(forKey: acceptedKey)?[key(project)] as? [String]).map { Set(wanted).isSubset(of: $0) } == true
     }
 
-    static func accept(_ project: LampProject, credits: Credits) {
+    /// Kept as agreed to: `sources` is what the person was shown (`fingerprint`), never what the wish holds by the time
+    /// they answer, which a change landing meanwhile may have added to.
+    static func accept(_ project: LampProject, sources: [String]) {
         var all = UserDefaults.standard.dictionary(forKey: acceptedKey) ?? [:]
-        all[project.id] = fingerprint(credits)
+        all[key(project)] = sources
         UserDefaults.standard.set(all, forKey: acceptedKey)
     }
 
     private static let acceptedKey = "sharedWithNoLicense"
 
-    private static func fingerprint(_ credits: Credits) -> [String] {
+    private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
+
+    /// The unlicensed work named in a warning, so an answer to it is held to what it named.
+    static func fingerprint(_ credits: Credits) -> [String] {
         unlicensed(credits).map { [$0.name, $0.url ?? "", $0.commit ?? ""].joined(separator: "\u{1F}") }.sorted()
     }
 
