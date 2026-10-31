@@ -5,6 +5,18 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.30.0
+
+- A much smaller download: Lamp is about 70 MB instead of 264 MB. Starter apps are fetched the first time you open
+  one, and what runs models on your Mac the first time you choose one.
+- Open an app someone sent you before setting anything up: its review comes first, and your first change asks for
+  what it needs right there in its chat.
+- Open a link to a project on GitHub on a Mac without Apple's developer tools.
+- Games keep your place through a change: every new game is made that way, and a change that would start play over
+  waits for Reload instead.
+- Phone controllers respond more reliably to each button press.
+- You can turn off the usage counts Lamp sends, in Settings → Memory.
+
 ## 0.29.0
 
 - A new look: Lamp is on paper with stripes, in light or dark to match your Mac. The desk is one list, your wishes
