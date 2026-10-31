@@ -1104,15 +1104,72 @@ enum GameKit {
         return page
     }
 
+    /// How long the game took to be built last time, in seconds: in the preview (kept beside its copy of the page), or
+    /// else in its window on this Mac (the line lamp-game.js logs as it draws its first frame). Nil when neither is known.
+    static func lastBuilt(_ project: LampProject) -> TimeInterval? {
+        if let text = try? String(contentsOf: builtFile(project), encoding: .utf8), let seconds = TimeInterval(text.trimmed) { return seconds }
+        guard let log = try? String(contentsOf: Runtime.logURL(project), encoding: .utf8),
+              let line = log.components(separatedBy: "\n").last(where: { $0.contains(builtLine) }),
+              let words = line.components(separatedBy: builtLine).last?.split(separator: " ").first else { return nil }
+        return TimeInterval(words)
+    }
+
+    /// The words lamp-game.js logs before the seconds the open game took to be built.
+    private static let builtLine = "Lamp: the game was built and drawn "
+
+    private static func builtFile(_ project: LampProject) -> URL {
+        stagingFolder(project).appendingPathComponent("built.txt")
+    }
+
+    /// How long a play in the preview may take: two minutes, or for a game that took long to build last time (a city),
+    /// twice that build and a minute for the play, up to ten minutes.
+    static func previewLimit(_ project: LampProject) -> TimeInterval {
+        min(600, max(120, 2 * (lastBuilt(project) ?? 0) + 60))
+    }
+
+    /// Whether the preview's next play will likely wait a while for the game to be built: the chat's step says so.
+    @MainActor static func buildsLong(_ project: LampProject) -> Bool {
+        !WebGamePreview.isWarm(for: project.id) && (lastBuilt(project) ?? 0) > 20
+    }
+
     /// Plays the script on a web game's page, as `play` does on a C++ game's preview, from the copy `stageWeb` made.
     @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
-        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project), phone: phonePreviewFolder(project)) else {
-            throw Failure(message: "The game didn't start in the preview, or ran for more than two minutes without finishing the play: "
-                + "check that Web/index.html loads it and that game() is called once, and look for an error in what it logged.")
+        let limit = previewLimit(project)
+        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project),
+                                                              phone: phonePreviewFolder(project), limit: .seconds(limit)) else {
+            throw Failure(message: "Stopped.")
         }
         let logs = result["logs"] as? [String] ?? []
+        // Only a build from the top counts: a play in the preview kept open builds just what changed.
+        if result["cold"] as? Bool == true, let built = result["built"] as? TimeInterval {
+            try? String(Int(built.rounded(.up))).write(to: builtFile(project), atomically: true, encoding: .utf8)
+        }
+        if let ran = result["timedOut"] as? TimeInterval {
+            let said = Privacy.sharesLog && !logs.isEmpty ? " What it logged last:\n" + logs.suffix(20).joined(separator: "\n") : ""
+            let seconds = Int(ran.rounded())
+            if let built = result["built"] as? TimeInterval {
+                throw Failure(message: "The game was built in the preview in \(Int(built.rounded())) s, but the play didn't finish within \(seconds) s: "
+                    + "something in its frames takes far too long, or waits for something that never comes." + said)
+            }
+            if result["started"] as? Bool == true {
+                throw Failure(message: "The game called game() but was still starting after \(seconds) s in the preview, so the play never began: "
+                    + "its init is still running, or waits for something that never comes (a file, a promise)." + said)
+            }
+            if result["answered"] as? Bool == true, result["started"] == nil {
+                throw Failure(message: "The game never started in the preview: in \(seconds) s its page didn't load Lamp's runtime. Check that "
+                    + "Web/index.html loads the game's module and that it imports Web/lamp-game.js and calls game() once.")
+            }
+            if result["answered"] as? Bool == true {
+                throw Failure(message: "After \(seconds) s in the preview the page still hadn't called game(): it's still loading or building "
+                    + "what comes before (a whole city's data can take minutes), or a module failed to load. "
+                    + (lastBuilt(project).map { "Last time it was built in \(Int($0.rounded())) s. " } ?? "")
+                    + "Look again to give it the time, or look at the game in its window with `on_device`." + said)
+            }
+            throw Failure(message: "The preview's page didn't answer for \(seconds) s: it's busy in one long piece of code that never "
+                + "lets it go, such as a loop that doesn't end. Look for one in what the game runs as it starts.")
+        }
         if let failed = result["failed"] as? String {
             let said = Privacy.sharesLog && !logs.isEmpty ? " What it logged last:\n" + logs.suffix(20).joined(separator: "\n") : ""
             throw Failure(message: "The game stopped in the preview: \(failed)." + said)
@@ -1557,7 +1614,10 @@ extension Agent.Rules {
     - `look_at_app` builds the preview on this Mac and plays the game from its start for two seconds, with no one \
     touching the controller, and shows you the last frame, what the game logged (`lamp_log`, a line per event, never \
     per frame) and the preview's stats (draws a frame, and vertices for C++ or triangles for a page); with `motion` it shows a frame every half \
-    second, and what it played on its speakers. `use_app` plays on from there with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
+    second, and what it played on its speakers. While the game is open on this Mac, a look instead puts what you've \
+    saved into it and shows its window as the person has it (where they are, not the start), in a few seconds, since \
+    the preview builds the whole world again out of sight; a look with `reopen`, and every `use_app`, play in the \
+    preview from the start. `use_app` plays on in the preview with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
     1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, b, x, y, lb, rb, lt, rt, menu, \
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
     Each look or use plays the whole game again from the start with the same moves, so after a change to the code \

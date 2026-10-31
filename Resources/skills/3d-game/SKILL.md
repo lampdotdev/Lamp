@@ -261,6 +261,7 @@ Some platforms might not be powerful enough to run three.js.
 ## Checking it
 
 `look_at_app` draws the preview on this Mac, which can't show a device's speed; its stats count draws and triangles a
-frame, to compare with the budget in the request's device line. `look_at_app` with `on_device` opens the game where
+frame, to compare with the budget in the request's device line. While the game is open on this Mac a look shows that
+window instead, with no stats: `use_app` or a look with `reopen` plays the preview. `look_at_app` with `on_device` opens the game where
 Try On points and shows its log, with the real frame times.
 Play it as the game skill's "Playtesting" says before you finish.

@@ -13,7 +13,12 @@ import LampRelayKit
 /// script and the files changed since, and the game's code runs again in place there with what it keeps (lamp-game.js,
 /// "Lamp's preview kept warm"), so only the first look of a while waits for the whole game to be built and its shaders
 /// compiled. Anything that can't go that way (Lamp's own files changed, the page can't run its code again, a play that
-/// fails or runs too long) closes it, and the look starts a new one.
+/// fails or runs too long) closes it, and the look starts a new one. It's kept while the agent goes on working on the
+/// game (`keepWarm`, each look and each step the agent saves), and for ten minutes after the last of them.
+///
+/// How long a play may take goes by how long this game took to be built last time (`play`'s `limit`): a city takes
+/// a minute and a half out of sight, which a fixed two minutes cut short. One that runs out says how far it got
+/// (whether the game had started, what it logged last) rather than nothing.
 @MainActor
 final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDelegate {
     private var webView: WKWebView?
@@ -23,6 +28,10 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     private var staged: URL?
     private var hashes: [String: String] = [:]
     private var lastPlayed = Date()
+    /// When this play began (the page loading, or a new play handed to the page kept open), and when the game was built
+    /// and its play began (`playing` from lamp-game.js): how long the build took, for the next play's limit.
+    private var began = Date()
+    private var builtIn: TimeInterval?
     private var playing = false
     private var stopped = false
     /// Each play's number, so a play's timeout never ends the next one.
@@ -45,18 +54,20 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         preview.end(nil)
     }
 
-    /// Plays the script and hands back what it drew and said, or nil when the page never got to the end of it (it
-    /// didn't start, or ran for more than two minutes: a whole city takes about half a minute to build out of sight).
+    /// Plays the script and hands back what it drew and said, or nil when it was stopped. A play that runs past `limit`
+    /// ends with `timedOut` (the seconds it ran), `started` and `logs` in its result: how far it got. Its result has
+    /// `built`, the seconds until the game was built and began to play.
     /// A shared game (`policy`) is held to what it's held to as an app (`SharedNetwork`), and is never kept warm: its
     /// policy is set up afresh with each play. Nor is a play with the phone page (`phone`, its copy): a game's phones
     /// join from a fresh start, which a page played again in place doesn't give them.
-    static func play(_ staged: URL, script: [String], for id: String, policy: NetworkPolicy? = nil, phone: URL? = nil) async -> (pictures: [String: Data], result: [String: Any])? {
+    static func play(_ staged: URL, script: [String], for id: String, policy: NetworkPolicy? = nil, phone: URL? = nil,
+                     limit: Duration = .seconds(120)) async -> (pictures: [String: Data], result: [String: Any])? {
         defer { underWay[id] = nil }
         let phoned = script.contains { $0.hasPrefix("phone ") }
         if let kept = warm[id] {
             warm[id] = nil
             underWay[id] = kept
-            if policy == nil, !phoned, let played = await kept.again(staged, script: script) {
+            if policy == nil, !phoned, let played = await kept.again(staged, script: script, limit: limit) {
                 keep(kept, for: id, after: played.result)
                 return played
             }
@@ -68,29 +79,44 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         preview.files.policy = policy
         preview.files.own = "lamp-game://app"
         preview.phoneFolder = phoneFolder(phone, if: phoned)
-        guard let result = await preview.run(staged, script: script) else { preview.close(); return nil }
+        guard let result = await preview.run(staged, script: script, limit: limit) else { preview.close(); return nil }
         if policy == nil, !phoned { keep(preview, for: id, after: result) } else { preview.close() }
         return (preview.pictures, result)
     }
 
     private static func phoneFolder(_ folder: URL?, if phoned: Bool) -> URL? { phoned ? folder : nil }
 
-    /// Kept open after a play that ended cleanly, closed once it has waited `keptFor` with no look.
+    /// Kept open after a play that ended cleanly, closed once it has waited `keptFor` with no look and no work on the game.
     private static func keep(_ preview: WebGamePreview, for id: String, after result: [String: Any]) {
-        guard result["failed"] == nil, result["again"] as? Bool != false, preview.webView != nil, !preview.stopped else { return preview.close() }
+        guard result["failed"] == nil, result["timedOut"] == nil, result["again"] as? Bool != false, preview.webView != nil, !preview.stopped
+        else { return preview.close() }
         warm[id]?.close()
         warm[id] = preview
         preview.lastPlayed = Date()
         Task { [weak preview] in
-            try? await Task.sleep(for: keptFor)
-            guard let preview, warm[id] === preview, Date().timeIntervalSince(preview.lastPlayed) >= 600 - 1 else { return }
+            while let kept = preview, warm[id] === kept {
+                let left = keptFor - .seconds(Date().timeIntervalSince(kept.lastPlayed))
+                if left <= .zero { break }
+                try? await Task.sleep(for: left)
+            }
+            guard let preview, warm[id] === preview else { return }
             warm[id] = nil
             preview.close()
         }
     }
 
+    /// The game's preview, if one is kept open, waits `keptFor` from now: the agent is still at work on the game (a look
+    /// at its open window, a step it saved), and its next look in the preview shouldn't wait for the world to be built
+    /// again because the last one was a while ago.
+    static func keepWarm(for id: String) {
+        warm[id]?.lastPlayed = Date()
+    }
+
+    /// Whether the game's next play goes into a preview kept open, which builds only what changed.
+    static func isWarm(for id: String) -> Bool { warm[id] != nil }
+
     /// The next play in the page kept open: nil when it can't go there.
-    private func again(_ staged: URL, script: [String]) async -> (pictures: [String: Data], result: [String: Any])? {
+    private func again(_ staged: URL, script: [String], limit: Duration) async -> (pictures: [String: Data], result: [String: Any])? {
         guard !playing, staged == self.staged, let webView else { return nil }
         let now = Self.hashes(of: staged)
         // A copy of the page names its build, which changes with every staging and says nothing of the game.
@@ -104,6 +130,8 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         pictures = [:]
         taken = []
         hashes = now
+        began = Date()
+        builtIn = nil
         let json = (try? JSONSerialization.data(withJSONObject: ["script": script, "changed": changed.sorted()])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         let result = await withCheckedContinuation { (done: CheckedContinuation<[String: Any]?, Never>) in
             finished = done
@@ -111,11 +139,12 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
                 MainActor.assumeIsolated { if answer as? Bool != true { self?.end(nil) } }
             }
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(120))
-                if self?.round == mine, self?.finished != nil { self?.end(nil) }
+                try? await Task.sleep(for: limit)
+                if self?.round == mine, self?.finished != nil { await self?.ranOut() }
             }
         }
-        guard let result, result["again"] as? Bool != false else { return nil }
+        guard var result, result["again"] as? Bool != false else { return nil }
+        if let builtIn { result["built"] = builtIn }
         return (pictures, result)
     }
 
@@ -137,7 +166,9 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         return found
     }
 
-    private func run(_ staged: URL, script: [String]) async -> [String: Any]? {
+    private func run(_ staged: URL, script: [String], limit: Duration) async -> [String: Any]? {
+        began = Date()
+        builtIn = nil
         files.folder = staged
         self.staged = staged
         hashes = Self.hashes(of: staged)
@@ -155,12 +186,47 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         view.navigationDelegate = self
         view.load(URLRequest(url: URL(string: "lamp-game://app/index.html")!))
         let timeout = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(120))
-            self?.end(nil)
+            try? await Task.sleep(for: limit)
+            await self?.ranOut()
         }
-        let result = await withCheckedContinuation { finished = $0 }
+        var result = await withCheckedContinuation { finished = $0 }
         timeout.cancel()
+        if let builtIn { result?["built"] = builtIn }
+        result?["cold"] = true
         return result
+    }
+
+    /// A play past its limit ends with how far it got, read from the page: whether game() had been called, and the
+    /// last lines it logged. A page that doesn't answer within a few seconds is said to have answered nothing.
+    private func ranOut() async {
+        guard finished != nil else { return }
+        var result: [String: Any] = ["timedOut": Date().timeIntervalSince(began)]
+        if let builtIn { result["built"] = builtIn }
+        if let webView {
+            // Nil: no answer at all, the page busy in code that never lets go; an empty answer, no lamp-game.js in the page.
+            let state: [String: Any]? = await withCheckedContinuation { (done: CheckedContinuation<[String: Any]?, Never>) in
+                var answered = false
+                webView.evaluateJavaScript("window.__lampPreviewState ? window.__lampPreviewState() : {}") { answer, _ in
+                    MainActor.assumeIsolated {
+                        guard !answered else { return }
+                        answered = true
+                        done.resume(returning: answer as? [String: Any] ?? [:])
+                    }
+                }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(3))
+                    guard !answered else { return }
+                    answered = true
+                    done.resume(returning: nil)
+                }
+            }
+            if let state {
+                result["answered"] = true
+                result["started"] = state["started"] as? Bool
+                result["logs"] = state["logs"] as? [String] ?? []
+            }
+        }
+        end(result)
     }
 
     /// A shared game never leaves its own address, in its window or a frame.
@@ -205,6 +271,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
             return
         }
         replyHandler(true, nil)
+        if body["playing"] as? Bool == true, builtIn == nil { builtIn = Date().timeIntervalSince(began) }
         guard body["done"] as? Bool == true else { return }
         guard let phone else { return end(body) }
         Task { @MainActor in

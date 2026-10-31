@@ -202,8 +202,9 @@ the starter.md files it moved.
 A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame
 given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's three.js with its node materials), so
 the agent looks at it and plays it in the game preview like any game, and it can be played on an iPhone, an iPad,
-Android or the Xbox too. It builds its whole city before the first frame, about half a minute out of sight, which is
-why the preview waits up to two minutes and keeps a page in no window running (`WebGamePreview`). Its credits.json
+Android or the Xbox too. It builds its whole city before the first frame, half a minute to a minute and a half out of
+sight, which is why the preview's limit goes by how long its last build took, it keeps a page in no window running
+(`WebGamePreview`), and a plain look at it while it's open on this Mac looks at its window instead. Its credits.json
 names Slop New York at the commit the starter is on, with its license file, and the map, terrain and city data it uses;
 a starter built on someone else's work ships one, and bringing in a newer upstream updates its commit in the same
 change. Every starter's copy starts its wish's chain with the starter itself (`Starters.copy`, "Credit" in the wishes
