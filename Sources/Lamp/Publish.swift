@@ -315,7 +315,14 @@ enum Publish {
         if !existing.ok {
             let on = await Subprocess.run(gh, ["api", "-X", "POST", "repos/\(repo)/pages", "-f", "source[branch]=\(pageBranch)", "-f", "source[path]=/"],
                                           timeout: 30)
-            guard on.ok else { throw Failure(message: "GitHub Pages couldn't be turned on: \(on.output.trimmed.suffix(200))") }
+            // GitHub turns Pages on by itself for a gh-pages branch just pushed, so "already enabled" can answer the ask
+            // made a moment after: Pages showing the page's branch is what was asked for.
+            if !on.ok {
+                let now = await Subprocess.run(gh, ["api", "repos/\(repo)/pages", "--jq", ".source.branch"], mergeErrors: false, timeout: 30)
+                guard now.ok, now.output.trimmed == pageBranch else {
+                    throw Failure(message: "GitHub Pages couldn't be turned on: \(on.output.trimmed.suffix(200))")
+                }
+            }
         } else if branch != pageBranch {
             throw Failure(message: "GitHub Pages for \(repo) shows its \(branch.isEmpty ? "own" : branch) branch, not the page. Choose \(pageBranch) in its Pages settings to play it.")
         } else {
