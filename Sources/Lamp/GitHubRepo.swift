@@ -91,6 +91,8 @@ enum GitHubRepo {
             let folder: URL
             let html: String
             let credits: Credits
+            /// credits.json's chain, whose last link names the commit pushed with the page, written then.
+            let chain: Credits
             let link: URL?
             let suggestions: [RemixIdea]
             let about: String?
@@ -160,7 +162,6 @@ enum GitHubRepo {
         if withPage, isPublic, let repo, Publish.hasPage(project) {
             let site = work.appendingPathComponent("page")
             let html = try Publish.copyPage(of: project, into: site)
-            try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
             try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, usesRapier: GameKit.usesRapier(project)).utf8)
                 .write(to: site.appendingPathComponent("README.md"))
             let leaks = ShareCheck.secrets(in: site, known: Sharing.knownSecrets(project))
@@ -168,7 +169,7 @@ enum GitHubRepo {
                 throw Sharing.ImportError("\(project.name)'s page can't go on GitHub: it holds a key or a password.",
                                           detail: "It's in \(first). Ask Lamp to take it out and keep it out of the code.")
             }
-            page = Staged.Page(folder: site, html: html, credits: credits, link: link,
+            page = Staged.Page(folder: site, html: html, credits: credits, chain: chain, link: link,
                                suggestions: RemixSuggestions.load(project) ?? RemixOffer.fallback,
                                about: AppDescription.description(of: project), url: Publish.pageURL(repo))
             showcase.play = page?.url
@@ -515,6 +516,10 @@ enum GitHubRepo {
         try Data(Publish.withCreditBar(page.html, credits: page.credits, open: open, suggestions: page.suggestions,
                                        name: project.name, about: page.about).utf8)
             .write(to: page.folder.appendingPathComponent("index.html"))
+        // The chain names the code it was put up with, as the commit up there now, so an unchanged wish is an unchanged page.
+        var chain = page.chain
+        if let last = chain.remixOf.indices.last, chain.remixOf[last].url == url { chain.remixOf[last].commit = commit }
+        try chain.encoded().write(to: page.folder.appendingPathComponent(Credits.file))
         let pushed = try await Publish.pushPage(page.folder, to: repo, gh: gh, login: login, message: "\(project.name)'s page, from Lamp")
         try await Publish.servePage(repo, commit: pushed.commit, changed: pushed.changed, gh: gh, step: step)
         record.page = page.url
