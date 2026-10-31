@@ -987,9 +987,11 @@ final class LampPageBlockedHost: NSObject {
         LampPageGuard.watch(view, scheme: files.scheme)
         #if os(macOS)
         LampPageReader.watch(view)
-        // The app menu's Reload, when Lamp has no change waiting: the page opens again, a game where the player was.
-        LampReload.page = { [weak view] in
-            view?.evaluateJavaScript("window.__lampReloadNow ? window.__lampReloadNow() : location.reload()", in: nil, in: .page) { _ in }
+        // The app menu's Reload, when Lamp has no change waiting: the page of the window in front opens again, a game
+        // where the player was. The pages are the reader's (`LampPageReader.page`), so a closed window's isn't chosen.
+        LampReload.page = {
+            LampPageReader.page(in: NSApp.keyWindow ?? NSApp.mainWindow)?
+                .evaluateJavaScript("window.__lampReloadNow ? window.__lampReloadNow() : location.reload()", in: nil, in: .page) { _ in }
         }
         #endif
         view.load(URLRequest(url: URL(string: "\(files.scheme)://app/index.html")!))
@@ -1016,6 +1018,12 @@ final class LampPageBlockedHost: NSObject {
     /// What each window's pages held when last read, by the window's number.
     private static var read: [Int: [LampScreen.Item]] = [:]
     private static let script = "{{PAGE_SCREEN_SCRIPT}}"
+
+    /// The page shown in a window, or, with none there, the first shown anywhere: what the app menu's Reload reopens.
+    static func page(in window: NSWindow?) -> WKWebView? {
+        let shown = pages.allObjects.filter { $0.window != nil }
+        return shown.first { $0.window === window } ?? shown.first { $0.window?.isVisible == true } ?? shown.first
+    }
 
     static func watch(_ view: WKWebView) {
         pages.add(view)
