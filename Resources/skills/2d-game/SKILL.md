@@ -236,7 +236,7 @@ The log on a device says every ten seconds how many frames a second it gets ther
 
 `look_at_app` plays the game in the preview from its start and shows its last frame (while the game is open on this
 Mac, it looks at that window instead, where the person is); `use_app` plays on in the preview with the controller
-(`stick`, `button`, `wait`), a picture after each, and every use plays the whole thing again with the same moves. Play it as the game skill's "Playtesting" says before you finish: its whole journey, then pause, a setting changed and found kept.
+(`stick`, `button`, `wait`), a picture after each, and every use plays the whole thing again with the same moves. Play it as the person would: start it, jump, die, win, pause, change a setting and come back to find it kept.
 Once it plays right, `look_at_app` with `on_device` where Try On points.
 
 ## SpriteKit in a Mac or iPhone app
