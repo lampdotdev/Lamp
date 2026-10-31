@@ -106,7 +106,8 @@ A capability given to one engine must be given to all of them that can take it, 
   million tokens fills its window and compacts. So every engine compacts at `Conversation.compactAt` (200k tokens):
   Claude Code by `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (it compacts a little under the window it's given), Codex by
   `model_auto_compact_token_limit`, and pi by a reserve for each model in `settings.json` in Lamp's pi folder
-  (`PiCompaction`, brought up to date before each run from pi's `get_available_models`): pi compacts on its own at the
+  (`PiCompaction`, from pi's `get_available_models`, asked again before a run only when pi or the files saying
+  which models it has changed): pi compacts on its own at the
   window less `compaction.reserveTokens`. Never `ctx.compact` from Lamp's extension: pi's manual compaction aborts the
   running turn and doesn't carry on, while its automatic one runs between a turn's requests and the turn goes on. A
   model pi doesn't list keeps pi's own reserve. The reserve also raises the longest summary pi 1.0.0 may ask for, up

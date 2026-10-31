@@ -5123,7 +5123,10 @@ final class Store: ObservableObject {
         }
         // A conversation that took the place of one set aside is told what the wish is (its APP.md).
         let fresh = Conversation.freshNote(for: engine, in: project)
-        if engine == .pi { await PiCompaction.prepare(for: project) }
+        if engine == .pi {
+            await PiCompaction.prepare(for: project)
+            guard goesOn() else { return false }
+        }
         var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands

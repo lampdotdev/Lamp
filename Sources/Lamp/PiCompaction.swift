@@ -11,6 +11,8 @@ enum PiCompaction {
     /// Which models' reserves in the settings are Lamp's, so it can take them away when they go stale and leave
     /// any other alone.
     static let ownedKey = "lampCompactionModels"
+    /// What the settings were written for (`stamp`).
+    static let stampKey = "lampCompactionStamp"
 
     /// What to reserve for a model with this window, nil when pi's own reserve already compacts in time.
     static func reserve(window: Int, compactAt: Int) -> Int? {
@@ -60,40 +62,65 @@ enum PiCompaction {
         return settings
     }
 
+    /// Asks pi for its models' windows, nil if it can't say in time. pi runs without a shell, so a pi that hangs is
+    /// ended with everything it started and the wait stays bounded.
+    static func discover(pi: URL, env: [String: String], timeout: TimeInterval = 10) async -> [String: Int]? {
+        let result = await Subprocess.run(pi.path, ["--mode", "rpc", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates",
+                                                    "--no-context-files", "--no-approve"],
+                                          cwd: URL(fileURLWithPath: NSTemporaryDirectory()), env: env, mergeErrors: false, timeout: timeout,
+                                          input: Data("{\"type\":\"get_available_models\"}\n".utf8))
+        return result.output.split(separator: "\n").lazy.compactMap { windows(inAnswer: String($0)) }.first
+    }
+
+    /// What the models and their windows depend on: Lamp's size, the copy of pi, and the files in pi's folder that say
+    /// which models it has. While this is the same as when the settings were written, there's no need to ask pi again.
+    static func stamp(pi: URL, folder: URL, compactAt: Int) -> String {
+        let files = [pi] + ["models.json", "auth.json", "models-store.json"].map { folder.appendingPathComponent($0) }
+        let marks = files.map { file -> String in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
+            return "\((attributes?[.size] as? Int) ?? -1)@\((attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"
+        }
+        return ([String(compactAt)] + marks).joined(separator: " ")
+    }
+
     /// Brings Lamp's pi settings up to date before a run, since the models pi can use change with keys and providers.
-    /// pi reads them as it starts. The file is read and written in one go on the main actor, so runs starting together
-    /// can't undo each other's. If pi can't say, the last settings stand.
+    /// pi reads them as it starts.
     @MainActor static func prepare(for project: LampProject) async {
         guard let pi = Agent.executable else { return }
-        var windows: [String: Int]?
-        let ask = #"printf '%s\n' '{"type":"get_available_models"}' | "$LAMP_PI" --mode rpc --no-session --no-extensions --no-skills --no-prompt-templates --no-context-files --no-approve"#
-        _ = await Shell.run(ask, cwd: URL(fileURLWithPath: NSTemporaryDirectory()),
-                            env: Agent.catalogEnvironment.merging(["LAMP_PI": pi.path]) { $1 }, login: false,
-                            started: { process in
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(10))
-                if process.isRunning { process.terminate() }
-            }
-        }) { line in
-            if let answer = Self.windows(inAnswer: line) { windows = answer }
+        await update(pi: pi, folder: URL(fileURLWithPath: Agent.configDir), env: Agent.catalogEnvironment, compactAt: Conversation.compactAt) {
+            Conversation.note(project, engine: .pi, $0)
         }
-        guard let windows else {
-            Conversation.note(project, engine: .pi, "pi's models unknown: compaction settings left as they were")
+    }
+
+    /// Asks pi only when the settings' stamp is out of date, or compaction was turned off, since asking costs each
+    /// turn the start of a pi. The file is read and written in one go on the main actor, so runs starting together
+    /// can't undo each other's. If pi can't say, the last settings stand.
+    @MainActor static func update(pi: URL, folder: URL, env: [String: String], compactAt: Int, timeout: TimeInterval = 10,
+                                  note: (String) -> Void) async {
+        let file = folder.appendingPathComponent("settings.json")
+        guard let before = read(file) else {
+            note("pi's settings unreadable: compaction settings left as they were")
             return
         }
-        let file = URL(fileURLWithPath: Agent.configDir).appendingPathComponent("settings.json")
-        var current: [String: Any] = [:]
-        if let data = try? Data(contentsOf: file) {
-            guard let read = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                Conversation.note(project, engine: .pi, "pi's settings unreadable: compaction settings left as they were")
-                return
-            }
-            current = read
+        let stamp = stamp(pi: pi, folder: folder, compactAt: compactAt)
+        let enabled = (before["compaction"] as? [String: Any])?["enabled"] as? Bool
+        if before[stampKey] as? String == stamp, enabled == true { return }
+        guard let windows = await discover(pi: pi, env: env, timeout: timeout) else {
+            note("pi's models unknown: compaction settings left as they were")
+            return
         }
-        let updated = settings(current, windows: windows, compactAt: Conversation.compactAt)
+        guard let current = read(file) else { return }
+        var updated = settings(current, windows: windows, compactAt: compactAt)
+        updated[stampKey] = stamp
         guard !NSDictionary(dictionary: updated).isEqual(to: current),
               let data = try? JSONSerialization.data(withJSONObject: updated, options: [.prettyPrinted, .sortedKeys]) else { return }
-        try? FileManager.default.createDirectory(atPath: Agent.configDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
+    }
+
+    /// The settings in this file, empty if there is none yet, nil if there's something in it that can't be read.
+    private static func read(_ file: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: file) else { return [:] }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 }

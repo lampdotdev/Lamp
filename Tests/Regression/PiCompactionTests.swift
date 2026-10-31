@@ -49,6 +49,70 @@ final class PiCompactionTests: XCTestCase {
         XCTAssertTrue(NSDictionary(dictionary: again).isEqual(to: updated))
     }
 
+    /// A pi that hangs while starting and won't be told, with a child of its own: the wait ends by the limit and both go.
+    @MainActor func testAPiThatHangsIsEndedWithItsChildrenAtTheLimit() async throws {
+        let work = try folder()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let child = work.appendingPathComponent("child")
+        let pi = try script(in: work, "trap '' TERM HUP INT\nsleep 30 & echo $! > '\(child.path)'\nwait\n")
+        let started = Date()
+        var said: [String] = []
+        await PiCompaction.update(pi: pi, folder: work, env: [:], compactAt: 200_000, timeout: 1) { said.append($0) }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 8)
+        XCTAssertEqual(said, ["pi's models unknown: compaction settings left as they were"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work.appendingPathComponent("settings.json").path))
+        let pid = try XCTUnwrap(pid_t(String(contentsOf: child, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        for _ in 0..<40 where Subprocess.alive([pid]) { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertFalse(Subprocess.alive([pid]), "pi's child outlived it")
+    }
+
+    /// pi is asked once while nothing it depends on changes, and again when something does.
+    @MainActor func testPiIsAskedAgainOnlyWhenItsModelsMayHaveChanged() async throws {
+        let work = try folder()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let asked = work.appendingPathComponent("asked")
+        let answer = #"{"type":"response","command":"get_available_models","success":true,"data":{"models":[{"id":"big","provider":"a","contextWindow":1000000}]}}"#
+        let pi = try script(in: work, "cat > /dev/null\necho x >> '\(asked.path)'\necho '\(answer)'\n")
+        func askedCount() -> Int { ((try? String(contentsOf: asked, encoding: .utf8)) ?? "").split(separator: "\n").count }
+        func update(compactAt: Int = 200_000) async {
+            await PiCompaction.update(pi: pi, folder: work, env: [:], compactAt: compactAt) { XCTFail($0) }
+        }
+        let file = work.appendingPathComponent("settings.json")
+        func settings() throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any]) }
+
+        await update()
+        await update()
+        XCTAssertEqual(askedCount(), 1)
+        let overrides = try XCTUnwrap((settings()["compaction"] as? [String: Any])?["modelOverrides"] as? [String: [String: Int]])
+        XCTAssertEqual(overrides, ["a/big": ["reserveTokens": 800_000]])
+
+        try "{}".write(to: work.appendingPathComponent("models.json"), atomically: true, encoding: .utf8)
+        await update()
+        XCTAssertEqual(askedCount(), 2, "a new models file")
+        await update(compactAt: 100_000)
+        XCTAssertEqual(askedCount(), 3, "a new size")
+
+        var off = try settings()
+        off["compaction"] = ["enabled": false]
+        try JSONSerialization.data(withJSONObject: off).write(to: file)
+        await update(compactAt: 100_000)
+        XCTAssertEqual(askedCount(), 4, "compaction turned off")
+        XCTAssertEqual((try settings()["compaction"] as? [String: Any])?["enabled"] as? Bool, true)
+    }
+
+    private func folder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pi-compaction-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    private func script(in folder: URL, _ body: String) throws -> URL {
+        let file = folder.appendingPathComponent("pi")
+        try ("#!/bin/sh\n" + body).write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        return file
+    }
+
     func testAFailedCompactionIsNoFailureOfTheTurn() {
         let started = Agent.parse(#"{"type":"compaction_start","reason":"threshold"}"#)
         guard case .compacting? = started.first else { return XCTFail("\(started)") }
