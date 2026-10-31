@@ -1422,7 +1422,7 @@ extension Agent.Rules {
     static let gameJourney = """
     - For a new game, or a change to its rules, flow, ending or restart: before you say it's done, play the whole \
     journey in the game skill's "Playtesting": from the real opening through a real win or loss and its results, then \
-    the game's own replay into a second round that resets and answers. A game with no rounds has no ending to invent: \
+    the game's own replay into a second round that resets and where you score again. A game with no rounds has no ending to invent: \
     play its real return or restart and say it has no round ending by design. Where you can't play a part, say which \
     part wasn't played, and never call it checked.
 

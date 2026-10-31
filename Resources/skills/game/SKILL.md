@@ -340,8 +340,8 @@ say it's done:
 4. Use the game's own replay, as the `Flow:` line has it: Rematch, Play Again, or back round through the opening.
 5. See what belongs to the round back at its start (score, lives, clock, board), and what outlasts it kept: best
    scores, settings, the session's choices.
-6. Do something that changes play or the score again. A reset screen isn't a second round; a second round that answers
-   is.
+6. Score again, or make whatever progress wins the round. A reset screen isn't a second round, and neither is a penalty
+   that only happens to you, such as a miss: it's a second round when your play counts in it.
 
 Fix what breaks, and play the part of the journey it touched again. Get to the ending by playing: never add a shortcut,
 shorten the round or change a rule so the check can finish.
@@ -362,7 +362,7 @@ On Lamp's game runtime and the C++ kit, the preview plays a script of the contro
 - A fix that changes timing or navigation can put the same moves somewhere else, so check they still reach the same
   places before you trust the picture after them.
 - Log each change of phase and score, a line per event: what the play logged backs up the pictures, and is all there is
-  when the person keeps pictures from you.
+  when the person keeps pictures from you. When moves are hard to aim, log where things are too, and aim from that.
 - Lamp's web runtime plays 10 minutes in all, the opening, every wait and both rounds counted, and an action lasts 60
   seconds at most. Past 10 minutes the frames stop, so a picture that repeats is not progress: the stats say how much
   was played. If the journey doesn't fit, say how far it got, and leave the game as it is.
