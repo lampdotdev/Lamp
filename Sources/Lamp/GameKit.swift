@@ -1025,6 +1025,8 @@ enum GameKit {
         var stats: String?
         var sound: String?   // what the game played and how loud the mix came out
         var phone: PhonePreview.Report?
+        /// A web game's: whether the play built the game in a new preview, rather than one kept warm.
+        var fresh = false
     }
 
     /// Plays the script in the preview: the game from its start, saves cleared, pictures where the script says.
@@ -1121,10 +1123,35 @@ enum GameKit {
         stagingFolder(project).appendingPathComponent("built.txt")
     }
 
-    /// How long a play in the preview may take: two minutes, or for a game that took long to build last time (a city),
-    /// twice that build and a minute for the play, up to ten minutes.
+    /// How long a play in the preview may take: for a game whose build was timed, twice that and a minute for the play,
+    /// two minutes at least and ten at most; three minutes for one never timed, whose first build may have the system
+    /// compiling every shader of a big world.
     static func previewLimit(_ project: LampProject) -> TimeInterval {
-        min(600, max(120, 2 * (lastBuilt(project) ?? 0) + 60))
+        guard let built = lastBuilt(project) else { return 180 }
+        return min(600, max(120, 2 * built + 60))
+    }
+
+    /// Whether a picture of the game's window shows nothing of the game: one even color where the game is drawn, as a
+    /// window that's covered or on another Space gives when its page has stopped drawing. The window's top edge (its
+    /// buttons) and Lamp's wand over it are left out.
+    static func isBlank(_ picture: URL) -> Bool {
+        guard let image = NSImage(contentsOf: picture)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+        let width = 64, height = 36
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var lowest = 255, highest = 0
+        // The first rows in memory are the picture's top: the top three of 36 hold the window's buttons and the wand.
+        for y in 3..<height {
+            for x in 0..<width {
+                let i = (y * width + x) * 4
+                let light = (Int(pixels[i]) + Int(pixels[i + 1]) + Int(pixels[i + 2])) / 3
+                lowest = min(lowest, light)
+                highest = max(highest, light)
+            }
+        }
+        return highest - lowest < 6
     }
 
     /// Whether the preview's next play will likely wait a while for the game to be built: the chat's step says so.
@@ -1190,7 +1217,7 @@ enum GameKit {
             pictures.append(beside)
         }
         return Played(pictures: pictures, printed: logs, stats: result["stats"] as? String, sound: result["sound"] as? String,
-                      phone: result["phone"] as? PhonePreview.Report)
+                      phone: result["phone"] as? PhonePreview.Report, fresh: result["cold"] as? Bool == true)
     }
 
     /// What a web game's preview is held to: for a game that declares the local network no network at all, shared or not

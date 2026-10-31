@@ -439,7 +439,7 @@ data) goes the same way: the modules that name it count as changed, so what was 
 (`namingData`), and once anything has changed the page's own files are fetched past any cache. Lamp's own files
 changing, a page that can't run its code again, a failed play or one that runs past its limit closes it, and that
 look starts a new preview. The limit goes by how long the game took to be built last time (`GameKit.previewLimit`:
-twice that and a minute, at least two minutes and at most ten), the last play in a new preview, from loading to its
+twice that and a minute, at least two minutes and at most ten, and three minutes for a game never timed), the last play in a new preview, from loading to its
 end (`built.txt` beside its copy: most of a city's is its first frames compiling shaders, after init), or else the open
 game's, from the line lamp-game.js logs at its first frame. While a preview that isn't warm builds a game that took more than 20 s, the look's step says so
 (" · building the world in a hidden copy"). A play that runs out says how far it got (whether `game()` was called,
@@ -507,9 +507,11 @@ reads as the person's own game while it still shows the old one. A plain look (n
 open on this Mac doesn't play the hidden copy at all (`Store.lookAtOpenGame`): it puts what the agent saved into the
 open game as a step (`stepPage`), and once that's in, asks the game itself for a picture of its window, as `on_device`
 does, in seconds rather than the minute a city takes to build out of sight. The picture is where the person is, not
-the start, which the look's answer says. Where that can't show the change (it waits for Reload, didn't go in, or no
-picture came), and for a look with `reopen` and every `use_app`, it plays in the hidden copy from the start: those press
-the controller, which in the person's game would take it from them. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+the start, which the look's answer says. Where that can't show the change (it waits for Reload, didn't go in, no picture
+came, or the picture is one even color where the game is drawn, as a window covered, on another Space or on a sleeping
+display gives once its page stops drawing: `GameKit.isBlank`), and for a look with `reopen` and every `use_app`, it
+plays in the hidden copy from the start: those press the controller, which in the person's game would take it from
+them. Agent Details says which copy each look used and how long a hidden play took, building the game or kept warm. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the

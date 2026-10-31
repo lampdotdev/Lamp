@@ -14,7 +14,7 @@ import LampRelayKit
 /// "Lamp's preview kept warm"), so only the first look of a while waits for the whole game to be built and its shaders
 /// compiled. Anything that can't go that way (Lamp's own files changed, the page can't run its code again, a play that
 /// fails or runs too long) closes it, and the look starts a new one. It's kept while the agent goes on working on the
-/// game (`keepWarm`, each look and each step the agent saves), and for ten minutes after the last of them.
+/// game (`keepWarm`: each look, and every two seconds of a turn on it), and for ten minutes after.
 ///
 /// How long a play may take goes by how long this game took to be built last time (`play`'s `limit`): a city takes
 /// a minute and a half out of sight, which a fixed two minutes cut short. One that runs out says how far it got

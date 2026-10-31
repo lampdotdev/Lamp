@@ -10247,7 +10247,11 @@ final class Store: ObservableObject {
         let asked = Date()
         Runtime.requestScreenshots(of: mac)
         var screenshots = await Runtime.screenshots(of: mac, since: asked, waiting: 3)
-        guard !screenshots.isEmpty else { return nil }
+        // A window that's covered or on another Space stops drawing its page: nothing of the game to show.
+        guard let first = screenshots.first, !GameKit.isBlank(first) else {
+            log(project, .detail, "The game's window showed nothing (covered, or on another Space), so the look played it in a hidden copy.")
+            return nil
+        }
         var lead = ""
         if motion, Privacy.sharesPictures {
             // A window that doesn't answer the watch is looked at in the hidden copy, which pictures its frames itself.
@@ -10415,6 +10419,10 @@ final class Store: ObservableObject {
             return (200, ["text": error.localizedDescription])
         }
         guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
+        if GameKit.engine(project) == .web {
+            log(project, .detail, "The hidden copy played it in \(Int(Date().timeIntervalSince(lookedAt).rounded())) s"
+                + (played.fresh ? ", building the game from the start." : ", in the copy kept from the last look."))
+        }
         // What the game logged is its log, for the person's Agent Details as much as the agent. While the game is open on
         // this Mac its own copy is writing that log: the hidden copy's play is added after it, never written over it.
         let printed = played.printed.joined(separator: "\n") + "\n"
