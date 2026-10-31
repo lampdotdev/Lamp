@@ -164,7 +164,7 @@ Lamp looks at your network only when you ask it to. What it finds stays on this 
 
 With pi, Lamp's rules go in the system prompt. Claude Code gets them through `--append-system-prompt`, and Codex as developer instructions. Attachments are passed natively where the tool supports it.
 
-Local models are slower and much less capable than the best cloud models for whole apps; small ones can loop. Lamp stops an agent that repeats the same step 6 times or makes more than 150 tool calls in one turn, and **Stop** cancels a turn at any time.
+Local models are slower and much less capable than the best cloud models for whole apps; small ones can loop. Lamp stops an agent that repeats the same step 6 times, and pauses one that takes more than 150 steps in one turn on a model on this Mac (500 for Claude Code, Codex and cloud models), until you say to keep going; **Stop** cancels a turn at any time.
 
 ## Troubleshooting
 
