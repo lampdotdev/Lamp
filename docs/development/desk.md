@@ -57,8 +57,8 @@ front (⌘[).
 or moved to with the arrows; the first until then) shows beside it what it is, in a panel the toolbar's sidebar button
 slides away and back, shown only where the window leaves the list room beside it (`DeskDetail`): its picture
 (`Runtime.previewURL`, else the one its starter shipped), line, who made it and its license, where it runs and its
-remixes, Open with ⋯, and **Remix it**: a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
-in its chat, which opens beside it as Open opens it; with nothing written it only opens. A starter's own three changes
+remixes, Open (the panel's first button, in ink) with ⋯, and **Remix it** (its Remix button outlined, the second thing to do): a box whose change goes to this wish (`Store.change(_:asking:)`), sent as if typed
+in its chat, which opens beside it as Open opens it; with nothing written it only opens. While a starter is fetched or built for its first opening, a spinner takes the place of its row's Open button, beside the "Getting it ready…" line. A starter's own three changes
 are there to put in the box. The wish changes in place, a version of its own that Undo and Versions take back. A starter
 or a wish opened from GitHub or a file is already the person's own copy, so the original is never touched.
 

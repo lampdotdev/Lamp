@@ -404,10 +404,18 @@ struct DeskListRow: View {
                         .frame(width: Self.changedWidth, alignment: .leading)
                 }
                 HStack(spacing: 6) {
-                    Button(action: open) { Label("Open", systemImage: DeskList.openSymbol) }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(PaperButtonStyle(.ink, square: true))
-                        .help("Open \(item.title)")
+                    // While it's fetched or built for its first opening, a spinner takes Open's place: the line under
+                    // its name says so too, but a wait is looked for where the click was.
+                    if opening {
+                        ProgressView().controlSize(.small)
+                            .frame(width: 30, height: 30)
+                            .help("Getting \(item.title) ready")
+                    } else {
+                        Button(action: open) { Label("Open", systemImage: DeskList.openSymbol) }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(PaperButtonStyle(.ink, square: true))
+                            .help("Open \(item.title)")
+                    }
                     // A starter is opened or remixed, nothing else: once changed it's in Yours, with the whole menu. Its
                     // place is kept, so Open lines up with every other row's.
                     if let project, !kept {
@@ -534,8 +542,9 @@ struct DeskDetail: View {
                     }
                 }
                 HStack(spacing: 6) {
+                    // Using it comes first; Remix, under it, is the second thing to do.
                     Button { open("") } label: { Label("Open", systemImage: DeskList.openSymbol) }
-                        .buttonStyle(PaperButtonStyle(.outline, height: 34))
+                        .buttonStyle(PaperButtonStyle(.ink, height: 34))
                     if let project, !kept {
                         DeskWishMore(project: project, entry: row.entry, request: change, height: 34) { change = "" }
                     }
@@ -574,7 +583,7 @@ struct DeskDetail: View {
                 }
             }
             Button(action: send) { Label("Remix", systemImage: "shuffle") }
-                .buttonStyle(PaperButtonStyle(.ink, height: 34))
+                .buttonStyle(PaperButtonStyle(.outline, height: 34))
                 .help(change.trimmed.isEmpty ? "Open \(item.title) with its chat" : "Ask for this change in \(item.title)'s chat")
         }
     }
