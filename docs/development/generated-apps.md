@@ -255,21 +255,22 @@ A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`,
 credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
 the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`; for a page, the app around it,
 `ScreenKit.paths`), the shared file itself, a
-README, and an MIT license by choice, never offered when
-something the wish is based on is share-alike. The README promises `zsh build.sh` only for a kind whose script builds
+README, an MIT license by choice (never offered when something the wish is based on is share-alike), and for a web game
+in a public repository its page to play, on the `gh-pages` branch (`Staged.Page`, "Publishing a game as a page" in the
+wishes guide). The README promises `zsh build.sh` only for a kind whose script builds
 with Apple's tools and nothing of Lamp's (`Recipe.buildsAlone`: the Mac app's; an app for the Mac and the iPhone is
 built by Xcode from a project Lamp keeps, so its README says Lamp builds it). The README leads with trying the wish
 before changing it: in a public repository, an Open in Lamp button (`GitHubRepo.openButton`, drawn into `.github/` by
-`writeButtons` as lamp.dev's buttons are, words alone), after Play in your browser for a game with a page, both to lamp.dev's remix link
+`writeButtons` as lamp.dev's buttons are, words alone), after Play in your browser to the page for a game with one, to lamp.dev's remix link
 (`GitHubRepo.remixLink`, `RemixLink.site`: the repository without a commit, so it's always the latest, and `from=readme`
 for the site's counts); then the wish's ideas (`RemixSuggestions`, a starter's tweaks), each that link with its request.
 A private repository, which Lamp can't fetch without a sign-in, offers the Share Link and the shared file instead; the
 card stages again when a new repository is made private (`setPrivate`). A public repository with no website of its own
-gets the remix link as its website (`offerRemixAsWebsite`, `from=github`); one the person set is left alone. One commit per Put on GitHub, on top of
+gets the remix link as its website, or a game's page once it's up (`offerWebsite`, `from=github`); one the person set is left alone. One commit per Put on GitHub, on top of
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
 own history, which holds every version and the chat's attachments. The repository is remembered by the wish's instance
-in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to), as a
-published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them. The file's credits
+in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to, and where its page
+plays, `Repo.page`). `gh`, the sign-in, the repository name and the page come from `Publish`, which shares them. The file's credits
 name the repository on the chain's last link (`Credits.Remix.url`, `Sharing.export(repository:)`), so a remix opened
 from there links where it came from.
 

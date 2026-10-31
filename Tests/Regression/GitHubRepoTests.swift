@@ -13,6 +13,28 @@ final class GitHubRepoTests: XCTestCase {
 
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
 
+    /// A web game's page plays in any browser: the page as the app plays it, with what lamp-game.js needs beside it and
+    /// Lamp's license, linked from the README by Play in your browser.
+    func testAWebGamesPageHasWhatItNeedsToPlay() throws {
+        let dir = root.appendingPathComponent("Hopper")
+        let web = dir.appendingPathComponent(GameKit.webFolder)
+        try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
+        try "A game made with Lamp.\nengine: web\n".write(to: dir.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8)
+        try "<html><body><script type=module src=game.js></script></body></html>".write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        try "import device from './lamp-device.js';".write(to: web.appendingPathComponent(GamePage.runtimeFile), atomically: true, encoding: .utf8)
+        let game = LampProject(id: "hopper", name: "Hopper", exe: "Hopper", dir: dir, platform: .game)
+        XCTAssertTrue(Publish.hasPage(game))
+        let site = root.appendingPathComponent("page")
+        let html = try Publish.copyPage(of: game, into: site)
+        XCTAssertTrue(html.contains("game.js"))
+        for path in [GamePage.deviceFile, GamePage.buildFile, Publish.runtimeLicense, ".nojekyll"] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: site.appendingPathComponent(path).path), path)
+        }
+        let readme = GitHubRepo.readme(for: game, credits: Credits(), open: Publish.OpenInLamp(), build: GitHubRepo.Build(alone: false, app: "Game", others: false),
+                                       repo: "someone/hopper", showcase: GitHubRepo.Showcase(play: Publish.pageURL("someone/hopper"), remix: true))
+        XCTAssertTrue(readme.contains("<a href=\"https://someone.github.io/hopper/\"><img src=\"\(GitHubRepo.playButton)\""), readme)
+    }
+
     func testTheStagedRepositoryBuildsOnItsOwnAndOpensInLamp() throws {
         let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
         try Template.writeOwnedFiles(for: wish)

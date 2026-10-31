@@ -16,7 +16,7 @@ import LampSidebarKit
 /// identity is derived from the starter (never a random one), its export time is fixed, and the shared file isn't in
 /// it (a zip differs every time it's made; the tree is what Lamp opens). Its README leads with the starter: its icon
 /// and its reel or preview (in `.github/`, out of the code's way), what it is, the changes its chat offers, and for a game, the
-/// page it plays on: the game staged as Publish stages one (`page`), which the script puts on the repository's
+/// page it plays on: the game staged as Put on GitHub stages one (`stagePage`), which the script puts on the repository's
 /// `gh-pages` branch for GitHub Pages.
 enum StarterRepos {
     static let commandLineFlag = "--stage-starter-repos"
@@ -122,7 +122,7 @@ enum StarterRepos {
         try Template.writeOwnedFiles(for: project)
         Sharing.setIdentity(identity(of: starter), of: project)
         let repo = repo(of: starter)
-        let staged = try GitHubRepo.stage(project, repo: repo, link: nil)
+        let staged = try GitHubRepo.stage(project, repo: repo, link: nil, withPage: false)
         let tree = staged.folder
         // The tree alone, not the shared file beside it.
         for file in try fm.contentsOfDirectory(at: tree, includingPropertiesForKeys: nil) where file.pathExtension == "lampapp" {
@@ -182,7 +182,7 @@ enum StarterRepos {
         return (tree, page)
     }
 
-    /// A game's page as Publish stages one to play in any browser (`Publish.stage`), with the credit bar, the starter's
+    /// A game's page as Put on GitHub stages one to play in any browser (`Publish.copyPage`), with the credit bar, the starter's
     /// changes in its Remix panel (whose request goes with the starter's id, so Lamp copies it) and Lamp's site for the rest: nothing else (no shared file, which differs every time
     /// it's made). Nil for a starter that isn't a game with a page.
     static func stagePage(_ project: LampProject, starter: Starters.Starter, repo: String, in root: URL) throws -> URL? {
@@ -190,22 +190,8 @@ enum StarterRepos {
         let fm = FileManager.default
         let site = root.appendingPathComponent("page-\(starter.folder.lastPathComponent)")
         try? fm.removeItem(at: site)
-        try fm.createDirectory(at: site, withIntermediateDirectories: true)
-        let web = project.dir.appendingPathComponent(GameKit.webFolder)
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
-        guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { return nil }
-        for case let file as URL in items {
-            if file.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
-            let values = try? file.resourceValues(forKeys: Set(keys))
-            guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
-            let target = site.appendingPathComponent(Sharing.relativePath(of: file, in: web))
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: file, to: target)
-        }
-        let anyBrowser = GamePage.anyBrowser
-        try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
+        let html = try Publish.copyPage(of: project, into: site)
         let index = site.appendingPathComponent("index.html")
-        guard let html = try? String(contentsOf: index, encoding: .utf8) else { return nil }
         let credits = Credits.load(project)
         let ideas = starter.tweaks.map { RemixIdea(text: $0.title, symbol: $0.symbol ?? "sparkles") }
         // Its Remix panel names the starter, so Lamp starts from a copy of it with the request.
@@ -213,8 +199,7 @@ enum StarterRepos {
         try Data(Publish.withCreditBar(html, credits: credits, open: open,
                                        suggestions: ideas.isEmpty ? RemixOffer.fallback : ideas, name: project.name,
                                        about: AppDescription.description(of: project)).utf8).write(to: index)
-        try Data().write(to: site.appendingPathComponent(".nojekyll"))
-        try Data("# \(project.name), to play\n\nThe page at \(Publish.pageURL(repo)). The wish itself, to open in Lamp and change, is on the [main branch](\(GitHubRepo.url(repo))).\n".utf8)
+        try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, usesRapier: GameKit.usesRapier(project)).utf8)
             .write(to: site.appendingPathComponent("README.md"))
         let leaks = ShareCheck.secrets(in: site, known: [])
         if let first = leaks.first { throw Sharing.ImportError("\(project.name)'s page holds something shaped like a key.", detail: "It's in \(first).") }

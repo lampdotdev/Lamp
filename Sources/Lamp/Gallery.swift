@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
 
     private static let useRowStatuses: [EngineUseRow.Status] = [
         .use, .gettingReady, .downloading(0.4), .failed("Lamp couldn't reach the internet to download it."),
@@ -892,45 +892,6 @@ enum Gallery {
         }
     }
 
-    // MARK: Publish
-
-    /// The card that says what a game's page will put up and where, from checking it to its being up, in the chat's
-    /// place at its narrowest and widest.
-    private static let publishEntries: [Entry] = [
-        publish("Checking", stage: .preparing),
-        publish("Needs GitHub's tool", stage: .needsGitHub(.install)),
-        publish("Needs a sign-in", stage: .needsGitHub(.signIn)),
-        publish("No license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."]),
-        publish("Ready", stage: .ready),
-        publish("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license.",
-                                                             "2 pictures made with AI, marked as such."]),
-        publish("Publishing", stage: .publishing("Waiting for GitHub to put it up…")),
-        publish("Couldn't publish", stage: .failed("GitHub didn't take the page: the connection was lost.")),
-        publish("Up", stage: .published, page: true),
-        publish("Up and copied", stage: .published, page: true, copied: true),
-        publish("Up, changed since", stage: .ready, page: true),
-        publish("Up, wide", stage: .published, page: true, width: 480),
-    ]
-
-    private static func publish(_ name: String, stage: PublishCard.Stage, notes: [String] = [], page: Bool = false, copied: Bool = false,
-                                width: CGFloat? = nil) -> Entry {
-        Entry(group: "Publish", name: name) {
-            let folder = Starters.folder?.appendingPathComponent("newyork")
-            let ready = stage != .preparing
-            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
-                                   stage: stage, repo: ready ? "someone/new-york" : nil, page: page ? "https://someone.github.io/new-york/" : nil,
-                                   credit: "Based on Slop New York by Mr.doob",
-                                   openInLamp: page ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
-                                   copied: copied, republish: page, canPublish: stage == .ready || { if case .failed = stage { true } else { false } }(), publish: {}, fix: {}, openPage: {}, copy: {}, close: {}, width: width)
-            return AnyView(card
-                .frame(width: width == nil ? 340 : nil)
-                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
-                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
-                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
-                .fixedSize(horizontal: false, vertical: true))
-        }
-    }
-
     /// The card that says what goes on GitHub and where, from checking it to its being up, in the chat's place at its
     /// narrowest and widest.
     private static let repoEntries: [Entry] = [
@@ -950,6 +911,17 @@ enum Gallery {
         repo("Up, unchanged", stage: .done(unchanged: true), up: true),
         repo("Up, changed since", stage: .ready, up: true),
         repo("Up, wide", stage: .done(unchanged: false), up: true, width: 480),
+        // A web game, whose page goes up beside its code.
+        repo("Game, ready", stage: .ready, remix: true, game: true),
+        repo("Game, ready, no license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."],
+             remix: true, game: true),
+        repo("Game, private", stage: .ready, isPrivate: true, game: true),
+        repo("Game, putting up its page", stage: .working("Waiting for GitHub to put the page up…"), remix: true, game: true),
+        repo("Game, page didn't go up", stage: .failed("GitHub is still putting the page up. It should be at https://someone.github.io/new-york/ in a few minutes; Put on GitHub again if it isn't."),
+             remix: true, game: true),
+        repo("Game, up", stage: .done(unchanged: false), up: true, remix: true, game: true),
+        repo("Game, up and copied", stage: .done(unchanged: false), up: true, copied: true, remix: true, game: true),
+        repo("Game, up, wide", stage: .done(unchanged: false), up: true, width: 480, remix: true, game: true),
     ]
 
     /// The card that sends a remix's changes back to the repository it came from, from checking them to the pull
@@ -992,7 +964,8 @@ enum Gallery {
     }
 
     private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
-                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false, isPrivate: Bool = false) -> Entry {
+                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false, isPrivate: Bool = false,
+                             game: Bool = false) -> Entry {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
@@ -1002,7 +975,9 @@ enum Gallery {
                                 openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
                                 canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: isPrivate, license: canChooseLicense,
-                                canChooseLicense: canChooseLicense, put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
+                                canChooseLicense: canChooseLicense, page: game && !isPrivate && ready ? "someone.github.io/new-york/" : nil,
+                                pageUp: game && up && { if case .done = stage { true } else { false } }(), privateGame: game && isPrivate,
+                                put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
                                 openRepo: {}, copy: {}, close: {}, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)
