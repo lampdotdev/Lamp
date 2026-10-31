@@ -24,7 +24,7 @@ final class GameFrameRateTests: XCTestCase {
         let sizes = context.evaluateScript("testSizes")?.toArray() as? [String] ?? []
         // Without the times, and only what's said of frames.
         return (logs.map { $0.replacingOccurrences(of: #"^\[[0-9.]+ s\] "#, with: "", options: .regularExpression) }
-                    .filter { !$0.contains("controller") }, sizes)
+                    .filter { !$0.contains("controller") && !$0.contains("was built and drawn") }, sizes)
     }
 
     /// A device that keeps up: drawn at 1920x1080 throughout, and the log says it gets 60 frames a second.

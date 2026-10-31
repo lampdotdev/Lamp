@@ -105,6 +105,15 @@ const clean = path => String(path).replace(/^\.?\//, '').split(/[?#]/)[0];
 // Asked again after a change, a file is asked for by a new address, so nothing on the way keeps the old one.
 let changes = 0;
 const fresh = path => changes ? `${path}${String(path).includes('?') ? '&' : '?'}lamp=${changes}` : path;
+// So is a file of the page's that the game's own code fetches (a city's building data), once anything has changed.
+if (window.fetch) {
+    const fetchFile = window.fetch;
+    window.fetch = function (input, init) {
+        const url = typeof input === 'string' || input instanceof URL ? String(input) : input && input.url;
+        if (changes && !(init && init.cache) && url && pathOf(url) != null) init = { ...init, cache: 'no-store' };
+        return fetchFile.call(this, input, init);
+    };
+}
 
 // A picture beside the page as a three.js texture, set up by `setup(texture)` (its color space, wrapping, repeat…). A
 // new copy of the picture goes into the same texture while the game is played, so every material using it shows it.
@@ -825,6 +834,8 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     const loop = now => {
         if (mine !== loops) return;
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
+        // How long the page took to build the game, which Lamp reads to know how long its preview's build may take.
+        if (!last && mine === 1) log(`Lamp: the game was built and drawn ${(now / 1000).toFixed(1)} s after the page opened.`);
         last = now;
         measure(now);
         try { step(dt); } catch (e) {
@@ -1760,6 +1771,21 @@ function canRunAgain(change) {
     return null;
 }
 
+// The game's modules that name a changed data file the runtime didn't load (one a module fetches itself, as a city's
+// building data is), read as changed themselves: a part kept from what they made is built again from the new file
+// rather than kept from the old one.
+async function namingData(paths, order) {
+    const data = paths.filter(p => !CODE.test(p) && !loaded.has(p)).map(p => p.split('/').pop());
+    if (!data.length) return [];
+    const naming = [];
+    for (const path of order) {
+        if (lampOwn(path) || paths.includes(path)) continue;
+        const text = texts.get(path) ?? inline.get(path) ?? await readText(path).catch(() => '');
+        if (data.some(name => text.includes(name))) naming.push(path);
+    }
+    return naming;
+}
+
 async function runAgain(change, state, roster) {
     const began = performance.now(), why = change.why;
     const cannot = reason => reopenOrHold({ ...change, why: `${why}; ${reason}` }, state);
@@ -1787,7 +1813,7 @@ async function runAgain(change, state, roster) {
         };
         for (const root of roots) visit(root);
     } catch (e) { return cannot(e.message); }
-    markStale(paths);
+    markStale([...paths, ...await namingData(paths, order)]);
 
     tellHost(change.gen, 'rerun', why);
     log(`Lamp: running the game's code again in place for a change (${why}), keeping where the player was.`);
@@ -2232,6 +2258,8 @@ function hidePill() { if (pill) pill.style.display = 'none'; }
 // first play of a while builds the whole game. A kept part skips the random numbers its build drew, so the same script
 // gives the same pictures as a cold play; one whose async build drew any while it waited is built again. Returns false
 // when it can't (the game hasn't started, or is starting), and Lamp opens a new preview.
+// Where a play that has run long has got to, for Lamp to say: whether game() has been called, and the last lines logged.
+if (preview) window.__lampPreviewState = () => ({ started: !!frameFunction, logs: logs.slice(-20) });
 if (preview && preview.warm) {
     window.__lampPreviewAgain = next => {
         if (!frameFunction || runningAgain) return false;
@@ -2294,6 +2322,8 @@ async function runPreview() {
     const post = message => window.webkit.messageHandlers.lampPreview.postMessage(message);
     let mostCalls = 0, mostTriangles = 0, triangles = 0, frames = 0;
     const limit = 60 * 600;
+    // The game is built: what's left is the play itself. Lamp times the build by this, to know how long the next may take.
+    post({ playing: true });
     for (const line of preview.script) {
         const words = line.trim().split(/\s+/);
         if (words[0] === 'phone') {

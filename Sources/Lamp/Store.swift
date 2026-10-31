@@ -787,6 +787,9 @@ final class Store: ObservableObject {
         /// The sources the agent's last look played in the hidden copy (`lookedAtGame`), by app: what it looks at is a
         /// state it means to show, so the game open on this Mac takes it too, without waiting for a progress line.
         var lookedSources: [String: String] = [:]
+        /// When the agent last looked at the game open on this Mac rather than the hidden copy (`lookAtOpenGame`): what
+        /// went in since is what its next such look says.
+        var lookedAtOpenGame: Date?
         /// Stops the agent's look playing the game in the hidden copy (`playGame`), set while it plays: a message from the
         /// person stops it (`stoppedForMessage`), so they never wait behind Lamp's own checking. It stops that play alone,
         /// for the game being played (a wish's part, under the wish's turn), never a build the turn runs beside it.
@@ -8882,6 +8885,8 @@ final class Store: ObservableObject {
             var seen = "", tried = "", seenAt = Date()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
+                // While the agent works on a game its preview stays warm, however long it goes between looks there.
+                if let self, turns[project.id] === turn, !turn.stopped, let app = stepped(project) { WebGamePreview.keepWarm(for: app.id) }
                 // Reload pressed while the agent works goes in here, between its steps, inside this turn.
                 if let self, !Task.isCancelled, reloadWhenFree.contains(project.id), turns[project.id] === turn {
                     await reloadInTurn(project, turn)
@@ -10209,9 +10214,74 @@ final class Store: ObservableObject {
 
     // MARK: Games in the preview
 
+    /// A plain look at a web game that's open on this Mac looks at that window, as `on_device` does, once the agent's
+    /// latest change is in it: the person's own game has the world built already, so it answers in a few seconds where
+    /// the hidden copy may take a minute or more to build it again out of sight. Pictures are asked of the game itself
+    /// (`Runtime.requestScreenshots`), so the window isn't brought forward or touched, and nothing is pressed: it shows
+    /// where the person is, as they left it. Nil, and the look plays in the hidden copy as before, when that can't show
+    /// the change: the game isn't open, the change waits for Reload or didn't go in, or no picture came. A look that
+    /// asks for a fresh start (`reopen`) and every `use_app` play in the hidden copy, from the start, since pressing in
+    /// the person's game would take it from them.
+    private func lookAtOpenGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any])? {
+        guard GameKit.engine(project) == .web, !GameKit.ownsLoop(project), project.hasMac, stepsPage(project) else { return nil }
+        let began = Date()
+        await turn.applying?.value
+        var mac = current(project) ?? project
+        mac.chosen = .mac
+        // What the agent has saved since the last step goes in now: a look says the state is whole.
+        if Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage, !Runtime.waitsForReload(mac), !turn.building,
+           turn.agent != nil, turns[project.id] === turn || turns[wish(of: project).id] === turn {
+            turn.applyingSources = Runtime.fingerprint(mac)
+            turn.applying = Task { [weak self] in
+                defer { turn.applying = nil }
+                await self?.stepPage(mac, in: turn, saved: Date())
+            }
+            await turn.applying?.value
+        }
+        guard turns[project.id] === turn, !turn.stopped, stepsPage(mac), !Runtime.waitsForReload(mac), !PageLive.shared.holds(mac) else { return nil }
+        let shown = !turn.shownSources.isEmpty && turn.shownSources == Runtime.fingerprint(mac)
+        guard shown || !Runtime.sourcesChanged(mac) || pageSignature(mac) == turn.shownPage else { return nil }
+        // A look after this one in the hidden copy, or a use, plays from the start as a plain look there would.
+        GameKit.plays[project.id] = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
+        note("Looking at \(project.name)", for: project)
+        let asked = Date()
+        Runtime.requestScreenshots(of: mac)
+        var screenshots = await Runtime.screenshots(of: mac, since: asked, waiting: 3)
+        // A window that's covered or on another Space stops drawing its page: nothing of the game to show.
+        guard let first = screenshots.first, !GameKit.isBlank(first) else {
+            log(project, .detail, "The game's window showed nothing (covered, or on another Space), so the look played it in a hidden copy.")
+            return nil
+        }
+        var lead = ""
+        if motion, Privacy.sharesPictures {
+            // A window that doesn't answer the watch is looked at in the hidden copy, which pictures its frames itself.
+            guard let watched = await Runtime.motion(of: mac) else { return nil }
+            lead = watched.text + " "
+            if !watched.pictures.isEmpty { screenshots = watched.pictures }
+        }
+        var text = lead + "Lamp looked at the game open on the person's Mac, which has your latest change in it: this is where they are in it, "
+            + "as they left it, not a play from the start."
+        // How the changes since the last look went in; said once.
+        let wentIn = turn.shown.contains { $0 > (turn.lookedAtOpenGame ?? turn.began) }
+        turn.lookedAtOpenGame = Date()
+        if wentIn, turn.pageReopened {
+            text += " Its page opened again for the change" + (turn.reloadWhy.map { " (\($0))" } ?? "") + ", so the person waited for the world to be built again."
+        } else if wentIn, turn.pageRanAgain {
+            text += " The change went in by running its code again in place" + (turn.reloadWhy.map { " (\($0))" } ?? "") + "."
+        }
+        text += " To see it from the start, or to play it, `use_app` plays it in the hidden preview from the start (a `reopen` look does too)."
+        text += " " + (Privacy.sharesPictures ? "A picture of its window follows." : Privacy.picturesOff)
+        if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        text += " This look took \(Int(Date().timeIntervalSince(began).rounded())) seconds."
+        text += GameKit.openGameNote(mac)
+        if Privacy.sharesLog, let tail = Runtime.logTail(mac) { text += "\n\nWhat it logged:\n\(tail)" }
+        return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
+    }
+
     /// `look_at_app` for a game: built for the preview on this Mac and played from its start for two
     /// seconds, untouched; with `motion`, a frame every half second.
-    private func lookAtGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any]) {
+    private func lookAtGame(_ project: LampProject, turn: Turn, motion: Bool, reopen: Bool = false) async -> (Int, [String: Any]) {
+        if !reopen, let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
         // The preview needs none of the console's tools, wherever Try On points.
         if let problem = await buildGamePreview(project, owner: turn) { return (200, ["text": problem]) }
         let script = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
@@ -10276,15 +10346,15 @@ final class Store: ObservableObject {
 
     /// Marks the agent's look or use being played as one in the hidden copy: the step's words are the agent's own ("Seeing
     /// the new car in the city"), and the person's game shows something else until the change goes in. Lamp says where,
-    /// whatever the agent wrote.
-    private func markHiddenCopy(_ project: LampProject, in turn: Turn) {
+    /// whatever the agent wrote, and that it's building the game's world first when that took long last time (`building`).
+    private func markHiddenCopy(_ project: LampProject, in turn: Turn, building: Bool = false) {
         let wish = self.wish(of: project).id
         guard var lines = logs[wish], let index = lines.lastIndex(where: {
             $0.kind == .tool && ($0.at ?? .distantPast) >= turn.began && ($0.text.hasPrefix("look_at_app") || $0.text.hasPrefix("use_app"))
         }) else { return }
         let said = lines[index].said?.trimmed.nilIfEmpty ?? TurnProgress.activity(for: ToolCall(lines[index].text))
-        guard !said.hasSuffix(Self.inHiddenCopy) else { return }
-        lines[index].said = said + Self.inHiddenCopy
+        guard !said.hasSuffix(Self.inHiddenCopy), !said.hasSuffix(Self.buildingInHiddenCopy) else { return }
+        lines[index].said = said + (building ? Self.buildingInHiddenCopy : Self.inHiddenCopy)
         logs[wish] = lines
         saveChat(self.wish(of: project))
     }
@@ -10307,12 +10377,14 @@ final class Store: ObservableObject {
 
     /// The end of a step played in the hidden copy.
     nonisolated static let inHiddenCopy = " · in a hidden copy"
+    /// Its end when the hidden copy is building the game's world first, which took long last time (a city).
+    nonisolated static let buildingInHiddenCopy = " · building the world in a hidden copy"
 
     private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
         // Lamp's own checking, out of sight: the activity line says what the agent said it's checking, never the building
         // before it, with where it's played (`markHiddenCopy`). The change goes into the open game as it plays (`autoApply`).
         let wish = self.wish(of: project).id
-        markHiddenCopy(project, in: owner)
+        markHiddenCopy(project, in: owner, building: GameKit.engine(project) == .web && GameKit.buildsLong(project))
         // What the agent looks at is what it means to show: the game open on this Mac takes it as it plays (`autoApply`).
         owner.lookedSources[project.id] = Runtime.fingerprint(current(project) ?? project)
         let lookedAt = Date()
@@ -10347,6 +10419,10 @@ final class Store: ObservableObject {
             return (200, ["text": error.localizedDescription])
         }
         guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
+        if GameKit.engine(project) == .web {
+            log(project, .detail, "The hidden copy played it in \(Int(Date().timeIntervalSince(lookedAt).rounded())) s"
+                + (played.fresh ? ", building the game from the start." : ", in the copy kept from the last look."))
+        }
         // What the game logged is its log, for the person's Agent Details as much as the agent. While the game is open on
         // this Mac its own copy is writing that log: the hidden copy's play is added after it, never written over it.
         let printed = played.printed.joined(separator: "\n") + "\n"
@@ -13641,11 +13717,13 @@ final class Store: ObservableObject {
         let onMac = !onDevice && pageOnMac(project, shape: shape)
         if onMac, asidePreviews.remove(project.id) != nil { TVPreview.close(project) }
         let project = onMac ? project.at(.mac) : project
+        // The agent is still at work on the game: its preview stays warm for the next look there.
+        if GameKit.isGame(project) { WebGamePreview.keepWarm(for: project.id) }
         // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
         if GameKit.isGame(project), !onDevice, !onMac {
             // One made for the Xbox with a loop of its own can't play the preview's script: it's looked at as a page is.
             if GameKit.ownsLoop(project) { return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen) }
-            return await lookAtGame(project, turn: turn, motion: motion)
+            return await lookAtGame(project, turn: turn, motion: motion, reopen: wantsFresh)
         }
         // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens

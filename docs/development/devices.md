@@ -429,13 +429,25 @@ its declared step makes, `Web/lamp.js` written then), installed as a game. The a
 `WebGamePreview`: a copy of the page (`GameKit.stageWeb`, under the sandbox) in a web view nobody sees, given the same
 script as the C++ kit's preview (`window.lampPreview`), which `lamp-game.js` plays itself at exactly 1/60 s a frame with its
 clock and random numbers fixed, pausing at each `shot` while Lamp pictures the whole page, HTML over the canvas
-included; the same script gives the same pixels. After a play that ends cleanly the preview is kept open for ten
-minutes, one a game: the next look hands it its script and the files changed since the last (by hash, the build's own
-name aside), and the game's code runs again in place there from a fresh start, with the clock, seed, saves and log
-reset (`__lampPreviewAgain`), so only the first look of a while waits for the whole game to be built and its shaders
-compiled. Lamp's own files changing, a page that can't run its code again, a failed play or one that runs past two
-minutes closes it, and that look starts a new preview. Its stats count draws and triangles (three.js's `renderer.info`, or the
-WebGL calls lamp-phaser.js counts).
+included; the same script gives the same pixels. After a play that ends cleanly the preview is kept open, one a game,
+while the agent works on the game (each look, at the preview or the open window, and every two seconds of a turn on
+it: `WebGamePreview.keepWarm`) and for ten minutes after: the next look hands it its script and the files changed
+since the last (by hash, the build's own name aside), and the game's code runs again in place there from a fresh
+start, with the clock, seed, saves and log reset (`__lampPreviewAgain`), so only the first look of a while waits for
+the whole game to be built and its shaders compiled. A changed data file the game fetches itself (a city's building
+data) goes the same way: the modules that name it count as changed, so what was kept from them is built again
+(`namingData`), and once anything has changed the page's own files are fetched past any cache. Lamp's own files
+changing, a page that can't run its code again, a failed play or one that runs past its limit closes it, and that
+look starts a new preview. The limit goes by how long the game took to be built last time (`GameKit.previewLimit`:
+twice that and a minute, at least two minutes and at most ten, and three minutes for a game never timed), the last play in a new preview, from loading to its
+end (`built.txt` beside its copy: most of a city's is its first frames compiling shaders, after init), or else the open
+game's, from the line lamp-game.js logs at its first frame. While a preview that isn't warm builds a game that took more than 20 s, the look's step says so
+(" · building the world in a hidden copy"). A play that runs out says how far it got (whether `game()` was called,
+what it logged last, `__lampPreviewState`, and whether its frames had begun), never a guess. The view is in no window;
+`inactiveSchedulingPolicy` `.none` keeps WebKit from suspending it, and the play's frames are the runtime's own
+(`__lampAdvance`), not the display's, so nothing waits on a screen: a city builds as fast there as in a window on
+screen. What makes a first look slow is the system compiling shaders it hasn't seen, wherever the page is drawn.
+Its stats count draws and triangles (three.js's `renderer.info`, or the WebGL calls lamp-phaser.js counts).
 
 A game may be written in TypeScript, its source in `src/` with `src/main.ts` its entry as a Vite project keeps it, so a
 game brought in from one stays as its authors wrote it. Before every build and every look (`Store.build`,
@@ -491,7 +503,15 @@ with any change (below): a swap goes in at once, busy or not; code run again in 
 and a change that opens the page again is held for Reload, never opened under the player (`PageLive.put` puts one change
 into a copy at a time). The step of a look or use played in the hidden copy ends in " · in a hidden copy"
 (`Store.markHiddenCopy`), Lamp's words whatever the agent's `doing` said, so "Seeing the new car in the city" never
-reads as the person's own game while it still shows the old one. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+reads as the person's own game while it still shows the old one. A plain look (no `reopen`, no moves) at a web game
+open on this Mac doesn't play the hidden copy at all (`Store.lookAtOpenGame`): it puts what the agent saved into the
+open game as a step (`stepPage`), and once that's in, asks the game itself for a picture of its window, as `on_device`
+does, in seconds rather than the minute a city takes to build out of sight. The picture is where the person is, not
+the start, which the look's answer says. Where that can't show the change (it waits for Reload, didn't go in, no picture
+came, or the picture is one even color where the game is drawn, as a window covered, on another Space or on a sleeping
+display gives once its page stops drawing: `GameKit.isBlank`), and for a look with `reopen` and every `use_app`, it
+plays in the hidden copy from the start: those press the controller, which in the person's game would take it from
+them. Agent Details says which copy each look used and how long a hidden play took, building the game or kept warm. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the
@@ -753,7 +773,8 @@ of Microsoft's beside it), and zips App.exe with Assets/; `build.sh preview` com
 annotated GLSL compiled by sokol-shdc into one header with HLSL and Metal; the console compiles the HLSL at launch with
 its own d3dcompiler. Both builds, and every play of the preview, run in the app's sandbox (`Sandbox.run`).
 
-`look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`); `use_app` takes
+`look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`), or, for a web game
+open on this Mac, looks at its window (above); `use_app` takes
 `stick`, `button` and `wait`, adds them to that play and plays the whole of it again from the start (`GameKit.plays`,
 `Store.useOnGame`), so after a change to the code the same moves show what changed, wherever the game is played.
 `look_at_app` with `on_device` opens it where Try On points and looks there: its window on this Mac, the simulator, or the
