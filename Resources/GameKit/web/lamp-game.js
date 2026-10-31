@@ -955,6 +955,14 @@ window.__lampLive = change => {
     return true;
 };
 
+// The app menu's Reload with no change waiting: the game opens again from its files, every part of it built afresh, with
+// the player where they were.
+window.__lampReloadNow = () => {
+    if (preview) return false;
+    reopen({ gen: changes, why: 'Reload' });
+    return true;
+};
+
 async function apply(change) {
     const paths = (change.changed || []).map(clean);
     // Not started yet: nothing to keep.

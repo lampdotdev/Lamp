@@ -95,7 +95,7 @@ A Mac app can be changed while it's in use (apps show the wand while the file `M
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
 wand at the top right of each of its windows, which opens the app's chat beside that window
 (`LampSidebar`; where it goes is below) and stays where it is while the chat is open, lit, closing the chat when
-clicked again, so people always find it in the same place (`LampMagic.showWand`); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's panel
+clicked again, so people always find it in the same place (`LampMagic.showWand`); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`). Beside it, **Reload** (⌥⌘R, and in a menu bar app's menu) is always there (`LampReload`): it asks Lamp (`/app/reload`) to put in a change waiting, as the Reload button does, and with none, or with Lamp not running, the app starts afresh itself: a page opens again with the player's place kept (`window.__lampReloadNow` in lamp-game.js, else `location.reload()`), any other app quits and opens again (`LampWindows.relaunch`), for when a change ran past something built once, and in Lamp's panel
 (`ChatPanel`) when the app has no window to put it beside. In a window with a title bar the wand is a title bar accessory. A
 window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for it, and an
 accessory would give it one: there the wand floats at the top right over the content, level with the traffic

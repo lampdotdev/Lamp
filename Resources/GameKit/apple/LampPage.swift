@@ -987,6 +987,10 @@ final class LampPageBlockedHost: NSObject {
         LampPageGuard.watch(view, scheme: files.scheme)
         #if os(macOS)
         LampPageReader.watch(view)
+        // The app menu's Reload, when Lamp has no change waiting: the page opens again, a game where the player was.
+        LampReload.page = { [weak view] in
+            view?.evaluateJavaScript("window.__lampReloadNow ? window.__lampReloadNow() : location.reload()", in: nil, in: .page) { _ in }
+        }
         #endif
         view.load(URLRequest(url: URL(string: "\(files.scheme)://app/index.html")!))
         return view

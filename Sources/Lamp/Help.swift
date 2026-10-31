@@ -168,7 +168,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             [
                 HelpSection(title: "In Lamp", text: "⌘N — New Wish\n⌘[ — Back to all your wishes\n⌘O — Import Shared Wish\n⇧⌘O — Open from GitHub\n⌘S — Name This Version\n⇧⌘C — Copy Wish File\n⌘, — Settings\n⌘/ — Lamp Help\n⇧⌘/ — Search the Help menu\nEscape — Put back a message you took from the chat to change"),
                 HelpSection(title: "In the chat", text: "Return — Send a message\nShift-Return — Add a new line\n⌘V — Paste text, or attach a copied image or file\nTab — Use the suggested next request\nEsc — Dismiss the suggestion"),
-                HelpSection(title: "In an app built with Lamp", text: "⇧⌘E — Customize with Lamp")
+                HelpSection(title: "In an app built with Lamp", text: "⇧⌘E — Customize with Lamp\n⌥⌘R — Reload: puts in a change waiting, or starts the app afresh")
             ]
         }
     }
