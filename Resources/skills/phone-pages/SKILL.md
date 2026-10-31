@@ -54,12 +54,12 @@ matchMedia('(orientation: landscape)').addEventListener('change', letGo);
 
 The game owns what's true; a phone draws what it's told and asks for moves. There's no second state machine on the phone.
 
-- **Views.** Derive each player's view from the game's state in one function, and send it to that player alone (`send(player, view)`, never player 0 for anything private) whenever what it holds changes, not only when the phase does: a wrong attempt changes the view with no change of phase. Send it in `onJoin` too, which also runs for a phone coming back and for a page that opened again, and for phones already joined when the code runs again. The phone keeps nothing it can't get back from its next view. A player with no part in the current view, like one back from a dropped link, is shown that and when they're next in, never an empty screen.
+- **Views.** Derive each player's view from the game's state in one function, and send it to that player alone (`send(player, view)`, never player 0 for anything private) whenever what it holds changes, not only when the phase does: a wrong attempt changes the view with no change of phase. It goes out on `onJoin` too, which also runs for a phone coming back and for a page that opened again, and for phones already joined when the code runs again: `onJoin` puts that in the moves' queue, so the view that lets a phone act again answers every move it sent before. The phone keeps nothing it can't get back from its next view. A player with no part in the current view, like one back from a dropped link, is shown that and when they're next in, never an empty screen.
 - **Turns.** Each view carries the phase and a `turn` the game moves on whenever an old screen's move would no longer mean the same thing (a new round, a new turn). A move names the `turn` it was made on, and an `id`, since a `turn` can't tell two moves in one turn apart: one more than the `answer.id` in the view it was made on (below), so ids come from the game and survive the page opening again.
 - **Moves.** Send the finished move as one bounded message: `pad.send({ move: 'try', id: id, turn: view.turn, path: path })`. `pad.axis` is for live movement only: an axis is dropped when the game is behind and late ones are thrown away, so never build a result from them. Collect a path on the phone and send it when it ends.
 - **The game decides.** `f.phones` holds buttons only; axes and messages come by `onAxis` and `onMessage`, between frames, so the game keeps its own queue and empties it in `frame`, never a flag `frame` clears. It drops a move from another phase or `turn`, whose phone has already moved on, and takes one with an `id` no newer than the player's last answer as a repeat, which changes nothing and only sends the view again. For any other move it checks the player and the move's size and shape, accepts or rejects it, and keeps that for the player. Every view carries that as `answer: { id, ok }`, `{ id: 0 }` before the first.
 - **One move at a time.** After sending, a phone takes no new move until a view's `answer.id` reaches it or a view has another phase or `turn`: views go out for other reasons too, and `send` returning true only means it went out. There's no timer that offers a fresh move, because a move that's late can still land, and two ids would count twice. A message can be dropped when the game is far behind, so a game whose turn can sit forever may send the same move again, same `id`, after a few seconds. A phone that loses its link forgets a waiting move and never sends it again after a reconnect; the view it comes back to says what happened.
-- **Input needs a current view.** A view belongs to the link it came on: take input only once one has arrived, and stop when `onState` leaves `connected`, until `onJoin`'s view comes on the new link.
+- **Input needs a current view.** A view belongs to the link it came on: take input only once one has arrived, and stop when `onState` leaves `connected`, until the view queued by `onJoin` comes on the new link.
 - **A gesture that's interrupted is no move.** Track the finger's `pointerId` and capture it. End the gesture, send nothing and clear what it drew on that finger's `pointercancel` or `lostpointercapture`, when the page is hidden (`visibilitychange`), when the phone turns, when `onState` leaves `connected`, and when a view arrives with another phase or `turn`. Only that finger's `pointerup` in the same `turn` submits, and it ends the gesture first, so the `lostpointercapture` that follows a normal release finds nothing to cancel. Keep `busy` true during a gesture so a newer page waits for it.
 
 ```js
@@ -99,9 +99,10 @@ function finish() {                                     // the finger lifted, or
 // In the game: moves wait for the frame, and the state decides.
 var moves = [];
 Lamp.controllers.onMessage(function (player, data) { moves.push({ player: player, data: data }); });
-Lamp.controllers.onJoin(function (player) { sendView(player); });
-// in frame(f): for each of moves.splice(0): drop an old turn's; for a new id, check it, change the state and keep
-// { id, ok } for that player's views; then sendView for whoever's view changed, and for a repeat
+Lamp.controllers.onJoin(function (player) { moves.push({ player: player, joined: true }); });
+// in frame(f), the only place views are sent: for each of moves.splice(0): drop an old turn's; for a new id, check it,
+// change the state and keep { id, ok } for that player's views; then sendView for whoever's view changed, for a
+// repeat and for joined
 ```
 
 ### Seeing the page
