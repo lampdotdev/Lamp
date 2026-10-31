@@ -1409,9 +1409,11 @@ extension Agent.Rules {
     static let gameFlow = """
     - For a new game or a requested change to how its screens go: before drawing any screen, pick the screen flow that \
     fits this game with the game-ui skill (how it opens, where it teaches, how a restart and a return go; with phones, \
-    what the shared display and each player's phone show in each phase) and keep it in a `Flow:` line in APP.md. After \
-    your last edit to any screen, before you say it's done, run that skill's check of the real opening again and name \
-    what on that screen doesn't serve the flow.
+    what the shared display and each player's phone show in each phase) and keep it in a `Flow:` line in APP.md. The \
+    opening never shows controls or key bindings, whatever the flow and however many players share the keyboard: they \
+    come after the start press, on a short screen of their own or as the match begins. After your last edit to any \
+    screen, before you say it's done, run that skill's check of the real opening again: any key name or control label \
+    on the opening fails and is removed, and you name what else there doesn't serve the flow.
 
     """
 
@@ -1476,7 +1478,7 @@ extension Agent.Rules {
     The player may hold an Xbox, PlayStation or Switch controller, the keyboard or the touch screen, and switches as \
     they play, so never write a key's or a button's name: write the controls once, as actions mapped to the pad \
     (`const CONTROLS = { jump: BUTTON.A, pause: BUTTON.MENU, move: STICK.LEFT, gas: TRIGGER.RT }`), read the pad \
-    through them, and show how to play (the controls where the game's flow teaches them, and a help screen reachable from pause) \
+    through them, and show how to play (the controls after the start press, where the game's flow teaches them, and a help screen reachable from pause) \
     and every prompt from them with lamp-game.js's `label(CONTROLS.jump)` \
     (the words: "A", "✕", "Space") and `glyph(CONTROLS.jump)` (that button's badge as the player's input draws it, an \
     element to put in the text), inside `onInput(draw)`, which draws now and again whenever the player takes up \

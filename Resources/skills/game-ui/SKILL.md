@@ -26,20 +26,22 @@ the game opens, where it teaches, how a restart works and how a player comes bac
 first to mind, and few games need it, so ask what the player should do first and what, if anything, has to come before
 that. These are examples of a flow, each with when it fits and what it costs:
 
-- **Instant play** (2048): it opens on the game, already playable. One action is named beside its target until it's
-  been done, and a new game is one quiet press. It fits a game a glance explains, with nothing to choose. There's no
+- **Instant play** (2048): it opens on the game, ready to play, and the first press is the start press, which brings
+  the controls before the clock or the danger begins. A new game is one quiet press. It fits a game a glance explains, with nothing to choose. There's no
   moment for mood or choices, so the name stays small and settings wait in pause.
 - **Arcade loop** (Asteroids): the name, the game playing itself and the best scores turn over until someone starts, the
-  first seconds of play teach, and game over comes back round with the score. It fits short runs and a score to beat.
+  controls come as the run begins, and game over comes back round with the score. It fits short runs and a score to beat.
   The loop has to be worth watching, or it's a title with extra steps.
 - **An opening in the fiction** (UNDERRUN): it opens inside the world, on a transmission, a scene or someone talking, and
-  play grows out of that, with the name arriving when it's earned. It fits a game with a story or a strong place. It
+  play grows out of that, with the name arriving when it's earned and the controls where the fiction hands over to
+  play. It fits a game with a story or a strong place. It
   costs writing and slows a second visit, so it's short and can be skipped at any moment, and the registered state keeps
   which beat it's on and how far through, so a change or a return goes on from there and a finished one isn't replayed.
-- **A briefing** (HexGL): the course, the vehicle and what's at stake, then a countdown. It fits a game where what
+- **A briefing** (HexGL): the course, the vehicle and what's at stake, then the controls with a countdown. It fits a game where what
   you're about to face changes how you play. It adds a step before every round, so Rematch and Continue go past it.
 - **Calm exploring** (Moonpool): it opens in the place, with nothing to fail, the name passing through and the first
-  thing worth finding in sight. It teaches by what the player notices, and a return puts them where they left off.
+  thing worth finding in sight. The first press brings the controls, what to do comes from what the player notices, and
+  a return puts them where they left off.
   It fits a game with no pressure. A goal can go unseen, so the world has to point at it.
 
 Another flow is often better: a game played only with phones may open on joining, a board game on its seats. The
@@ -54,8 +56,8 @@ change doesn't touch how the screens go.
 Leave out the screens the game has no use for:
 
 1. **A title**, where the flow has one: the game's name in a scene or strong emblem, one dominant Play or Continue, and a
-   few quieter choices (How to play, Settings). It's the first screen and the main menu at once. No level cards, join
-   code or list of controls here: those are later screens.
+   few quieter choices (How to play, Settings). It's the first screen and the main menu at once. No level cards or
+   join code here: those are later screens.
 2. **Joining or setup**: only when the game needs it, and only the choices needed now. Rule tweaks go behind a labeled
    secondary choice.
 3. **Level or mode choice**: a screen of its own, when the choice means something. A game with one endless mode goes
@@ -63,8 +65,16 @@ Leave out the screens the game has no use for:
 4. **Play**, then **Pause** with Resume first, and **Results** that say what happened before any decoration.
 
 Starting is one action and it visibly changes something: no splash that only asks for a press before the real menu, and
-no second confirmation of what the player just chose. A prompt to press something is built from the real bindings (the
-game skill says how).
+no second confirmation of what the player just chose. A prompt to press something after the opening is built from the
+real bindings (the game skill says how).
+
+**The opening never shows controls or key bindings**, whatever the flow, and however many players share the keyboard:
+local multiplayer is no exception. That means no key or button name and no label for what a control does (Space, WASD,
+A, "Whack: F"), on a card, on a tag beside a character or in a start prompt. It invites with a word, Play or Start,
+that a click or any of the game's confirm buttons answers. Players learn the controls afterwards, either on a short
+screen of their own after the start press or as the match begins, before play, and the flow chooses which. Rematch and
+Continue go past them, and they stay in pause. The stick and buttons Lamp draws on a touch screen are the controls
+themselves, not labels.
 
 Rematch and quick start keep the session's choices: players, level, mode, and go straight to the round. Settings aren't
 a step on the way to play.
@@ -216,14 +226,18 @@ person has it open Lamp asks them to press Reload first, with no picture until t
 picture may be a returning player's. Say which you saw, and when you couldn't see the opening, say so instead of
 calling it checked.
 
-Hold it against the `Flow:` line, not against a picture of a title: does everything on screen serve what the player is
-doing right now? An instant-play game may name one action beside its target, and a game played only with phones may
-open on joining. What fails is anything there because a title usually has it: a list of controls, level cards, a join
-code that isn't this screen's job, a tagline and prompt stacked under the name with no reason in your brief. Prompts match
-the real bindings, and starting does something the first time.
+First, write out every word on the opening, in the scenery and on tags as well as in the text. Any key name, button
+name or control label among them fails, for every flow and however well it teaches: remove it before you say it's done,
+and move it to where the flow teaches the controls.
 
-Then say in a line, by name, what's on that screen that doesn't serve the flow (a rules strip, two cards of controls), or
-that nothing does. Fix what you named and run this check again.
+Then hold the rest against the `Flow:` line, not against a picture of a title: does everything on screen serve what the
+player is doing right now? A game played only with phones may open on joining. What fails is anything there because a
+title usually has it: level cards, a join code that isn't this screen's job, a tagline and prompt stacked under the name
+with no reason in your brief.
+
+Say in a line, by name, what's on that screen that doesn't serve the flow (a rules strip, two cards of controls), or that
+nothing does. Fix what you named and run this check again. Then press start, and see the controls appear before play,
+with prompts that match the real bindings, and starting that does something the first time.
 
 ## One critique pass
 
