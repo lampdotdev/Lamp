@@ -294,5 +294,6 @@ the scene as `@Observable` (Observation), which `@State` holds as above; a scene
 - **Art**: as above: shapes in code (`SKShapeNode` drawn once into a texture with `view.texture(from:)`, since a shape
   node is costly to draw), pictures from `make_art` in Assets/ loaded once with `LampAssets.image("hero.png").map(SKTexture.init(image:))`.
 
-Look with `look_at_app` (with `motion` for what moves) and use it with `use_app` as the person would, keys and clicks;
-the game skill's "Keeping every frame smooth" holds here too.
+Look with `look_at_app` (with `motion` for what moves), and use it with `use_app`, keys and clicks, when the person
+asks you to try it: the game skill's "Playtesting" says what to say otherwise. Its "Keeping every frame smooth" holds
+here too.

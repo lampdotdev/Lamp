@@ -787,7 +787,8 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 `look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`), or, for a web game
 open on this Mac, looks at its window (above); `use_app` takes
 `stick`, `button` and `wait`, adds them to that play and plays the whole of it again from the start (`GameKit.plays`,
-`Store.useOnGame`), so after a change to the code the same moves show what changed, wherever the game is played.
+`Store.useOnGame`, which builds the preview itself), so after a change to the code the same moves show what changed, wherever the game is played. Any look
+but one with `on_device` starts the play over, a look at the open game's window too, so a change is carried through a long play by `use_app`.
 `look_at_app` with `on_device` opens it where Try On points and looks there: its window on this Mac, the simulator, or the
 Xbox. On the Xbox, `on_device`, Play and the end of a turn build for the console and put it there through the
 integration's bridge: `stop` ends

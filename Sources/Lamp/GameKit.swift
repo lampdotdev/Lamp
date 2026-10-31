@@ -1021,7 +1021,7 @@ enum GameKit {
                                             "menu": 1 << 6, "view": 1 << 7, "up": 1 << 8, "down": 1 << 9, "left": 1 << 10,
                                             "right": 1 << 11, "ls": 1 << 12, "rs": 1 << 13]
 
-    /// The play the agent has made so far in the preview, by app: every look starts one, every `use_app` adds to it,
+    /// The play the agent has made so far in the preview, by app: every look but one with `on_device` starts one, every `use_app` adds to it,
     /// and each is played again whole from the start (the preview's frames are always 1/60 s and its random numbers
     /// always the same), so a change to the code is seen in the same moves.
     @MainActor static var plays: [String: [String]] = [:]
@@ -1359,7 +1359,7 @@ extension Agent.Rules {
     what the Mac window saved. Either way you get a picture with its screen as text and what its console printed; neither \
     is the person's Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys where you \
     last looked: the arrows, enter, back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's \
-    move), then shows it again. Try it by playing it. `look_at_app` with `on_device` opens it where Try On points (its \
+    move), then shows it again, in plain sight, so only when the person asks you to try it. `look_at_app` with `on_device` opens it where Try On points (its \
     window on this Mac, or the Xbox) and shows that screen and its log.
 
     """
@@ -1673,8 +1673,9 @@ extension Agent.Rules {
     preview from the start. `use_app` plays on in the preview with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
     1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, b, x, y, lb, rb, lt, rt, menu, \
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
-    Each look or use plays the whole game again from the start with the same moves, so after a change to the code \
-    the same moves show what changed. Play it as the person would before you finish: a game that only looks right \
+    Each use plays the whole game again from the start with the moves so far, so after a change to the code the same \
+    moves show what changed (one to timing or navigation can land them elsewhere: check). Each look but one with \
+    `on_device` starts the moves over, a plain look at the person's open window too. Play it as the person would before you finish: a game that only looks right \
     isn't done. Read how the game takes the controller first (APP.md, its controls code): a vehicle's gas is often a \
     trigger, held as `key` rt alongside the stick that steers, and a game that barely moves under your moves is one \
     you're driving with the wrong control, not one that can't be tried. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \

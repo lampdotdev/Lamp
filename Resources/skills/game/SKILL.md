@@ -324,11 +324,22 @@ single picture hides.
 
 ## Playtesting
 
-Play it the way the person would before you finish: a game that only looks right isn't done. Web: Lamp's preview
-plays the game from a script of the controller's moves (`use_app` with `stick`, `button` and `wait`), with the same
-random numbers each time, so the same moves after a change show exactly what it changed. Play a whole round: start,
-learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there always something
-to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and play it again.
+Play it the way the person would before you finish: a game that only looks right isn't done. On Lamp's game runtime and
+the C++ kit, the preview plays the game from a script of the controller's moves (`use_app` with `stick`, `button` and
+`wait`), with the same random numbers each time, so the same moves after a change show exactly what it changed. Play a
+whole round: start, learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there
+always something to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and
+play it again.
+
+Every `use_app` plays all the moves so far again from the start, on the code as you saved it, with no look needed to
+build it. Every look but one with `on_device` starts the moves over, a plain look at the person's open window too: after
+a fix, go on with `use_app`, and if such a look came first, send all the moves again in one `use_app`. A look with
+`on_device` leaves them as they are, so never send them again after one. A fix that changes timing or navigation can put
+the same moves somewhere else, so check they still reach the same places.
+
+SpriteKit in a Swift app and a page with a loop of its own have no scripted preview: `use_app` there acts where the
+person sees it, so it waits for them to ask. Without that, keep to what `look_at_app` shows, and say what you didn't
+play rather than calling it checked.
 
 ## A game and the wish's other apps
 
