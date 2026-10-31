@@ -1378,7 +1378,9 @@ extension Sharing {
     /// these byte for byte is Lamp's own library wherever it sits, so the review leaves it out, as it does Lamp's files
     /// around the page. One that differs in any way is the sender's code and is read like the rest. Tests stand in
     /// their own, since a test run has none of Lamp's resources.
+    /// The versions Lamp shipped before count too (`DeviceSupport.earlierLibraryFingerprints`).
     nonisolated(unsafe) static var knownLibraries: Set<String> = Set((DeviceSupport.threeFiles + DeviceSupport.rapierFiles).map { fingerprint($0.contents) })
+        .union(DeviceSupport.earlierLibraryFingerprints)
 
     static func fingerprint(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()

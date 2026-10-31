@@ -139,6 +139,15 @@ enum DeviceSupport {
     /// loads the same in every host. Given only to a game whose page imports it (`GameKit.usesRapier`).
     static let rapierFiles = bundled("WebLibraries/rapier")
 
+    /// The SHA-256 of every file of the versions of those libraries Lamp shipped before (`WebLibraries/earlier.txt`,
+    /// which scripts/update-three.sh and update-rapier.sh add to as a version goes out), so a wish shared from an older
+    /// Lamp still has its copy told from the sender's own code (`Sharing.knownLibraries`).
+    static let earlierLibraryFingerprints: Set<String> = {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/earlier.txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return Set(text.split(whereSeparator: \.isNewline).map(String.init))
+    }()
+
     /// A folder of Lamp's bundle, every file by its path in the folder, read once; empty in a build without it, which
     /// then writes nothing for it.
     private static func bundled(_ path: String) -> [(name: String, contents: String)] {
