@@ -1409,8 +1409,9 @@ extension Agent.Rules {
     static let gameFlow = """
     - For a new game or a requested change to how its screens go: before drawing any screen, pick the screen flow that \
     fits this game with the game-ui skill (how it opens, where it teaches, how a restart and a return go; with phones, \
-    what the shared display and each player's phone show in each phase) and keep it in a `Flow:` line in APP.md. Before \
-    you finish, check the real opening as that skill says.
+    what the shared display and each player's phone show in each phase) and keep it in a `Flow:` line in APP.md. After \
+    your last edit to any screen, before you say it's done, run that skill's check of the real opening again and name \
+    what on that screen doesn't serve the flow.
 
     """
 

@@ -203,16 +203,27 @@ device or path you didn't run.
 
 ## Check the real opening
 
-Before you say a new game is done, or a change to its flow, see what a new player sees. `look_at_app` with `reopen`
-gives a fresh preview from the start: a plain look shows where the person is in an open game, and `use_app` adds to the
-moves already played, so after playtesting it can land anywhere. Look before pressing anything. That picture comes
-about two seconds in, so where the opening changes by itself, follow it with `use_app` and `wait` before any other move.
+After your last edit to any screen and before you say a new game is done, or a change to its flow, see what a new
+player sees. A look from before that edit doesn't count, so every later edit to a screen means this check again.
+
+On Lamp's web runtime, `look_at_app` with `reopen` gives a fresh preview from the start: a plain look shows where the
+person is in an open game, and `use_app` adds to the moves already played, so after playtesting it can land anywhere.
+Look before pressing anything. That picture comes about two seconds in, so where the opening changes by itself, follow
+it with `use_app` and `wait` before any other move.
+
+A native game, or a page with a loop of its own, has no such preview. There `reopen` opens the app again, and while the
+person has it open Lamp asks them to press Reload first, with no picture until they do. Its saved data stays too, so the
+picture may be a returning player's. Say which you saw, and when you couldn't see the opening, say so instead of
+calling it checked.
 
 Hold it against the `Flow:` line, not against a picture of a title: does everything on screen serve what the player is
 doing right now? An instant-play game may name one action beside its target, and a game played only with phones may
 open on joining. What fails is anything there because a title usually has it: a list of controls, level cards, a join
 code that isn't this screen's job, a tagline and prompt stacked under the name with no reason in your brief. Prompts match
-the real bindings, and starting does something the first time. Fix what fails and look again.
+the real bindings, and starting does something the first time.
+
+Then say in a line, by name, what's on that screen that doesn't serve the flow (a rules strip, two cards of controls), or
+that nothing does. Fix what you named and run this check again.
 
 ## One critique pass
 
