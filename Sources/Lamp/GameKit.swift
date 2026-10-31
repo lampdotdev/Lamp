@@ -1104,8 +1104,8 @@ enum GameKit {
         return page
     }
 
-    /// How long the game took to be built last time, in seconds: in the preview (kept beside its copy of the page), or
-    /// else in its window on this Mac (the line lamp-game.js logs as it draws its first frame). Nil when neither is known.
+    /// How long the game took to be built last time, in seconds: a play in a new preview (kept beside its copy of the
+    /// page), or else its window on this Mac (the line lamp-game.js logs as it draws its first frame). Nil when neither is known.
     static func lastBuilt(_ project: LampProject) -> TimeInterval? {
         if let text = try? String(contentsOf: builtFile(project), encoding: .utf8), let seconds = TimeInterval(text.trimmed) { return seconds }
         guard let log = try? String(contentsOf: Runtime.logURL(project), encoding: .utf8),
@@ -1143,15 +1143,16 @@ enum GameKit {
         }
         let logs = result["logs"] as? [String] ?? []
         // Only a build from the top counts: a play in the preview kept open builds just what changed.
-        if result["cold"] as? Bool == true, let built = result["built"] as? TimeInterval {
-            try? String(Int(built.rounded(.up))).write(to: builtFile(project), atomically: true, encoding: .utf8)
+        if result["cold"] as? Bool == true, let took = result["took"] as? TimeInterval {
+            try? String(Int(took.rounded(.up))).write(to: builtFile(project), atomically: true, encoding: .utf8)
         }
         if let ran = result["timedOut"] as? TimeInterval {
             let said = Privacy.sharesLog && !logs.isEmpty ? " What it logged last:\n" + logs.suffix(20).joined(separator: "\n") : ""
             let seconds = Int(ran.rounded())
             if let built = result["built"] as? TimeInterval {
-                throw Failure(message: "The game was built in the preview in \(Int(built.rounded())) s, but the play didn't finish within \(seconds) s: "
-                    + "something in its frames takes far too long, or waits for something that never comes." + said)
+                throw Failure(message: "The game's init was done in the preview after \(Int(built.rounded())) s, but its play didn't finish "
+                    + "within \(seconds) s: its first frames compile the scene's shaders, which can take a minute for a big world the "
+                    + "first time, or something in its frames takes far too long or waits for something that never comes." + said)
             }
             if result["started"] as? Bool == true {
                 throw Failure(message: "The game called game() but was still starting after \(seconds) s in the preview, so the play never began: "

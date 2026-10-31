@@ -439,13 +439,14 @@ data) goes the same way: the modules that name it count as changed, so what was 
 (`namingData`), and once anything has changed the page's own files are fetched past any cache. Lamp's own files
 changing, a page that can't run its code again, a failed play or one that runs past its limit closes it, and that
 look starts a new preview. The limit goes by how long the game took to be built last time (`GameKit.previewLimit`:
-twice that and a minute, at least two minutes and at most ten), the preview's own build (`built.txt` beside its copy,
-timed to the `playing` the page says as its play begins) or else the open game's, from the line lamp-game.js logs at
-its first frame. While a preview that isn't warm builds a game that took more than 20 s, the look's step says so
+twice that and a minute, at least two minutes and at most ten), the last play in a new preview, from loading to its
+end (`built.txt` beside its copy: most of a city's is its first frames compiling shaders, after init), or else the open
+game's, from the line lamp-game.js logs at its first frame. While a preview that isn't warm builds a game that took more than 20 s, the look's step says so
 (" · building the world in a hidden copy"). A play that runs out says how far it got (whether `game()` was called,
-what it logged last, `__lampPreviewState`), never a guess. The view is in no window, so WebKit's timers and rendering
-for hidden pages would hold it back: `inactiveSchedulingPolicy` `.none` keeps it running at full speed, the play's
-frames are the runtime's own (`__lampAdvance`), not the display's, and a city builds as fast hidden as in a window.
+what it logged last, `__lampPreviewState`, and whether its frames had begun), never a guess. The view is in no window;
+`inactiveSchedulingPolicy` `.none` keeps WebKit from suspending it, and the play's frames are the runtime's own
+(`__lampAdvance`), not the display's, so nothing waits on a screen: a city builds as fast there as in a window on
+screen. What makes a first look slow is the system compiling shaders it hasn't seen, wherever the page is drawn.
 Its stats count draws and triangles (three.js's `renderer.info`, or the WebGL calls lamp-phaser.js counts).
 
 A game may be written in TypeScript, its source in `src/` with `src/main.ts` its entry as a Vite project keeps it, so a

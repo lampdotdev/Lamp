@@ -28,8 +28,8 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     private var staged: URL?
     private var hashes: [String: String] = [:]
     private var lastPlayed = Date()
-    /// When this play began (the page loading, or a new play handed to the page kept open), and when the game was built
-    /// and its play began (`playing` from lamp-game.js): how long the build took, for the next play's limit.
+    /// When this play began (the page loading, or a new play handed to the page kept open), and how long after it the
+    /// game's init was done and its frames began (`playing` from lamp-game.js), which a play that runs out says.
     private var began = Date()
     private var builtIn: TimeInterval?
     private var playing = false
@@ -55,8 +55,9 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
     }
 
     /// Plays the script and hands back what it drew and said, or nil when it was stopped. A play that runs past `limit`
-    /// ends with `timedOut` (the seconds it ran), `started` and `logs` in its result: how far it got. Its result has
-    /// `built`, the seconds until the game was built and began to play.
+    /// ends with `timedOut` (the seconds it ran), `started` and `logs` in its result: how far it got. A play in a new
+    /// page has `cold` and `took`, its seconds from loading the page to the end: the whole build, its first frames'
+    /// shaders included (most of a city's), and the short play, which the next play's limit goes by.
     /// A shared game (`policy`) is held to what it's held to as an app (`SharedNetwork`), and is never kept warm: its
     /// policy is set up afresh with each play. Nor is a play with the phone page (`phone`, its copy): a game's phones
     /// join from a fresh start, which a page played again in place doesn't give them.
@@ -193,6 +194,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         timeout.cancel()
         if let builtIn { result?["built"] = builtIn }
         result?["cold"] = true
+        result?["took"] = Date().timeIntervalSince(began)
         return result
     }
 
