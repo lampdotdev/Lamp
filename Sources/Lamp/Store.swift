@@ -775,6 +775,8 @@ final class Store: ObservableObject {
         var autoApply: Task<Void, Never>?
         var applying: Task<Void, Never>?
         var applyingSources = ""
+        /// The sources the last step of a game's page was tried with, whatever came of it (`stepPage`, `awaitStep`).
+        var finishedStep: String?
         var autoApplied = 0
         /// The sources a step of the agent's saves put into the game open on this Mac (`stepPage`): a build of the same
         /// sources has nothing to show the person, so it says nothing in the chat.
@@ -4708,9 +4710,10 @@ final class Store: ObservableObject {
         let sentAgain = messages.contains { $0.replaces != nil || !$0.tookBack.isEmpty }
         let pointed = asked.compactMap { id in logs[project.id]?.first { $0.id == id }?.pointed }
         let made = Parts.madeNote(for: project, apps: apps(of: project))
+        let carriedHolds = holdsForRequest(project)
         let notes = Attachments.note(for: saved) + PointedAt.note(for: pointed) + Versions.note(for: project) + made.text
             + GameFun.note(for: project, apps: apps(of: project), request: prompt)
-            + (untoldHolds(project).map { "\n\n" + $0 } ?? "")
+            + (carriedHolds.note.map { "\n\n" + $0 } ?? "")
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         // A crash the agent hasn't heard of goes with the request, and counts as told only once the request has reached
         // the agent, like the note about going back: a run that never started leaves it for the next request.
@@ -4721,6 +4724,7 @@ final class Store: ObservableObject {
         turns[project.id]?.carriedSetAside = carried
         let ran = await runAgent(prompt + notes + crashAside, files: files, sendsRequest: true, on: project)
         project = current(project) ?? project
+        settleHolds(carriedHolds, reached: asked.last.map { Self.reachedAgent($0, in: logs[project.id] ?? []) } ?? ran, for: project)
         if let carried, let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []),
            setAsideChanges[project.id]?.crash == carried {
             setAsideChanges[project.id]?.told = true
@@ -5499,6 +5503,17 @@ final class Store: ObservableObject {
     /// so every tool's answer carries this (`agentRequest`, `mcp`), whichever engine asks, and a request carries what
     /// no tool's answer got to. An agent with no call left ends the turn without it, and the chat's Reload line under its
     /// answer says what waits. What it was told stays true to it until it hears otherwise, so the end of a hold is told too.
+    /// `untoldHolds` for a request: counted as told only once the request reaches the agent (`settleHolds`), since a run
+    /// can fail before it starts, and nothing else would say it again.
+    func holdsForRequest(_ project: LampProject) -> (note: String?, before: Set<String>?) {
+        let before = toldHolds[wish(of: project).id]
+        return (untoldHolds(project), before)
+    }
+
+    func settleHolds(_ carried: (note: String?, before: Set<String>?), reached: Bool, for project: LampProject) {
+        if !reached { toldHolds[wish(of: project).id] = carried.before }
+    }
+
     func untoldHolds(_ project: LampProject) -> String? {
         let wish = wish(of: project)
         let holds = apps(of: wish).flatMap { app in PageLive.shared.holds(of: app).map { (hold: $0, name: app.name) } }
@@ -5529,16 +5544,32 @@ final class Store: ObservableObject {
 
     /// `progress` says what's saved is whole, which is what lets the open game take it (`autoApply`), and the agent's next
     /// words may be its last: so its answer waits for how that went, ten seconds at most, and carries it (`untoldHolds`).
+    /// One attempt at what's saved now: it stops when that attempt ends however it went (a game that won't build isn't
+    /// tried again, so nothing more would come), when no step can run, and when the sources move on.
     private func awaitStep(_ project: LampProject) async {
-        guard let turn = turns[project.id] ?? turns[wish(of: project).id], var mac = stepped(project) else { return }
+        guard let turn = turns[project.id] ?? turns[wish(of: project).id], let app = stepped(project) else { return }
+        await awaitStep(of: app, in: turn)
+    }
+
+    func awaitStep(of app: LampProject, in turn: Turn) async {
+        var mac = app
         mac.chosen = .mac
-        guard stepsPage(mac) else { return }
+        let sources = Runtime.fingerprint(mac)
         var waited = 0
-        while waited < 20, !turn.stopped, turn.agent != nil, !Runtime.waitsForReload(mac),
-              turn.applying != nil || (Runtime.sourcesChanged(mac) && pageSignature(mac) != turn.shownPage) {
+        while waited < 20, turn.finishedStep != sources, Runtime.fingerprint(mac) == sources,
+              // A step under way runs whatever began since: its own build is what keeps the next one off.
+              turn.applying != nil || (stepCanRun(mac, in: turn) && Runtime.sourcesChanged(mac) && pageSignature(mac) != turn.shownPage) {
             try? await Task.sleep(for: .milliseconds(500))
             waited += 1
         }
+    }
+
+    /// Whether `autoApply` can take a step of an open game's page now.
+    private func stepCanRun(_ app: LampProject, in turn: Turn) -> Bool {
+        let crash = setAsideChanges[wish(of: app).id]
+        return !turn.stopped && turn.agent != nil && !turn.building && !turn.keptOpen && stepsPage(app) && !Runtime.waitsForReload(app)
+            && (!turn.look.inProgress || turn.stopHidden != nil)
+            && (crash?.told != false || turn.carriedSetAside == crash?.crash)
     }
 
     /// Whether a tool call ends the agent's turn: any after it asked, other than the ask itself, and any at all once
@@ -9116,6 +9147,11 @@ final class Store: ObservableObject {
     private func stepPage(_ project: LampProject, in turn: Turn, saved: Date) async {
         // A turn's project is the wish while the game is one of its parts.
         func stillOwned() -> Bool { !turn.stopped && (turns[project.id] === turn || turns[wish(of: project).id] === turn) }
+        // Tried, whatever comes of it, for `progress` waiting on this step.
+        var tried = project
+        tried.chosen = .mac
+        let sources = Runtime.fingerprint(tried)
+        defer { turn.finishedStep = sources }
         // Nothing the page is made of changed since the last step: nothing to put in, nor to say.
         let page = pageSignature(project)
         guard page != turn.shownPage else { return }

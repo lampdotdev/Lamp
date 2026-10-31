@@ -102,8 +102,9 @@ export async function asset(path) {
 // The files the game loaded through the runtime, and how the runtime puts a new copy of each in by itself.
 const loaded = new Set(), swaps = new Map();
 // Every file of the page this copy has read, through the runtime, fetched or started as a worker: what the running game
-// holds may have come from any of them (`unusedFiles`).
+// holds may have come from any of them (`unusedFiles`, `waitsFor`). What a worker reads for itself the page never sees.
 const everRead = new Set();
+let workerStarted = false;
 const clean = path => String(path).replace(/^\.?\//, '').split(/[?#]/)[0];
 // Asked again after a change, a file is asked for by a new address, so nothing on the way keeps the old one.
 let changes = 0;
@@ -1233,11 +1234,11 @@ function names(text, path) {
 // What of a change's files taken away the running game clearly has no use for: nothing it runs imports them, it never read
 // them, no part is built from them, and neither its code, its page nor its stylesheets name them. Anything else (a
 // worker it started, data it fetched, a module it imports, a name in a comment) is left in the change, which goes on to
-// say honestly what came of it. A page that can't be read says nothing is unused. Not for the person's Reload, which
-// puts everything in.
+// say honestly what came of it. With a worker started, what's read is only partly known, so no file is known to be
+// unused, and a page that can't be read says the same. Not for the person's Reload, which puts everything in.
 async function unusedFiles(change, paths) {
     const removed = (change.removed || []).map(clean).filter(p => paths.includes(p));
-    if (!removed.length || change.now) return [];
+    if (!removed.length || change.now || workerStarted) return [];
     try {
         if (removed.includes(pagePath())) return [];
         const html = await readText(pagePath()), parsed = parse(html);
@@ -1900,12 +1901,12 @@ async function namingData(paths, order, named = new Set()) {
     return naming;
 }
 
-// What of a change the code run again didn't take in: a file the game uses (one it loaded through the runtime, or that
-// its code names) that nothing read again, nor put in as it was (`put`), so a part kept from it, or code that read it
-// once, shows the old one until the page opens again. That waits for Reload.
+// What of a change the code run again didn't take in: a file the game uses (one it loaded through the runtime, read in
+// any other way, or that its code names) that nothing read again, nor put in as it was (`put`), so a part kept from it,
+// or code that read it once, shows the old one until the page opens again. That waits for Reload.
 function waitsFor(change, named) {
     return (change.changed || []).map(clean).filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p) && !readSince.has(p)
-        && !(change.put || []).includes(p) && (loaded.has(p) || named.has(p)));
+        && !(change.put || []).includes(p) && (loaded.has(p) || everRead.has(p) || named.has(p)));
 }
 
 async function runAgain(change, state, roster) {
@@ -2206,6 +2207,7 @@ function watch() {
         window.Worker = function (url, ...rest) {
             const path = pathOf(String(url));
             if (path != null) read(clean(path));
+            workerStarted = true;
             return new Started(url, ...rest);
         };
         window.Worker.prototype = browser.Worker.prototype;

@@ -465,28 +465,51 @@ final class GameRegistrationTests: XCTestCase {
         XCTAssertFalse(live.told.contains { $0["state"] as? String == "report" }, "no run, so nothing to report")
     }
 
-    /// A module the game imports can't go quietly: the change never says it went in by itself.
+    /// What the run of a change said waits for Reload, once it has said.
+    private func waits(gen: Int) async throws -> [String]? {
+        try await until("the report for change \(gen) came") { self.live.told.contains { $0["state"] as? String == "report" && $0["gen"] as? Int == gen } }
+        return live.told.last { $0["state"] as? String == "report" && $0["gen"] as? Int == gen }?["waits"] as? [String]
+    }
+
+    /// A module the game imports can't go quietly: with nothing to load, its page opens again.
     func testTakingAwayAnImportedModuleIsNoQuietSwap() async throws {
         try await open(Self.game(body: "import { helper } from './helper.js'; window.helper = helper;"), also: ["helper.js": "export const helper = 1;"])
         try await wander()
         let said = try await removal(["helper.js"], gen: 1)
-        XCTAssertNotEqual(said, "swapped")
+        XCTAssertEqual(said, "rerun")
+        try await until("the page opened again") { self.live.told.contains { $0["state"] as? String == "reloading" } }
     }
 
-    /// A file the game fetched (here by a name built in its code) and a worker it started: what the running game holds
-    /// came from them, so taking one away isn't nothing.
-    func testTakingAwayAFileTheGameReadOrAWorkerItStartedIsHonest() async throws {
-        try await open(Self.game(body: """
-            window.ready = fetch(['lev', 'els.json'].join('')).then(r => r.text());
-            new Worker(['job', 's.js'].join(''));
-            """), also: ["levels.json": "[1]", "jobs.js": ""])
-        try await js("window.ready.then(text => { window.readText = text; })")
+    /// A file the game fetched once, by a name built in its code, and keeps: what it read stays in the running game, so
+    /// the run says the file waits for Reload, taken away or changed.
+    func testAFileTheGameReadOnceWaitsForReload() async throws {
+        let body = """
+            window.ready = window.ready || fetch(['lev', 'els.json'].join('')).then(r => r.text()).then(text => { window.readText = text; });
+            """
+        try await open(Self.game(body: body), also: ["levels.json": "[1]", "more.json": "[1]"])
         try await until("the game read it") { try await self.text("window.readText || ''") == "[1]" }
-        let data = try await removal(["levels.json"], gen: 1)
-        XCTAssertNotEqual(data, "swapped")
-        try await until("the code ran again") { try await self.number("window.drawn") == 2 }
-        let worker = try await removal(["jobs.js"], gen: 2)
-        XCTAssertNotEqual(worker, "swapped")
+        let said = try await removal(["levels.json"], gen: 1)
+        XCTAssertEqual(said, "rerun")
+        let gone = try await waits(gen: 1)
+        XCTAssertEqual(gone, ["levels.json"])
+    }
+
+    /// A worker started by a name built in its code, once: taken away, it's a use the run says waits.
+    func testAWorkerTheGameStartedOnceWaitsForReload() async throws {
+        try await open(Self.game(body: "window.worker = window.worker || new Worker(['job', 's.js'].join(''));"), also: ["jobs.js": ""])
+        let said = try await removal(["jobs.js"], gen: 1)
+        XCTAssertEqual(said, "rerun")
+        let gone = try await waits(gen: 1)
+        XCTAssertEqual(gone, ["jobs.js"])
+    }
+
+    /// What a worker reads for itself the page never sees, so with one started no file is known to be unused.
+    func testAFileOnlyAWorkerMayReadIsNoQuietSwap() async throws {
+        try await open(Self.game(body: "window.worker = window.worker || new Worker(URL.createObjectURL(new Blob([''], { type: 'text/javascript' })));"),
+                       also: ["data.bin": "1"])
+        let said = try await removal(["data.bin"], gen: 1)
+        XCTAssertEqual(said, "rerun", "ran the code again rather than saying the file went in with nothing to do")
+        _ = try await waits(gen: 1)
     }
 
     /// Named only as a whole name counts: `world.js` isn't `orld.js`, and `orld.js` in a comment is.
@@ -494,7 +517,9 @@ final class GameRegistrationTests: XCTestCase {
         try await open(Self.game(body: "// the old map, orld.js, went away"), also: ["orld.js": ""])
         try await wander()
         let said = try await removal(["orld.js"], gen: 1)
-        XCTAssertNotEqual(said, "swapped", "Lamp can't tell a comment from a use, so it doesn't call this one unused")
+        XCTAssertEqual(said, "rerun", "Lamp can't tell a comment from a use, so it doesn't call this one unused")
+        let gone = try await waits(gen: 1)
+        XCTAssertEqual(gone, ["orld.js"])
     }
 
     /// A name added by a change that ran the code again counts: the code as it's served, not as it first loaded.
@@ -504,7 +529,9 @@ final class GameRegistrationTests: XCTestCase {
         files.text["game.js"] = "// spare.json is spare.\n" + Self.game()
         try await change("game.js")
         let said = try await removal(["spare.json"], gen: 9)
-        XCTAssertNotEqual(said, "swapped", "the code running now names it")
+        XCTAssertEqual(said, "rerun", "the code running now names it")
+        let gone = try await waits(gen: 9)
+        XCTAssertEqual(gone, ["spare.json"])
     }
 
     /// An edit and an unused file taken away together: the edit goes in, and the file doesn't hold anything back.

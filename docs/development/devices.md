@@ -564,14 +564,17 @@ taken away is told to the page apart from what changed (`removed`, measured like
 so a file made since the install and deleted again is in it, where `gone` is the install's and is for the app's file
 server). One the running game clearly has no use for is no part of the change (`unusedFiles`): nothing it runs imports
 it, it never read it (through the runtime, fetched, or started as a worker: `everRead`), no part is built from it, and
-its code, page and stylesheets don't name it, by the whole name (`names`, so `world.js` doesn't name `orld.js`). With
-nothing else in the change, that goes in as a swap with nothing run. Anything else taken away stays in the change, which
-says what came of it as any change does: that's a guess only in the safe direction, since a name in a comment counts.
+its code, page and stylesheets don't name it, by the whole name (`names`, so `world.js` doesn't name `orld.js`). What a
+worker reads for itself the page never sees, so with a worker started nothing counts as unused. With nothing else in the
+change, an unused file goes in as a swap with nothing run. Anything else taken away stays in the change, which says what
+came of it as any change does, and a file the game read (`everRead`) that nothing read again waits for Reload, however
+its name was built: that's a guess only in the safe direction, since a name in a comment counts.
 Lamp holds what the page said it holds as `PageLive.Hold`: part of the change in, all of it waiting for a pause, or all
 of it waiting for Reload, worked out from the page's words each time, so a later change or Reload ends it. A step can
-land after the agent's last call, so `progress` waits up to ten seconds for the step it lets go in (`Store.awaitStep`),
+land after the agent's last call, so `progress` waits up to ten seconds for the one attempt at what's saved
+(`Store.awaitStep`, which stops when `Turn.finishedStep` says that attempt ended, however it went, or when no step can run),
 and every tool's answer on every engine carries a hold the agent hasn't heard of, once, with what waits by name
-(`Store.untoldHolds`, `holdNote`), and of the end of one it heard of; so does its next request, for one no answer got to. An agent with no call left can
+(`Store.untoldHolds`, `holdNote`), and of the end of one it heard of; so does its next request, for one no answer got to, counted as told once the request reaches the agent (`settleHolds`). An agent with no call left can
 end its turn without it, and the chat's Reload line under its answer says what waits, in plain words (`ReloadLine`). A look
 in the hidden copy, which builds every part afresh, tells the agent which parts the open game built again and that one
 it kept doesn't show a change built into it (`GameKit.openGameNote`), so it never says the person sees what they don't. New York keeps its renderer, the

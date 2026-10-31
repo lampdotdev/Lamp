@@ -253,6 +253,68 @@ final class PhonePagePublishingTests: XCTestCase {
         XCTAssertEqual(again["removed"] as? [String], [])
     }
 
+    /// `progress` waits for one attempt at what's saved: a game that won't take it doesn't cost every later line ten seconds.
+    func testProgressWaitsForOneStepAttemptOnly() async throws {
+        try Data("one".utf8).write(to: web.appendingPathComponent("game.js"))
+        PageLive.shared.installed(game, at: .mac)
+        let asking = Task { await nextChange(after: 0) }
+        try await Task.sleep(for: .milliseconds(50))
+        defer { asking.cancel() }
+        let turn = Store.Turn()
+        turn.agent = Process()
+        func timed() async -> TimeInterval {
+            let began = Date()
+            await Store.shared.awaitStep(of: game, in: turn)
+            return Date().timeIntervalSince(began)
+        }
+        // That attempt is over, whatever came of it: a build that failed, or a step that had nothing to do.
+        turn.finishedStep = Runtime.fingerprint(game)
+        let tried = await timed()
+        XCTAssertLessThan(tried, 1, "no second wait for what was already tried")
+
+        // Not tried yet: it waits, and only until the attempt ends.
+        turn.finishedStep = nil
+        let sources = Runtime.fingerprint(game)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            turn.finishedStep = sources
+        }
+        let waited = await timed()
+        XCTAssertGreaterThan(waited, 0.4)
+        XCTAssertLessThan(waited, 2)
+
+        // A step can't run while Lamp builds, so there's nothing to wait for.
+        turn.finishedStep = nil
+        turn.building = true
+        let blocked = await timed()
+        XCTAssertLessThan(blocked, 1)
+    }
+
+    /// A request that never reached the agent told it nothing: the hold is still news.
+    func testAHoldCarriedByARequestThatNeverArrivedIsToldAgain() async throws {
+        let file = web.appendingPathComponent("game.js")
+        try Data("one".utf8).write(to: file)
+        PageLive.shared.installed(game, at: .mac)
+        try Data("two".utf8).write(to: file)
+        let asking = Task { await nextChange(after: 0) }
+        try await Task.sleep(for: .milliseconds(50))
+        let put = Task { await PageLive.shared.put(game, at: .mac) }
+        let answer = await asking.value
+        _ = PageLive.shared.state(["place": "mac", "state": "held", "why": "the import map changed", "gen": answer["gen"] as Any], for: game)
+        _ = await put.value
+
+        let request = UUID()
+        let carried = Store.shared.holdsForRequest(game)
+        XCTAssertNotNil(carried.note)
+        Store.shared.settleHolds(carried, reached: Store.reachedAgent(request, in: []), for: game)
+        XCTAssertNotNil(Store.shared.untoldHolds(game), "the request failed to start")
+
+        let again = Store.shared.holdsForRequest(game)
+        XCTAssertNil(again.note, "the tool's answer told it")
+        Store.shared.settleHolds(again, reached: true, for: game)
+        XCTAssertNil(Store.shared.untoldHolds(game))
+    }
+
     /// What a held change is, for the agent and the chat: told apart, for this generation, and gone once it's resolved.
     func testAHoldSaysWhichKindItIsUntilItsResolved() async throws {
         let file = web.appendingPathComponent("game.js")
