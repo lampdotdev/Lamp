@@ -1491,7 +1491,7 @@ function keep(path, key, build, options = {}) {
     const id = `${path} ${key}`, text = lasting ? bare(source(build)) : source(build), had = kept.get(id), again = runningAgain;
     if (lasting && had && had.text !== text && redeclare(key)) return had.value;
     const same = had && had.inputs.length === inputs.length && inputs.every((v, i) => Object.is(v, had.inputs[i]));
-    const sources = [from].flat().filter(f => typeof f === 'string' && f).map(f => f.endsWith('/') ? clean(f) + '/' : clean(f));
+    const sources = [from].flat().filter(f => typeof f === 'string' && f).map(clean);
     const sameSources = had && had.from.join('\n') === sources.join('\n');
     // In the preview a part whose async build drew random numbers while it waited is built again: how many were its
     // own can't be told, and a play must give the numbers a cold one does.
@@ -2297,7 +2297,8 @@ async function putBack() {
     if (reopened && said && !said.fresh && !runningAgain) {
         for (const entry of cameras.values()) if (said.held && said.held.cameras[entry.id]) tally.kept.push(`camera ${entry.id}`);
         tally.built.push(...[...kept.values()].map(k => ({ key: k.key, ms: k.ms, cause: null })));
-        tellHost(said.gen, 'report', cameThrough());
+        tellHost(said.gen, 'report', cameThrough(), {
+            built: tally.built.map(k => ({ part: k.key, ...(k.ms == null ? {} : { ms: Math.round(k.ms) }) })), kept: tally.kept.length, waits: [] });
     }
     pending = null;
     restoring = null;
@@ -2321,7 +2322,7 @@ function showPill() {
     pill.style.cssText = 'position:fixed;z-index:20;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));'
         + 'padding:8px 16px;border:0;border-radius:18px;background:rgba(20,20,24,.72);color:#fff;font:600 15px -apple-system,system-ui,sans-serif;'
         + '-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)';
-    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = { ...waiting, now: true }; waiting = null; queue = queue.then(() => startAgain(change)); } };
+    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = { ...waiting, now: true }; waiting = null; queue = queue.then(() => change.reopens ? reopen(change) : startAgain(change)); } };
     listen(pill, 'pointerdown', press);
     document.body.append(pill);
 }

@@ -404,6 +404,7 @@ final class GameRegistrationTests: XCTestCase {
             import { Painter } from './paint.js';
             window.paint = live.keep('roadPaint', () => ({ lanes: new Painter().lanes() }), { from: ['map.js'] });
             window.readStreets = () => fetch('streets.json');
+            window.levels = live.keep('levels', () => ({ built: (window.levelBuilds = (window.levelBuilds || 0) + 1) }), { from: ['levels/'] });
             """
         try await open(Self.game(body: body), also: ["paint.js": paint, "map.js": "export const LANES = 2;", "streets.json": "[1]"])
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -418,11 +419,17 @@ final class GameRegistrationTests: XCTestCase {
         let level = try await number("play.level")
         XCTAssertEqual(level, 7, "the player's place is kept")
 
+        // A folder it's built from: any file in it.
+        try await js("window.__lampLive({ changed: ['levels/one.json'], gen: 2, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 3 }
+        let levelBuilds = try await number("window.levelBuilds")
+        XCTAssertEqual(levelBuilds, 2, "built once at the start, and again for the file in its folder only")
+
         try await js("window.readStreets()")
         files.text["streets.json"] = "[2]"
-        try await js("window.__lampLive({ changed: ['streets.json'], gen: 2, why: 'test' })")
-        try await until("the code ran again") { try await self.number("window.drawn") == 3 }
-        try await until("the report came") { self.live.told.last { $0["state"] as? String == "report" }?["gen"] as? Int == 2 }
+        try await js("window.__lampLive({ changed: ['streets.json'], gen: 3, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 4 }
+        try await until("the report came") { self.live.told.last { $0["state"] as? String == "report" }?["gen"] as? Int == 3 }
         let waits = live.told.last { $0["state"] as? String == "report" }?["waits"] as? [String]
         XCTAssertEqual(waits, ["streets.json"], "the game uses it, and nothing read it again")
     }

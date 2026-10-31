@@ -44,6 +44,8 @@ import Foundation
         var words: String?
         var built: [Built] = []
         var waits: [String] = []
+        /// Whether the page said which parts it built again: a copy built by an earlier Lamp says it only in words.
+        var tellsParts = false
 
         init(words: String?, built: [Built] = [], waits: [String] = []) {
             self.words = words
@@ -57,6 +59,7 @@ import Foundation
                 (item["part"] as? String).map { Built(part: String($0.prefix(80)), ms: item["ms"] as? Int, cause: (item["cause"] as? String).map { String($0.prefix(160)) }) }
             }
             waits = (body["waits"] as? [String] ?? []).prefix(20).map { String($0.prefix(200)) }
+            tellsParts = body["built"] is [Any]
         }
 
         /// The parts built again in the person's words ("the road paint"), and how long they took together.

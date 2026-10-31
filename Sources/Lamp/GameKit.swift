@@ -760,7 +760,7 @@ enum GameKit {
         let report = PageLive.shared.lastReport(project, at: .mac)
         var came = report?.words.map { " What came through the open game's last change: \($0). Anything reset or not registered is the person's place lost: register it now, so the next change keeps it." } ?? ""
         // The hidden copy builds every part afresh; the open game builds again only the parts a change is known to touch.
-        if let report, report.words != nil {
+        if let report, report.words != nil, report.tellsParts {
             came += " The open game built again " + (report.built.isEmpty ? "no part of the world" : report.built.map(\.part).joined(separator: ", "))
                 + " and kept every other part as it was. If what you changed is built in a part it kept, the person doesn't see it yet, whatever this look shows:"
                 + " name the file it's built from in that part's keep (`from`, the game skill, \"Changes while it's played\"), so the change builds it again, and don't say it's in until a look at the open game shows it."
