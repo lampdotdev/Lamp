@@ -101,6 +101,9 @@ export async function asset(path) {
 
 // The files the game loaded through the runtime, and how the runtime puts a new copy of each in by itself.
 const loaded = new Set(), swaps = new Map();
+// Every file of the page this copy has read, through the runtime, fetched or started as a worker: what the running game
+// holds may have come from any of them (`unusedFiles`).
+const everRead = new Set();
 const clean = path => String(path).replace(/^\.?\//, '').split(/[?#]/)[0];
 // Asked again after a change, a file is asked for by a new address, so nothing on the way keeps the old one.
 let changes = 0;
@@ -953,7 +956,9 @@ window.__lampLive = change => {
     queue = queue.then(() => {
         // What the code run again couldn't take in goes in as the page opens again, at Reload.
         if (waiting && waiting.reopens && change.now) { waiting = null; return reopen(change); }
-        if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])] };
+        // A file taken away while a change waits, and made again since, is a changed file like any other.
+        if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])],
+            removed: [...new Set([...(waiting.removed || []).filter(p => !change.changed.includes(p)), ...(change.removed || [])])] };
         waiting = null;
         return apply(change);
     }).catch(e => log(`Lamp: ${e && e.message || e}`));
@@ -973,11 +978,21 @@ window.__lampReloadNow = () => {
 };
 
 async function apply(change) {
-    const paths = (change.changed || []).map(clean);
+    let paths = (change.changed || []).map(clean);
     // Not started yet: nothing to keep.
     if (!started) { tellHost(change.gen, 'reloading'); location.reload(); return; }
     // Where the player is before anything is swapped, for the page to open from should the swap not take.
     const before = takeSnapshot(), roster = phonesHere(), began = performance.now();
+    // Files taken away that the running game has no use for are no part of the change. With nothing else in it there's
+    // nothing to put in, and the game goes on as it was.
+    const unused = await unusedFiles(change, paths);
+    if (unused.length) {
+        for (const path of unused) texts.delete(path);
+        paths = paths.filter(p => !unused.includes(p));
+        change = { ...change, changed: paths };
+        log(`Lamp: ${unused.join(', ')} ${unused.length === 1 ? 'was' : 'were'} taken away, and the running game has no use for ${unused.length === 1 ? 'it' : 'them'}.`);
+        if (!paths.length) { hidePill(); tellHost(change.gen, 'swapped'); return; }
+    }
     const said = [];
     let why = paths.length ? null : 'nothing to put in', touched = false;
     // A part declared as built from a changed file is built again, with everything else kept: a swap would leave it as
@@ -1206,6 +1221,36 @@ async function readModules(changed, page = document) {
         next = unread();
     }
     return roots;
+}
+
+// Whether `text` names a file: by its whole name, so `world.js` doesn't name `orld.js`. Only a name: a comment naming the
+// file counts, and two files of one name in different folders count as each other, which errs toward saying a file is used.
+function names(text, path) {
+    const name = path.split('/').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^\\w$.-])${name}($|[^\\w$-])`).test(text);
+}
+
+// What of a change's files taken away the running game clearly has no use for: nothing it runs imports them, it never read
+// them, no part is built from them, and neither its code, its page nor its stylesheets name them. Anything else (a
+// worker it started, data it fetched, a module it imports, a name in a comment) is left in the change, which goes on to
+// say honestly what came of it. A page that can't be read says nothing is unused. Not for the person's Reload, which
+// puts everything in.
+async function unusedFiles(change, paths) {
+    const removed = (change.removed || []).map(clean).filter(p => paths.includes(p));
+    if (!removed.length || change.now) return [];
+    try {
+        if (removed.includes(pagePath())) return [];
+        const html = await readText(pagePath()), parsed = parse(html);
+        await readModules(paths.filter(p => /\.m?js$/i.test(p)), parsed);
+        const styles = [...parsed.querySelectorAll('link[rel~="stylesheet"]')].map(l => pathOf(new URL(l.getAttribute('href'), location.href).href));
+        const asked = removed.filter(p => !lampOwn(p) && !imports.has(p) && !loaded.has(p) && !everRead.has(p) && !swaps.has(p) && !builtFrom([p]));
+        const sources = [html];
+        for (const path of [...imports.keys(), ...styles]) {
+            if (path == null || lampOwn(path) || removed.includes(path)) continue;
+            sources.push(texts.get(path) ?? inline.get(path) ?? (modules.get(path) || {}).text ?? await readText(path));
+        }
+        return asked.filter(p => !sources.some(text => names(text, p)));
+    } catch (e) { return []; }
 }
 
 // Puts changed modules and stylesheets into the running game: { said } what went in, or { why } it couldn't, with
@@ -1575,6 +1620,7 @@ function took(path) {
 let readSince = new Set();
 function read(path) {
     readSince.add(path);
+    everRead.add(path);
     for (const entry of building) entry.assets.add(path);
     for (const waiting of keepsWaiting) waiting.assets.add(path);
 }
@@ -1842,14 +1888,14 @@ function canRunAgain(change) {
 // code names, for what of a change nothing read again (`waitsFor`).
 async function namingData(paths, order, named = new Set()) {
     const outside = paths.filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p));
-    const data = paths.filter(p => !CODE.test(p) && !loaded.has(p)).map(p => p.split('/').pop());
+    const data = paths.filter(p => !CODE.test(p) && !loaded.has(p));
     if (!outside.length) return [];
     const naming = [];
     for (const path of order) {
         if (lampOwn(path) || paths.includes(path)) continue;
         const text = texts.get(path) ?? inline.get(path) ?? await readText(path).catch(() => '');
-        for (const p of outside) if (text.includes(p.split('/').pop())) named.add(p);
-        if (data.some(name => text.includes(name))) naming.push(path);
+        for (const p of outside) if (names(text, p)) named.add(p);
+        if (data.some(p => names(text, p))) naming.push(path);
     }
     return naming;
 }
@@ -2155,7 +2201,15 @@ function watch() {
         return Watched;
     };
     if (browser.AudioContext) window.AudioContext = window.webkitAudioContext = owning(browser.AudioContext, c => c.state !== 'closed' && c.close());
-    if (browser.Worker) window.Worker = owning(browser.Worker, w => w.terminate());
+    if (browser.Worker) {
+        const Started = owning(browser.Worker, w => w.terminate());
+        window.Worker = function (url, ...rest) {
+            const path = pathOf(String(url));
+            if (path != null) read(clean(path));
+            return new Started(url, ...rest);
+        };
+        window.Worker.prototype = browser.Worker.prototype;
+    }
     watchPhones();
 }
 

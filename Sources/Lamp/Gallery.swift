@@ -714,6 +714,14 @@ enum Gallery {
                 ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Hot Shelf"), button: "Reload", prominent: true) {}
             })
         },
+        // A game that took some of a change, and one that takes it by itself at its next pause: the line says how much
+        // waits for Reload, in the same place.
+        Entry(group: "Activity", name: "Reload for the rest of a change") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Moonpool", held: .partly), button: "Reload", prominent: true) {})
+        },
+        Entry(group: "Activity", name: "Reload before the next pause") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Moonpool", held: .pause), button: "Reload", prominent: true) {})
+        },
         // A wish on several places: Reload says where it opens the app again and where it only puts the change.
         Entry(group: "Activity", name: "Reload on every place") {
             AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise",
