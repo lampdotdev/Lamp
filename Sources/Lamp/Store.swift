@@ -6115,9 +6115,12 @@ final class Store: ObservableObject {
             }
             return
         }
+        // While a turn holds the wish (an app in a folder of its own is held by its wish's id), nothing is built: the
+        // installed copy opens as it is, and the turn's changes go into it live as they're saved (below).
+        let turnHolds = busy.contains(project.id) || busy.contains(wish(of: project).id)
         // Built by an older Lamp: rebuild it first, so it gets this Lamp's fixes and building blocks.
         // Not while it's running (that would quit it under the user); if the build fails, the old one opens.
-        if stamps[project.id]?.isOutdated(for: project) == true, !busy.contains(project.id),
+        if stamps[project.id]?.isOutdated(for: project) == true, !turnHolds,
            macCopies(of: project).isEmpty {
             if await updateForThisForge(project) { return }
         }
@@ -6126,13 +6129,13 @@ final class Store: ObservableObject {
         // (`intentsCanComeBack`, `shareCanComeBack`), else it would be built again on every open.
         let intentsBack = await Self.intentsCanComeBack(project)
         let shareBack = await Self.shareCanComeBack(project)
-        if intentsBack || shareBack, !busy.contains(project.id),
+        if intentsBack || shareBack, !turnHolds,
            macCopies(of: project).isEmpty {
             if await updateForThisForge(project, because: "Signing \(project.name) for your Apple team…") { return }
         }
         // The Mac copy of an app of several places, older than its code (built for another place since): built and
         // installed now, its open copy taking the change as any change goes in (`install`).
-        if project.platform.choosesPlace, Runtime.sourcesChanged(project), !busy.contains(project.id) {
+        if project.platform.choosesPlace, Runtime.sourcesChanged(project), !turnHolds {
             await run(project)
             return
         }
@@ -6157,9 +6160,7 @@ final class Store: ObservableObject {
             guard await AppQuit.close(running, id: project.id, runtime: Runtime.macFolder(project),
                                       stopped: { Date().timeIntervalSince(asked) > 15 }) else { return }
         }
-        // While a turn holds the wish, nothing is built: the installed copy opens as it is, and the turn's changes go into it
-        // live as they're saved. Only a wish with nothing installed yet waits, and says so.
-        let turnHolds = busy.contains(project.id) || busy.contains(wish(of: project).id)
+        // Only a wish with nothing installed yet waits, and says so.
         let installed = FileManager.default.fileExists(atPath: project.installedURL.path)
         if turnHolds, !installed {
             log(project, .status, "\(project.name) isn't made yet: open it once this change is done.")
