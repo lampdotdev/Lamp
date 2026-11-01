@@ -51,7 +51,7 @@ final class GameRegistrationTests: XCTestCase {
         """
 
     private static func game(lens: String = "60", start: String = "{ mode: 'title', level: 1, player: { x: 0, z: 0 } }",
-                             version: Int = 1, extra: String = "", body: String = "") -> String {
+                             version: Int = 1, extra: String = "", body: String = "", options: String = "") -> String {
         """
         import * as THREE from 'three';
         import { game, hot } from './lamp-game.js';
@@ -68,6 +68,7 @@ final class GameRegistrationTests: XCTestCase {
         \(body)
         game({
             renderer,
+            \(options)
             init() {
                 // A start that sets the camera as a game's would: the player's place wins at the first frame.
                 camera.position.set(0, 2, 8);
@@ -167,6 +168,57 @@ final class GameRegistrationTests: XCTestCase {
         XCTAssertEqual(pose, "[[11,12,13],35,[4,5,6]]")
         let turnedAfter = try await number("camera.quaternion.x")
         XCTAssertEqual(turnedAfter, turned)
+    }
+
+    /// Prompts as a game draws them: `onInput` before `game()`, as a page's own HUD can.
+    private static func promptsGame(_ options: String = "") -> String {
+        game(body: """
+            import { label, glyph, onInput, BUTTON, STICK } from './lamp-game.js';
+            window.prompt = () => label(STICK.LEFT);
+            window.right = () => label(STICK.RIGHT);
+            window.jump = () => label(BUTTON.A);
+            window.badge = () => glyph(STICK.LEFT).textContent;
+            window.onPad = () => label(STICK.LEFT, { kind: 'controller', family: 'xbox' });
+            onInput(() => { window.drawnPrompt = label(STICK.LEFT); });
+            """, options: options)
+    }
+
+    func testAGameThatAsksForTheArrowsIsToldTheArrows() async throws {
+        try await open(Self.promptsGame())
+        let pad = try await text("onPad()")
+        let wasd = try await text("prompt()")
+        XCTAssertEqual(wasd, "W A S D")
+
+        try await open(Self.promptsGame("keyboardHints: { leftStick: 'arrows' },"))
+        let arrows = try await text("prompt()"), badge = try await text("badge()"), drawn = try await text("drawnPrompt")
+        XCTAssertEqual(arrows, "↑ ← ↓ →")
+        XCTAssertEqual(badge, "↑←↓→")
+        XCTAssertEqual(drawn, "↑ ← ↓ →", "a prompt drawn before game() is drawn again")
+        // Only the left stick's keys, and only the keyboard's.
+        let right = try await text("right()"), jump = try await text("jump()"), onPad = try await text("onPad()")
+        XCTAssertEqual(right, "I J K L")
+        XCTAssertEqual(jump, "Space")
+        XCTAssertEqual(onPad, pad)
+    }
+
+    func testAPageThatReadsTheKeysItselfStillHasNoStickKeys() async throws {
+        try await open(Self.promptsGame("keyboard: false, keyboardHints: { leftStick: 'arrows' },"))
+        let prompt = try await value("prompt()")
+        XCTAssertTrue(prompt == nil || prompt is NSNull, "\(prompt ?? "nil")")
+    }
+
+    func testAChangeWhileItsPlayedTakesTheHintAndGivesItBack() async throws {
+        try await open(Self.promptsGame())
+        files.text["game.js"] = Self.promptsGame("keyboardHints: { leftStick: 'arrows' },")
+        try await change("game.js")
+        let arrows = try await text("prompt()"), drawn = try await text("drawnPrompt")
+        XCTAssertEqual(arrows, "↑ ← ↓ →")
+        XCTAssertEqual(drawn, "↑ ← ↓ →")
+
+        files.text["game.js"] = Self.promptsGame()
+        try await change("game.js")
+        let wasd = try await text("prompt()")
+        XCTAssertEqual(wasd, "W A S D")
     }
 
     func testAChangedCameraBuildGivesTheNewLensAtTheOldPose() async throws {

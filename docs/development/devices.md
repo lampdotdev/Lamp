@@ -415,7 +415,7 @@ starts at about 1 MB and grows with the bodies (about 7 MB for 500). What the pl
 its family, from the Gamepad API's id or the vendor Lamp's Android app sends with the pad, the keyboard, or touch; a
 device that comes with a controller starts on it, a touch screen on touch, anything else and the preview on the
 keyboard, and it follows the last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick
-or trigger for it. The page never works out which device it's on: what it needs of one comes from the device's row in
+or trigger for it (a game's `keyboardHints` picks which of the left stick's keys they name; both keep working). The page never works out which device it's on: what it needs of one comes from the device's row in
 the table of devices (`Place.input`: its keyboard's names for keys, the controller that comes with it, the one controller
 layout its host supports, where it supports one), in the `lamp-device.js` Lamp writes into each copy of the page (`GamePage`, see
 [kinds of app](kinds-of-app.md)), and the controllers' layouts (how each is recognized, what's printed on its buttons)

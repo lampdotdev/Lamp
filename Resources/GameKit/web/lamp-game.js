@@ -295,13 +295,16 @@ window.addEventListener('keyup', e => { if (e.isTrusted) keys.delete(codeOf(e));
 window.addEventListener('blur', () => keys.clear());
 
 // The keyboard as a pad: the keys for each button and for each way a stick or trigger goes, the first the one a
-// prompt names (`label`).
+// prompt names (`label`), but for the left stick, where a game's `keyboardHints` can name the arrows instead.
 const KEYS = { [BUTTON.A]: ['Space', 'Enter'], [BUTTON.B]: ['Escape', 'Backspace'], [BUTTON.X]: ['KeyF'], [BUTTON.Y]: ['KeyR'],
                [BUTTON.LB]: ['KeyQ'], [BUTTON.RB]: ['KeyE'], [BUTTON.MENU]: ['KeyP'], [BUTTON.VIEW]: ['Tab'],
                [BUTTON.UP]: ['ArrowUp'], [BUTTON.DOWN]: ['ArrowDown'], [BUTTON.LEFT]: ['ArrowLeft'], [BUTTON.RIGHT]: ['ArrowRight'] };
 const STICK_KEYS = { left: { up: ['KeyW', 'ArrowUp'], left: ['KeyA', 'ArrowLeft'], down: ['KeyS', 'ArrowDown'], right: ['KeyD', 'ArrowRight'] },
                      right: { up: ['KeyI'], left: ['KeyJ'], down: ['KeyK'], right: ['KeyL'] } };
 const TRIGGER_KEYS = { lt: ['KeyZ'], rt: ['KeyC'] };
+// Which of the left stick's keys a prompt names, by their place in STICK_KEYS.left. Both always move the stick.
+const LEFT_STICK_HINTS = { wasd: 0, arrows: 1 };
+let leftStickHint = LEFT_STICK_HINTS.wasd;
 
 function keyboardPad() {
     const any = codes => codes.some(c => keys.has(c)), axis = (plus, minus) => (any(plus) ? 1 : 0) - (any(minus) ? 1 : 0);
@@ -456,6 +459,8 @@ export function onInput(changed) {
     return () => listeners.delete(changed);
 }
 
+const drawPrompts = () => { for (const changed of listeners) try { changed(input()); } catch (e) { log(`Error: ${e.message}`); } };
+
 function use(kind, family, name = '') {
     if (preview) return;
     // A new controller of the same family can still change a label (a DualShock's Share where a DualSense has Create).
@@ -464,7 +469,7 @@ function use(kind, family, name = '') {
     if (current.kind === kind && current.family === family && !relabels) return;
     current = family ? { kind, family } : { kind };
     log(`Lamp: playing with ${family ? (LAYOUTS[family] || {}).spoken || controllers.unknown : 'the ' + kind}.`);
-    for (const changed of listeners) try { changed(input()); } catch (e) { log(`Error: ${e.message}`); }
+    drawPrompts();
 }
 
 // Whose controller it is: the device's one layout where it has one, or else what the controller reports, its name as
@@ -510,8 +515,8 @@ function keyName(code) {
 
 function keysFor(name) {
     if (name === 'STICK_L' || name === 'STICK_R') {
-        const s = STICK_KEYS[name === 'STICK_L' ? 'left' : 'right'];
-        return [s.up[0], s.left[0], s.down[0], s.right[0]];
+        const s = STICK_KEYS[name === 'STICK_L' ? 'left' : 'right'], at = name === 'STICK_L' ? leftStickHint : 0;
+        return [s.up[at], s.left[at], s.down[at], s.right[at]];
     }
     if (name === 'LT' || name === 'RT') return [TRIGGER_KEYS[name.toLowerCase()][0]];
     const codes = KEYS[BUTTON[name]];
@@ -519,7 +524,7 @@ function keysFor(name) {
 }
 
 // What to call a button (BUTTON.A…), a stick (STICK.LEFT) or a trigger (TRIGGER.RT) on the input the player is using
-// (or the one given): "A", "✕", "Space", "W A S D". A key's code ('KeyH'), for a page that reads keys itself, is that
+// (or the one given): "A", "✕", "Space", "W A S D" ("↑ ← ↓ →" with game()'s `keyboardHints`). A key's code ('KeyH'), for a page that reads keys itself, is that
 // key's name whatever the input. null when the input has nothing for it (no key for a stick's click, no touch button
 // the game didn't ask for), so the prompt is left out.
 export function label(what, on = current) {
@@ -765,6 +770,8 @@ function fit() {
 // the buttons the touch controls show (BUTTON.A | BUTTON.B | BUTTON.MENU unless given; BUTTON.RSTICK adds a right stick),
 // or `false` for a page that draws touch controls of its own. `keyboard: false` is for a page that reads the keys itself:
 // the keyboard then isn't the first pad as well, so a key isn't heard twice. The preview's script is the first pad either way.
+// `keyboardHints: { leftStick: 'arrows' }` is for a game whose person asked for the arrow keys: label() and glyph() name
+// them for the left stick instead of W A S D ('wasd', the default). It only chooses the name: both keep moving the stick.
 // The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialized before game() is called). A 2D
 // game calls phaser() from lamp-phaser.js instead, which calls this with Phaser's canvas.
 // `sharp: true` keeps it drawn at 1920x1080 however slow frames are (the log still says how fast they come).
@@ -773,7 +780,7 @@ function fit() {
 // smaller when frames run slow, and the runtime only measures and logs the frame rate.
 // `snapshot`, `restore`, `busy`, `assetChanged` and `dispose` keep the player's place through a change Lamp makes while
 // the game is played (see "Changes while it's played" below).
-export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false, fill = false,
+export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, keyboardHints, sharp = false, fill = false,
                              snapshot, restore, busy, assetChanged, dispose, flat = false }) {
     // The game's code run again in place for a change calls this again: the page, the frame loop's clock and whatever
     // the game kept stay, and the new init starts from where the player was.
@@ -794,6 +801,10 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     if (buttons === false) drawsTouch = false;
     else if (buttons != null) touchButtons = buttons;
     readsKeyboard = keyboard !== false;
+    // Set on every call, so code run again for a change that takes the hint away goes back to the default. Prompts drawn
+    // before this call are drawn again.
+    const hint = LEFT_STICK_HINTS[keyboardHints && keyboardHints.leftStick] ?? LEFT_STICK_HINTS.wasd;
+    if (hint !== leftStickHint) { leftStickHint = hint; drawPrompts(); }
     if (!fill) {
         renderer.setPixelRatio(1);
         renderer.setSize(WIDTH, HEIGHT, false);

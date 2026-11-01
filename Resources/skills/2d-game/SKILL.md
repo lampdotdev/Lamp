@@ -133,7 +133,8 @@ Write the controls once as actions on the pad (CONTROLS above) and read the pad 
 controller, the keyboard and the touch controls as that one pad, so the game needs nothing else. Show how to play, and
 every prompt, from the actions: as HTML over the canvas inside `onInput(draw)`, with `glyph(CONTROLS.jump)` in the
 text ("Press [A] to jump", a badge as the player's input draws it), or in a Phaser Text with `label(CONTROLS.jump)`
-("A", "✕", "Space"), redrawn from `onInput`. Leave a line out where `label` is null. On a phone the touch controls show
+("A", "✕", "Space"), redrawn from `onInput`. Leave a line out where `label` is null. When the person asked for the arrow
+keys, `phaser({ keyboardHints: { leftStick: 'arrows' }, … })` makes the hints name them (the game skill, "Controls"). On a phone the touch controls show
 a left stick and the buttons `touch` names: give a platformer jump on A and perhaps one more, and keep the game whole
 with those few. Menus move with the stick or the d-pad, choose with A and go back with B; Menu pauses.
 
