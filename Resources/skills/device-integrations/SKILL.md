@@ -219,11 +219,11 @@ never anything to download; `output` is where it leaves it, which `"@{package}"`
 
 ```json
 "app": { "declared": {
-  "files": { "manifest": "title={{NAME}}\nmajor_version=1\nmm_icon_focus_hd=pkg:/images/icon_focus_hd.png\n…", "source/main.brs": "sub Main()\n…\nend sub\n" },
+  "files": { "app/manifest.json": "{ \"name\": \"{{NAME}}\", \"icon\": \"images/icon.png\" }\n", "app/index.html": "…" },
   "rules": "What a builder needs to know to write apps for it, in a few sentences.",
-  "package": "rm -f build/app.zip && mkdir -p build images && zip -qr build/app.zip manifest source components images",
+  "package": "rm -f build/app.zip && mkdir -p build && cd app && zip -qr ../build/app.zip .",
   "output": "build/app.zip",
-  "icons": { "images/icon_focus_hd.png": "290x218", "images/icon_focus_fhd.png": "540x405" }
+  "icons": { "app/images/icon.png": "512x512" }
 } }
 ```
 
@@ -231,13 +231,13 @@ The package step runs in the app's sandbox like every build.
 
 `"support"` gives the app Lamp's building blocks (AI through the person's Mac, saved data, the package's own files),
 by library to where they go in the app's folder: `"web": "Web/lamp.js"` for an app that's a web page (a script its
-`index.html` loads before the app's own), `"brightscript": "components/Lamp"` for a Roku channel (a folder its
-components include). Lamp writes them before every build, so keep them out of `files`, and make sure the package step
+`index.html` loads before the app's own), `"brightscript": "components/Lamp"` for a channel in Roku's BrightScript (a
+folder its components include), `"typescript": "src/lamp"` for an app on Roku's TypeScript SDK (a module its code imports). Lamp writes them before every build, so keep them out of `files`, and make sure the package step
 takes them into the package. Lamp tells the app where it is and gives it its token on the device itself.
 
 `"icons"` gives the app its icon on the device, wherever the device shows one (a channel's poster on a Roku's home
 screen, a tile, a splash screen, a launcher): by path in the app's folder to its size in pixels,
-`"images/icon_focus_hd.png": "290x218"`, one for each picture the device's manifest names, at the sizes its maker
+`"app/images/icon.png": "512x512"`, one for each picture the device's manifest names, at the sizes its maker
 documents. Lamp draws the icon it made for the app at each path before every build (a dark tile until there is one), so name those paths in the scaffold's manifest, keep them out of `files`, and make
 sure the package step takes them in. Never draw an icon in the scaffold or the package step. A device that shows no icon
 for an app needs none.
@@ -264,7 +264,7 @@ and current JavaScript, with the app's console in its log. Use it for a web app 
 one kind. The integrations Lamp ships may offer more kinds beside `app` in `kinds` (the Xbox's native 3D games,
 `{"lamp": "native-game"}`); an integration you write has only `app`.
 
-`"runs"`, beside `app`, says in one plain sentence what the device runs ("Only its own channels, written in BrightScript
+`"runs"`, beside `app`, says in one plain sentence what the device runs ("Only its own apps, written in its maker's own SDK
 and driven by the remote: no web pages, no 3D"). Lamp gives it as the reason when something the device can't run is asked
 of it, so write it for the person, from the device's documentation.
 

@@ -83,7 +83,7 @@ it says nothing, from what its `app` declares. Each row says whether a **web** b
 each gets onto the device, or why it can't. It holds facts only, never a preference: which make and which devices an
 app gets is the agent's choice. `IntegrationCheck.problems` refuses a `supports` that names a make the integration has
 no files for. Its reason for a make it can't run is its own `runs` (what the device runs, in a sentence the person
-would follow: a Roku's says BrightScript channels and the remote, no pages, no 3D), so a game or a screen given a Roku as
+would follow: a Roku's says TypeScript apps on Roku's own SDK and the remote, no pages, no 3D), so a game or a screen given a Roku as
 a place is refused with that (`Places.refusal`, in `AppKinds.target`), and the agent's rules (`deviceRules`) have it say so in its own
 words and offer what works: a simple version for the device as one of the wish's apps, or another place.
 

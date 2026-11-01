@@ -786,6 +786,7 @@ struct IntegrationRunner {
                     guard let value else { return .waiting("\(device.name) doesn't say yet.") }
                     if let equals = condition.equals, value.caseInsensitiveCompare(equals) != .orderedSame { return .waiting(waiting) }
                     if let contains = condition.contains, !value.localizedCaseInsensitiveContains(contains) { return .waiting(waiting) }
+                    if let atLeast = condition.atLeast, !Integration.isVersion(value, atLeast: atLeast) { return .waiting(waiting) }
                     read = read ?? value
                 }
             }

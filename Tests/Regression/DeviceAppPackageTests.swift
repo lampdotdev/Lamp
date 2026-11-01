@@ -37,6 +37,20 @@ final class DeviceAppPackageTests: XCTestCase {
         XCTAssertFalse(IntegrationCheck.lifecycle(roku).contains { $0.contains("icon.png") })
     }
 
+    /// A Roku older than Roku's SDK needs stays at its first step, so nothing is put on it until it's updated.
+    func testARokuOlderThanTheSDKWaitsAtTheUpdateStep() throws {
+        XCTAssertFalse(Integration.isVersion("15.0.4", atLeast: "15.1"))
+        XCTAssertTrue(Integration.isVersion("15.1", atLeast: "15.1"))
+        XCTAssertTrue(Integration.isVersion("15.3.4", atLeast: "15.1"))
+        XCTAssertTrue(Integration.isVersion("16", atLeast: "15.1"))
+        XCTAssertFalse(Integration.isVersion("15.1 beta", atLeast: "15.1"))
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Devices/roku.json")
+        let roku = try JSONDecoder().decode(Integration.self, from: Data(contentsOf: file))
+        XCTAssertEqual(roku.steps.first?.check.first?.atLeast, "15.1")
+        XCTAssertEqual(roku.steps.first?.check.first?.xml, "software-version")
+    }
+
     /// Windows names a package by a short id of its publisher; the bridge launches it by that name.
     func testWindowsNamesThePackageAsTheDeviceDoes() {
         XCTAssertEqual(MSIX.publisherID("CN=LampTest"), "t1a59ncyrzgcm")
