@@ -22,7 +22,7 @@ enum Gallery {
     static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
 
     private static let useRowStatuses: [EngineUseRow.Status] = [
-        .use, .gettingReady, .downloading(0.4), .failed("Lamp couldn't reach the internet to download it."),
+        .use, .gettingReady, .downloading(0.4), .failed(ErrorMessages.noConnection),
         .checkingSignIn, .signingIn, .failed("Signing in didn't finish."),
     ]
 
