@@ -12001,9 +12001,9 @@ final class Store: ObservableObject {
     }
 
     /// Whether this design's artwork is on its way, drawn by Lamp: the icon is the blueprint until it comes. Not for a
-    /// starter (it never gets any), nor while the person draws icons themselves, nor once drawing it failed.
+    /// starter's own design (its artwork came with it), nor while the person draws icons themselves, nor once drawing it failed.
     private func awaitsArtwork(_ project: LampProject, spec: IconSpec) -> Bool {
-        !Starters.isStarter(project) && !AppAI.iconsByHand && !spec.subject.trimmed.isEmpty
+        !Starters.keepsShippedDesign(project) && !AppAI.iconsByHand && !spec.subject.trimmed.isEmpty
             && !artFailed.contains(Icons.artKey(project, spec: spec)) && (GlassIcons.canDraw || AppAI.imageRoute != nil)
     }
 
@@ -12164,7 +12164,7 @@ final class Store: ObservableObject {
     private func upgradeIconArt(_ project: LampProject) {
         // A part's artwork is its wish's: drawn once, for the wish, and given to each of its apps (`iconToParts`).
         let project = wish(of: project)
-        guard !Starters.isStarter(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
+        guard !Starters.keepsShippedDesign(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.artwork(project, spec: spec) == nil else { return }
         // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
         guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
