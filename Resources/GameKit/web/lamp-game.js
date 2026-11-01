@@ -121,6 +121,10 @@ export function work(path, message, transfer = []) {
 
 // The files the game loaded through the runtime, and how the runtime puts a new copy of each in by itself.
 const loaded = new Set(), swaps = new Map();
+// Every file of the page this copy has read, through the runtime, fetched or started as a worker: what the running game
+// holds may have come from any of them (`unusedFiles`, `waitsFor`). What a worker reads for itself the page never sees.
+const everRead = new Set();
+let workerStarted = false;
 const clean = path => String(path).replace(/^\.?\//, '').split(/[?#]/)[0];
 // Asked again after a change, a file is asked for by a new address, so nothing on the way keeps the old one.
 let changes = 0;
@@ -311,13 +315,16 @@ window.addEventListener('keyup', e => { if (e.isTrusted) keys.delete(codeOf(e));
 window.addEventListener('blur', () => keys.clear());
 
 // The keyboard as a pad: the keys for each button and for each way a stick or trigger goes, the first the one a
-// prompt names (`label`).
+// prompt names (`label`), but for the left stick, where a game's `keyboardHints` can name the arrows instead.
 const KEYS = { [BUTTON.A]: ['Space', 'Enter'], [BUTTON.B]: ['Escape', 'Backspace'], [BUTTON.X]: ['KeyF'], [BUTTON.Y]: ['KeyR'],
                [BUTTON.LB]: ['KeyQ'], [BUTTON.RB]: ['KeyE'], [BUTTON.MENU]: ['KeyP'], [BUTTON.VIEW]: ['Tab'],
                [BUTTON.UP]: ['ArrowUp'], [BUTTON.DOWN]: ['ArrowDown'], [BUTTON.LEFT]: ['ArrowLeft'], [BUTTON.RIGHT]: ['ArrowRight'] };
 const STICK_KEYS = { left: { up: ['KeyW', 'ArrowUp'], left: ['KeyA', 'ArrowLeft'], down: ['KeyS', 'ArrowDown'], right: ['KeyD', 'ArrowRight'] },
                      right: { up: ['KeyI'], left: ['KeyJ'], down: ['KeyK'], right: ['KeyL'] } };
 const TRIGGER_KEYS = { lt: ['KeyZ'], rt: ['KeyC'] };
+// Which of the left stick's keys a prompt names, by their place in STICK_KEYS.left. Both always move the stick.
+const LEFT_STICK_HINTS = { wasd: 0, arrows: 1 };
+let leftStickHint = LEFT_STICK_HINTS.wasd;
 
 function keyboardPad() {
     const any = codes => codes.some(c => keys.has(c)), axis = (plus, minus) => (any(plus) ? 1 : 0) - (any(minus) ? 1 : 0);
@@ -472,6 +479,8 @@ export function onInput(changed) {
     return () => listeners.delete(changed);
 }
 
+const drawPrompts = () => { for (const changed of listeners) try { changed(input()); } catch (e) { log(`Error: ${e.message}`); } };
+
 function use(kind, family, name = '') {
     if (preview) return;
     // A new controller of the same family can still change a label (a DualShock's Share where a DualSense has Create).
@@ -480,7 +489,7 @@ function use(kind, family, name = '') {
     if (current.kind === kind && current.family === family && !relabels) return;
     current = family ? { kind, family } : { kind };
     log(`Lamp: playing with ${family ? (LAYOUTS[family] || {}).spoken || controllers.unknown : 'the ' + kind}.`);
-    for (const changed of listeners) try { changed(input()); } catch (e) { log(`Error: ${e.message}`); }
+    drawPrompts();
 }
 
 // Whose controller it is: the device's one layout where it has one, or else what the controller reports, its name as
@@ -526,8 +535,8 @@ function keyName(code) {
 
 function keysFor(name) {
     if (name === 'STICK_L' || name === 'STICK_R') {
-        const s = STICK_KEYS[name === 'STICK_L' ? 'left' : 'right'];
-        return [s.up[0], s.left[0], s.down[0], s.right[0]];
+        const s = STICK_KEYS[name === 'STICK_L' ? 'left' : 'right'], at = name === 'STICK_L' ? leftStickHint : 0;
+        return [s.up[at], s.left[at], s.down[at], s.right[at]];
     }
     if (name === 'LT' || name === 'RT') return [TRIGGER_KEYS[name.toLowerCase()][0]];
     const codes = KEYS[BUTTON[name]];
@@ -535,7 +544,7 @@ function keysFor(name) {
 }
 
 // What to call a button (BUTTON.A…), a stick (STICK.LEFT) or a trigger (TRIGGER.RT) on the input the player is using
-// (or the one given): "A", "✕", "Space", "W A S D". A key's code ('KeyH'), for a page that reads keys itself, is that
+// (or the one given): "A", "✕", "Space", "W A S D" ("↑ ← ↓ →" with game()'s `keyboardHints`). A key's code ('KeyH'), for a page that reads keys itself, is that
 // key's name whatever the input. null when the input has nothing for it (no key for a stick's click, no touch button
 // the game didn't ask for), so the prompt is left out.
 export function label(what, on = current) {
@@ -781,6 +790,8 @@ function fit() {
 // the buttons the touch controls show (BUTTON.A | BUTTON.B | BUTTON.MENU unless given; BUTTON.RSTICK adds a right stick),
 // or `false` for a page that draws touch controls of its own. `keyboard: false` is for a page that reads the keys itself:
 // the keyboard then isn't the first pad as well, so a key isn't heard twice. The preview's script is the first pad either way.
+// `keyboardHints: { leftStick: 'arrows' }` is for a game whose person asked for the arrow keys: label() and glyph() name
+// them for the left stick instead of W A S D ('wasd', the default). It only chooses the name: both keep moving the stick.
 // The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialized before game() is called). A 2D
 // game calls phaser() from lamp-phaser.js instead, which calls this with Phaser's canvas.
 // `sharp: true` keeps it drawn at 1920x1080 however slow frames are (the log still says how fast they come).
@@ -789,7 +800,7 @@ function fit() {
 // smaller when frames run slow, and the runtime only measures and logs the frame rate.
 // `snapshot`, `restore`, `busy`, `assetChanged` and `dispose` keep the player's place through a change Lamp makes while
 // the game is played (see "Changes while it's played" below).
-export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false, fill = false,
+export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, keyboardHints, sharp = false, fill = false,
                              snapshot, restore, busy, assetChanged, dispose, flat = false }) {
     // The game's code run again in place for a change calls this again: the page, the frame loop's clock and whatever
     // the game kept stay, and the new init starts from where the player was.
@@ -811,6 +822,10 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     if (buttons === false) drawsTouch = false;
     else if (buttons != null) touchButtons = buttons;
     readsKeyboard = keyboard !== false;
+    // Set on every call, so code run again for a change that takes the hint away goes back to the default. Prompts drawn
+    // before this call are drawn again.
+    const hint = LEFT_STICK_HINTS[keyboardHints && keyboardHints.leftStick] ?? LEFT_STICK_HINTS.wasd;
+    if (hint !== leftStickHint) { leftStickHint = hint; drawPrompts(); }
     if (!fill) {
         renderer.setPixelRatio(1);
         renderer.setSize(WIDTH, HEIGHT, false);
@@ -986,7 +1001,9 @@ window.__lampLive = change => {
     queue = queue.then(() => {
         // What the code run again couldn't take in goes in as the page opens again, at Reload.
         if (waiting && waiting.reopens && change.now) { waiting = null; return reopen(change); }
-        if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])] };
+        // A file taken away while a change waits, and made again since, is a changed file like any other.
+        if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])],
+            removed: [...new Set([...(waiting.removed || []).filter(p => !change.changed.includes(p)), ...(change.removed || [])])] };
         waiting = null;
         return apply(change);
     }).catch(e => log(`Lamp: ${e && e.message || e}`));
@@ -1006,11 +1023,21 @@ window.__lampReloadNow = () => {
 };
 
 async function apply(change) {
-    const paths = (change.changed || []).map(clean);
+    let paths = (change.changed || []).map(clean);
     // Not started yet: nothing to keep.
     if (!started) { tellHost(change.gen, 'reloading'); location.reload(); return; }
     // Where the player is before anything is swapped, for the page to open from should the swap not take.
     const before = takeSnapshot(), roster = phonesHere(), began = performance.now();
+    // Files taken away that the running game has no use for are no part of the change. With nothing else in it there's
+    // nothing to put in, and the game goes on as it was.
+    const unused = await unusedFiles(change, paths);
+    if (unused.length) {
+        for (const path of unused) texts.delete(path);
+        paths = paths.filter(p => !unused.includes(p));
+        change = { ...change, changed: paths };
+        log(`Lamp: ${unused.join(', ')} ${unused.length === 1 ? 'was' : 'were'} taken away, and the running game has no use for ${unused.length === 1 ? 'it' : 'them'}.`);
+        if (!paths.length) { hidePill(); tellHost(change.gen, 'swapped'); return; }
+    }
     const said = [];
     let why = paths.length ? null : 'nothing to put in', touched = false;
     // A part declared as built from a changed file is built again, with everything else kept: a swap would leave it as
@@ -1242,6 +1269,36 @@ async function readModules(changed, page = document) {
         next = unread();
     }
     return roots;
+}
+
+// Whether `text` names a file: by its whole name, so `world.js` doesn't name `orld.js`. Only a name: a comment naming the
+// file counts, and two files of one name in different folders count as each other, which errs toward saying a file is used.
+function names(text, path) {
+    const name = path.split('/').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^\\w$.-])${name}($|[^\\w$-])`).test(text);
+}
+
+// What of a change's files taken away the running game clearly has no use for: nothing it runs imports them, it never read
+// them, no part is built from them, and neither its code, its page nor its stylesheets name them. Anything else (a
+// worker it started, data it fetched, a module it imports, a name in a comment) is left in the change, which goes on to
+// say honestly what came of it. With a worker started, what's read is only partly known, so no file is known to be
+// unused, and a page that can't be read says the same. Not for the person's Reload, which puts everything in.
+async function unusedFiles(change, paths) {
+    const removed = (change.removed || []).map(clean).filter(p => paths.includes(p));
+    if (!removed.length || change.now || workerStarted) return [];
+    try {
+        if (removed.includes(pagePath())) return [];
+        const html = await readText(pagePath()), parsed = parse(html);
+        await readModules(paths.filter(p => /\.m?js$/i.test(p)), parsed);
+        const styles = [...parsed.querySelectorAll('link[rel~="stylesheet"]')].map(l => pathOf(new URL(l.getAttribute('href'), location.href).href));
+        const asked = removed.filter(p => !lampOwn(p) && !imports.has(p) && !loaded.has(p) && !everRead.has(p) && !swaps.has(p) && !builtFrom([p]));
+        const sources = [html];
+        for (const path of [...imports.keys(), ...styles]) {
+            if (path == null || lampOwn(path) || removed.includes(path)) continue;
+            sources.push(texts.get(path) ?? inline.get(path) ?? await readText(path));
+        }
+        return asked.filter(p => !sources.some(text => names(text, p)));
+    } catch (e) { return []; }
 }
 
 // Puts changed modules and stylesheets into the running game: { said } what went in, or { why } it couldn't, with
@@ -1650,6 +1707,7 @@ function took(path) {
 let readSince = new Set();
 function read(path) {
     readSince.add(path);
+    everRead.add(path);
     for (const entry of building) entry.assets.add(path);
     for (const waiting of keepsWaiting) waiting.assets.add(path);
 }
@@ -2131,24 +2189,24 @@ function canRunAgain(change) {
 // code names, for what of a change nothing read again (`waitsFor`).
 async function namingData(paths, order, named = new Set()) {
     const outside = paths.filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p));
-    const data = paths.filter(p => !CODE.test(p) && !loaded.has(p)).map(p => p.split('/').pop());
+    const data = paths.filter(p => !CODE.test(p) && !loaded.has(p));
     if (!outside.length) return [];
     const naming = [];
     for (const path of order) {
         if (lampOwn(path) || paths.includes(path)) continue;
         const text = texts.get(path) ?? inline.get(path) ?? await readText(path).catch(() => '');
-        for (const p of outside) if (text.includes(p.split('/').pop())) named.add(p);
-        if (data.some(name => text.includes(name))) naming.push(path);
+        for (const p of outside) if (names(text, p)) named.add(p);
+        if (data.some(p => names(text, p))) naming.push(path);
     }
     return naming;
 }
 
-// What of a change the code run again didn't take in: a file the game uses (one it loaded through the runtime, or that
-// its code names) that nothing read again, nor put in as it was (`put`), so a part kept from it, or code that read it
-// once, shows the old one until the page opens again. That waits for Reload.
+// What of a change the code run again didn't take in: a file the game uses (one it loaded through the runtime, read in
+// any other way, or that its code names) that nothing read again, nor put in as it was (`put`), so a part kept from it,
+// or code that read it once, shows the old one until the page opens again. That waits for Reload.
 function waitsFor(change, named) {
     return (change.changed || []).map(clean).filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p) && !readSince.has(p)
-        && !(change.put || []).includes(p) && (loaded.has(p) || named.has(p)));
+        && !(change.put || []).includes(p) && (loaded.has(p) || everRead.has(p) || named.has(p)));
 }
 
 async function runAgain(change, state, roster) {
@@ -2468,7 +2526,16 @@ function watch() {
         return Watched;
     };
     if (browser.AudioContext) window.AudioContext = window.webkitAudioContext = owning(browser.AudioContext, c => c.state !== 'closed' && c.close());
-    if (browser.Worker) window.Worker = owning(browser.Worker, w => w.terminate());
+    if (browser.Worker) {
+        const Started = owning(browser.Worker, w => w.terminate());
+        window.Worker = function (url, ...rest) {
+            const path = pathOf(String(url));
+            if (path != null) read(clean(path));
+            workerStarted = true;
+            return new Started(url, ...rest);
+        };
+        window.Worker.prototype = browser.Worker.prototype;
+    }
     watchPhones();
 }
 

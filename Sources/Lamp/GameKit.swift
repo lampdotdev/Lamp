@@ -1025,7 +1025,7 @@ enum GameKit {
                                             "menu": 1 << 6, "view": 1 << 7, "up": 1 << 8, "down": 1 << 9, "left": 1 << 10,
                                             "right": 1 << 11, "ls": 1 << 12, "rs": 1 << 13]
 
-    /// The play the agent has made so far in the preview, by app: every look starts one, every `use_app` adds to it,
+    /// The play the agent has made so far in the preview, by app: every look but one with `on_device` starts one, every `use_app` adds to it,
     /// and each is played again whole from the start (the preview's frames are always 1/60 s and its random numbers
     /// always the same), so a change to the code is seen in the same moves.
     @MainActor static var plays: [String: [String]] = [:]
@@ -1325,7 +1325,7 @@ extension Agent {
         let web = GameKit.engine(project) == .web, ownLoop = GameKit.ownsLoop(project)
         // A page made for the Xbox before Lamp's game runtime keeps its own loop, and its own way of being tried.
         let kit = ownLoop ? [Rules.gameOwnLoop] : [web ? Rules.gameWebKit : Rules.gameKit, web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.gameWebLive] : [])
-        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
+        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, Rules.gameFlow] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
                      web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : Rules.gameTry, Rules.appMd, Rules.audience,
                      Skills.index(Skills.offered(.game)), Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
@@ -1337,7 +1337,7 @@ extension Agent {
     /// The rules for a game that's one of a wish's apps, in a folder of its own: the game's own, for the files there,
     /// without those about the wish as a whole. A game made beside other apps is a page, as every new game is.
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
-        let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.gameWebLive, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
+        let rules = [Rules.gameWebEdit, Rules.gameFlow, Rules.gameWebKit, Rules.gameWebSound, Rules.gameWebLive, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
         return (Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
@@ -1363,7 +1363,7 @@ extension Agent.Rules {
     what the Mac window saved. Either way you get a picture with its screen as text and what its console printed; neither \
     is the person's Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys where you \
     last looked: the arrows, enter, back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's \
-    move), then shows it again. Try it by playing it. `look_at_app` with `on_device` opens it where Try On points (its \
+    move), then shows it again, in plain sight, so only when the person asks you to try it. `look_at_app` with `on_device` opens it where Try On points (its \
     window on this Mac, or the Xbox) and shows that screen and its log.
 
     """
@@ -1409,10 +1409,23 @@ extension Agent.Rules {
     it's played and what that allows: never say it's on a device it isn't on. Read APP.md first for context.
     """
 
+    /// Said to every game, however it's made: a skill read once and left behind didn't hold agents to this.
+    static let gameFlow = """
+    - For a new game or a requested change to how its screens go: before drawing any screen, pick the screen flow that \
+    fits this game with the game-ui skill (how it opens, where it teaches, how a restart and a return go; with phones, \
+    what the shared display and each player's phone show in each phase, with what this player does on a phone \
+    controller you make or change) and keep it in a `Flow:` line in APP.md, with phones a small table of phases under it. The \
+    opening never shows controls or key bindings, whatever the flow and however many players share the keyboard: they \
+    come after the start press, on a short screen of their own or as the match begins. After your last edit to any \
+    screen, before you say it's done, run that skill's check of the real opening again: any key name or control label \
+    on the opening fails and is removed, and you name what else there doesn't serve the flow.
+
+    """
+
     /// What `make_app_for` answers with when an app becomes a game.
     static func gameChange(_ project: LampProject) -> String {
-        GameKit.engine(project) == .web ? gameWebEdit + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry
-            : gameEdit + gameKit + gameSound + gameBudget + gameTry
+        GameKit.engine(project) == .web ? gameWebEdit + gameFlow + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry
+            : gameEdit + gameFlow + gameKit + gameSound + gameBudget + gameTry
     }
 
     static var gameWebEdit: String { """
@@ -1470,12 +1483,15 @@ extension Agent.Rules {
     The player may hold an Xbox, PlayStation or Switch controller, the keyboard or the touch screen, and switches as \
     they play, so never write a key's or a button's name: write the controls once, as actions mapped to the pad \
     (`const CONTROLS = { jump: BUTTON.A, pause: BUTTON.MENU, move: STICK.LEFT, gas: TRIGGER.RT }`), read the pad \
-    through them, and show how to play (the controls as play starts, and a help screen on the title or pause menu) \
+    through them, and show how to play (the controls after the start press, where the game's flow teaches them, and a help screen reachable from pause) \
     and every prompt from them with lamp-game.js's `label(CONTROLS.jump)` \
     (the words: "A", "✕", "Space") and `glyph(CONTROLS.jump)` (that button's badge as the player's input draws it, an \
     element to put in the text), inside `onInput(draw)`, which draws now and again whenever the player takes up \
     another input (`input()` says which). Both are null where that input has nothing for it: leave that line out. A \
-    page that reads the keys itself (`keyboard: false`) names its own keys by their codes, `label('KeyH')`. Shake \
+    page that reads the keys itself (`keyboard: false`) names its own keys by their codes, `label('KeyH')`. When the \
+    person names the keys to move with, the hints use them: `keyboardHints: { leftStick: 'arrows' }` to `game()` or \
+    `phaser()` makes `label(STICK.LEFT)` and `glyph(STICK.LEFT)` name the arrow keys (`'wasd'` is the default), and both \
+    sets of keys still move the player. Shake \
     the controller with `rumble(0, low, high, seconds)`. Log events with `log()`, a line per event, never per \
     frame. Where it's played, the log says every ten seconds how many frames a second it really gets there and at \
     what size it's drawn; when frames run slow, Lamp may draw it smaller and scale it up to the screen (the 3d-game \
@@ -1667,8 +1683,9 @@ extension Agent.Rules {
     preview from the start. `use_app` plays on in the preview with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
     1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, b, x, y, lb, rb, lt, rt, menu, \
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
-    Each look or use plays the whole game again from the start with the same moves, so after a change to the code \
-    the same moves show what changed. Play it as the person would before you finish: a game that only looks right \
+    Each use plays the whole game again from the start with the moves so far, so after a change to the code the same \
+    moves show what changed (one to timing or navigation can land them elsewhere: check). Each look but one with \
+    `on_device` starts the moves over, a plain look at the person's open window too. Play it as the person would before you finish: a game that only looks right \
     isn't done. Read how the game takes the controller first (APP.md, its controls code): a vehicle's gas is often a \
     trigger, held as `key` rt alongside the stick that steers, and a game that barely moves under your moves is one \
     you're driving with the wrong control, not one that can't be tried. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \

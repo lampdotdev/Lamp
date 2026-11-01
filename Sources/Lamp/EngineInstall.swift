@@ -554,8 +554,9 @@ final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable 
         let continuation = self.continuation
         self.continuation = nil
         if let error {
-            continuation?.resume(throwing: EngineInstall.Failure(message: (error as NSError).code == NSURLErrorCancelled
-                ? "The download was stopped." : "The download didn't finish: \(error.localizedDescription)"))
+            continuation?.resume(throwing: EngineInstall.Failure(message: ErrorMessages.isCancelled(error) ? "The download was stopped."
+                : ErrorMessages.isConnectivity(error) ? ErrorMessages.noConnection
+                : "The download didn't finish: \(error.localizedDescription)"))
         } else if status != 200 {
             continuation?.resume(throwing: EngineInstall.Failure(message: "The download site answered \(status)."))
         } else if let moved {
@@ -646,13 +647,9 @@ final class EngineDownloads: ObservableObject {
         return done
     }
 
-    private static func message(_ error: Error) -> String {
+    static func message(_ error: Error) -> String {
         if let failure = error as? EngineInstall.Failure { return failure.message }
-        let code = (error as NSError).code
-        if [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut].contains(code) {
-            return "Lamp couldn't reach the internet to download it."
-        }
-        return error.localizedDescription
+        return ErrorMessages.reason(error) ?? "The download was stopped."
     }
 
     private static func checkedKey(_ engine: Engine) -> String { "engineChecked.\(engine.rawValue)" }

@@ -383,7 +383,8 @@ A game is drawn with three.js, or with Phaser when it's 2D (`GameKit.Engine.web`
 model writes both best and every place has a web view, and on the Xbox a game installed as a game gets enough of the
 console. Which of the two is the agent's choice as it writes the game, from what the person asked for: `Rules.gameWebKit`
 has it choose 2D or 3D and read the `game` and `game-ui` skills with the `2d-game` or `3d-game` skill, which are the only guidance that
-names the library and its recipe (entry point, renderer, frame callback, where setup goes). The kind and the scaffold are
+names the library and its recipe (entry point, renderer, frame callback, where setup goes). How a new game opens, teaches, restarts and returns is chosen
+for that game in the `game-ui` skill and kept in a `Flow:` line in APP.md; `Rules.gameFlow`, in every game's prompt, only points there. The kind and the scaffold are
 the same, and the placeholder card is three.js's either way. A web game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
@@ -414,7 +415,7 @@ starts at about 1 MB and grows with the bodies (about 7 MB for 500). What the pl
 its family, from the Gamepad API's id or the vendor Lamp's Android app sends with the pad, the keyboard, or touch; a
 device that comes with a controller starts on it, a touch screen on touch, anything else and the preview on the
 keyboard, and it follows the last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick
-or trigger for it. The page never works out which device it's on: what it needs of one comes from the device's row in
+or trigger for it (a game's `keyboardHints` picks which of the left stick's keys they name; both keep working). The page never works out which device it's on: what it needs of one comes from the device's row in
 the table of devices (`Place.input`: its keyboard's names for keys, the controller that comes with it, the one controller
 layout its host supports, where it supports one), in the `lamp-device.js` Lamp writes into each copy of the page (`GamePage`, see
 [kinds of app](kinds-of-app.md)), and the controllers' layouts (how each is recognized, what's printed on its buttons)
@@ -559,7 +560,23 @@ was built as it was. The page's report after a run (`PageLive.Report`) names eac
 and why, and the changed files nothing in the running game read again (`waitsFor`: a file the game uses whose part was
 kept, or that its code read once at the start); those wait for Reload as a held change does (the page keeps them and
 opens again for them at Reload, `Store.pageWaitsInPart`), and the chat's line for that step says the rest shows after
-Reload, never "Put into" (`stepPage`); the rebuild and its time are in the step's detail, for Agent Details. A look
+Reload, never "Put into" (`stepPage`); the rebuild and its time are in the step's detail, for Agent Details. A file
+taken away is told to the page apart from what changed (`removed`, measured like `changed` against what the copy had,
+so a file made since the install and deleted again is in it, where `gone` is the install's and is for the app's file
+server). One the running game clearly has no use for is no part of the change (`unusedFiles`): nothing it runs imports
+it, it never read it (through the runtime, fetched, or started as a worker: `everRead`), no part is built from it, and
+its code, page and stylesheets don't name it, by the whole name (`names`, so `world.js` doesn't name `orld.js`). What a
+worker reads for itself the page never sees, so with a worker started nothing counts as unused. With nothing else in the
+change, an unused file goes in as a swap with nothing run. Anything else taken away stays in the change, which says what
+came of it as any change does, and a file the game read (`everRead`) that nothing read again waits for Reload, however
+its name was built: that's a guess only in the safe direction, since a name in a comment counts.
+Lamp holds what the page said it holds as `PageLive.Hold`: part of the change in, all of it waiting for a pause, or all
+of it waiting for Reload, worked out from the page's words each time, so a later change or Reload ends it. A step can
+land after the agent's last call, so `progress` waits up to ten seconds for the one attempt at what's saved
+(`Store.awaitStep`, which stops when `Turn.finishedStep` says that attempt ended, however it went, or when no step can run),
+and every tool's answer on every engine carries a hold the agent hasn't heard of, once, with what waits by name
+(`Store.untoldHolds`, `holdNote`), and of the end of one it heard of; so does its next request, for one no answer got to, counted as told once the request reaches the agent (`settleHolds`). An agent with no call left can
+end its turn without it, and the chat's Reload line under its answer says what waits, in plain words (`ReloadLine`). A look
 in the hidden copy, which builds every part afresh, tells the agent which parts the open game built again and that one
 it kept doesn't show a change built into it (`GameKit.openGameNote`), so it never says the person sees what they don't. New York keeps its renderer, the
 ground's heights and each part of the city, so a change to its HUD runs again in about 2 s instead of a 16 s start,
@@ -635,7 +652,9 @@ from the new files (`PageCopies`).
 
 **Phones as players.** A game takes phones on the Wi‑Fi as a TV app's page does (`Target.takesPhones`): its lamp.js
 has `Lamp.controllers` (`GameKit.lampJS`, `TVTemplate.controllersJS`) and its phone page is `Phone/` beside `Web/`,
-shared with the game (`GameFiles`) and copied with a starter. On this Mac the game runs its own phones, so they go on
+shared with the game (`GameFiles`) and copied with a starter. What a controller is for a game is designed from the player's
+job in the `game-ui` skill, and how the game sends each player a view and takes their moves is the `phone-pages` skill's
+("Views and moves"); the runtime has no view or move of its own. On this Mac the game runs its own phones, so they go on
 playing, and new ones join, whether Lamp is open or not: the phone page is staged at each build (`TVs.stagePhone`) and
 put in the game's bundle as it's installed (`GamePhones`, in `Contents/Resources/Phone`, with lamp-controller.js), and
 the copy answers `/app/controller` itself (`LampControllers` in LampPage.swift) from `ControllerRuntime`, LampRelayKit's
@@ -808,7 +827,8 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 `look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`), or, for a web game
 open on this Mac, looks at its window (above); `use_app` takes
 `stick`, `button` and `wait`, adds them to that play and plays the whole of it again from the start (`GameKit.plays`,
-`Store.useOnGame`), so after a change to the code the same moves show what changed, wherever the game is played.
+`Store.useOnGame`, which builds the preview itself), so after a change to the code the same moves show what changed, wherever the game is played. Any look
+but one with `on_device` starts the play over, a look at the open game's window too, so a change is carried through a long play by `use_app`.
 `look_at_app` with `on_device` opens it where Try On points and looks there: its window on this Mac, the simulator, or the
 Xbox. On the Xbox, `on_device`, Play and the end of a turn build for the console and put it there through the
 integration's bridge: `stop` ends

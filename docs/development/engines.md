@@ -105,11 +105,18 @@ A capability given to one engine must be given to all of them that can take it, 
   wish worked on for days grows past what one request can carry (about 32 MB at Anthropic) long before a model with a
   million tokens fills its window and compacts. So every engine compacts at `Conversation.compactAt` (200k tokens):
   Claude Code by `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (it compacts a little under the window it's given), Codex by
-  `model_auto_compact_token_limit`, and pi by Lamp's extension (`compactsEarly`, from `LAMP_COMPACT_TOKENS`), which
-  has pi's own compaction do it. Claude Code's `compact_boundary` and pi's `compaction_end` are `.compacted`, and Codex's
-  is found in its file after the run; nothing of it shows in the chat, and the notes are told again. Each run's size
+  `model_auto_compact_token_limit`, and pi by a reserve for each model in `settings.json` in Lamp's pi folder
+  (`PiCompaction`, from pi's `get_available_models`, asked again before a run only when pi or the files saying
+  which models it has changed): pi compacts on its own at the
+  window less `compaction.reserveTokens`. Never `ctx.compact` from Lamp's extension: pi's manual compaction aborts the
+  running turn and doesn't carry on, while its automatic one runs between a turn's requests and the turn goes on. A
+  model pi doesn't list keeps pi's own reserve. The reserve also raises the longest summary pi 1.0.0 may ask for, up
+  to the model's own output limit. Claude Code's `compact_boundary` and pi's `compaction_end` are `.compacted`, and
+  Codex's is found in its file after the run; nothing of it shows in the chat, and the notes are told again. A pi
+  compaction that fails leaves the turn going, and pi tries again before the next request. Each run's size
   before and after (the context its last request took, the pictures still sent and their bytes, the file, how often it
-  compacted) is a line in `conversations.log` in Lamp's logs folder (`Conversation.note`). Lamp Dev takes
+  compacted) is a line in `conversations.log` in Lamp's logs folder (`Conversation.note`), as are pi's compactions
+  starting, ending and failing, with how long they took. Lamp Dev takes
   `LAMP_COMPACT_TOKENS` from its own environment to try a compaction quickly (Claude Code takes no window under 100k;
   `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers it further). When a request fails all the same in a way a smaller
   conversation would get past (`Conversation.isTooBigToSend`: refused for its size, the prompt too long, or the

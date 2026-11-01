@@ -22,7 +22,7 @@ enum Gallery {
     static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
 
     private static let useRowStatuses: [EngineUseRow.Status] = [
-        .use, .gettingReady, .downloading(0.4), .failed("Lamp couldn't reach the internet to download it."),
+        .use, .gettingReady, .downloading(0.4), .failed(ErrorMessages.noConnection),
         .checkingSignIn, .signingIn, .failed("Signing in didn't finish."),
     ]
 
@@ -713,6 +713,14 @@ enum Gallery {
                 ChatLook.Worked("Worked for 54 s") { EmptyView() }
                 ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Hot Shelf"), button: "Reload", prominent: true) {}
             })
+        },
+        // A game that took some of a change, and one that takes it by itself at its next pause: the line says how much
+        // waits for Reload, in the same place.
+        Entry(group: "Activity", name: "Reload for the rest of a change") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Moonpool", held: .partly), button: "Reload", prominent: true) {})
+        },
+        Entry(group: "Activity", name: "Reload before the next pause") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Moonpool", held: .pause), button: "Reload", prominent: true) {})
         },
         // A wish on several places: Reload says where it opens the app again and where it only puts the change.
         Entry(group: "Activity", name: "Reload on every place") {

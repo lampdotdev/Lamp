@@ -36,6 +36,28 @@ import Foundation
 
     private struct Key: Hashable { let id: String; let place: Place }
 
+    /// A change a copy hasn't taken whole, as the page last said: for the chat's Reload line (`kind`, in plain words) and
+    /// the agent (what's waiting, by name). Worked out from what the page said each time it's asked, so Reload or a
+    /// later change that goes in ends it, and a later change that's held too is a hold of its own (`gen`).
+    struct Hold: Equatable {
+        enum Kind: Equatable {
+            /// Its code ran with the change, and part of it waits for Reload.
+            case partly
+            /// All of it waits for a pause in the game, or Reload.
+            case pause
+            /// All of it waits for Reload.
+            case reload
+        }
+        var project: String
+        var place: Place
+        var gen: Int
+        var kind: Kind
+        var why: String?
+        var files: [String] = []
+        /// Which hold this is: told to the agent once.
+        var id: String { "\(project) \(place.rawValue) \(gen) \(kind)" }
+    }
+
     /// What came through the page's last run of its code (lamp-game.js, `cameThrough`): in its words, the parts of the
     /// world built again (each with how long it took and why, and whether it's built in the background while the game
     /// plays on), the changed files nothing in the running game read again, which wait for Reload, and how long the game
@@ -122,12 +144,15 @@ import Foundation
     }
 
     /// The change the copy has been given: every file that differs from what it was installed with, by its hash, and
-    /// those it no longer has.
+    /// those of the install it no longer has (`gone`, which the app serves from); what this change changed, measured
+    /// against what the copy had, and which of those it took away (`removed`, for the page, which a file made since the
+    /// install and deleted again is in, though it was never in `gone`).
     private struct Given: Codable {
         var gen: Int
         var files: [String: String]
         var gone: [String]
         var changed: [String]
+        var removed: [String]? = nil
         var now = false
         /// The page said it holds this change for a pause, and hasn't said it went in since: kept with it, so a Lamp
         /// started again while the game waits still shows Reload.
@@ -280,7 +305,8 @@ import Foundation
         let gen = (given[key]?.gen ?? 0) + 1
         // A change of the phone page while the page holds one of its own for Reload leaves that one waiting.
         let waiting = changed.isEmpty && held.contains(key)
-        give(Given(gen: gen, files: files, gone: gone, changed: waiting ? lastGiven(project, key)?.changed ?? [] : changed,
+        let removed = waiting ? lastGiven(project, key)?.removed ?? [] : changed.filter { now[$0] == nil }
+        give(Given(gen: gen, files: files, gone: gone, changed: waiting ? lastGiven(project, key)?.changed ?? [] : changed, removed: removed,
                    waits: waiting ? true : nil, phone: phone, phoneOnly: changed.isEmpty ? true : nil), to: key, in: project)
         if !waiting { held.remove(key) }
         let said = await answer(key, gen: gen)
@@ -331,6 +357,18 @@ import Foundation
 
     /// The copy's last report whole: what was built again, and what waits for Reload.
     func lastReport(_ project: LampProject, at place: Place) -> Report? { reports[Key(id: project.id, place: place)] }
+
+    /// What the app's open copies hold of a change, each as the page last said.
+    func holds(of project: LampProject) -> [Hold] {
+        [Place.mac, .simulator].compactMap { place in
+            let key = Key(id: project.id, place: place)
+            guard held.contains(key), let gen = lastGiven(project, key)?.gen else { return nil }
+            if let report = reports[key], !report.waits.isEmpty {
+                return Hold(project: project.id, place: place, gen: gen, kind: .partly, why: report.words, files: report.waits)
+            }
+            return Hold(project: project.id, place: place, gen: gen, kind: pausing.contains(key) ? .pause : .reload, why: reasons[project.id])
+        }
+    }
 
     /// Whether a copy is holding a change for a pause.
     func holds(_ project: LampProject) -> Bool { held.contains { $0.id == project.id } }
@@ -417,7 +455,8 @@ import Foundation
         // What its page saved is asked for before anything else: a preview waits on it.
         if wanted() { return (200, ["epoch": epoch, "gen": after, "send": "saved"]) }
         guard let change = newer() else { return (200, ["epoch": epoch, "gen": given[key]?.gen ?? 0]) }
-        var answer: [String: Any] = ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.phoneOnly == true ? [] : change.changed, "now": change.now]
+        var answer: [String: Any] = ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.phoneOnly == true ? [] : change.changed,
+                                     "removed": change.phoneOnly == true ? [] : change.removed ?? [], "now": change.now]
         if let phone = change.phone { answer["phone"] = ["version": phone.version, "files": phone.files] }
         return (200, answer)
     }

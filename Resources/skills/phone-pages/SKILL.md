@@ -1,6 +1,6 @@
 ---
 name: phone-pages
-description: How to build a page for phones on the same Wi-Fi - phones as controllers (buttons, sticks, a wheel, a buzzer), a second screen joined by a QR code, or sending the TV a file (a photo, a game, a song). Read before writing Phone/ or using Lamp.controllers or Lamp.phonePage.
+description: How to build a page for phones on the same Wi-Fi - phones as controllers (buttons, sticks, a wheel, a buzzer, a game's own interaction, how views and moves go between game and phone), a second screen joined by a QR code, or sending the TV a file (a photo, a game, a song). Read before writing Phone/ or using Lamp.controllers or Lamp.phonePage.
 ---
 
 # Phones as controllers and second screens
@@ -19,8 +19,8 @@ var pad = LampController.connect({
   busy: function () { return false; },  // true while opening again would lose something (a drawing, a form)
   onUpdate: function (apply) { }   // leave it out unless the page must choose: call apply() to open the newer page
 });
-pad.button('a', true); pad.button('a', false);  // a button held, then let go
-pad.axis('stick', x, y);                         // a stick or slider, each from -1 to 1
+pad.button('jump', true); pad.button('jump', false);  // a button held, then let go, named for what it does
+pad.axis('steer', x, y);                         // a stick, wheel or slider, each from -1 to 1
 pad.send({ ready: true });                       // JSON to the TV app, 16 KB at most
 ```
 
@@ -30,31 +30,86 @@ Make each control big enough for a thumb, show the player's number and the state
 
 `pad.button`, `pad.axis` and `pad.send` return false when nothing was sent: show that state, never a press that went nowhere.
 
-### A game's controller is held sideways
+### How a game's controller is held
 
-A page of game controls is made for landscape: two thumbs, movement on the left, the main action on the right, and the player, the link and Back quiet in the middle or along the top. Compose those zones for the game and its verbs; a portrait layout stretched sideways isn't this. A page that isn't game controls (photos, files, a scoreboard, a hand of cards) stays whichever way suits it.
+The game-ui skill ("With phones") settles what the controller is, and that settles how it's held. A two-thumb page is made for landscape: movement on the left, the main action on the right, and the player, the link and Back quiet in the middle or along the top. Compose those zones for the game and its verbs; a portrait layout stretched sideways isn't this. A page built around one big interaction (a lock, a dial, a hand of cards) and a page that isn't game controls (photos, files, a scoreboard) stay whichever way suits them, with the same safe areas and the same care when the phone turns.
 
 - Lay it out with `viewport-fit=cover` in the viewport tag, `env(safe-area-inset-*)` around the edges and `100dvh` for the height, so a notch and the browser's bars don't sit on a control.
 - Nothing forces a phone sideways. `screen.orientation.lock` works in few browsers and usually only full screen: try it after a tap if you like, handle its failure, and make the page right without it. Never rotate the page with CSS.
 - Joining and typing a name may stay upright, and the keyboard changes the viewport's shape: decide what `@media (orientation: …)` shows from the game's phase too, so a keyboard never hides the name field behind "turn your phone".
-- Held upright during play, keep the player and the link on screen, show a themed "Turn your phone sideways", take no play gestures, and offer "Use upright" with a compact layout for someone who can't rotate. Keep Back reachable, and never pause the party for one phone turning.
-- If the phone turns during a press, send every held button's release and zero every active axis, drop the page's own pointer capture and gesture state, and ask for a fresh press. The page keeps track of what's held; never close the link to clear it. Turning back restores the phase as it was, with no new join and no reset.
+- A two-thumb page held upright during play: keep the player and the link on screen, show a themed "Turn your phone sideways", take no play gestures, and offer "Use upright" with a compact layout for someone who can't rotate. Keep Back reachable, and never pause the party for one phone turning.
+- If the phone turns during a press, end any gesture (below), send every held button's release and zero every active axis, drop the page's own pointer capture and gesture state, and ask for a fresh press. The page keeps track of what's held; never close the link to clear it. Turning back restores the phase as it was, with no new join and no reset.
 
 ```js
 var held = {};
 function press(name, down) { if (down) held[name] = true; else delete held[name]; pad.button(name, down); }
 function letGo() {
   Object.keys(held).forEach(function (name) { press(name, false); });
-  pad.axis('stick', 0, 0);                         // every axis this page moves
+  pad.axis('steer', 0, 0);                         // every axis this page moves
 }
 matchMedia('(orientation: landscape)').addEventListener('change', letGo);
 ```
 
+### Views and moves
+
+The game owns what's true; a phone draws what it's told and asks for moves. There's no second state machine on the phone.
+
+- **Views.** Derive each player's view from the game's state in one function, and send it to that player alone (`send(player, view)`, never player 0 for anything private) whenever what it holds changes, not only when the phase does: a wrong attempt changes the view with no change of phase. It goes out on `onJoin` too, which also runs for a phone coming back and for a page that opened again, and for phones already joined when the code runs again: `onJoin` puts that in the moves' queue, so the view that lets a phone act again answers every move it sent before. The phone keeps nothing it can't get back from its next view. A player with no part in the current view, like one back from a dropped link, is shown that and when they're next in, never an empty screen.
+- **Turns.** Each view carries the phase and a `turn` the game moves on whenever an old screen's move would no longer mean the same thing (a new round, a new turn). A move names the `turn` it was made on, and an `id`, since a `turn` can't tell two moves in one turn apart: one more than the `answer.id` in the view it was made on (below), so ids come from the game and survive the page opening again.
+- **Moves.** Send the finished move as one bounded message: `pad.send({ move: 'try', id: id, turn: view.turn, path: path })`. `pad.axis` is for live movement only: an axis is dropped when the game is behind and late ones are thrown away, so never build a result from them. Collect a path on the phone and send it when it ends.
+- **The game decides.** `f.phones` holds buttons only; axes and messages come by `onAxis` and `onMessage`, between frames, so the game keeps its own queue and empties it in `frame`, never a flag `frame` clears. It drops a move from another phase or `turn`, whose phone has already moved on, and takes one with an `id` no newer than the player's last answer as a repeat, which changes nothing and only sends the view again. For any other move it checks the player and the move's size and shape, accepts or rejects it, and keeps that for the player. Every view carries that as `answer: { id, ok }`, `{ id: 0 }` before the first.
+- **One move at a time.** After sending, a phone takes no new move until a view's `answer.id` reaches it or a view has another phase or `turn`: views go out for other reasons too, and `send` returning true only means it went out. There's no timer that offers a fresh move, because a move that's late can still land, and two ids would count twice. A message can be dropped when the game is far behind, so a game whose turn can sit forever may send the same move again, same `id`, after a few seconds. A phone that loses its link forgets a waiting move and never sends it again after a reconnect; the view it comes back to says what happened.
+- **Input needs a current view.** A view belongs to the link it came on: take input only once one has arrived, and stop when `onState` leaves `connected`, until the view queued by `onJoin` comes on the new link.
+- **A gesture that's interrupted is no move.** Track the finger's `pointerId` and capture it. End the gesture, send nothing and clear what it drew on that finger's `pointercancel` or `lostpointercapture`, when the page is hidden (`visibilitychange`), when the phone turns, when `onState` leaves `connected`, and when a view arrives with another phase or `turn`. Only that finger's `pointerup` in the same `turn` submits, and it ends the gesture first, so the `lostpointercapture` that follows a normal release finds nothing to cancel. Keep `busy` true during a gesture so a newer page waits for it.
+
+```js
+var view = null, live = false, path = null, finger = null, waiting = null;
+function cancel() { path = null; finger = null; draw(); }
+var pad = LampController.connect({
+  onMessage: function (next) {
+    var moved = view && (next.turn !== view.turn || next.phase !== view.phase);
+    if (moved) { path = null; finger = null; }
+    if (moved || next.answer.id >= waiting) waiting = null;  // any other view isn't an answer
+    view = next; live = true; draw();
+  },
+  onState: function (state) {
+    if (state !== 'connected') { live = false; path = null; finger = null; waiting = null; }
+    draw();
+  },
+  busy: function () { return !!path; }
+});
+lock.addEventListener('pointerdown', function (event) {
+  if (!live || path || waiting !== null) return;
+  finger = event.pointerId; lock.setPointerCapture(finger); path = []; draw();
+});
+lock.addEventListener('pointerup', function (event) { if (event.pointerId === finger) finish(); });
+['pointercancel', 'lostpointercapture'].forEach(function (name) {
+  lock.addEventListener(name, function (event) { if (event.pointerId === finger) cancel(); });
+});
+document.addEventListener('visibilitychange', function () { if (document.hidden) cancel(); });
+matchMedia('(orientation: landscape)').addEventListener('change', cancel);
+function finish() {                                     // the finger lifted, or Submit
+  if (live && path) {
+    var id = view.answer.id + 1;
+    if (pad.send({ move: 'try', id: id, turn: view.turn, path: path })) waiting = id;
+  }
+  path = null; finger = null; draw();
+}
+
+// In the game: moves wait for the frame, and the state decides.
+var moves = [];
+Lamp.controllers.onMessage(function (player, data) { moves.push({ player: player, data: data }); });
+Lamp.controllers.onJoin(function (player) { moves.push({ player: player, joined: true }); });
+// in frame(f), the only place views are sent: for each of moves.splice(0): drop an old turn's; for a new id, check it,
+// change the state and keep { id, ok } for that player's views; then sendView for whoever's view changed, for a
+// repeat and for joined
+```
+
 ### Seeing the page
 
-In a game on Lamp's web runtime, you can see and press this page yourself: `use_app` with `phone` true on an action opens the real `Phone/index.html` at 844x390, sideways, joined to the game as a player in the same play, with a picture of it beside the game's, what it sent the game, its words and controls, and what it logged. Tap with `click` by `target` (a selector or the words on it) or x and y; `press`, `release` and `drag` work a held button or a stick; `type` fills a field; `rotate` turns it (`up`, then `left` or `right` for each way round), and works with a finger left down; `link` with `item` `lost`, `away` or `back` drops and restores it. Before you finish, play the whole journey with it: joining, the menu, play, results, the link lost and back, and rotation with a control held.
+In a game on Lamp's web runtime, you can see and press this page yourself: `use_app` with `phone` true on an action opens the real `Phone/index.html` at 844x390, sideways (`rotate` with `up` for a page held upright), joined to the game as a player in the same play, with a picture of it beside the game's, what it sent the game, its words and controls, and what it logged. Tap with `click` by `target` (a selector or the words on it) or x and y; `press`, `release` and `drag` work a held button or a stick, and a `press`, several `drag`s with no place, then a `release` trace a path; `type` fills a field; `rotate` turns it (`up`, then `left` or `right` for each way round), and works with a finger left down; `link` with `item` `lost`, `away` or `back` drops and restores it. Before you finish, play the whole journey with it: joining, the menu, play, a move the game rejects, results, the link lost and back, and rotation with a control or a gesture held.
 
-It's the real page and the real `Lamp.controllers`, but not a real phone: one phone at most, in Mac WebKit, touches made by Lamp, on a link that stands in for the relay (no QR scan, no files, no network, so what it loads must be in `Phone/`). The page's timers and clocks go by the play, so a long press lasts what the script says; a CSS animation runs by real time. A notch, the browser's bars, the keyboard, tilt and `orientation.lock` aren't there to see, and speed isn't either. Say so when you report it, and ask the person to try it on their phone.
+It's the real page and the real `Lamp.controllers`, but not a real phone: one phone at most and one finger, so it shows nothing about a second player's view or a two-finger gesture; in Mac WebKit, with synthetic touches that move in straight steps and no `pointercancel` of their own, so it shows a gesture works, not how it feels; on a link that stands in for the relay (no QR scan, no files, no network, so what it loads must be in `Phone/`). The page's timers and clocks go by the play, so a long press lasts what the script says; a CSS animation runs by real time. A notch, the browser's bars, the keyboard, tilt, the wake lock, vibration and `orientation.lock` aren't there to see, and speed isn't either. Say so when you report it, and ask the person to try it on their phone.
 
 On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game. It starts with a host:
 
@@ -80,7 +135,7 @@ Lamp.controllers.onError(function (message) { joinNote.textContent = message; })
 Lamp.controllers.start();
 ```
 
-In a game, the join card is a screen of its own, not part of the title (the game-ui skill has the flow): show it at once when the player goes to join, or from setup or pause to add players, and a game played only with phones may open on it. While it's up it says when the game is getting ready for phones (until the first link), when phones can't join and when it's trying again. Keep the session running behind it: hiding the card never calls `stop()`, drops a player or starts again. While it's hidden, keep the newest `onLink` address and the newest error rather than a picture of an old code, and draw the card from those when it opens, finding its elements again, since a change to the code may have made them anew. Register the handlers before `start()` in every case, and keep the links short-lived. A page that isn't a game (a second screen, a file sent to the TV) may show its code from the start. Draw into the same canvas each time `onLink` calls again. A code that couldn't be drawn and phones that can't join (`start()` rejects, `onError`) each say so in the card; neither hides it as if the game had no phones. In a game drawn on a canvas (three.js, Phaser), put the join card in HTML over it, or draw `LampQR.matrix(url)` (its `size` and `dark(x, y)`) into the scene yourself, with a light border four modules wide.
+In a game, the join card is a screen of its own, not part of a title (the game-ui skill has the flow, and what the shared display and each phone show in each phase): show it at once when the player goes to join, or from setup or pause to add players, and a game played only with phones may open on it. While it's up it says when the game is getting ready for phones (until the first link), when phones can't join and when it's trying again. Keep the session running behind it: hiding the card never calls `stop()`, drops a player or starts again. While it's hidden, keep the newest `onLink` address and the newest error rather than a picture of an old code, and draw the card from those when it opens, finding its elements again, since a change to the code may have made them anew. Register the handlers before `start()` in every case, and keep the links short-lived. A page that isn't a game (a second screen, a file sent to the TV) may show its code from the start. Draw into the same canvas each time `onLink` calls again. A code that couldn't be drawn and phones that can't join (`start()` rejects, `onError`) each say so in the card; neither hides it as if the game had no phones. In a game drawn on a canvas (three.js, Phaser), put the join card in HTML over it, or draw `LampQR.matrix(url)` (its `size` and `dark(x, y)`) into the scene yourself, with a light border four modules wide.
 
 ## Files
 
@@ -106,7 +161,7 @@ The TV sends a phone a file the same way, with `Lamp.controllers.sendFile(player
 
 ## Tilt
 
-The page is plain http, and phones give their motion sensors only to https pages. So make buttons and sticks the controls. Offer tilt only where `LampController.canTilt()` says so, from a tap (a Start button), since the browser asks the person first: `LampController.tilt(pad).then(...).catch(...)` then sends the phone's tilt as axis `'tilt'` (x: left -1 to right 1, y: away -1 to toward 1). Where it can't, the game must still be playable with the buttons.
+The page is plain http, and phones give their motion sensors only to https pages. So a game's controller is a touch interaction that's usable without tilt, whatever shape the game-ui skill's design gave it. Offer tilt only where `LampController.canTilt()` says so, from a tap (a Start button), since the browser asks the person first: `LampController.tilt(pad).then(...).catch(...)` then sends the phone's tilt as axis `'tilt'` (x: left -1 to right 1, y: away -1 to toward 1). Where it can't, the game must still be fully playable by touch. The wake lock and `navigator.vibrate` are extras in the same way: many phones won't give them to this page, so try them, handle their failure, and let nothing depend on them.
 
 ## The wish's own apps
 

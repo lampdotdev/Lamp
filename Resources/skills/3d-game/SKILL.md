@@ -46,8 +46,8 @@ lamp-game.js once. A `WebGPURenderer` is made and given its `await r.init()` in 
 - `init` runs once, before the first frame. It may be async, to load models with
   `new GLTFLoader().loadAsync('ship.glb')` or sounds; make or load every sound here. It builds what the state says:
   the level, the player and the open menu or overlay from the registered state, which is already back after a change
-  of the code, and the title or intro only when `play.mode` says so (the game skill, "Changes while it's played"; the
-  game-ui skill says what the title and menus are). A camera's start pose goes in its `build`, never here.
+  of the code, and the opening (a title, an intro, a briefing) only when `play.mode` says so (the game skill, "Changes
+  while it's played"; the game-ui skill says how a game opens and what its menus are). A camera's start pose goes in its `build`, never here.
 - `frame(f)` runs about 60 times a second. It reads the controller as `f.pads[0]`, moves things by `f.dt` (and
   `f.time`), and ends with `renderer.render(scene, camera)`.
 - `touch` names the buttons Lamp's touch controls show on a phone or tablet.

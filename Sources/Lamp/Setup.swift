@@ -1444,7 +1444,7 @@ struct ComputerUseSettings: View {
             if status != .ready { await allow() }
             enabled = status == .ready
         } catch {
-            problem = error.localizedDescription
+            problem = ErrorMessages.reason(error)
         }
         working = nil
     }
@@ -2191,7 +2191,7 @@ private struct LocalAISheet: View {
                 repo = ""
                 local.download(spec)
             } catch {
-                addError = error.localizedDescription
+                addError = ErrorMessages.reason(error)
             }
         }
     }

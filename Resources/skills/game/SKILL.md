@@ -8,7 +8,8 @@ description: Games, 2D or 3D, made either way - what makes one fun and playtesti
 A game is something played in real time, rather than used. What follows holds for every game, whichever way it's
 made; each part then names the tools for each make. For a game in 2D, open the 2d-game skill too (Phaser or SpriteKit,
 and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityKit in Swift). Before designing its
-title, menus, level select, HUD, pause or results, read the game-ui skill.
+opening, title, menus, level select, HUD, pause or results, read the game-ui skill: a new game picks its screen flow
+there before any screen is drawn, however it's made.
 
 The tools Lamp has for games:
 
@@ -30,10 +31,10 @@ The tools Lamp has for games:
   the keys or touch. Lamp's preview of the game plays with its scripted pad, and can join the game's phone page as one
   player (the phone-pages skill). Read a phone's buttons in `frame(f)` from `f.phones`, as the pads are read (`frame().phones`
   in a Phaser scene): one `{ player, down, pressed, released }` for each phone joined, each button by the name the phone
-  page gave it, so `for (const p of f.phones) if (p.pressed.a) start()`. `pressed` and `released` last the one frame after
+  page gave it, so `for (const p of f.phones) if (p.pressed.go) start()`. `pressed` and `released` last the one frame after
   it happened, and a press let go again between two frames is still a press. `onButton` runs between frames, so a flag
   it sets and `frame` clears is lost: keep it for what can't wait for a frame. Sticks and messages still come by
-  `onAxis` and `onMessage`.
+  `onAxis` and `onMessage`, so the game keeps its own queue for them (the phone-pages skill's "Views and moves").
 - **A TV app's page**: a game made as a Samsung or LG TV app before games took phones (`kind` "app") has no
   lamp-game.js: it follows the TV rules and lamp.js instead, with its own `requestAnimationFrame`. The rest of this
   skill holds for it wherever it doesn't name the runtime.
@@ -102,7 +103,9 @@ Switch controller, the keyboard or the touch screen, and switch while playing.
   button's name on that input ("A", "✕", "Space") and `glyph(CONTROLS.jump)` its badge, an element to put in the text.
   Both are null where the input has nothing for that action: leave the line out. Never write a key's or a button's
   name yourself; a page that reads the keys itself (`keyboard: false`) names its own keys by their codes,
-  `label('KeyH')`.
+  `label('KeyH')`. When the person names the keys to move with, the hints use them: `keyboardHints: { leftStick:
+  'arrows' }` to `game()` or `phaser()` makes `label(STICK.LEFT)` and `glyph(STICK.LEFT)` name the arrow keys (`'wasd'`
+  is the default). Both sets of keys still move the player.
 - **Swift**: GameController's `GCController` for a controller, with the button's name from the controller itself
   (`localizedName`, `sfSymbolsName`) rather than a fixed letter; keys on a Mac with
   `NSEvent.addLocalMonitorForEvents`.
@@ -159,7 +162,7 @@ game is written to keep the player's place through one:
   }, { target: () => controls.target });
   const play = live.state('play', {
       version: 1,
-      start: () => ({ mode: 'title', menu: null, level: 1, score: 0, lives: 3, player: { x: 0, z: 0, heading: 0, speed: 0 } }),
+      start: () => ({ mode: 'opening', menu: null, level: 1, score: 0, lives: 3, player: { x: 0, z: 0, heading: 0, speed: 0 } }),
   });
   ```
 
@@ -184,7 +187,7 @@ game is written to keep the player's place through one:
   it's `start()`, and the same object stays the whole time. So `init` (in a 2D game, the first scene's `init` or
   `create`) reads the state and builds exactly that screen: that mode, that menu or overlay open, and nothing a fresh
   start shows (a title card, an intro, a tutorial prompt, a fade in) built or shown at all. Never start fresh and then
-  put the place back, which leaves the title over the game and input in the title's mode. A later restart (a new
+  put the place back, which leaves the opening over the game and input in the opening's mode. A later restart (a new
   round, a death) sets the state's fields back itself. A 2D game registers its state; Phaser's game and cameras are made
   again from it.
 - **A game from before this**, or one brought in, may use `snapshot()` in game() (or phaser()), plain JSON of where it
@@ -346,19 +349,30 @@ to time. When frames are late, draw less.
 Sprites, characters and backgrounds are art from `make_art` or one ready-made pack (the assets skill), all in one
 style, on a transparent background where they move. Shapes and colors made in code, well lit, look better than
 mismatched models. Score, pause and menus are large and easy to read, over the game (SwiftUI over a SpriteView; HTML
-over the canvas in a page), and made for its world: the game-ui skill says which screens a game needs and how to give
-them its theme.
+over the canvas in a page), and made for its world: the game-ui skill says how to choose the screens a game needs and
+give them its theme.
 
 After changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches flicker a
 single picture hides.
 
 ## Playtesting
 
-Play it the way the person would before you finish: a game that only looks right isn't done. Web: Lamp's preview
-plays the game from a script of the controller's moves (`use_app` with `stick`, `button` and `wait`), with the same
-random numbers each time, so the same moves after a change show exactly what it changed. Play a whole round: start,
-learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there always something
-to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and play it again.
+Play it the way the person would before you finish: a game that only looks right isn't done. On Lamp's game runtime and
+the C++ kit, the preview plays the game from a script of the controller's moves (`use_app` with `stick`, `button` and
+`wait`), with the same random numbers each time, so the same moves after a change show exactly what it changed. Play a
+whole round: start, learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there
+always something to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and
+play it again.
+
+Every `use_app` plays all the moves so far again from the start, on the code as you saved it, with no look needed to
+build it. Every look but one with `on_device` starts the moves over, a plain look at the person's open window too: after
+a fix, go on with `use_app`, and if such a look came first, send all the moves again in one `use_app`. A look with
+`on_device` leaves them as they are, so never send them again after one. A fix that changes timing or navigation can put
+the same moves somewhere else, so check they still reach the same places.
+
+SpriteKit in a Swift app and a page with a loop of its own have no scripted preview: `use_app` there acts where the
+person sees it, so it waits for them to ask. Without that, keep to what `look_at_app` shows, and say what you didn't
+play rather than calling it checked.
 
 ## A game and the wish's other apps
 

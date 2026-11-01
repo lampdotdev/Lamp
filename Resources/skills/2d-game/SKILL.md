@@ -57,7 +57,7 @@ class Play extends Phaser.Scene {
     }
 }
 
-phaser({ scenes: [Boot, Title, Play], physics: { default: 'arcade', arcade: { gravity: { y: 2400 } } }, touch: BUTTON.A | BUTTON.B | BUTTON.MENU });
+phaser({ scenes: [Boot, Play], physics: { default: 'arcade', arcade: { gravity: { y: 2400 } } }, touch: BUTTON.A | BUTTON.B | BUTTON.MENU });
 ```
 
 As the game grows, each scene goes in a module of its own (`play.js` exporting `Play`, imported by game.js) that ends
@@ -89,13 +89,13 @@ What Lamp has changed in Phaser, so its usual code works here:
 
 ### Structure
 
-- **Scenes**: one for each screen (Boot, which loads; Title; Play; GameOver); the game-ui skill says which screens a
-  game needs and how they look. A pause menu is a scene launched over
+- **Scenes**: Boot, which loads, then one for each screen of the flow the game picked (the game-ui skill), which is Play
+  alone for a game that opens on play. A pause menu is a scene launched over
   play (`this.scene.launch('pause'); this.scene.pause()`), which reads the pad itself and resumes play
   (`this.scene.resume('play'); this.scene.stop()`). Keep the game's state (score, lives, level) in a plain object
   passed in `this.scene.start('play', state)`, not spread over scenes.
 - **A map as a menu**, where the game-ui skill's example suits: the stops in an array, one sprite tweened between them
-  with `this.tweens.add` as the choice changes, `this.cameras.main.pan` or `zoomTo` from the title's view, and input
+  with `this.tweens.add` as the choice changes, `this.cameras.main.pan` or `zoomTo` from the view before it, and input
   ignored only for the tween's few frames so a fast press can go on to the next stop. The registered state keeps the stop and the
   camera's position, and `create` sets them directly from it.
 - **The step**: move by `delta`, and give Arcade physics the work of falling, sliding and colliding. Arcade steps its
@@ -133,7 +133,8 @@ Write the controls once as actions on the pad (CONTROLS above) and read the pad 
 controller, the keyboard and the touch controls as that one pad, so the game needs nothing else. Show how to play, and
 every prompt, from the actions: as HTML over the canvas inside `onInput(draw)`, with `glyph(CONTROLS.jump)` in the
 text ("Press [A] to jump", a badge as the player's input draws it), or in a Phaser Text with `label(CONTROLS.jump)`
-("A", "✕", "Space"), redrawn from `onInput`. Leave a line out where `label` is null. On a phone the touch controls show
+("A", "✕", "Space"), redrawn from `onInput`. Leave a line out where `label` is null. When the person asked for the arrow
+keys, `phaser({ keyboardHints: { leftStick: 'arrows' }, … })` makes the hints name them (the game skill, "Controls"). On a phone the touch controls show
 a left stick and the buttons `touch` names: give a platformer jump on A and perhaps one more, and keep the game whole
 with those few. Menus move with the stick or the d-pad, choose with A and go back with B; Menu pauses.
 
@@ -192,7 +193,7 @@ so a fresh start and a change's start are one path:
 ```js
 const play = hot(import.meta).state('play', {
     version: 1,
-    start: () => ({ scene: 'title', mode: 'ready', level: 1, score: 0, paused: false, player: { x: 120, y: 400 } }),
+    start: () => ({ scene: 'play', mode: 'ready', level: 1, score: 0, paused: false, player: { x: 120, y: 400 } }),
 });
 class Boot extends Phaser.Scene {
     constructor() { super('boot'); }
@@ -242,7 +243,7 @@ Once it plays right, `look_at_app` with `on_device` where Try On points.
 ## SpriteKit in a Mac or iPhone app
 
 The game is an `SKScene` subclass for each screen, shown in SwiftUI with `SpriteView`, with SwiftUI over it for the
-score, menus and prompts (the game-ui skill says which screens a game needs and how they look):
+score, menus and prompts (the game-ui skill says how to choose a game's screens and how they look):
 
 ```swift
 import SwiftUI
@@ -294,5 +295,6 @@ the scene as `@Observable` (Observation), which `@State` holds as above; a scene
 - **Art**: as above: shapes in code (`SKShapeNode` drawn once into a texture with `view.texture(from:)`, since a shape
   node is costly to draw), pictures from `make_art` in Assets/ loaded once with `LampAssets.image("hero.png").map(SKTexture.init(image:))`.
 
-Look with `look_at_app` (with `motion` for what moves) and use it with `use_app` as the person would, keys and clicks;
-the game skill's "Keeping every frame smooth" holds here too.
+Look with `look_at_app` (with `motion` for what moves), and use it with `use_app`, keys and clicks, when the person
+asks you to try it: the game skill's "Playtesting" says what to say otherwise. Its "Keeping every frame smooth" holds
+here too.

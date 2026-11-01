@@ -41,7 +41,7 @@ chat. With VoiceOver a row is picked as a click picks it, and opened by its Open
 (`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over and Send Changes Back… where they apply, Wish Info
 (its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
 A row under Starter apps has no ⋯ (above), and its side panel offers Open and Remix it; the arrows move the pick through
-both sections, and File → Duplicate… acts on no wish while a starter not on the desk yet is picked.
+both sections, and File's commands act on no wish while a starter not on the desk yet is picked.
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
 for the menu. Dragged out
 of Lamp a row is the wish's shared file, or the app itself in the Dock or the Applications folder (`WishDrag`). A dot
@@ -80,12 +80,15 @@ untouched copy of the starter with the request written into its box (`openCopy`)
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
 open the starter itself), and the shuffle mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
-wish's menu and File → Duplicate…, which acts on the row picked while the desk is in front and otherwise on the chat in
-front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
+wish's menu and File → Duplicate…, which, like Copy Wish File and Name This Version…, acts on the row picked while the
+desk is in front and otherwise on the chat in front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
 to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
 panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
 the card its starter's chat opens on (the original's starter.md kept as `.lamp/starter-suggestions.md`,
 `Starters.suggestions`), never as a starter itself: its icon is painted and the desk counts it as the person's.
+
+Name This Version… can be chosen once that wish has a version. Knowing takes git, which doesn't run while a menu is
+drawn: `MenuVersions` reads it as the commands' wish or its versions change, and the menu reads the answer.
 
 **Making a new wish.** It's typed in the bar over the list, or said with the talk button beside it (`TalkButton`, moving
 with `Dictation.level`); either way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so
