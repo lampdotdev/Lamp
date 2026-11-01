@@ -3,7 +3,7 @@ name: New York
 kind: game
 offer: Make New York yours
 repository: https://github.com/lampdotdev/newyork
-commit: d64c6c99ca6d33a6ab02615ff03f530dbd6247e1
+commit: 99efbab0a38a6010592015469f5d9912ba14b784
 tweaks:
   - car.side.fill: Give me a sports car
   - dollarsign.circle.fill: Let me pick up taxi fares
