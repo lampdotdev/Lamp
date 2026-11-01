@@ -6116,8 +6116,9 @@ final class Store: ObservableObject {
             return
         }
         // While a turn holds the wish (an app in a folder of its own is held by its wish's id), nothing is built: the
-        // installed copy opens as it is, and the turn's changes go into it live as they're saved (below).
-        let turnHolds = busy.contains(project.id) || busy.contains(wish(of: project).id)
+        // installed copy opens as it is, and the turn's changes go into it live as they're saved (below). Read afresh
+        // at each decision, since a turn can start during any of the waits.
+        var turnHolds: Bool { busy.contains(project.id) || busy.contains(wish(of: project).id) }
         // Built by an older Lamp: rebuild it first, so it gets this Lamp's fixes and building blocks.
         // Not while it's running (that would quit it under the user); if the build fails, the old one opens.
         if stamps[project.id]?.isOutdated(for: project) == true, !turnHolds,
