@@ -103,7 +103,9 @@ Switch controller, the keyboard or the touch screen, and switch while playing.
   button's name on that input ("A", "✕", "Space") and `glyph(CONTROLS.jump)` its badge, an element to put in the text.
   Both are null where the input has nothing for that action: leave the line out. Never write a key's or a button's
   name yourself; a page that reads the keys itself (`keyboard: false`) names its own keys by their codes,
-  `label('KeyH')`.
+  `label('KeyH')`. When the person names the keys to move with, the hints use them: `keyboardHints: { leftStick:
+  'arrows' }` to `game()` or `phaser()` makes `label(STICK.LEFT)` and `glyph(STICK.LEFT)` name the arrow keys (`'wasd'`
+  is the default). Both sets of keys still move the player.
 - **Swift**: GameController's `GCController` for a controller, with the button's name from the controller itself
   (`localizedName`, `sfSymbolsName`) rather than a fixed letter; keys on a Mac with
   `NSEvent.addLocalMonitorForEvents`.

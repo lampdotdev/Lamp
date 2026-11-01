@@ -1484,7 +1484,10 @@ extension Agent.Rules {
     (the words: "A", "✕", "Space") and `glyph(CONTROLS.jump)` (that button's badge as the player's input draws it, an \
     element to put in the text), inside `onInput(draw)`, which draws now and again whenever the player takes up \
     another input (`input()` says which). Both are null where that input has nothing for it: leave that line out. A \
-    page that reads the keys itself (`keyboard: false`) names its own keys by their codes, `label('KeyH')`. Shake \
+    page that reads the keys itself (`keyboard: false`) names its own keys by their codes, `label('KeyH')`. When the \
+    person names the keys to move with, the hints use them: `keyboardHints: { leftStick: 'arrows' }` to `game()` or \
+    `phaser()` makes `label(STICK.LEFT)` and `glyph(STICK.LEFT)` name the arrow keys (`'wasd'` is the default), and both \
+    sets of keys still move the player. Shake \
     the controller with `rumble(0, low, high, seconds)`. Log events with `log()`, a line per event, never per \
     frame. Where it's played, the log says every ten seconds how many frames a second it really gets there and at \
     what size it's drawn; when frames run slow, Lamp may draw it smaller and scale it up to the screen (the 3d-game \
