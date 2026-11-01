@@ -1154,7 +1154,9 @@ final class SidebarServer {
 
     // MARK: What the person did
 
-    func handle(_ command: SidebarCommand, from projectID: String) {
+    /// `wire` is the version the chat that sent it speaks (`SidebarWire.version`): an app's chat from before an update
+    /// can be open still, and doesn't show what's newer.
+    func handle(_ command: SidebarCommand, from projectID: String, wire: Int = SidebarWire.version) {
         let store = Store.shared
         guard let project = store.projects.first(where: { $0.id == projectID }) else { return }
         switch command {
@@ -1363,7 +1365,8 @@ final class SidebarServer {
         case .repo(let command):
             let cards = GitHubRepoCards.shared
             switch command {
-            case .open: cards.open(project)
+            // A chat that can't show the picture never sends it up: the person would publish what they never saw.
+            case .open: cards.open(project, canShowPicture: wire >= 12)
             case .put: cards.put(project)
             case .fix: cards.fix(project)
             case .openRepo: cards.openRepo(project)
@@ -1537,7 +1540,7 @@ final class SidebarServer {
                 } else if case .pointAgain = command, let app = Store.shared.projects.first(where: { $0.id == appID }), app.isPart {
                     MagicPanel.shared.pointAgain(in: app)
                 } else {
-                    server?.handle(command, from: projectID)
+                    server?.handle(command, from: projectID, wire: version)
                 }
             }
         }

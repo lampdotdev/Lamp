@@ -443,7 +443,8 @@ enum GitHubRepo {
     /// `changed` is false when the repository already had the wish (and its page) as it is. The record returned names
     /// the commit up there now. Once the code is up it's kept, so a page that fails to go up is tried again on top of it.
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool,
-                       isPrivate: Bool, license: Bool, step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
+                       isPrivate: Bool, license: Bool, picture: Bool? = nil,
+                       step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
         let fm = FileManager.default
         let url = url(repo)
         let tree = staged.folder
@@ -455,7 +456,7 @@ enum GitHubRepo {
             guard made.ok else { throw Failure(message: "GitHub didn't make \(repo): \(made.output.trimmed.suffix(200))") }
             // Kept as soon as it's made, so a try that fails after this goes on with the same repository rather than
             // leaving this one behind and making another.
-            keep(Repo(repo: repo, url: url, license: license, commit: kept(for: project)?.commit), for: project)
+            keep(Repo(repo: repo, url: url, license: license, commit: kept(for: project)?.commit, picture: picture), for: project)
         }
         // Written only now the repository exists and the choice is settled: a refused repository leaves the box on the
         // card to untick, and the tree it stays staged in holds no license the retry would carry up.
@@ -523,7 +524,7 @@ enum GitHubRepo {
             guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
         }
         var record = Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
-                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page)
+                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page, picture: picture)
         guard let page = staged.page, record.isPublic == true, let commit = record.commit else { return (record, changed) }
         keep(record, for: project)
         // The page's Open in Lamp and Remix… start from the code just pushed with it, which is the game it plays.
@@ -626,10 +627,10 @@ enum GitHubRepo {
 
     func card(for project: LampProject) -> Card? { cards[project.id] }
 
-    func open(_ project: LampProject) {
+    func open(_ project: LampProject, canShowPicture: Bool = true) {
         guard cards[project.id] == nil else { return }
         let kept = GitHubRepo.kept(for: project)
-        let picture = WishLink.picture(of: project)
+        let picture = canShowPicture ? WishLink.picture(of: project) : nil
         cards[project.id] = Card(kept: kept, license: kept.map { $0.license ?? false } ?? true, picture: picture,
                                  thumbnail: picture.flatMap(Self.thumbnail), showsPicture: kept?.picture ?? true)
         Task { cards[project.id]?.icon = await Sharing.sharedIcon(of: project) }
@@ -719,12 +720,11 @@ enum GitHubRepo {
             do {
                 let id = project.id
                 let uploaded = try await GitHubRepo.upload(staged, of: project, to: repo, gh: gh, login: login, isNew: isNew,
-                                                                  isPrivate: card.isPrivate, license: card.license) { step in
+                                                                  isPrivate: card.isPrivate, license: card.license,
+                                                                  picture: card.picture == nil ? before?.picture : card.showsPicture) { step in
                     Task { @MainActor in GitHubRepoCards.shared.cards[id]?.stage = .working(step) }
                 }
-                let changed = uploaded.changed
-                var kept = uploaded.repo
-                kept.picture = card.showsPicture
+                let (kept, changed) = uploaded
                 GitHubRepo.keep(kept, for: project)
                 // The chat beside the installed app names the repository and commit for a remix (`Sidebar.install`).
                 if kept.isPublic == true { await GitHubRepo.offerWebsite(kept.repo, page: kept.page, gh: gh) }

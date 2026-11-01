@@ -5,8 +5,9 @@ import Foundation
 /// the extension sends what the person did. Lamp draws nothing here and the extension decides nothing: it shows
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
-    /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 11
+    /// What this side reads and writes; see `SidebarCommand.hello`. 12: Put on GitHub's card shows the wish's picture
+    /// and its box (`SidebarRepo.picture`), so the picture goes up only from a chat that showed it.
+    public static let version = 12
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
