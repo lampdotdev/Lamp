@@ -2403,7 +2403,9 @@ final class Store: ObservableObject {
         // A game or a screen is made before Apple's tools, git among them, are on the Mac: it has no versions until then.
         guard Versions.hasGit else { return true }
         guard await Versions.git("git init -q", cwd: project.dir) == 0 else { return false }
-        return await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": message]) == .saved
+        guard await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": message]) == .saved else { return false }
+        versionsRevision += 1
+        return true
     }
 
     /// Which simulator an iPhone & iPad app opens in. Takes effect at its next open; the app is quit first
