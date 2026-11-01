@@ -1588,7 +1588,6 @@ function keep(path, key, build, options = {}) {
         slices();
         return had.value;
     }
-    if (had) letGo(had);
     const entry = { path, key, text, inputs, lasting, from: sources, dispose: typeof dispose === 'function' ? dispose : null, used: true,
                     stale: false, value: undefined, made: undefined, assets: new Set(), draws: 0, cause, ms: null };
     const began = performance.now();
@@ -1613,6 +1612,8 @@ function keep(path, key, build, options = {}) {
             () => { if (kept.get(id) === entry) kept.delete(id); });
     } else { entry.made = value; entry.ms = performance.now() - began; }
     entry.value = value;
+    // The part it replaces goes, sparing what the new one shares with it (materials made once, so compiled once).
+    if (had) Promise.resolve(value).then(v => letGo(had, usedBy(v)), () => letGo(had));
     kept.set(id, entry);
     if (again && had) tally.built.push(entry);
     return value;
@@ -1664,16 +1665,21 @@ function own(made, waiting) {
     }
 }
 
-function letGo(k) {
+// `spare` holds the geometry and materials a part that replaces this one goes on using (made once and shared by both,
+// so the new part's shaders were compiled long ago): those stay.
+function letGo(k, spare = new Set()) {
     // A part built in the background lets go of the one it replaced once it's let go of itself.
     if (k.replaces) { letGo(k.replaces); k.replaces = null; }
     Promise.resolve(k.value).then(v => {
         try {
             if (k.dispose) return k.dispose(v);
             // A part that's a plain object of three.js objects ({ group, heights }) lets go of each.
-            for (const o of v && v.isObject3D ? [v] : isPlain(v) ? Object.values(v).filter(o => o && o.isObject3D) : []) {
+            for (const o of objectsOf(v)) {
                 o.removeFromParent();
-                o.traverse(o => { if (o.geometry) o.geometry.dispose(); for (const m of [o.material].flat()) if (m && m.dispose) m.dispose(); });
+                o.traverse(o => {
+                    if (o.geometry && !spare.has(o.geometry)) o.geometry.dispose();
+                    for (const m of [o.material].flat()) if (m && m.dispose && !spare.has(m)) m.dispose();
+                });
             }
             if (v && !v.isObject3D && typeof v.dispose === 'function') v.dispose();
             else if (v && !v.isObject3D && typeof v.destroy === 'function') v.destroy(true);
@@ -1822,11 +1828,30 @@ function watchRender(r) {
         return draw.call(this, scene, camera, ...rest);
     };
 }
+// A part's three.js objects compiled ahead for the scene and camera the game draws, a material at a time with a frame
+// between: a pipeline's compiling holds the frames the GPU presents meanwhile (WebKit's WebGPU), so one at a time keeps
+// each hold to one material's.
+const objectsOf = v => v && v.isObject3D ? [v] : isPlain(v) ? Object.values(v).filter(o => o && o.isObject3D) : [];
+// The geometry and materials of a part's three.js objects.
+function usedBy(v) {
+    const used = new Set();
+    for (const o of objectsOf(v)) o.traverse(m => { if (m.geometry) used.add(m.geometry); for (const x of [m.material].flat()) if (x) used.add(x); });
+    return used;
+}
 async function compileAhead(value) {
-    const objects = value && value.isObject3D ? [value] : isPlain(value) ? Object.values(value).filter(o => o && o.isObject3D) : [];
+    const objects = objectsOf(value);
     if (!objects.length || !lastDrawn || !renderer || typeof renderer.compileAsync !== 'function') return null;
-    const t = performance.now();
-    for (const o of objects) { try { await renderer.compileAsync(o, lastDrawn.camera, lastDrawn.scene); } catch (e) {} }
+    const t = performance.now(), seen = new Set(), each = [];
+    for (const o of objects) o.traverse(m => {
+        const materials = [m.material].flat().filter(Boolean);
+        if (!materials.length || materials.every(x => seen.has(x))) return;
+        materials.forEach(x => seen.add(x));
+        each.push(m);
+    });
+    for (const m of each) {
+        try { await renderer.compileAsync(m, lastDrawn.camera, lastDrawn.scene); } catch (e) {}
+        await new Promise(nextFrame);
+    }
     return performance.now() - t;
 }
 
@@ -2321,6 +2346,8 @@ function ranAgain(again) {
     // No old frame held (a page with no canvas to picture): on screen at the next frame.
     if (!curtain && !again.change.quiet) after(0, () => { if (shownFor === again.change.gen) { tellHost(shownFor, 'shown'); shownFor = null; } });
     for (const [id, k] of kept) if (!k.used) { if (k.pending) stopBuilding(k); letGo(k); kept.delete(id); }
+    // What a part built in the background replaced goes once the new one is on screen, not in its first frames.
+    for (const k of kept.values()) if (k.used && k.replaces) { const old = k.replaces, spare = usedBy(k.made); k.replaces = null; after(1000, () => letGo(old, spare)); }
     for (const list of [cameras, states]) for (const [id, entry] of list) if (!entry.used) list.delete(id);
     restoring = null;
     const waits = waitsFor(again.change, again.named);
