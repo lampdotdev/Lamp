@@ -317,6 +317,15 @@ game is written to keep the player's place through one:
     variables at the module's top. An exported plain object (`export const TUNING = {…}`) takes the values a change
     changed and keeps the rest. What a constructor built once stays as built through a swap: give
     `accept((next, { changed }) => …)` the rebuild, or have it return false to run the code again.
+    **What's at a module's top level outlives it.** The page keeps every version of a module for as long as it's open,
+    with whatever its variables point at, so a list of objects or a memo at a module's top level holds the old run's
+    world, and each run of the code gets slower. Release what the module gathered in `hot(import.meta).dispose(…)`, and
+    have the run or the part that owns a system drop it where it's registered (the game's `dispose` for what a run made,
+    a part's own `dispose` for what it keeps, which stays registered while the part is kept). A big table that doesn't
+    change as it's played is built inside `keep`, with what it's read from in `from`, so a run reuses it; what changes
+    as it's played stays out of `keep`. Name the file's address outside the build (`const address = new URL('./x.bin',
+    import.meta.url)`): the runtime writes `import.meta` out differently each run, so a build that names it is built
+    again every time.
     `hot(import.meta).dispose(data => …)` takes away what a version made at its top level, keeping in `data` what the
     next version reads as `hot(import.meta).data`.
 
