@@ -32,7 +32,18 @@ final class GameRetiredPartTests: XCTestCase {
     private static let page = """
         <!doctype html><html><head>
         <script>
-        window.requestAnimationFrame = function (fn) { return window.setTimeout(function () { fn(performance.now()); }, 16); };
+        // A page in no window draws no frames, and its timers are slowed to a few a second: frames come from a message
+        // channel, which isn't, since how many frames go by decides when a scene counts as no longer drawn.
+        (function () {
+            const channel = new MessageChannel(), waiting = [];
+            let last = 0;
+            channel.port1.onmessage = function () {
+                if (performance.now() - last < 16) { channel.port2.postMessage(0); return; }
+                last = performance.now();
+                for (const fn of waiting.splice(0)) fn(last);
+            };
+            window.requestAnimationFrame = function (fn) { waiting.push(fn); channel.port2.postMessage(0); return 1; };
+        })();
         window.opens = 1 + Number(sessionStorage.opens || 0); sessionStorage.opens = window.opens;
         window.addEventListener('error', e => { window.failed = e.message; });
         window.addEventListener('unhandledrejection', e => { window.failed = String(e.reason); });
@@ -207,6 +218,54 @@ final class GameRetiredPartTests: XCTestCase {
         XCTAssertTrue(whole)
         let disposed = try await number("shared.disposed")
         XCTAssertEqual(disposed, 0)
+    }
+
+    func testAHeldChildOfARetiredGroupLeavesItCleanly() async throws {
+        let pool = """
+            const pool = window.pool = live.keep('pool', () => [new THREE.Mesh(shared.geo, shared.mat)]);
+            """
+        try await open(Self.game(pool + Self.goes(1, extra: "g.add(pool[0]); g.position.x = 10; g.updateMatrixWorld(true);")))
+        files.text["game.js"] = Self.game(pool + Self.goes(2, shares: false))
+        try await change("game.js")
+        try await emptied("made[0]")
+        let detached = try await yes("pool[0].parent === null")
+        XCTAssertTrue(detached, "it can't go on pointing at a group that no longer lists it")
+        let x = try await number("pool[0].updateWorldMatrix(true, false); pool[0].matrixWorld.elements[12]")
+        XCTAssertEqual(x, 0, "and takes nothing from where the old group stood")
+    }
+
+    private static func stage(_ version: Int) -> String {
+        """
+        const stage = live.keep('stage', () => { /* \(version) */
+            const s = new THREE.Scene(), mine = own();
+            s.add(mine);
+            (window.made = window.made || []).push({ g: s, mine, geometry: mine.geometry });
+            return s;
+        });
+        """
+    }
+    private static let drawsStage = "renderer.render(window.drawInstead || stage, camera);"
+
+    func testAReplacedSceneNoLongerDrawnIsDisposedOfAndTakenApart() async throws {
+        try await open(Self.game(Self.stage(1), frame: Self.drawsStage))
+        files.text["game.js"] = Self.game(Self.stage(2), frame: Self.drawsStage)
+        try await change("game.js")
+        try await until("its own geometry was disposed of") { try await self.number("window.ownDisposed || 0") == 1 }
+        try await until("it was taken apart", seconds: 12) { try await self.yes("made[0].g.children.length === 0") }
+        let fresh = try await yes("made[1].g.children.length === 1 && made[1].mine.geometry === made[1].geometry")
+        XCTAssertTrue(fresh)
+    }
+
+    func testAReplacedSceneStillBeingDrawnWaitsUntilItStops() async throws {
+        try await open(Self.game(Self.stage(1), frame: Self.drawsStage))
+        try await js("window.drawInstead = made[0].g")
+        files.text["game.js"] = Self.game(Self.stage(2), frame: Self.drawsStage)
+        try await change("game.js")
+        try await pastEmptying()
+        let whole = try await yes("made[0].g.children.length === 1 && made[0].mine.geometry === made[0].geometry")
+        XCTAssertTrue(whole, "something still draws it")
+        try await js("window.drawInstead = null")
+        try await until("it was taken apart once nothing drew it", seconds: 16) { try await self.yes("made[0].g.children.length === 0") }
     }
 
     func testAPartWithItsOwnDisposeIsLeftToIt() async throws {

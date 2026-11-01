@@ -882,6 +882,7 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         last = now;
         measure(now);
         drewThisFrame = false;
+        framesDrawn++;
         const began = clockNow();
         try { step(dt); } catch (e) {
             // New code swapped in or run again that fails as it runs goes back out the safe way: the page opens again
@@ -1749,7 +1750,7 @@ function letGo(k, spare = new Set()) {
             // first, or the scene would count as still holding it.
             const roots = keptRoots(), objects = objectsOf(v).filter(o => !roots.has(o));
             for (const o of objects) o.removeFromParent();
-            const held = stillHeld(roots);
+            const held = stillHeld(roots, objects);
             for (const o of objects) {
                 o.traverse(o => {
                     if (o.geometry && !spare.has(o.geometry) && !held.has(o.geometry)) o.geometry.dispose();
@@ -1773,15 +1774,16 @@ function letGo(k, spare = new Set()) {
 //
 // Only roots are remembered, weakly: a part nothing holds simply goes, and this list keeps nothing alive.
 const retired = [], blanks = new Map();
-let emptying = false;
+let emptying = false, emptyAfter = 3000;
 function retire(o) {
     retired.push(new WeakRef(o));
+    emptyAfter = 3000;
     emptySoon();
 }
 function emptySoon() {
     if (emptying) return;
     emptying = true;
-    after(3000, emptyRetired);
+    after(emptyAfter, emptyRetired);
 }
 function emptyRetired() {
     emptying = false;
@@ -1789,21 +1791,28 @@ function emptyRetired() {
     // A run under way, a build still to finish or an async part still to arrive may yet use what's in the list.
     if (runningAgain || backgrounds.size || [...kept.values()].some(k => !k.settled)) return emptySoon();
     try {
-        const held = stillHeld(), list = retired.splice(0);
+        const roots = keptRoots(), held = stillHeld(roots), drawing = scenesDrawing(), list = retired.splice(0);
         for (const ref of list) {
             const root = ref.deref();
-            // Put back in a scene, or kept by something else since: no longer retired.
-            if (root && !root.parent && !held.has(root)) emptyOut(root, held);
+            if (!root || root.parent || roots.has(root)) continue;
+            // Put back in a scene, or kept by something else since: no longer retired. A scene something still draws
+            // is asked about again, more rarely each time, and goes once it isn't drawn.
+            if (drawing.includes(root)) retired.push(ref);
+            else if (!held.has(root)) emptyOut(root, held);
         }
     // Only ever a saving: what couldn't be taken apart goes on as it was.
     } catch (e) { log(`Lamp: taking apart what the game let go of failed (${e && e.message || e}).`); }
+    if (!retired.length) { emptyAfter = 3000; return; }
+    emptyAfter = Math.min(emptyAfter * 2, 60000);
+    emptySoon();
 }
 function emptyOut(root, held) {
     const stack = [root];
     while (stack.length) {
         const o = stack.pop();
         if (held.has(o)) continue;
-        for (const child of o.children) { if (child.parent === o && !held.has(child)) child.parent = null; stack.push(child); }
+        // A child that's held elsewhere leaves too: its parent no longer lists it, so it can't go on inheriting from it.
+        for (const child of o.children) { if (child.parent === o) child.parent = null; stack.push(child); }
         o.children = [];
         if (o.geometry) o.geometry = blankOf(o.geometry);
         if (o.material) o.material = blankOf([o.material].flat()[0]);
@@ -1820,7 +1829,8 @@ function blankOf(thing) {
 }
 // What the game keeps by name: the three.js objects, geometry and materials of every part kept (with its pools,
 // however they're held, so a detached object counts), of what's being built or waiting to be swapped in, and the
-// cameras registered. `stillHeld` is all that with what hangs under it, and every scene the renderer drew.
+// cameras registered. `stillHeld` is all that with what hangs under it, and every scene the renderer is drawing,
+// other than those in `going`, a part's own scene being let go of.
 function keptRoots() {
     const roots = new Set(), seen = new Set();
     const walk = (v, depth) => {
@@ -1841,7 +1851,7 @@ function keptRoots() {
     for (const entry of cameras.values()) walk(entry, 2);
     return roots;
 }
-function stillHeld(roots = keptRoots()) {
+function stillHeld(roots = keptRoots(), going = []) {
     const held = new Set();
     const add = root => root.traverse(o => {
         held.add(o);
@@ -1849,7 +1859,7 @@ function stillHeld(roots = keptRoots()) {
         for (const x of [o.material].flat()) if (x) held.add(x);
     });
     for (const root of roots) { if (root.isObject3D) add(root); else held.add(root); }
-    for (const ref of drawnScenes) { const scene = ref.deref(); if (scene && !held.has(scene)) add(scene); }
+    for (const scene of scenesDrawing()) if (!held.has(scene) && !going.includes(scene)) add(scene);
     return held;
 }
 
@@ -1997,12 +2007,20 @@ let lastDrawn = null, drewThisFrame = false, warming = null, warmed = null;
 // Watches the renderer's render() for what it draws, and after the code ran again has its first frame's shaders
 // compiled with compileAsync() before it's drawn, the old frame held on screen meanwhile, so nothing compiles in a
 // frame the player sees. A renderer without compileAsync (Phaser's) is left as it is.
-// Every scene drawn lately, weakly: a second scene (a minimap's, a mirror's) is the game's as much as the first.
+// Every scene drawn lately, weakly, with the frame it was last drawn in: a second scene (a minimap's, a mirror's) is the
+// game's as much as the first, and one not drawn for a while no longer is. Counted in frames, so a run of the code or a
+// window out of sight, which draw nothing, don't make a scene look abandoned.
 const drawnScenes = [];
+let framesDrawn = 0;
 function noteDrawn(scene) {
-    if (!scene || !scene.isObject3D || drawnScenes.some(ref => ref.deref() === scene)) return;
-    drawnScenes.push(new WeakRef(scene));
-    if (drawnScenes.length > 8) drawnScenes.shift();
+    if (!scene || !scene.isObject3D) return;
+    const known = drawnScenes.find(d => d.ref.deref() === scene);
+    if (known) { known.frame = framesDrawn; return; }
+    drawnScenes.push({ ref: new WeakRef(scene), frame: framesDrawn });
+    if (drawnScenes.length > 8) drawnScenes.splice(drawnScenes.indexOf(drawnScenes.reduce((a, b) => b.frame < a.frame ? b : a)), 1);
+}
+function scenesDrawing() {
+    return drawnScenes.filter(d => framesDrawn - d.frame <= 60).map(d => d.ref.deref()).filter(Boolean);
 }
 function watchRender(r) {
     if (!r || r.__lampRender || typeof r.render !== 'function' || typeof r.compileAsync !== 'function') return;
