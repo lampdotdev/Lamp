@@ -1788,12 +1788,15 @@ function emptyRetired() {
     if (!retired.length) return;
     // A run under way, a build still to finish or an async part still to arrive may yet use what's in the list.
     if (runningAgain || backgrounds.size || [...kept.values()].some(k => !k.settled)) return emptySoon();
-    const held = stillHeld(), list = retired.splice(0);
-    for (const ref of list) {
-        const root = ref.deref();
-        // Put back in a scene, or kept by something else since: no longer retired.
-        if (root && !root.parent && !held.has(root)) emptyOut(root, held);
-    }
+    try {
+        const held = stillHeld(), list = retired.splice(0);
+        for (const ref of list) {
+            const root = ref.deref();
+            // Put back in a scene, or kept by something else since: no longer retired.
+            if (root && !root.parent && !held.has(root)) emptyOut(root, held);
+        }
+    // Only ever a saving: what couldn't be taken apart goes on as it was.
+    } catch (e) { log(`Lamp: taking apart what the game let go of failed (${e && e.message || e}).`); }
 }
 function emptyOut(root, held) {
     const stack = [root];
@@ -1825,7 +1828,9 @@ function keptRoots() {
         if (v.isObject3D || v.isBufferGeometry || v.isMaterial) { roots.add(v); return; }
         if (depth <= 0) return;
         seen.add(v);
-        const each = v instanceof Map ? v.values() : v instanceof Set ? v : Object.values(v);
+        // Another library's object can throw on being read: what can't be read can't be told to be held.
+        let each = [];
+        try { each = [...(v instanceof Map ? v.values() : v instanceof Set ? v : Object.values(v))]; } catch (e) {}
         for (const x of each) walk(x, depth - 1);
     };
     for (const k of kept.values()) {
