@@ -155,7 +155,8 @@ desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
 (its design), the icon drawn from it in icon/ with its artwork, drawn once the way an app's is: layers of glass
 (icon/art.json, `GlassIcons`) or, for a game, a painting (icon/art.png). The artwork goes where an app keeps its icon's,
-since Lamp draws none for a starter on the person's Mac, which would offer to set up pictures in its chat;
+since Lamp draws none for a starter's own design on the person's Mac, which would offer to set up pictures in its
+chat (one whose icon.json changes, as a remix's does, gets its artwork drawn like any app's: `Starters.keepsShippedDesign`);
 `StarterIconsTests` draws the icons again, with Xcode set up for the Liquid Glass one, and the artwork again with
 `LAMP_PAINT_STARTER_ART=1` and a key), so the desk
 shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`),
@@ -254,7 +255,8 @@ fetched or built says "Getting it ready…" (`fetchingStarters`, `openWhenReady`
 **A starter added or changed in how it looks gets a new preview in the same change** (`StartersTests` fails
 without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,
 and once its window has settled its `.lamp/runtime/preview.png` is the picture (the app writes it at each launch,
-without Lamp's chat). Shrink it to at most 800 px on the long side (`sips -Z 800`) and put it at `.github/preview.png`
+without Lamp's chat, and takes it again every few seconds for up to a minute while the window is all one color, as a
+game's loading screen is). Shrink it to at most 800 px on the long side (`sips -Z 800`) and put it at `.github/preview.png`
 in the starter's repository, then move the pin (below). Look at it before committing: example content only, nothing
 from the Mac it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured
 with its panel open.

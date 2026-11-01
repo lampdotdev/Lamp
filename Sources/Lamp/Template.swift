@@ -7376,11 +7376,17 @@ enum Template {
                     MainActor.assumeIsolated {
                         // The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it
                         // shows after each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
+                        // A window of one color (a game's loading screen, a page not drawn yet) is taken again a few
+                        // seconds later, for up to a minute, keeping the last picture meanwhile.
                         if let previewWindow {
-                            if let png = previewPicture ?? drawn(previewWindow) {
+                            if let png = previewPicture ?? drawn(previewWindow), !looksBlank(png) || previewRetakes >= 20 {
                                 try? png.write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
                             } else {
                                 previewTaken = false
+                                if previewRetakes < 20 {
+                                    previewRetakes += 1
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { MainActor.assumeIsolated { snapshot() } }
+                                }
                             }
                         }
                         let text = folder.appendingPathComponent("screen.txt")
@@ -7404,6 +7410,26 @@ enum Template {
         }
 
         @MainActor private static var previewTaken = false
+        @MainActor private static var previewRetakes = 0
+
+        /// Whether a picture is nearly all one shade: 99% of it, seen at 64 by 64, within one step of sixteen. A line of
+        /// text or a button is enough to keep a picture; the title bar's buttons on a black window aren't.
+        nonisolated static func looksBlank(_ png: Data) -> Bool {
+            guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
+            let side = 64
+            var shades = [UInt8](repeating: 0, count: side * side)
+            let drew = shades.withUnsafeMutableBytes { bytes -> Bool in
+                guard let context = CGContext(data: bytes.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side,
+                                              space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+                return true
+            }
+            guard drew else { return false }
+            var counts = [Int](repeating: 0, count: 16)
+            for shade in shades { counts[Int(shade) / 16] += 1 }
+            return (counts.max() ?? 0) * 100 >= side * side * 99
+        }
         private static let pictures = DispatchQueue(label: "lamp.pictures")
 
         /// What a picture of a window needs from it, read on the main thread; the picture is taken off it (`capture`).
