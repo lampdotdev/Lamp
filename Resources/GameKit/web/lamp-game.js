@@ -1668,9 +1668,9 @@ function keep(path, key, build, options = {}) {
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
         const drawnBefore = draws;
-        value.then(v => { entry.made = v; entry.timers = waiting.timers; entry.ms = performance.now() - began; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
-            () => { if (kept.get(id) === entry) kept.delete(id); });
-    } else { entry.made = value; entry.ms = performance.now() - began; }
+        value.then(v => { entry.made = v; entry.settled = true; entry.timers = waiting.timers; entry.ms = performance.now() - began; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
+            () => { entry.settled = true; if (kept.get(id) === entry) kept.delete(id); });
+    } else { entry.made = value; entry.settled = true; entry.ms = performance.now() - began; }
     entry.value = value;
     // The part it replaces goes, sparing what the new one shares with it (materials made once, so compiled once).
     if (had) Promise.resolve(value).then(v => letGo(had, usedBy(v)), () => letGo(had));
@@ -1727,25 +1727,115 @@ function own(made, waiting) {
 }
 
 // `spare` holds the geometry and materials a part that replaces this one goes on using (made once and shared by both,
-// so the new part's shaders were compiled long ago): those stay.
+// so the new part's shaders were compiled long ago): those stay, and so does whatever the game still holds elsewhere
+// (`stillHeld`). A part with a `dispose` of its own takes care of everything it made.
 function letGo(k, spare = new Set()) {
     // A part built in the background lets go of the one it replaced once it's let go of itself.
     if (k.replaces) { letGo(k.replaces); k.replaces = null; }
     Promise.resolve(k.value).then(v => {
         try {
             if (k.dispose) return k.dispose(v);
-            // A part that's a plain object of three.js objects ({ group, heights }) lets go of each.
-            for (const o of objectsOf(v)) {
-                o.removeFromParent();
+            // A part that's a plain object of three.js objects ({ group, heights }) lets go of each, out of its scene
+            // first, or the scene would count as still holding it.
+            const roots = keptRoots(), objects = objectsOf(v).filter(o => !roots.has(o));
+            for (const o of objects) o.removeFromParent();
+            const held = stillHeld(roots);
+            for (const o of objects) {
                 o.traverse(o => {
-                    if (o.geometry && !spare.has(o.geometry)) o.geometry.dispose();
-                    for (const m of [o.material].flat()) if (m && m.dispose && !spare.has(m)) m.dispose();
+                    if (o.geometry && !spare.has(o.geometry) && !held.has(o.geometry)) o.geometry.dispose();
+                    for (const m of [o.material].flat()) if (m && m.dispose && !spare.has(m) && !held.has(m)) m.dispose();
                 });
+                retire(o);
             }
             if (v && !v.isObject3D && typeof v.dispose === 'function') v.dispose();
             else if (v && !v.isObject3D && typeof v.destroy === 'function') v.destroy(true);
         } catch (e) { log(`Lamp: letting go of ${k.key} kept in ${k.path} failed (${e && e.message || e}).`); }
     }, () => {});
+}
+
+// A part let go of can go on being reachable: a module runs again as a new module, and the browser keeps the one it
+// replaces, with whatever its variables point at, for as long as the page is open, and a kept renderer holds on to
+// what it drew. Left as they are, a few such references keep every old part's buffers and objects in the page, the
+// garbage collector walks them all, and each run of the code takes longer than the last until the page runs out of
+// memory. So once nothing is deciding what the game goes on with, what's left of a part is taken apart: its objects
+// lose their children and their own hold on geometry and materials, and whatever still points at them points at
+// nothing heavy. Objects stay valid, on blank geometry and a blank material, for old code that's still calling them.
+//
+// Only roots are remembered, weakly: a part nothing holds simply goes, and this list keeps nothing alive.
+const retired = [], blanks = new Map();
+let emptying = false;
+function retire(o) {
+    retired.push(new WeakRef(o));
+    emptySoon();
+}
+function emptySoon() {
+    if (emptying) return;
+    emptying = true;
+    after(3000, emptyRetired);
+}
+function emptyRetired() {
+    emptying = false;
+    if (!retired.length) return;
+    // A run under way, a build still to finish or an async part still to arrive may yet use what's in the list.
+    if (runningAgain || backgrounds.size || [...kept.values()].some(k => !k.settled)) return emptySoon();
+    const held = stillHeld(), list = retired.splice(0);
+    for (const ref of list) {
+        const root = ref.deref();
+        // Put back in a scene, or kept by something else since: no longer retired.
+        if (root && !root.parent && !held.has(root)) emptyOut(root, held);
+    }
+}
+function emptyOut(root, held) {
+    const stack = [root];
+    while (stack.length) {
+        const o = stack.pop();
+        if (held.has(o)) continue;
+        for (const child of o.children) { if (child.parent === o && !held.has(child)) child.parent = null; stack.push(child); }
+        o.children = [];
+        if (o.geometry) o.geometry = blankOf(o.geometry);
+        if (o.material) o.material = blankOf([o.material].flat()[0]);
+    }
+}
+// One empty object of the plainest class a geometry or material comes from, beneath three.js's event dispatcher.
+function blankOf(thing) {
+    if (!thing) return null;
+    const chain = [];
+    for (let c = thing.constructor; c && c !== Function.prototype; c = Object.getPrototypeOf(c)) chain.push(c);
+    const base = chain[Math.max(0, chain.length - 2)];
+    if (!blanks.has(base)) { let made = null; try { made = new base(); } catch (e) {} blanks.set(base, made); }
+    return blanks.get(base);
+}
+// What the game keeps by name: the three.js objects, geometry and materials of every part kept (with its pools,
+// however they're held, so a detached object counts), of what's being built or waiting to be swapped in, and the
+// cameras registered. `stillHeld` is all that with what hangs under it, and every scene the renderer drew.
+function keptRoots() {
+    const roots = new Set(), seen = new Set();
+    const walk = (v, depth) => {
+        if (!v || typeof v !== 'object' || seen.has(v) || ArrayBuffer.isView(v) || v instanceof ArrayBuffer || (globalThis.Node && v instanceof Node)) return;
+        if (v.isObject3D || v.isBufferGeometry || v.isMaterial) { roots.add(v); return; }
+        if (depth <= 0) return;
+        seen.add(v);
+        const each = v instanceof Map ? v.values() : v instanceof Set ? v : Object.values(v);
+        for (const x of each) walk(x, depth - 1);
+    };
+    for (const k of kept.values()) {
+        walk(k.made, 3);
+        if (k.replaces) walk(k.replaces.made, 3);
+        if (k.pending) walk(k.pending.value, 3);
+    }
+    for (const entry of cameras.values()) walk(entry, 2);
+    return roots;
+}
+function stillHeld(roots = keptRoots()) {
+    const held = new Set();
+    const add = root => root.traverse(o => {
+        held.add(o);
+        if (o.geometry) held.add(o.geometry);
+        for (const x of [o.material].flat()) if (x) held.add(x);
+    });
+    for (const root of roots) { if (root.isObject3D) add(root); else held.add(root); }
+    for (const ref of drawnScenes) { const scene = ref.deref(); if (scene && !held.has(scene)) add(scene); }
+    return held;
 }
 
 // MARK: Building in the background
@@ -1845,6 +1935,7 @@ function buildingFrom(path) {
 // Built: its shaders are compiled while the old part is drawn, and it waits to be swapped in with the others.
 async function built(k, p, value) {
     p.waits = true;
+    p.value = value;
     p.ms = performance.now() - p.began;
     p.compiled = await compileAhead(value);
     // Not while the code runs again: that run decides which part the game goes on with.
@@ -1860,7 +1951,7 @@ async function built(k, p, value) {
     backgrounds.delete(k);
     const entry = { path: k.path, key: k.key, text: p.text, inputs: p.inputs, lasting: false, from: p.from, dispose: p.dispose, used: false,
                     stale: false, value, made: value, assets: p.assets, timers: p.timers, draws: 0, cause: p.cause, ms: p.ms,
-                    busy: p.busy, compiled: p.compiled, gen: p.gen, fresh: true, replaces: k };
+                    busy: p.busy, compiled: p.compiled, gen: p.gen, fresh: true, replaces: k, settled: true };
     kept.set(`${k.path} ${k.key}`, entry);
     log(`Lamp: ${k.key} was built in the background in ${seconds(p.ms)} while the game ran${p.compiled == null ? '' : ` (its shaders compiled ahead in ${Math.round(p.compiled)} ms)`}.`);
     if (!backgrounds.size) swapIn();
@@ -1891,12 +1982,20 @@ let lastDrawn = null, drewThisFrame = false, warming = null, warmed = null;
 // Watches the renderer's render() for what it draws, and after the code ran again has its first frame's shaders
 // compiled with compileAsync() before it's drawn, the old frame held on screen meanwhile, so nothing compiles in a
 // frame the player sees. A renderer without compileAsync (Phaser's) is left as it is.
+// Every scene drawn lately, weakly: a second scene (a minimap's, a mirror's) is the game's as much as the first.
+const drawnScenes = [];
+function noteDrawn(scene) {
+    if (!scene || !scene.isObject3D || drawnScenes.some(ref => ref.deref() === scene)) return;
+    drawnScenes.push(new WeakRef(scene));
+    if (drawnScenes.length > 8) drawnScenes.shift();
+}
 function watchRender(r) {
     if (!r || r.__lampRender || typeof r.render !== 'function' || typeof r.compileAsync !== 'function') return;
     const draw = r.render;
     r.__lampRender = true;
     r.render = function (scene, camera, ...rest) {
         if (!drewThisFrame && scene && scene.isObject3D && camera && camera.isCamera) { lastDrawn = { scene, camera }; drewThisFrame = true; }
+        noteDrawn(scene);
         if (warming === 'ask' && lastDrawn) {
             const t = performance.now();
             warming = Promise.resolve().then(() => this.compileAsync(scene, camera)).catch(() => {})
