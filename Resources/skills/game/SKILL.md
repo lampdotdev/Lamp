@@ -221,8 +221,8 @@ game is written to keep the player's place through one:
     fields, an exported function, a new module): the page is put back as the new HTML has it, every module of the game
     runs again, and the game starts straight from what it registered, as a reload would but without one. What's
     registered stays: the renderer and its compiled shaders, the cameras, the state, and each part kept with
-    `hot(import.meta).keep(key, build, { inputs, from })`, and so do the files the runtime loaded, so the change costs only
-    what's built again. The listeners,
+    `hot(import.meta).keep(key, build, { inputs, from, background })`, and so do the files the runtime loaded, so the change costs only
+    what's built again, and a part built in the background costs the person nothing. The listeners,
     timers, sound contexts and workers the old code started are taken away by Lamp, and so are its `Lamp.controllers`
     callbacks, which the new code sets again as it starts; `dispose` in game() is for anything else it must let go of,
     and never stops the phones (a `stop()` there is ignored).
@@ -256,8 +256,39 @@ game is written to keep the player's place through one:
     const paint = live.keep('roadPaint', () => buildRoadPaint(streets.network), { inputs: [streets], from: ['js/map-data.js'] });
     ```
 
-    After a run, the look says which parts were built again, how long each took, and what of the change nothing read
-    again, which shows only after Reload. A look in the hidden copy builds every part afresh, so it shows a change the
+    A part that takes more than a frame or two to build (a city from its map data, a terrain, a road network, the
+    traffic on it) is built in the background with `background: true`, so a change to it never holds the game still:
+    the person plays on with the part they have, "Building…" shows over the game, and once the new part is built its
+    shaders are compiled and it swaps in, in about a frame. Until then the game's logic and the controller use the old
+    part, so code that reads a part works with either. Its build is either a generator that yields every few
+    milliseconds of work (a row of blocks, a chunk of terrain), which Lamp steps between frames, or an async function
+    that hands the pure data work (parsing, the arrays geometry is made from) to a worker with `work()` from
+    lamp-game.js and makes only the three.js objects from what comes back:
+
+    ```js
+    const city = live.keep('city', function* () {
+        const group = new THREE.Group();
+        for (const block of MAP.blocks) { group.add(buildBlock(block)); yield; }
+        return { group };
+    }, { from: ['js/map-data.js'], background: true });
+
+    const ground = live.keep('ground', async () => {
+        const { positions, normals } = await work('js/ground-worker.js', { size: MAP.size });   // posted back with their buffers as transfer
+        return { group: groundMesh(positions, normals) };
+    }, { from: ['js/elevation.js'], background: true });
+    ```
+
+    The first build, as the game starts, is built whole. A part built from one being built (its `inputs`) is built
+    again from the new one once that's in, so parts that must change together are one part. Keep a part's three.js
+    objects in the value it returns (one object, or a plain object of them, as `{ group }`), so Lamp can compile them
+    ahead and let go of the old ones. Make a part's materials once, in a kept part of their own
+    (`live.keep('cityMaterials', () => makeCityMaterials())`), and build only its geometry in the background: a
+    material made anew is a shader to compile, which holds the frames on screen while it compiles (about a third of a
+    second each in WebKit), and the old part goes without taking the materials the new one still uses.
+
+    After a run, the look says which parts were built again, how long each took, which are still being built in the
+    background, how long the game stood still, and what of the change nothing read again, which shows only after
+    Reload. A look in the hidden copy builds every part afresh, so it shows a change the
     open game may not: what you see there is in the person's game only when the part it's built into was built again.
 
     A big 3D world on three.js's `WebGPURenderer` keeps its scene and lights the same way, as its camera is. For a new one of

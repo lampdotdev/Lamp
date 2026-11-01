@@ -55,10 +55,12 @@ lamp-game.js once. A `WebGPURenderer` is made and given its `await r.init()` in 
   `hot(import.meta).keep` (the game skill, "Changes while it's played", has the recipe). The world is built in parts (the ground, the
   buildings, the trees and street details, the props, the traffic), each in a module of its own and into a group of
   its own, kept with the data it's built from as its `from`, so a change to one part or its data builds only that
-  part again; each thing that moves or changes in play (the player,
+  part again, and a part that's slow to build (the city, the terrain, the traffic) with `background: true`, built in
+  steps or with a worker, so the game plays on while it's built (the game skill's recipe); each thing that moves or changes in play (the player,
   a vehicle, the camera, enemies, the HUD's code) is a class in a module that ends with `hot(import.meta).accept()`,
   so a change to its methods goes into the running scene with nothing built again. A uniform's value or a material's
-  color set in an `update` swaps; a material made anew compiles its shader again as it's first drawn.
+  color set in an `update` swaps; a material made anew compiles its shader again, which Lamp does before the
+  first frame after a change while the frame before stays on screen, so a world's materials are made in its kept parts.
 
 A page laid out at the window's size whose HUD is its own HTML (a strategy game, a page made for phones as well as
 TVs) passes `fill: true` to `game()` and places and sizes its canvas itself, drawing it smaller when frames run slow;

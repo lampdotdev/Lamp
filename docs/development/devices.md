@@ -580,7 +580,29 @@ end its turn without it, and the chat's Reload line under its answer says what w
 in the hidden copy, which builds every part afresh, tells the agent which parts the open game built again and that one
 it kept doesn't show a change built into it (`GameKit.openGameNote`), so it never says the person sees what they don't. New York keeps its renderer, the
 ground's heights and each part of the city, so a change to its HUD runs again in about 2 s instead of a 16 s start,
-and a change to its trees builds only the street details, traffic and road paint again. What a game registers lasts
+and a change to its trees builds only the street details, traffic and road paint again. A part built that way still
+holds the game until it's built, so a part that's slow to build says `background: true` (lamp-game.js, "Building in the
+background"; the game skill's recipe): when a change builds it again, `keep` gives the new code the part it has and
+builds the new one between frames, a generator stepped a few milliseconds a frame (`slice`, fewer when the game's own
+frame is slow) or an async build waiting on a worker (`work()`), while the person plays on with the old one and the
+runtime's "Building…" shows beside its Reload pill. A part built from one still being built waits for it (`inputs`),
+rather than being built from the old one. Once every part is built, each one's three.js objects are compiled for the
+scene and camera last drawn (`compileAhead`, three.js's `compileAsync`, which the WebGL and WebGPU renderers both
+have), and the code runs again in place, quietly (no `rerun`, `restored` or `shown` for Lamp: the change's own words
+were said), with everything kept, which takes the new part as any kept part is taken, about a frame; the old one is let
+go after (`replaces`), sparing the geometry and materials the new one still uses (`usedBy`), as a part built again the
+usual way does. A pipeline's compiling holds the frames WebKit presents (about 300 ms for each new material in a test
+city), so `compileAhead` compiles a material a frame, and the game skill has a part's materials made once, in a kept
+part of their own, so a part built again compiles nothing. That's the same run in place a change makes, chosen over swapping a value under the game's
+variables, which no runtime can rebind: what read the old part reads the new one from there. A change that runs the
+code again meanwhile takes a built part with it, and goes on with a build its change doesn't touch. While the game is
+`busy()` the swap waits for a pause, as a run in place does. The preview, which plays from the start, builds every part
+whole. Every run in place also has its first frame's shaders compiled before it's drawn (`watchRender` puts
+`compileAsync` in front of that frame's render, the last frame held on screen meanwhile), so no game shows a frame
+stalled on compiling. The report is said at the new code's first drawn frame with how long the game stood still
+(`frozen`, from the old code's last frame) and that frame's time; parts still being built are named apart, and a second
+report (`later`) gives their time once they're in, which `PageLive` keeps beside the change's waits. A look at the open
+game waits for that, up to half a minute (`lookAtOpenGame`), and `openGameNote` says what's still being built. What a game registers lasts
 beyond that (lamp-game.js, "What the game registers"; the scaffold and the game skill start every new game with it):
 `live.renderer(build)` is one entry of `keep` outside any module (`lasting`, so no change of a module marks it stale,
 only its build's own code), `live.camera` keeps the object and its pose, lens and target, and `live.state` a plain
