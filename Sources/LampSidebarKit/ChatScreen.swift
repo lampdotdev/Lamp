@@ -173,9 +173,10 @@ private struct Chat: View {
                              credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, size: card.size, copied: card.copied, update: card.update,
                              canPut: card.canPut, isPrivate: card.isPrivate, license: card.license, canChooseLicense: card.canChooseLicense,
                              page: card.page, pageUp: card.pageUp ?? false, privateGame: card.privateGame ?? false,
+                             picture: card.picture.flatMap(NSImage.init(data:)), showsPicture: card.showsPicture ?? false,
                              put: { link.send(.repo(.put)) }, fix: { link.send(.repo(.fix)) }, makeLink: { link.send(.repo(.makeLink)) },
                              setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },
-                             openRepo: { link.send(.repo(.openRepo)) }, play: { link.send(.repo(.play)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
+                             setPicture: { link.send(.repo(.setPicture($0))) }, openRepo: { link.send(.repo(.openRepo)) }, play: { link.send(.repo(.play)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
                 }
             } else if let card = state.contribute {
                 ScrollView {

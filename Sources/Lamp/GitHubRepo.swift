@@ -26,7 +26,8 @@ enum GitHubRepo {
     /// pushed, which a later share names on the chain (`Sharing.export`); nil from a Lamp before it was kept.
     /// `isPublic` is what GitHub said after the last push, and `version` the wish's own version that push carried: a
     /// remix starts from the repository only while both hold (`remixOrigin`). Nil from a Lamp before they were kept.
-    /// `page` is the game's page's address, once GitHub has put it up.
+    /// `page` is the game's page's address, once GitHub has put it up. `picture` is whether the person had the README
+    /// show the wish's picture, which an update keeps to.
     struct Repo: Codable, Equatable {
         var repo: String   // "owner/name"
         var url: String
@@ -35,6 +36,7 @@ enum GitHubRepo {
         var isPublic: Bool? = nil
         var version: String? = nil
         var page: String? = nil
+        var picture: Bool? = nil
     }
 
     static func url(_ repo: String) -> String { "https://github.com/\(repo)" }
@@ -107,8 +109,10 @@ enum GitHubRepo {
     /// `GitHubProjects.check`): the chain ends with the wish as its shared file does, and the README names no address.
     /// `isPublic` is whether anyone will be able to read the repository: its README then offers it by a link of Lamp's
     /// site (`Showcase.remix`), which Lamp fetches without a sign-in, and a web game gets its page (`withPage`; a starter's
-    /// repository stages its own, `StarterRepos.stagePage`).
-    static func stage(_ project: LampProject, repo: String?, link: URL?, isPublic: Bool = true, withPage: Bool = true) throws -> Staged {
+    /// repository stages its own, `StarterRepos.stagePage`). `picture` is the wish's picture for the README to show, when
+    /// the person chose to show it (`GitHubRepoCards`).
+    static func stage(_ project: LampProject, repo: String?, link: URL?, isPublic: Bool = true, withPage: Bool = true,
+                      picture: Data? = nil) throws -> Staged {
         let fm = FileManager.default
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
@@ -156,6 +160,12 @@ enum GitHubRepo {
         // The ideas its chat offers beside it on a Mac without Lamp (`RemixSuggestions`), each a remix of its own.
         let ideas = (RemixSuggestions.load(project) ?? []).map(\.text)
         var showcase = Showcase(icon: icon, ideas: ideas)
+        if let picture {
+            let file = tree.appendingPathComponent(previewPicture)
+            try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try picture.write(to: file)
+            showcase.preview = previewPicture
+        }
         if isPublic, repo != nil { try writeButtons(in: tree); showcase.remix = true }
         // A web game plays as a page too, staged here so it's checked and shown before anything goes up: only in a public
         // repository, since GitHub serves a private one's page only on a paid plan.
@@ -235,8 +245,9 @@ enum GitHubRepo {
     }
 
     /// What a README shows of the wish before anything about Lamp: pictures and ideas, by their paths in the
-    /// repository. A person's own wish shows its icon only: a picture of it running could show their data. A starter
-    /// shows its preview (example content only), what to try with it, and where to play it when it's a game.
+    /// repository. A person's own wish shows its picture only when they chose to, on the card that shows it, since a
+    /// picture of it running could show their data (`previewPicture`). A starter shows its preview (example content
+    /// only), what to try with it, and where to play it when it's a game.
     struct Showcase {
         var icon: String? = nil
         var preview: String? = nil
@@ -258,6 +269,8 @@ enum GitHubRepo {
     /// The README's buttons, in the repository's pictures (`Starters.picturesFolder`): Open in Lamp, and for a game
     /// with a page, Play in your browser before it, since someone who hasn't tried a thing wants to try it first.
     static let openButton = ".github/open-in-lamp.svg"
+    /// The wish's picture, as the desk shows it, when the person chose to show it.
+    static let previewPicture = ".github/preview.png"
     static let playButton = ".github/play-in-browser.svg"
 
     /// The buttons drawn as lamp.dev's are, words alone: Open in Lamp in the paper's color on ink, Play in your browser
@@ -430,7 +443,8 @@ enum GitHubRepo {
     /// `changed` is false when the repository already had the wish (and its page) as it is. The record returned names
     /// the commit up there now. Once the code is up it's kept, so a page that fails to go up is tried again on top of it.
     static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool,
-                       isPrivate: Bool, license: Bool, step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
+                       isPrivate: Bool, license: Bool, picture: Bool? = nil,
+                       step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
         let fm = FileManager.default
         let url = url(repo)
         let tree = staged.folder
@@ -442,7 +456,7 @@ enum GitHubRepo {
             guard made.ok else { throw Failure(message: "GitHub didn't make \(repo): \(made.output.trimmed.suffix(200))") }
             // Kept as soon as it's made, so a try that fails after this goes on with the same repository rather than
             // leaving this one behind and making another.
-            keep(Repo(repo: repo, url: url, license: license, commit: kept(for: project)?.commit), for: project)
+            keep(Repo(repo: repo, url: url, license: license, commit: kept(for: project)?.commit, picture: picture), for: project)
         }
         // Written only now the repository exists and the choice is settled: a refused repository leaves the box on the
         // card to untick, and the tree it stays staged in holds no license the retry would carry up.
@@ -510,7 +524,7 @@ enum GitHubRepo {
             guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
         }
         var record = Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
-                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page)
+                          isPublic: await isPublic(repo, gh: gh), version: staged.version, page: kept(for: project)?.page, picture: picture)
         guard let page = staged.page, record.isPublic == true, let commit = record.commit else { return (record, changed) }
         keep(record, for: project)
         // The page's Open in Lamp and Remix… start from the code just pushed with it, which is the game it plays.
@@ -590,6 +604,11 @@ enum GitHubRepo {
         /// an update never adds a license the person left out, nor takes away one they chose.
         var isPrivate = false
         var license = true
+        /// The picture the desk shows of the wish (`WishLink.picture`), and whether the README shows it: as chosen at the
+        /// last Put on GitHub, else shown, as Share Link's card has it; the card shows it, so the person sees what goes up.
+        var picture: Data?
+        var thumbnail: Data?
+        var showsPicture = false
         /// Whether what was staged goes where anyone can read it: as GitHub says for a repository that's up, as chosen
         /// for a new one.
         var isPublic: Bool?
@@ -608,10 +627,12 @@ enum GitHubRepo {
 
     func card(for project: LampProject) -> Card? { cards[project.id] }
 
-    func open(_ project: LampProject) {
+    func open(_ project: LampProject, canShowPicture: Bool = true) {
         guard cards[project.id] == nil else { return }
         let kept = GitHubRepo.kept(for: project)
-        cards[project.id] = Card(kept: kept, license: kept.map { $0.license ?? false } ?? true)
+        let picture = canShowPicture ? WishLink.picture(of: project) : nil
+        cards[project.id] = Card(kept: kept, license: kept.map { $0.license ?? false } ?? true, picture: picture,
+                                 thumbnail: picture.flatMap(Self.thumbnail), showsPicture: kept?.picture ?? true)
         Task { cards[project.id]?.icon = await Sharing.sharedIcon(of: project) }
         prepare(project)
     }
@@ -637,9 +658,10 @@ enum GitHubRepo {
                 repo = await Publish.freeName(for: project, login: login, gh: gh)
                 isPublic = !(cards[project.id]?.isPrivate ?? false)
             }
+            let picture = cards[project.id].flatMap { $0.showsPicture ? $0.picture : nil }
             do {
                 let staged = try await Task.detached(priority: .userInitiated) {
-                    try GitHubRepo.stage(project, repo: repo, link: WishLink.kept(for: project)?.url, isPublic: isPublic)
+                    try GitHubRepo.stage(project, repo: repo, link: WishLink.kept(for: project)?.url, isPublic: isPublic, picture: picture)
                 }.value
                 guard cards[project.id] != nil else {
                     try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
@@ -667,6 +689,25 @@ enum GitHubRepo {
         if cards[project.id]?.kept == nil { prepare(project) }
     }
     func setLicense(_ project: LampProject, _ license: Bool) { cards[project.id]?.license = license }
+    /// The README changes with it, so it's staged again.
+    func setPicture(_ project: LampProject, _ shows: Bool) {
+        guard cards[project.id]?.showsPicture != shows else { return }
+        cards[project.id]?.showsPicture = shows
+        prepare(project)
+    }
+
+    /// A small copy of the picture for the card, which goes to the chat with each change of it.
+    private static func thumbnail(_ data: Data) -> Data? {
+        guard let image = NSImage(data: data) else { return nil }
+        let scale = min(640 / max(image.size.width, 1), 360 / max(image.size.height, 1), 1)
+        let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+        let small = NSImage(size: size, flipped: false) { rect in
+            image.draw(in: rect)
+            return true
+        }
+        guard let tiff = small.tiffRepresentation else { return nil }
+        return NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+    }
 
     func put(_ project: LampProject) {
         guard let card = cards[project.id], card.canPut, let staged = card.staged, let repo = card.repo,
@@ -678,10 +719,12 @@ enum GitHubRepo {
         Task {
             do {
                 let id = project.id
-                let (kept, changed) = try await GitHubRepo.upload(staged, of: project, to: repo, gh: gh, login: login, isNew: isNew,
-                                                                  isPrivate: card.isPrivate, license: card.license) { step in
+                let uploaded = try await GitHubRepo.upload(staged, of: project, to: repo, gh: gh, login: login, isNew: isNew,
+                                                                  isPrivate: card.isPrivate, license: card.license,
+                                                                  picture: card.picture == nil ? before?.picture : card.showsPicture) { step in
                     Task { @MainActor in GitHubRepoCards.shared.cards[id]?.stage = .working(step) }
                 }
+                let (kept, changed) = uploaded
                 GitHubRepo.keep(kept, for: project)
                 // The chat beside the installed app names the repository and commit for a remix (`Sidebar.install`).
                 if kept.isPublic == true { await GitHubRepo.offerWebsite(kept.repo, page: kept.page, gh: gh) }
@@ -760,6 +803,7 @@ enum GitHubRepo {
                            notes: notes, size: size, copied: card.copied,
                            update: card.kept != nil, canPut: card.canPut, isPrivate: card.isPrivate, license: card.license,
                            canChooseLicense: card.staged.map { GitHubRepo.canOfferLicense($0.credits) } ?? true,
-                           page: page, pageUp: pageUp, privateGame: !isPublic && Publish.hasPage(project))
+                           page: page, pageUp: pageUp, privateGame: !isPublic && Publish.hasPage(project),
+                           picture: card.thumbnail, showsPicture: card.showsPicture)
     }
 }
