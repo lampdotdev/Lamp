@@ -52,12 +52,16 @@ public struct RepoCard: View {
     let page: String?
     let pageUp: Bool
     let privateGame: Bool
+    /// The picture of the wish the desk shows, which the README can show too, and whether it will.
+    let picture: NSImage?
+    let showsPicture: Bool
     let put: () -> Void
     let fix: () -> Void
     /// Opens Share Link's card, to make the link Remix it with Lamp goes to.
     let makeLink: () -> Void
     let setPrivate: (Bool) -> Void
     let setLicense: (Bool) -> Void
+    let setPicture: (Bool) -> Void
     let openRepo: () -> Void
     /// Opens the page in the browser.
     let play: () -> Void
@@ -67,8 +71,9 @@ public struct RepoCard: View {
 
     public init(icon: NSImage?, name: String, stage: Stage, repo: String?, url: String?, credit: String?, openInLamp: String?, notes: [String], size: String?,
                 copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
-                page: String? = nil, pageUp: Bool = false, privateGame: Bool = false, put: @escaping () -> Void, fix: @escaping () -> Void, makeLink: @escaping () -> Void = {}, setPrivate: @escaping (Bool) -> Void, setLicense: @escaping (Bool) -> Void,
-                openRepo: @escaping () -> Void, play: @escaping () -> Void = {}, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
+                page: String? = nil, pageUp: Bool = false, privateGame: Bool = false, picture: NSImage? = nil, showsPicture: Bool = false,
+                put: @escaping () -> Void, fix: @escaping () -> Void, makeLink: @escaping () -> Void = {}, setPrivate: @escaping (Bool) -> Void, setLicense: @escaping (Bool) -> Void,
+                setPicture: @escaping (Bool) -> Void = { _ in }, openRepo: @escaping () -> Void, play: @escaping () -> Void = {}, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
         self.icon = icon
         self.name = name
         self.stage = stage
@@ -87,11 +92,14 @@ public struct RepoCard: View {
         self.page = page
         self.pageUp = pageUp
         self.privateGame = privateGame
+        self.picture = picture
+        self.showsPicture = showsPicture
         self.put = put
         self.fix = fix
         self.makeLink = makeLink
         self.setPrivate = setPrivate
         self.setLicense = setLicense
+        self.setPicture = setPicture
         self.openRepo = openRepo
         self.play = play
         self.copy = copy
@@ -150,6 +158,22 @@ public struct RepoCard: View {
                         .font(.callout)
                     }
                     if let size { row("Files", size) }
+                }
+                // The picture is shown where it's chosen, as Share Link's card shows it, so the person sees what goes up:
+                // it can show what's in the app.
+                if let picture, !isDone {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(nsImage: picture).resizable().scaledToFit()
+                            .frame(maxWidth: .infinity, maxHeight: 180)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+                            .opacity(showsPicture ? 1 : 0.3)
+                            .accessibilityLabel("Picture of the wish")
+                        Toggle("Include this picture", isOn: Binding(get: { showsPicture }, set: setPicture))
+                            .toggleStyle(.checkbox)
+                            .font(.callout)
+                    }
+                    .disabled(busy)
                 }
                 ForEach(notes, id: \.self) { note in
                     Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

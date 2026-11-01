@@ -1373,6 +1373,7 @@ final class SidebarServer {
             case .makeLink: cards.makeLink(project)
             case .setPrivate(let value): cards.setPrivate(project, value)
             case .setLicense(let value): cards.setLicense(project, value)
+            case .setPicture(let value): cards.setPicture(project, value)
             }
         case .contribute(let command):
             let cards = ContributeCards.shared

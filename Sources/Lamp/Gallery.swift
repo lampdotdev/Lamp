@@ -921,6 +921,9 @@ enum Gallery {
         repo("Up, wide", stage: .done(unchanged: false), up: true, width: 480),
         // A web game, whose page goes up beside its code.
         repo("Game, ready", stage: .ready, remix: true, game: true),
+        // The wish's picture, which the README shows while the box is ticked.
+        repo("Game, ready, with its picture", stage: .ready, remix: true, game: true, picture: true),
+        repo("Ready, picture left out", stage: .ready, remix: true, picture: false),
         repo("Game, ready, no license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."],
              remix: true, game: true),
         repo("Game, private", stage: .ready, isPrivate: true, game: true),
@@ -973,7 +976,7 @@ enum Gallery {
 
     private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
                              canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false, isPrivate: Bool = false,
-                             game: Bool = false) -> Entry {
+                             game: Bool = false, picture: Bool? = nil) -> Entry {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
@@ -985,6 +988,10 @@ enum Gallery {
                                 canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: isPrivate, license: canChooseLicense,
                                 canChooseLicense: canChooseLicense, page: game && !isPrivate && ready ? "someone.github.io/new-york/" : nil,
                                 pageUp: game && up && { if case .done = stage { true } else { false } }(), privateGame: game && isPrivate,
+                                picture: picture == nil ? nil : folder.flatMap { folder in
+                                    ["\(Starters.listingFolder)/preview.png", "\(Starters.treeFolder)/\(Starters.picturesFolder)/preview.png"]
+                                        .lazy.compactMap { NSImage(contentsOf: folder.appendingPathComponent($0)) }.first },
+                                showsPicture: picture ?? false,
                                 put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
                                 openRepo: {}, copy: {}, close: {}, width: width)
             return AnyView(card

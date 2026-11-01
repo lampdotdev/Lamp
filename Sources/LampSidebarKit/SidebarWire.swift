@@ -857,10 +857,13 @@ public struct SidebarRepo: Codable, Equatable {
     public var page: String?
     public var pageUp: Bool?
     public var privateGame: Bool?
+    /// The picture of the wish the README can show (a small copy, as PNG), and whether it will.
+    public var picture: Data?
+    public var showsPicture: Bool?
 
     public init(name: String, icon: Data?, stage: RepoCard.Stage, repo: String?, url: String?, credit: String?, openInLamp: String?,
                 notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
-                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil) {
+                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil, picture: Data? = nil, showsPicture: Bool? = nil) {
         self.name = name
         self.icon = icon
         self.stage = stage
@@ -879,6 +882,8 @@ public struct SidebarRepo: Codable, Equatable {
         self.page = page
         self.pageUp = pageUp
         self.privateGame = privateGame
+        self.picture = picture
+        self.showsPicture = showsPicture
     }
 }
 
@@ -926,4 +931,5 @@ public enum SidebarRepoCommand: Codable, Equatable {
     case makeLink
     case setPrivate(Bool)
     case setLicense(Bool)
+    case setPicture(Bool)
 }
