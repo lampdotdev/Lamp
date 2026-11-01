@@ -52,7 +52,8 @@ enum GitHubRepo {
 
     // MARK: Where it went
 
-    private static var keptURL: URL { Edition.supportFolder.appendingPathComponent("GitHub Repositories.json") }
+    /// A test points this at a folder of its own, so it never writes over the person's own record.
+    nonisolated(unsafe) static var keptURL = Edition.supportFolder.appendingPathComponent("GitHub Repositories.json")
     private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
 
     static func kept(for project: LampProject) -> Repo? { readKept()[key(project)] }
@@ -433,10 +434,6 @@ enum GitHubRepo {
         let fm = FileManager.default
         let url = url(repo)
         let tree = staged.folder
-        let licenseFile = tree.appendingPathComponent("LICENSE")
-        if license, !fm.fileExists(atPath: licenseFile.path) {
-            try Data(mitLicense(holder: login).utf8).write(to: licenseFile)
-        }
         if isNew {
             step("Making \(repo)…")
             let made = await Subprocess.run(gh, ["repo", "create", repo, isPrivate ? "--private" : "--public",
@@ -446,6 +443,12 @@ enum GitHubRepo {
             // Kept as soon as it's made, so a try that fails after this goes on with the same repository rather than
             // leaving this one behind and making another.
             keep(Repo(repo: repo, url: url, license: license, commit: kept(for: project)?.commit), for: project)
+        }
+        // Written only now the repository exists and the choice is settled: a refused repository leaves the box on the
+        // card to untick, and the tree it stays staged in holds no license the retry would carry up.
+        let licenseFile = tree.appendingPathComponent("LICENSE")
+        if license, !fm.fileExists(atPath: licenseFile.path) {
+            try Data(mitLicense(holder: login).utf8).write(to: licenseFile)
         }
         let git = git
         let identity = identity(login: login)
