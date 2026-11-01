@@ -138,4 +138,83 @@ final class GitHubRepoTests: XCTestCase {
         XCTAssertTrue(GitHubRepo.canOfferLicense(credits), "data under its own share-alike licence stays credited, the code can still be MIT")
         XCTAssertTrue(GitHubRepo.mitLicense(holder: "someone").contains("Copyright (c)"))
     }
+
+    /// Unticking the license after GitHub refused to make the repository: the retry leaves it out.
+    func testAnUntickedLicenseStaysOutWhenARefusedRepositoryIsTriedAgain() async throws {
+        let pushed = try await retryAfterARefusal(firstLicense: true, retryLicense: false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: pushed.appendingPathComponent("LICENSE").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pushed.appendingPathComponent("README.md").path), "the wish did go up")
+    }
+
+    func testALicenseLeftTickedGoesUpWhenARefusedRepositoryIsTriedAgain() async throws {
+        let pushed = try await retryAfterARefusal(firstLicense: true, retryLicense: true)
+        let license = try String(contentsOf: pushed.appendingPathComponent("LICENSE"), encoding: .utf8)
+        XCTAssertTrue(license.hasPrefix("MIT License"), license)
+    }
+
+    /// The wish's own license is the person's, whichever way the box goes.
+    func testTheWishsOwnLicenseStaysWhenARefusedRepositoryIsTriedAgain() async throws {
+        for retryLicense in [false, true] {
+            let pushed = try await retryAfterARefusal(firstLicense: true, retryLicense: retryLicense, own: "Apache License\n")
+            XCTAssertEqual(try String(contentsOf: pushed.appendingPathComponent("LICENSE"), encoding: .utf8), "Apache License\n")
+        }
+    }
+
+    /// Puts a wish on GitHub through a stand-in `gh` that refuses to make the repository the first time, then again with
+    /// the choice made on the card, and returns a checkout of what reached the repository (a bare one here, by git's
+    /// own address rewriting). The second try is the card's: a new repository, since nothing was made or kept.
+    private func retryAfterARefusal(firstLicense: Bool, retryLicense: Bool, own: String? = nil) async throws -> URL {
+        let fm = FileManager.default
+        let place = root.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: place, withIntermediateDirectories: true)
+        let bare = place.appendingPathComponent("tally.git")
+        XCTAssertEqual(TestShell.run("git init -q --bare -b main \(Sandbox.quoted(bare.path))").status, 0)
+        let gh = place.appendingPathComponent("gh")
+        try """
+        #!/bin/zsh
+        if [[ "$1 $2" == "repo create" ]]; then
+          [[ -e "$0.refused" ]] && exit 0
+          touch "$0.refused"
+          echo "HTTP 422: refused" >&2
+          exit 1
+        fi
+        [[ "$1 $2" == "repo view" ]] && echo PRIVATE
+        exit 0
+        """.write(to: gh, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: gh.path)
+
+        // Git reads this process's surroundings: the push lands in the bare repository, with none of this Mac's settings.
+        let surroundings = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_COUNT": "1",
+                            "GIT_CONFIG_KEY_0": "url.\(bare.absoluteString).insteadOf",
+                            "GIT_CONFIG_VALUE_0": "https://github.com/someone/tally.git"]
+        for (name, value) in surroundings { setenv(name, value, 1) }
+        let keptURL = GitHubRepo.keptURL
+        GitHubRepo.keptURL = place.appendingPathComponent("kept.json")
+        defer {
+            for name in surroundings.keys { unsetenv(name) }
+            GitHubRepo.keptURL = keptURL
+        }
+
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: place)
+        try Template.writeOwnedFiles(for: wish)
+        let staged = try GitHubRepo.stage(wish, repo: "someone/tally", link: nil, isPublic: false)
+        defer { try? fm.removeItem(at: staged.folder.deletingLastPathComponent()) }
+        if let own { try own.write(to: staged.folder.appendingPathComponent("LICENSE"), atomically: true, encoding: .utf8) }
+        func put(license: Bool) async throws {
+            _ = try await GitHubRepo.upload(staged, of: wish, to: "someone/tally", gh: gh.path, login: "someone", isNew: true,
+                                            isPrivate: true, license: license) { _ in }
+        }
+        do {
+            try await put(license: firstLicense)
+            XCTFail("the first try was to be refused")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("refused"), error.localizedDescription)
+        }
+        try await put(license: retryLicense)
+
+        let pushed = place.appendingPathComponent("pushed")
+        let cloned = TestShell.run("git clone -q \(Sandbox.quoted(bare.path)) \(Sandbox.quoted(pushed.path))")
+        XCTAssertEqual(cloned.status, 0, cloned.output)
+        return pushed
+    }
 }
