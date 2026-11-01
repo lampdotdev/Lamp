@@ -48,7 +48,7 @@ of Lamp a row is the wish's shared file, or the app itself in the Dock or the Ap
 beside a name says it's ready. The one wait the list shows is a starter opened before Lamp has built it, since nothing
 else on screen says the click did anything until it opens by itself (`openWhenReady`): "Getting it ready…" takes its
 line's place, a sheen crossing it so the wait never looks frozen (`DeskStatusLine`), still where the person asked for
-less motion. A wish being made or changed shows that in its chat, never on the desk. When a wish is used where nothing
+less motion. A wish being made or changed shows that in its chat, never on the desk. Being changed doesn't stop it being used: Open, and the chat's Play, open the installed Mac copy as it is while a turn holds the wish, with no build, and the turn's changes go into it live (`Store.use`, `Store.open`); only a wish with nothing installed yet shows its chat, and a question waiting for the person does too. When a wish is used where nothing
 comes forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a large
 translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in
 front (⌘[).

@@ -1452,7 +1452,8 @@ extension Store {
         apps.contains { $0.destination != .mac }
     }
 
-    /// A wish double-clicked on the desk: used when it's made and nothing's waiting on it, else its chat is shown.
+    /// A wish double-clicked on the desk: used when it's made, even while a turn changes it (its installed copy, as it is),
+    /// else its chat is shown.
     /// Where opening it brings nothing to the front (the menu bar, a widget, the background, the person's own
     /// phone), the desk says where it is.
     func use(_ project: LampProject) {
@@ -1466,8 +1467,11 @@ extension Store {
             prepareStarters()
             return
         }
-        guard made, !project.finding, !busy.contains(project.id), Talk.waiting(in: logs[project.id] ?? []) == nil,
-              queued[project.id]?.isEmpty != false else {
+        // A turn going on, or messages waiting for it, needn't keep the person from using it: the installed copy opens as it
+        // is and takes the turn's changes live (`open`). A question waiting for them, or nothing installed yet, shows the chat.
+        let installed = apps(of: project).contains { $0.hasMac && FileManager.default.fileExists(atPath: $0.installedURL.path) }
+        let working = busy.contains(project.id) || queued[project.id]?.isEmpty == false
+        guard made, !project.finding, !working || installed, Talk.waiting(in: logs[project.id] ?? []) == nil else {
             return showChat(project.id)
         }
         unread.remove(project.id)

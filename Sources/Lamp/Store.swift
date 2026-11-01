@@ -6157,13 +6157,20 @@ final class Store: ObservableObject {
             guard await AppQuit.close(running, id: project.id, runtime: Runtime.macFolder(project),
                                       stopped: { Date().timeIntervalSince(asked) > 15 }) else { return }
         }
+        // While a turn holds the wish, nothing is built: the installed copy opens as it is, and the turn's changes go into it
+        // live as they're saved. Only a wish with nothing installed yet waits, and says so.
+        let turnHolds = busy.contains(project.id) || busy.contains(wish(of: project).id)
+        let installed = FileManager.default.fileExists(atPath: project.installedURL.path)
+        if turnHolds, !installed {
+            log(project, .status, "\(project.name) isn't made yet: open it once this change is done.")
+            return
+        }
         // A build that waited for the app to close, and didn't get in then (Lamp wasn't running): it goes in now.
-        if Runtime.holdsBuild(project) {
+        if Runtime.holdsBuild(project), !turnHolds {
             await run(project)
             return
         }
-        guard FileManager.default.fileExists(atPath: project.installedURL.path),
-              !(project.platform.choosesPlace && Runtime.sourcesChanged(project)) else {
+        guard installed, turnHolds || !(project.platform.choosesPlace && Runtime.sourcesChanged(project)) else {
             await run(project)
             return
         }
