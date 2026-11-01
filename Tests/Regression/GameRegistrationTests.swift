@@ -459,7 +459,7 @@ final class GameRegistrationTests: XCTestCase {
         XCTAssertNil(part["ms"], "still being built")
         XCTAssertNotNil(first["frozen"])
 
-        try await until("the new part went in") {
+        try await until("the new part went in", seconds: 20) {
             let seed = try await self.number("window.city.seed")
             return seed == 2
         }

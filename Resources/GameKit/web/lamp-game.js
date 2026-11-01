@@ -1724,8 +1724,12 @@ function slices() {
     if (slicing || !backgrounds.size) return;
     slicing = true;
     after(400, () => { if (backgrounds.size) showHint(); });
-    nextFrame(slice);
+    // Between frames, or every 50 ms where frames come slower (a window out of sight), so the build goes on.
+    const mine = ++sliceCount, go = () => { if (mine === sliceCount) { sliceCount++; slice(); } };
+    nextFrame(go);
+    after(50, go);
 }
+let sliceCount = 0;
 function slice() {
     const began = performance.now(), budget = Math.max(4, Math.min(10, 14 - frameCost));
     for (const k of [...backgrounds]) {
