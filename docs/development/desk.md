@@ -213,6 +213,11 @@ names Slop New York at the commit the starter is on, with its license file, and 
 a starter built on someone else's work ships one, and bringing in a newer upstream updates its commit in the same
 change. Every starter's copy starts its wish's chain with the starter itself (`Starters.copy`, "Credit" in the wishes
 guide).
+A game starter may keep its upstream's TypeScript: Battle Drones is Simon Willison's Battle Drones (Apache 2.0) with
+his `src/` as he wrote it but for eight files marked at their tops, bundled into `Web/app/` by Lamp (`GameKit.compileSource`, in
+the devices guide), and Lamp's additions beside it in `src/lamp/` (controllers, playing together with phones, the
+snapshot) and `Phone/`. A newer Battle Drones is brought in by diffing his repository since the commit credits.json
+names and applying that to `src/`.
 A starter may be a screen: Home HQ is Wes Bos's photo-frame-dashboard (MIT) as a screen, its page in `Web/` as plain
 scripts with no build step, at home on the Mac, and its changes put it where a screen goes (an iPad, a TV, an Android
 photo frame). It's shared as any starter is, its page and Native.swift as the file's code (`ScreenFiles`, "Wishes"). Its `Sources/Native.swift` reads the person's calendars and photos only once they turn them on in the
