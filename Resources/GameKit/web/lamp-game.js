@@ -877,8 +877,9 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         // Its shaders compiling: the frame before stays on screen, and the game waits for them.
         if (warming && warming !== 'ask') { nextFrame(loop); return; }
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
-        // How long the page took to build the game, which Lamp reads to know how long its preview's build may take.
-        if (!last && mine === 1) log(`Lamp: the game was built and drawn ${(now / 1000).toFixed(1)} s after the page opened.`);
+        // How long the page took to build the game, which Lamp reads to know how long its preview's build may take. And
+        // the app's picture for Lamp's desk is taken from here, past the loading screen (`tellPlaying`).
+        if (!last && mine === 1) { log(`Lamp: the game was built and drawn ${(now / 1000).toFixed(1)} s after the page opened.`); tellPlaying('playing'); }
         last = now;
         measure(now);
         drewThisFrame = false;
@@ -965,6 +966,10 @@ let hooks = {}, started = false, waiting = null, pill = null;
 // the state didn't take.
 let pending = null, reopened = false, taken = false, guarding = false;
 const host = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampLive;
+// Whether the game is past its loading screen, for the picture of the app Lamp's desk shows (`LampPagePlaying` in a Mac
+// app): 'loading' from when this runtime loads, 'playing' at the first frame of play.
+const tellPlaying = state => { try { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampPlaying; h && h.postMessage(state); } catch (e) {} };
+if (!preview) tellPlaying('loading');
 // Putting in what was built in the background says only its report: the change it's part of has said the rest.
 const tellHost = (gen, state, why, more) => { if (runningAgain && runningAgain.change.quiet && state !== 'report') return; try { const h = host(); h && h.postMessage({ gen, state, ...(why ? { why } : {}), ...more }); } catch (e) {} };
 // What a change of these is, is code: swapped in, or the page is opened again for it.
