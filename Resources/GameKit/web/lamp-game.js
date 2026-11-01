@@ -1176,7 +1176,11 @@ export function hot(meta) {
     entry.disposers = [];
     if (!loading.has(path) && !entry.versions.length) {
         // The version the page loaded first, which every module that imported it holds: known once it has run.
-        import(meta.url).then(ns => { if (!entry.versions.length) entry.versions.push(versionOf(ns)); }, () => {});
+        // A module that awaits at its top level can be handed over before it has finished: its exports can't be read
+        // yet, so it's asked again.
+        const first = tries => import(meta.url).then(ns => { if (!entry.versions.length) addVersion(entry, versionOf(ns)); })
+            .catch(e => { if (e instanceof ReferenceError && tries) after(250, () => first(tries - 1)); });
+        first(40);
         fetch(meta.url, { cache: 'no-store' }).then(a => a.ok ? a.text() : null).then(t => { if (entry.text == null) entry.text = t; }, () => {});
     }
     return {
@@ -1189,6 +1193,12 @@ export function hot(meta) {
     };
 }
 
+// Only the last version's text is compared with: an array's can be megabytes, for every run of the code.
+function addVersion(m, version) {
+    const last = m.versions[m.versions.length - 1];
+    if (last) last.made = null;
+    m.versions.push(version);
+}
 function versionOf(ns) {
     const made = {};
     for (const name of Object.keys(ns)) {
@@ -1417,7 +1427,7 @@ async function swapModules(changed) {
     for (const path of boundaries) {
         const m = modules.get(path), ns = loaded.get(path);
         const changedNames = putIn(m, ns);
-        m.versions.push(made.get(path));
+        addVersion(m, made.get(path));
         m.text = texts.get(path);
         if (m.onAccept) {
             try {
@@ -1429,7 +1439,7 @@ async function swapModules(changed) {
     for (const path of order) {
         latest.set(path, addresses.get(path));
         const m = modules.get(path);
-        if (m && !boundaries.has(path)) { m.versions.push(made.get(path)); m.text = texts.get(path); }
+        if (m && !boundaries.has(path)) { addVersion(m, made.get(path)); m.text = texts.get(path); }
         if (!boundaries.has(path)) said.push(`${path}, run again for the modules that import it`);
     }
     for (const path of changed) texts.delete(path);
@@ -2420,7 +2430,7 @@ async function runAgain(change, state, roster) {
             }
             const ns = await import(from);
             const m = modules.get(path);
-            if (m) { m.versions.push(versionOf(ns)); m.text = code; }
+            if (m) { addVersion(m, versionOf(ns)); m.text = code; }
             latest.set(path, from);
         } catch (e) {
             return ranAgainFailed(again, `${path} didn't load (${e && e.message || e})`);
