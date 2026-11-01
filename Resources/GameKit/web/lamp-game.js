@@ -1750,12 +1750,12 @@ function letGo(k, spare = new Set()) {
             // first, or the scene would count as still holding it.
             const roots = keptRoots(), objects = objectsOf(v).filter(o => !roots.has(o));
             for (const o of objects) o.removeFromParent();
-            const held = stillHeld(roots, objects);
+            const held = stillHeld(roots);
             for (const o of objects) {
-                o.traverse(o => {
-                    if (o.geometry && !spare.has(o.geometry) && !held.has(o.geometry)) o.geometry.dispose();
-                    for (const m of [o.material].flat()) if (m && m.dispose && !spare.has(m) && !held.has(m)) m.dispose();
-                });
+                // A scene still being drawn waits: disposed of now, the renderer would only make it all again, and
+                // nothing would dispose of that. It's disposed of when it's taken apart.
+                if (held.has(o)) { retire(o, true); continue; }
+                disposeTree(o, spare, held);
                 retire(o);
             }
             if (v && !v.isObject3D && typeof v.dispose === 'function') v.dispose();
@@ -1774,9 +1774,15 @@ function letGo(k, spare = new Set()) {
 //
 // Only roots are remembered, weakly: a part nothing holds simply goes, and this list keeps nothing alive.
 const retired = [], blanks = new Map();
+function disposeTree(root, spare, held) {
+    root.traverse(o => {
+        if (o.geometry && !spare.has(o.geometry) && !held.has(o.geometry)) o.geometry.dispose();
+        for (const m of [o.material].flat()) if (m && m.dispose && !spare.has(m) && !held.has(m)) m.dispose();
+    });
+}
 let emptying = false, emptyAfter = 3000;
-function retire(o) {
-    retired.push(new WeakRef(o));
+function retire(o, undisposed = false) {
+    retired.push({ ref: new WeakRef(o), undisposed });
     emptyAfter = 3000;
     emptySoon();
 }
@@ -1792,13 +1798,15 @@ function emptyRetired() {
     if (runningAgain || backgrounds.size || [...kept.values()].some(k => !k.settled)) return emptySoon();
     try {
         const roots = keptRoots(), held = stillHeld(roots), drawing = scenesDrawing(), list = retired.splice(0);
-        for (const ref of list) {
-            const root = ref.deref();
+        for (const entry of list) {
+            const root = entry.ref.deref();
             if (!root || root.parent || roots.has(root)) continue;
             // Put back in a scene, or kept by something else since: no longer retired. A scene something still draws
             // is asked about again, more rarely each time, and goes once it isn't drawn.
-            if (drawing.includes(root)) retired.push(ref);
-            else if (!held.has(root)) emptyOut(root, held);
+            if (drawing.includes(root)) { retired.push(entry); continue; }
+            if (held.has(root)) continue;
+            if (entry.undisposed) disposeTree(root, new Set(), held);
+            emptyOut(root, held);
         }
     // Only ever a saving: what couldn't be taken apart goes on as it was.
     } catch (e) { log(`Lamp: taking apart what the game let go of failed (${e && e.message || e}).`); }
@@ -1829,8 +1837,7 @@ function blankOf(thing) {
 }
 // What the game keeps by name: the three.js objects, geometry and materials of every part kept (with its pools,
 // however they're held, so a detached object counts), of what's being built or waiting to be swapped in, and the
-// cameras registered. `stillHeld` is all that with what hangs under it, and every scene the renderer is drawing,
-// other than those in `going`, a part's own scene being let go of.
+// cameras registered. `stillHeld` is all that with what hangs under it, and every scene the renderer is drawing.
 function keptRoots() {
     const roots = new Set(), seen = new Set();
     const walk = (v, depth) => {
@@ -1851,7 +1858,7 @@ function keptRoots() {
     for (const entry of cameras.values()) walk(entry, 2);
     return roots;
 }
-function stillHeld(roots = keptRoots(), going = []) {
+function stillHeld(roots = keptRoots()) {
     const held = new Set();
     const add = root => root.traverse(o => {
         held.add(o);
@@ -1859,7 +1866,7 @@ function stillHeld(roots = keptRoots(), going = []) {
         for (const x of [o.material].flat()) if (x) held.add(x);
     });
     for (const root of roots) { if (root.isObject3D) add(root); else held.add(root); }
-    for (const scene of scenesDrawing()) if (!held.has(scene) && !going.includes(scene)) add(scene);
+    for (const scene of scenesDrawing()) if (!held.has(scene)) add(scene);
     return held;
 }
 

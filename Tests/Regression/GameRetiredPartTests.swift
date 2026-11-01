@@ -54,7 +54,9 @@ final class GameRetiredPartTests: XCTestCase {
         """
 
     /// A game around `body`: a stand-in renderer (three.js's own would need a GPU here), a kept scene and what's shared
-    /// made once, counting its disposals. `frame` runs each frame.
+    /// made once, counting its disposals. The renderer caches what it draws as three.js's does: a geometry or material
+    /// is registered when first drawn and forgotten only by its `dispose` event, so one drawn again after a disposal is
+    /// cached again. `frame` runs each frame.
     private static func game(_ body: String, top: String = "", frame: String = "") -> String {
         """
         import * as THREE from 'three';
@@ -63,7 +65,15 @@ final class GameRetiredPartTests: XCTestCase {
         window.run = (window.run || 0) + 1;
         const live = hot(import.meta);
         const canvas = document.createElement('canvas');
-        const renderer = live.renderer(() => ({ domElement: canvas, setPixelRatio() {}, setSize() {}, render() {}, compileAsync() { return Promise.resolve(); } }));
+        const cached = window.cached = window.cached || new Set();
+        const cache = thing => {
+            if (!thing || cached.has(thing)) return;
+            cached.add(thing);
+            const forget = () => { cached.delete(thing); thing.removeEventListener('dispose', forget); };
+            thing.addEventListener('dispose', forget);
+        };
+        const draw = drawn => drawn.traverse(o => { cache(o.geometry); cache(o.material); });
+        const renderer = live.renderer(() => ({ domElement: canvas, setPixelRatio() {}, setSize() {}, render(drawn) { draw(drawn); }, compileAsync() { return Promise.resolve(); } }));
         const camera = live.camera('main', () => new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 500));
         const play = live.state('play', { version: 1, start: () => ({ x: 0 }) });
         const scene = live.keep('scene', () => new THREE.Scene());
@@ -239,7 +249,7 @@ final class GameRetiredPartTests: XCTestCase {
         const stage = live.keep('stage', () => { /* \(version) */
             const s = new THREE.Scene(), mine = own();
             s.add(mine);
-            (window.made = window.made || []).push({ g: s, mine, geometry: mine.geometry });
+            (window.made = window.made || []).push({ g: s, mine, geometry: mine.geometry, material: mine.material });
             return s;
         });
         """
@@ -252,7 +262,9 @@ final class GameRetiredPartTests: XCTestCase {
         try await change("game.js")
         try await until("its own geometry was disposed of") { try await self.number("window.ownDisposed || 0") == 1 }
         try await until("it was taken apart", seconds: 12) { try await self.yes("made[0].g.children.length === 0") }
-        let fresh = try await yes("made[1].g.children.length === 1 && made[1].mine.geometry === made[1].geometry")
+        let forgotten = try await yes("!cached.has(made[0].geometry) && !cached.has(made[0].material)")
+        XCTAssertTrue(forgotten, "the renderer holds nothing of it")
+        let fresh = try await yes("made[1].g.children.length === 1 && made[1].mine.geometry === made[1].geometry && cached.has(made[1].geometry)")
         XCTAssertTrue(fresh)
     }
 
@@ -264,8 +276,14 @@ final class GameRetiredPartTests: XCTestCase {
         try await pastEmptying()
         let whole = try await yes("made[0].g.children.length === 1 && made[0].mine.geometry === made[0].geometry")
         XCTAssertTrue(whole, "something still draws it")
+        let disposed = try await number("window.ownDisposed || 0")
+        XCTAssertEqual(disposed, 0, "what's still drawn isn't disposed of, or the renderer would only make it again")
         try await js("window.drawInstead = null")
         try await until("it was taken apart once nothing drew it", seconds: 16) { try await self.yes("made[0].g.children.length === 0") }
+        let once = try await number("window.ownDisposed || 0")
+        XCTAssertEqual(once, 1)
+        let forgotten = try await yes("!cached.has(made[0].geometry) && !cached.has(made[0].material)")
+        XCTAssertTrue(forgotten, "the renderer holds nothing of it once it's gone")
     }
 
     func testAPartWithItsOwnDisposeIsLeftToIt() async throws {
