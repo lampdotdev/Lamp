@@ -765,6 +765,10 @@ enum GameKit {
                 + " and kept every other part as it was. If what you changed is built in a part it kept, the person doesn't see it yet, whatever this look shows:"
                 + " name the file it's built from in that part's keep (`from`, the game skill, \"Changes while it's played\"), so the change builds it again, and don't say it's in until a look at the open game shows it."
         }
+        // A part built in the background: the person plays on with the old one until it's built and goes in by itself.
+        if let building = report?.building, !building.isEmpty {
+            came += " The open game is still building \(building.joined(separator: ", ")) in the background, with the person playing on the one it had: it goes in by itself once built, so a look at the open game shows it only after that."
+        }
         if let waits = report?.waits, !waits.isEmpty {
             return came + " The person's open game doesn't show all of this: it ran the new code in place, but nothing in it read \(waits.joined(separator: ", ")) again, so that shows only after Reload."
                 + " Don't say they can see it: say what shows after Reload, or declare the file in the `from` of the part built from it, so the next change builds that part again in place."
@@ -1487,7 +1491,9 @@ extension Agent.Rules {
     lens and target; `live.state(id, { version, start })` for everything that says where the game is, as one plain \
     object the game changes and never replaces (the mode, which menu or overlay is open, the level, the player's \
     position, heading and speed, what they ride or hold, the score, lives, time, the time of day…); and \
-    `live.keep(key, build, { inputs, from })` for each part of the world, with the data it's built from as its `from`. All of it is back before init reads it and before \
+    `live.keep(key, build, { inputs, from })` for each part of the world, with the data it's built from as its `from`, \
+    and `background: true` for a part that takes long to build, so the game plays on while a change builds it again \
+    (the game skill says how). All of it is back before init reads it and before \
     the first frame, so the one start reads the state and builds that place, with that menu or overlay open and nothing \
     a fresh start would show (no title, intro or tutorial). Raise `version` with a `migrate` when a field changes its \
     meaning; a field you add takes its start value. Only what's registered is kept: a renderer, camera or variable of \

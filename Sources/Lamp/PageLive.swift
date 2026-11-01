@@ -37,15 +37,20 @@ import Foundation
     private struct Key: Hashable { let id: String; let place: Place }
 
     /// What came through the page's last run of its code (lamp-game.js, `cameThrough`): in its words, the parts of the
-    /// world built again (each with how long it took and why), and the changed files nothing in the running game read
-    /// again, which wait for Reload.
+    /// world built again (each with how long it took and why, and whether it's built in the background while the game
+    /// plays on), the changed files nothing in the running game read again, which wait for Reload, and how long the game
+    /// stood still for it. A part built in the background goes in later, with a report of its own (`later`).
     struct Report: Equatable {
-        struct Built: Equatable { var part: String; var ms: Int?; var cause: String? }
+        struct Built: Equatable { var part: String; var ms: Int?; var cause: String?; var background = false }
         var words: String?
         var built: [Built] = []
         var waits: [String] = []
         /// Whether the page said which parts it built again: a copy built by an earlier Lamp says it only in words.
         var tellsParts = false
+        /// How long the game stood still for the change, from its last frame before to its first after, in ms.
+        var frozen: Int?
+        /// The report of parts built in the background going in, after the change's own report.
+        var later = false
 
         init(words: String?, built: [Built] = [], waits: [String] = []) {
             self.words = words
@@ -56,20 +61,34 @@ import Foundation
         init(_ body: [String: Any]) {
             words = (body["why"] as? String).map { String($0.prefix(600)) }
             built = (body["built"] as? [[String: Any]] ?? []).prefix(40).compactMap { item in
-                (item["part"] as? String).map { Built(part: String($0.prefix(80)), ms: item["ms"] as? Int, cause: (item["cause"] as? String).map { String($0.prefix(160)) }) }
+                (item["part"] as? String).map { Built(part: String($0.prefix(80)), ms: item["ms"] as? Int, cause: (item["cause"] as? String).map { String($0.prefix(160)) },
+                                                      background: item["background"] as? Bool ?? false) }
             }
             waits = (body["waits"] as? [String] ?? []).prefix(20).map { String($0.prefix(200)) }
             tellsParts = body["built"] is [Any]
+            frozen = body["frozen"] as? Int
+            later = body["later"] as? Bool ?? false
         }
 
-        /// The parts built again in the person's words ("the road paint"), and how long they took together.
+        /// The parts built again in the person's words ("the road paint"), and how long they took together; parts
+        /// still being built in the background are said apart ("building the city in the background").
         var rebuilt: String? {
-            guard !built.isEmpty else { return nil }
-            let names = built.map { "the " + Self.words(of: $0.part) }
-            let list = names.count <= 3 ? ListFormatter.localizedString(byJoining: names) : "\(names.count) parts of the world"
-            let ms = built.compactMap(\.ms).reduce(0, +)
-            return ms > 0 ? "\(list) in \(Self.seconds(ms))" : list
+            let now = built.filter { !$0.background || $0.ms != nil }, building = built.filter { $0.background && $0.ms == nil }
+            func listed(_ parts: [Built]) -> String {
+                let names = parts.map { "the " + Self.words(of: $0.part) }
+                return names.count <= 3 ? ListFormatter.localizedString(byJoining: names) : "\(names.count) parts of the world"
+            }
+            var said: [String] = []
+            if !now.isEmpty {
+                let ms = now.compactMap(\.ms).reduce(0, +)
+                said.append(ms > 0 ? "\(listed(now)) in \(Self.seconds(ms))" : listed(now))
+            }
+            if !building.isEmpty { said.append((now.isEmpty ? "" : "and building ") + "\(listed(building)) in the background") }
+            return said.isEmpty ? nil : said.joined(separator: " ")
         }
+
+        /// The parts still being built in the background as the game plays on: one built has its time.
+        var building: [String] { built.filter { $0.background && $0.ms == nil }.map(\.part) }
 
         /// A part's key as words: `roadPaint` → "road paint", `street_details` → "street details".
         static func words(of key: String) -> String {
@@ -430,7 +449,13 @@ import Foundation
             return (200, [:])
         }
         if state == "report" {
-            let report = Report(body)
+            var report = Report(body)
+            // Parts built in the background going in: what of the change waits for Reload still does.
+            if report.later {
+                report.waits = reports[key]?.waits ?? []
+                reports[key] = report
+                return (200, [:])
+            }
             reports[key] = report
             // Part of the change didn't reach the running game: the page holds it for Reload, and so does the chat.
             if !report.waits.isEmpty {

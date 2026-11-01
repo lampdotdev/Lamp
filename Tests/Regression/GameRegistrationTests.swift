@@ -433,4 +433,41 @@ final class GameRegistrationTests: XCTestCase {
         let waits = live.told.last { $0["state"] as? String == "report" }?["waits"] as? [String]
         XCTAssertEqual(waits, ["streets.json"], "the game uses it, and nothing read it again")
     }
+
+    /// A part built in the background: the code runs again at once with the part the game has, the new one is built
+    /// between frames and goes in once built, and the reports say what was still being built, then how long it took.
+    func testAPartBuiltInTheBackgroundLetsTheGamePlayOnThenGoesIn() async throws {
+        let body = """
+            import { SEED } from './map.js';
+            window.city = live.keep('city', function* () {
+                for (let i = 0; i < 40; i++) { const t = performance.now(); while (performance.now() - t < 5) {} yield; }
+                return { seed: SEED };
+            }, { from: ['map.js'], background: true });
+            """
+        try await open(Self.game(body: body), also: ["map.js": "export const SEED = 1;"])
+        let built = try await number("window.city.seed")
+        XCTAssertEqual(built, 1, "built whole as the game starts")
+        try await wander()
+        files.text["map.js"] = "export const SEED = 2;"
+        try await js("window.__lampLive({ changed: ['map.js'], gen: 1, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 2 }
+        let meanwhile = try await number("window.city.seed")
+        XCTAssertEqual(meanwhile, 1, "the game goes on with the part it has while the new one is built")
+        let first = try XCTUnwrap(live.told.last { $0["state"] as? String == "report" })
+        let part = try XCTUnwrap((first["built"] as? [[String: Any]])?.first)
+        XCTAssertEqual(part["background"] as? Bool, true)
+        XCTAssertNil(part["ms"], "still being built")
+        XCTAssertNotNil(first["frozen"])
+
+        try await until("the new part went in") {
+            let seed = try await self.number("window.city.seed")
+            return seed == 2
+        }
+        try await until("its report came") { self.live.told.last { $0["state"] as? String == "report" }?["later"] as? Bool == true }
+        let later = try XCTUnwrap(live.told.last { $0["state"] as? String == "report" })
+        let ms = try XCTUnwrap((later["built"] as? [[String: Any]])?.first?["ms"] as? Int)
+        XCTAssertGreaterThanOrEqual(ms, 200, "it took its time between frames")
+        let level = try await number("play.level")
+        XCTAssertEqual(level, 7, "the player's place is kept through both")
+    }
 }

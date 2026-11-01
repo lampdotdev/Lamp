@@ -9105,7 +9105,8 @@ final class Store: ObservableObject {
         turn.autoApplied += 1
         log(current, .status, words.map { "Put into \(current.name): " + $0 } ?? "Put the change into \(current.name)")
         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
-            + (report?.rebuilt.map { ", rebuilding \($0) and keeping the rest of the world." } ?? "."))
+            + (report?.rebuilt.map { ", rebuilding \($0) and keeping the rest of the world." } ?? ".")
+            + (report?.frozen.map { " The game stood still \($0) ms for it." } ?? ""))
     }
 
     /// The open game ran a change's code again but some of the change didn't reach it (a file nothing read again,
@@ -10274,6 +10275,11 @@ final class Store: ObservableObject {
         guard shown || !Runtime.sourcesChanged(mac) || pageSignature(mac) == turn.shownPage else { return nil }
         // A look after this one in the hidden copy, or a use, plays from the start as a plain look there would.
         GameKit.plays[project.id] = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
+        // A part still built in the background as the person plays: the look is of the change, once it has gone in.
+        for _ in 0..<60 where PageLive.shared.lastReport(mac, at: .mac)?.building.isEmpty == false {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard turns[project.id] === turn, !turn.stopped else { return nil }
+        }
         note("Looking at \(project.name)", for: project)
         let asked = Date()
         Runtime.requestScreenshots(of: mac)
