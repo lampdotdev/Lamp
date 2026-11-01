@@ -7360,12 +7360,8 @@ enum Template {
             // the desk keeps this picture until the next launch.
             // A game is pictured once it's playing, not on its loading screen: its page asks for the picture then
             // (`LampPagePlaying`). One that hasn't said so in two minutes is pictured as it is.
-            let waited = Date().timeIntervalSince(launched)
-            let loading = LampPageItems.playing == false && waited < 120
-            if loading, !previewFallback {
-                previewFallback = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 120.5 - waited) { MainActor.assumeIsolated { snapshot() } }
-            }
+            let loading = LampPageItems.playing == false && Date().timeIntervalSince(launched) < 120
+            if loading { previewAtTheLatest() }
             let previewWindow = previewTaken || loading ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
             if previewWindow != nil { previewTaken = true }
             let front = Array(windows.prefix(3))
@@ -7421,6 +7417,26 @@ enum Template {
         @MainActor private static var previewTaken = false
         @MainActor private static var previewRetakes = 0
         @MainActor private static var previewFallback = false
+
+        /// A game's page says it's loading: a picture taken before it said so (the page can paint its loading screen
+        /// before the game's code runs) is of that screen, so it's taken again once the game plays, or at two minutes.
+        @MainActor static func gameLoading() {
+            previewTaken = false
+            previewAtTheLatest()
+        }
+
+        /// The game is playing and its loading screen gone: the picture is taken now.
+        @MainActor static func gamePlaying() {
+            previewTaken = false
+            snapshot()
+        }
+
+        @MainActor private static func previewAtTheLatest() {
+            guard !previewFallback else { return }
+            previewFallback = true
+            let waited = Date().timeIntervalSince(launched)
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, 120.5 - waited)) { MainActor.assumeIsolated { snapshot() } }
+        }
         nonisolated(unsafe) private static var launched = Date()
 
         /// Whether a picture is nearly all one shade: 99% of it, seen at 64 by 64, within one step of sixteen. A line of

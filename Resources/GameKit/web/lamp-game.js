@@ -877,9 +877,9 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         // Its shaders compiling: the frame before stays on screen, and the game waits for them.
         if (warming && warming !== 'ask') { nextFrame(loop); return; }
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
-        // How long the page took to build the game, which Lamp reads to know how long its preview's build may take. And
-        // the app's picture for Lamp's desk is taken from here, past the loading screen (`tellPlaying`).
-        if (!last && mine === 1) { log(`Lamp: the game was built and drawn ${(now / 1000).toFixed(1)} s after the page opened.`); tellPlaying('playing'); }
+        // How long the page took to build the game, which Lamp reads to know how long its preview's build may take.
+        const first = !last && mine === 1;
+        if (first) log(`Lamp: the game was built and drawn ${(now / 1000).toFixed(1)} s after the page opened.`);
         last = now;
         measure(now);
         drewThisFrame = false;
@@ -898,6 +898,9 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         frameCost = frameCost ? frameCost * 0.9 + cost * 0.1 : cost;
         if (reporting && !warming) firstDrawn(cost);
         shoot();
+        // The first frame of play is drawn, and on screen at the next: the app's picture for Lamp's desk is taken from
+        // there, past the loading screen (`tellPlaying`).
+        if (first) nextFrame(() => tellPlaying('playing'));
         // Opened again for a change: it's on screen with this first frame.
         if (shownFor != null && !curtain && !runningAgain && reopenedFrame++ > 0) { tellHost(shownFor, 'shown'); shownFor = null; }
         lift();

@@ -634,11 +634,14 @@ final class LampPagePlaying: NSObject, WKScriptMessageHandler {
         let said = message.body as? String
         MainActor.assumeIsolated {
             switch said {
-            case "loading": if LampPageItems.playing == nil { LampPageItems.playing = false }
+            case "loading":
+                guard LampPageItems.playing == nil else { return }
+                LampPageItems.playing = false
+                LampRuntime.gameLoading()
             case "playing":
                 guard LampPageItems.playing != true else { return }
                 LampPageItems.playing = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { LampRuntime.snapshot() } }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { LampRuntime.gamePlaying() } }
             default: break
             }
         }
