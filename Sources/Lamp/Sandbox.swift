@@ -223,8 +223,16 @@ enum Sandbox {
         }
         // The Xcode in use, read only, wherever it is: one kept on another disk (under /Volumes, or a link from
         // /Applications into one) is closed above, and every compile would find no SDK.
+        // The folders on the way to it can be looked at (not read): a tool reached through a link from /Applications
+        // finds its own place with realpath, which stats every step (/Volumes, the disk), and the Swift driver that
+        // can't says swift-build doesn't exist.
         for folder in developerFolders() {
             lines.append("(allow file-read* (subpath \(quotedPath(folder))))")
+            var path = (folder as NSString).deletingLastPathComponent
+            while path != "/" {
+                lines.append("(allow file-read-metadata (literal \(quotedPath(path))))")
+                path = (path as NSString).deletingLastPathComponent
+            }
         }
         // Both Lamps' folders (keys, sign-ins, every other app) stay closed; the app's own folder opens.
         for name in Edition.lampFolderNames {
