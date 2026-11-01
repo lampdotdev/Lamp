@@ -573,7 +573,10 @@ rather than being built from the old one. Once every part is built, each one's t
 scene and camera last drawn (`compileAhead`, three.js's `compileAsync`, which the WebGL and WebGPU renderers both
 have), and the code runs again in place, quietly (no `rerun`, `restored` or `shown` for Lamp: the change's own words
 were said), with everything kept, which takes the new part as any kept part is taken, about a frame; the old one is let
-go after (`replaces`). That's the same run in place a change makes, chosen over swapping a value under the game's
+go after (`replaces`), sparing the geometry and materials the new one still uses (`usedBy`), as a part built again the
+usual way does. A pipeline's compiling holds the frames WebKit presents (about 300 ms for each new material in a test
+city), so `compileAhead` compiles a material a frame, and the game skill has a part's materials made once, in a kept
+part of their own, so a part built again compiles nothing. That's the same run in place a change makes, chosen over swapping a value under the game's
 variables, which no runtime can rebind: what read the old part reads the new one from there. A change that runs the
 code again meanwhile takes a built part with it, and goes on with a build its change doesn't touch. While the game is
 `busy()` the swap waits for a pause, as a run in place does. The preview, which plays from the start, builds every part

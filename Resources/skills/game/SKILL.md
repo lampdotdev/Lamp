@@ -278,7 +278,10 @@ game is written to keep the player's place through one:
     The first build, as the game starts, is built whole. A part built from one being built (its `inputs`) is built
     again from the new one once that's in, so parts that must change together are one part. Keep a part's three.js
     objects in the value it returns (one object, or a plain object of them, as `{ group }`), so Lamp can compile them
-    ahead and let go of the old ones.
+    ahead and let go of the old ones. Make a part's materials once, in a kept part of their own
+    (`live.keep('cityMaterials', () => makeCityMaterials())`), and build only its geometry in the background: a
+    material made anew is a shader to compile, which holds the frames on screen while it compiles (about a third of a
+    second each in WebKit), and the old part goes without taking the materials the new one still uses.
 
     After a run, the look says which parts were built again, how long each took, which are still being built in the
     background, how long the game stood still, and what of the change nothing read again, which shows only after

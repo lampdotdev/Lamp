@@ -1714,7 +1714,9 @@ function letGo(k, spare = new Set()) {
 //   }, { from: ['js/map-data.js'], background: true });
 //
 // The part's three.js objects are compiled for the scene the game last drew, with the camera it drew it with, when the
-// part is one or a plain object holding them ({ group }). The log and Lamp's report say what was built in the
+// part is one or a plain object holding them ({ group }), a material a frame. A material made anew still holds the frames
+// on screen while its shader compiles, so a part's materials are made once, in a kept part of their own, and the part
+// built in the background makes only geometry with them: the old part goes without the materials the new one uses. The log and Lamp's report say what was built in the
 // background and for how long, and how long the game stood still for the change (about a frame).
 
 // The parts being built in the background: each the part the game has now, with what's being built in `pending`.
