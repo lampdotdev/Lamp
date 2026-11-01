@@ -42,11 +42,12 @@ struct LampApp: App {
 }
 
 /// The menu bar's commands. They observe the store themselves, so whether Duplicate… or Copy Wish File can be chosen
-/// follows the selection without the scene around them being built again for every change (see `LampApp.store`).
+/// follows the wish they act on without the scene around them being built again for every change (see `LampApp.store`).
 struct LampCommands: Commands {
     @ObservedObject var store: Store
     @ObservedObject private var deskPick = DeskPick.shared
-    private var duplicating: LampProject? { store.commandTarget(deskPick: deskPick.target) }
+    @ObservedObject private var versions = MenuVersions.shared
+    private var target: LampProject? { store.commandTarget(deskPick: deskPick.target) }
 
     var body: some Commands {
         AboutCommands()
@@ -61,21 +62,21 @@ struct LampCommands: Commands {
                 .keyboardShortcut("o")
             Button("Open from GitHub…") { store.chooseRepository() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
-            Button("Duplicate…") { if let project = duplicating { Task { await store.remix(project) } } }
-                .disabled(duplicating.map { !store.canDuplicate($0) } ?? true)
+            Button("Duplicate…") { if let project = target { Task { await store.remix(project) } } }
+                .disabled(target.map { !store.canDuplicate($0) } ?? true)
         }
         CommandGroup(after: .pasteboard) {
             // The same as Share ▸ Copy Wish File in the toolbar; here so the shortcut the Help lists exists.
-            Button("Copy Wish File") { if let project = store.selected { store.copyAppFile(project) } }
+            Button("Copy Wish File") { if let project = target { store.copyAppFile(project) } }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
-                .disabled(store.selected.map { !store.canShare($0) } ?? true)
+                .disabled(target.map { !store.canShare($0) } ?? true)
         }
         CommandGroup(replacing: .saveItem) {
             Button("Name This Version…") {
-                if let project = store.selected { Task { await store.nameCurrentVersion(of: project) } }
+                if let project = target { Task { await store.nameCurrentVersion(of: project) } }
             }
             .keyboardShortcut("s")
-            .disabled(store.selected == nil)
+            .disabled(target.map { !versions.hasVersions($0) } ?? true)
         }
         CommandGroup(after: .windowArrangement) { GalleryCommand() }
     }
