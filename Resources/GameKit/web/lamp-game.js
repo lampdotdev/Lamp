@@ -45,6 +45,8 @@ const browser = {
 const listen = (target, ...rest) => browser.listen.call(target, ...rest);
 const after = (ms, fn) => browser.setTimeout.call(window, fn, ms);
 const nextFrame = fn => browser.frame.call(window, fn);
+// A runtime run outside a page (Lamp's tests) may have no performance clock.
+const clockNow = () => globalThis.performance ? performance.now() : Date.now();
 
 // MARK: Random numbers, the same each preview play (xorshift64*, as the C++ kit has it)
 
@@ -865,7 +867,7 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         last = now;
         measure(now);
         drewThisFrame = false;
-        const began = performance.now();
+        const began = clockNow();
         try { step(dt); } catch (e) {
             // New code swapped in or run again that fails as it runs goes back out the safe way: the page opens again
             // from where the player was before it.
@@ -876,7 +878,7 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         guarding = false;
         // A frame that drew nothing through the renderer has nothing to compile.
         if (warming === 'ask') warming = null;
-        const cost = performance.now() - began;
+        const cost = clockNow() - began;
         frameCost = frameCost ? frameCost * 0.9 + cost * 0.1 : cost;
         if (reporting && !warming) firstDrawn(cost);
         shoot();
