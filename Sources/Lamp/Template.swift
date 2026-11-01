@@ -7269,6 +7269,7 @@ enum Template {
             // Only on a Mac where Lamp has this app's project.
             guard fm.fileExists(atPath: folder.deletingLastPathComponent().path) else { return }
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            launched = Date()
             // Pictures: once the first window has settled, and whenever the user leaves the app
             // (often to ask Lamp for a change).
             DispatchQueue.main.async { MainActor.assumeIsolated { firstSnapshot() } }
@@ -7357,7 +7358,11 @@ enum Template {
             guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
             // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
             // the desk keeps this picture until the next launch.
-            let previewWindow = previewTaken ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
+            // A game is pictured once it's playing, not on its loading screen: its page asks for the picture then
+            // (`LampPagePlaying`). One that hasn't said so in two minutes is pictured as it is.
+            let loading = LampPageItems.playing == false && Date().timeIntervalSince(launched) < 120
+            if loading { previewAtTheLatest() }
+            let previewWindow = previewTaken || loading ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
             if previewWindow != nil { previewTaken = true }
             let front = Array(windows.prefix(3))
             let seen = capturable()
@@ -7411,6 +7416,28 @@ enum Template {
 
         @MainActor private static var previewTaken = false
         @MainActor private static var previewRetakes = 0
+        @MainActor private static var previewFallback = false
+
+        /// A game's page says it's loading: a picture taken before it said so (the page can paint its loading screen
+        /// before the game's code runs) is of that screen, so it's taken again once the game plays, or at two minutes.
+        @MainActor static func gameLoading() {
+            previewTaken = false
+            previewAtTheLatest()
+        }
+
+        /// The game is playing and its loading screen gone: the picture is taken now.
+        @MainActor static func gamePlaying() {
+            previewTaken = false
+            snapshot()
+        }
+
+        @MainActor private static func previewAtTheLatest() {
+            guard !previewFallback else { return }
+            previewFallback = true
+            let waited = Date().timeIntervalSince(launched)
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, 120.5 - waited)) { MainActor.assumeIsolated { snapshot() } }
+        }
+        nonisolated(unsafe) private static var launched = Date()
 
         /// Whether a picture is nearly all one shade: 99% of it, seen at 64 by 64, within one step of sixteen. A line of
         /// text or a button is enough to keep a picture; the title bar's buttons on a black window aren't.
@@ -8896,6 +8923,8 @@ enum Template {
         /// holding the keyboard) in the page's own script, which takes it whether or not the app is in front, where
         /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's.
         static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
+        /// Whether the game on a page is playing (`LampPagePlaying`): nil for an app with no game, false while it loads.
+        @MainActor static var playing: Bool?
     }
 
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from

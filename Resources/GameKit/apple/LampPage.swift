@@ -63,6 +63,9 @@ import UIKit
         configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the wish's other apps
         configuration.userContentController.addScriptMessageHandler(LampPageVoice(scheme: scheme), contentWorld: .page, name: "lampVoice")
         configuration.userContentController.add(LampPageLog(), name: "lampLog")
+        #if os(macOS)
+        configuration.userContentController.add(LampPagePlaying(), contentWorld: .page, name: "lampPlaying")
+        #endif
         // The page's console, into the app's log.
         configuration.userContentController.addUserScript(WKUserScript(source: """
             (function () {
@@ -622,6 +625,29 @@ final class LampPageLog: NSObject, WKScriptMessageHandler {
         FileHandle.standardError.write(Data((line.prefix(2000) + "\n").utf8))
     }
 }
+
+#if os(macOS)
+/// A game's page saying it's loading, and then that it's playing (lamp-game.js): the picture of the app Lamp's desk shows
+/// waits for play, and is taken a moment after it starts, once the loading screen has faded (`LampRuntime.snapshot`).
+final class LampPagePlaying: NSObject, WKScriptMessageHandler {
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        let said = message.body as? String
+        MainActor.assumeIsolated {
+            switch said {
+            case "loading":
+                guard LampPageItems.playing == nil else { return }
+                LampPageItems.playing = false
+                LampRuntime.gameLoading()
+            case "playing":
+                guard LampPageItems.playing != true else { return }
+                LampPageItems.playing = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { LampRuntime.gamePlaying() } }
+            default: break
+            }
+        }
+    }
+}
+#endif
 
 // MARK: - Serving and showing the page
 
