@@ -321,7 +321,11 @@ game is written to keep the player's place through one:
     with whatever its variables point at, so a list of objects or a memo at a module's top level holds the old run's
     world, and each run of the code gets slower. Release what the module gathered in `hot(import.meta).dispose(…)`, and
     have the run or the part that owns a system drop it where it's registered (the game's `dispose` for what a run made,
-    a part's own `dispose` for what it keeps, which stays registered while the part is kept). A big table that doesn't
+    a part's own `dispose` for what it keeps, which stays registered while the part is kept). A kept renderer doesn't
+    manage what a run builds around it: every render pipeline, pass and effect made in a run gets an explicit teardown in
+    the game's `dispose`, the pipeline first and the scene pass it reads last, each step safe if an earlier one throws,
+    and never `renderer.dispose()`. A build hands on only the data a later consumer needs: one closure kept at a module's
+    top level holds everything the function that made it gathered. A big table that doesn't
     change as it's played is built inside `keep`, with what it's read from in `from`, so a run reuses it; what changes
     as it's played stays out of `keep`. Name the file's address outside the build (`const address = new URL('./x.bin',
     import.meta.url)`): the runtime writes `import.meta` out differently each run, so a build that names it is built
