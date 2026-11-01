@@ -1630,7 +1630,8 @@ function keep(path, key, build, options = {}) {
         : !same ? 'a part it\'s built from was built again' : !sameSources ? 'what it\'s built from changed' : null;
     // Built from a part that's being built in the background: built from the new one once that swaps in, and until
     // then the game goes on with the one it has.
-    if (again && had && !lasting && !preview && inputs.some(v => [...kept.values()].some(k => k.pending && Object.is(k.value, v)))) {
+    // (an async part's value is its promise; what the game passes on is what it gave, `made`)
+    if (again && had && !lasting && !preview && inputs.some(v => [...kept.values()].some(k => k.pending && (Object.is(k.value, v) || Object.is(k.made, v))))) {
         had.used = true;
         tally.waiting.push(key);
         return had.value;
@@ -1830,6 +1831,17 @@ function stepPart(k) {
     } catch (e) { failed(k, p, e); }
     finally { keeping--; building.pop(); p.busy += performance.now() - t; }
 }
+// Whether a part being built in the background is built from `path`: what changed it, what its last build read, or
+// what it declares it's built from. Its new build reads it, so it doesn't wait for Reload.
+function buildingFrom(path) {
+    for (const k of backgrounds) {
+        if (!k.pending) continue;
+        if (k.pending.cause === path || k.assets.has(path) || k.pending.assets.has(path)) return true;
+        if (k.from.some(f => f === path || (f.endsWith('/') && path.startsWith(f)) || (!f.endsWith('/') && below(f).has(path)))) return true;
+    }
+    return false;
+}
+
 // Built: its shaders are compiled while the old part is drawn, and it waits to be swapped in with the others.
 async function built(k, p, value) {
     p.waits = true;
@@ -1838,7 +1850,12 @@ async function built(k, p, value) {
     // Not while the code runs again: that run decides which part the game goes on with.
     while (runningAgain) await new Promise(done => after(50, done));
     // Built again since, or let go of: what this build made goes.
-    if (k.pending !== p) return letGo({ key: k.key, path: k.path, value, dispose: p.dispose });
+    if (k.pending !== p) {
+        // Sparing what the parts kept still use: the materials made once and shared, the geometry of the part on screen.
+        const spare = new Set();
+        for (const other of kept.values()) for (const used of usedBy(other.made)) spare.add(used);
+        return letGo({ key: k.key, path: k.path, value, dispose: p.dispose }, spare);
+    }
     k.pending = null;
     backgrounds.delete(k);
     const entry = { path: k.path, key: k.key, text: p.text, inputs: p.inputs, lasting: false, from: p.from, dispose: p.dispose, used: false,
@@ -2205,7 +2222,7 @@ async function namingData(paths, order, named = new Set()) {
 // any other way, or that its code names) that nothing read again, nor put in as it was (`put`), so a part kept from it,
 // or code that read it once, shows the old one until the page opens again. That waits for Reload.
 function waitsFor(change, named) {
-    return (change.changed || []).map(clean).filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p) && !readSince.has(p)
+    return (change.changed || []).map(clean).filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p) && !readSince.has(p) && !buildingFrom(p)
         && !(change.put || []).includes(p) && (loaded.has(p) || everRead.has(p) || named.has(p)));
 }
 
