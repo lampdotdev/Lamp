@@ -1873,14 +1873,15 @@ function swapIn() {
     }).catch(e => log(`Lamp: ${e && e.message || e}`));
 }
 
-// "Building…" over the game while a part is built in the background, beside Lamp's Reload.
+// "Building…" over the game while a part is built in the background, at the top right, below where the app around
+// the page puts its own buttons.
 let hint = null;
 function showHint() {
     if (preview || !document.body) return;
     if (!hint) {
         hint = document.createElement('div');
         hint.textContent = 'Building…';
-        hint.style.cssText = 'position:fixed;z-index:20;right:14px;top:calc(14px + env(safe-area-inset-top));pointer-events:none;'
+        hint.style.cssText = 'position:fixed;z-index:20;right:14px;top:calc(48px + env(safe-area-inset-top));pointer-events:none;'
             + 'padding:6px 14px;border-radius:16px;background:rgba(20,20,24,.6);color:rgba(255,255,255,.85);font:600 13px -apple-system,system-ui,sans-serif;'
             + '-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);transition:opacity .3s;opacity:0';
     }
