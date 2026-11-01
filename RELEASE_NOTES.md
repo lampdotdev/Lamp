@@ -5,6 +5,24 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.31.0
+
+- Put a web game on GitHub with a page to play it: Put on GitHub now publishes the game's page alongside its code and
+  gives you the link.
+- Share a wish that uses data with no stated license: Lamp warns you and lets you decide, and when sharing fails it
+  says why.
+- Reload, in every app's menu (⌥⌘R), puts the latest change on screen.
+- Open and Play work while a change is being made: the app opens as it is and takes the change when it's done.
+- Changing a big game no longer freezes it: only the part of its world a change touches is built again, in the
+  background while you keep playing, and the chat says when something waits for Reload.
+- Lamp checks a game in the window you have open, so changes to a game finish sooner.
+- A remixed app gets its own icon drawn, and the desk shows a picture of a game rather than its loading screen.
+- Long requests keep going: only a model running on your Mac pauses after 150 steps, and a conversation that grows
+  too long is shortened without stopping the change.
+- Setup shows how far downloads have got, can try again, and explains connection problems plainly.
+- With a wish picked on the desk, Name This Version… and Copy Wish File act on it.
+- Games use the latest three.js.
+
 ## 0.30.0
 
 - A much smaller download: Lamp is about 70 MB instead of 264 MB. Starter apps are fetched the first time you open
