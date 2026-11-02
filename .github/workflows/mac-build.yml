@@ -88,6 +88,10 @@ jobs:
         # These checks also live outside the Swift package and need no phone or Apple account.
         run: python3 scripts/check-phone-tools.py
 
+      - name: Native action checks
+        # Compiles the generated LampSupport.swift and exercises its action sessions outside the Swift test target.
+        run: scripts/check-act.sh
+
       - name: Regression tests
         # Each test in a process of its own, several at once: most of the suite waits on compilers, sockets and apps it
         # starts rather than on the processor, so it takes a few minutes instead of twenty. The suites that need a key,
