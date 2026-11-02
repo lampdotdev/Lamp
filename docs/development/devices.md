@@ -879,6 +879,13 @@ lamp-web-app://app/ and so its own saved data, `Sources/LampWebApp.swift`, its p
 no fixed canvas, and Web Apps/ to install in), going wherever a page goes and looked at as a screen is (below). A screen is
 never made into a web app or back: each keeps its own address and saves.
 
+It's what an app is by default wherever Lamp has a host for a page (the table's `defaultMake`, the web-or-native skill),
+native only for what a page can't be (a menu bar icon, widgets, App Intents, Health and the rest the skill lists) or when
+the person asks; an app made native before keeps its make. So its rules are an app's of the places it's on, not a
+screen's across a room (`Rules.webAppPage`): a Mac app's type and density in its window, touch on a phone, and the
+remote, old TV browsers and the tv-design skill only once it's on a TV. It's offered the app-kinds skill as a native
+app is.
+
 ## Screens
 
 A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is a web app as Lamp once made them: the TV

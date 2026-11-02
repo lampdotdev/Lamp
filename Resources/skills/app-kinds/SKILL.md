@@ -1,6 +1,6 @@
 ---
 name: app-kinds
-description: How each kind of app (tool, companion, collection, dashboard, canvas, utility, game or toy) is laid out, looks and talks on a Mac and on iPhone, and on a Mac where the app works - a window, or a utility that works where the person already is. Read before writing a new app or changing an app's kind.
+description: How each kind of app (tool, companion, collection, dashboard, canvas, utility, game or toy) is laid out, looks and talks on a Mac and on iPhone, made natively or as a web app, and on a Mac where the app works - a window, or a utility that works where the person already is. Read before writing a new app or changing an app's kind.
 ---
 
 # The kinds of app
@@ -10,9 +10,15 @@ style they gave wins over the kind's look but keeps its structure: a "cozy" wate
 cozy. Every kind feels like Apple made it, following the Human Interface Guidelines of the app's platform. Put the
 kind in APP.md's first line (`Kind: companion`), and never name kinds to the person.
 
+What follows names SwiftUI's pieces. A web app is laid out the same way in HTML and CSS: the system font
+(`-apple-system, system-ui`), light and dark (`prefers-color-scheme`), a grid of cards for LazyVGrid, a side panel for
+an inspector, a sheet as a dialog over the page, a chart drawn in SVG, symbols as small SVG icons kept in Web/, and a
+spring as a CSS transition. A menu bar icon, a widget and a haptic are native code's (the web-or-native skill).
+
 ## On a Mac: where the app works
 
-Before the kind, decide where the app works.
+Before the kind, decide where the app works. A utility that works where the person is or in the background, and a
+menu bar app, are made natively (the web-or-native skill).
 
 - When the wish acts on something the user already has in front of them in another app (the text they selected, the
   post or message they're writing there, the file or page they're looking at), don't make a window to paste or drop
