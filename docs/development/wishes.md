@@ -311,8 +311,9 @@ credits.json with this wish at the end of the chain, a README with the credits a
 (`Publish.pageReadme`) and `.nojekyll`. What in the page needs Lamp isn't there: lamp.js answers `LampAI.isAvailable`
 with false and its calls with a failure that says the page is away from Lamp, `LampNative.available` is false and
 `Lamp.wish` says it can't reach the wish's other apps, so the page goes on as it does on a device away from the Mac
-(the web-app skill tells the agent so). What the page saves with `LampStore` is kept under its repository's name on
-`<owner>.github.io`, which every page of that account shares as one origin; and over the page Lamp's credit bar ("Based on Slop New York by Mr.doob · Open in Lamp · Remix…",
+(the web-app skill tells the agent so). What the page saves with `LampStore` is kept under its repository's name, written
+into the published lamp.js (`LAMP_PAGE_SCOPE`, `Publish.copyPage`), since every page of an account shares one origin,
+on `<owner>.github.io` or the account's own domain; and over the page Lamp's credit bar ("Based on Slop New York by Mr.doob · Open in Lamp · Remix…",
 `Publish.withCreditBar`, settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding
 its link on a narrow screen). Its Open in Lamp is the wish's Share Link when the person has made one (`Publish.OpenInLamp`:
 that page works for someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with

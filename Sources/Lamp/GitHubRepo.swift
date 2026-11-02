@@ -173,7 +173,7 @@ enum GitHubRepo {
         var page: Staged.Page?
         if withPage, isPublic, let repo, Publish.hasPage(project) {
             let site = work.appendingPathComponent("page")
-            let html = try Publish.copyPage(of: project, into: site)
+            let html = try Publish.copyPage(of: project, into: site, scope: String(repo.split(separator: "/").last ?? ""))
             try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, site: site).utf8)
                 .write(to: site.appendingPathComponent("README.md"))
             let leaks = ShareCheck.secrets(in: site, known: Sharing.knownSecrets(project))

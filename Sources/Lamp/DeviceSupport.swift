@@ -343,11 +343,12 @@ enum DeviceSupport {
       // Where Lamp is: filled in by Lamp in the package it puts on a device. Never the app's token, which the app asks
       // Lamp for once, just after Lamp has put it on the device, and keeps.
       var installed = /*LAMP_INSTALL*/null;
-      // A page put on GitHub Pages shares its address's origin (<owner>.github.io) with every other page of that account,
-      // so what it saves is kept under its repository's name there: two apps' 'notes' never meet.
+      // A page put on GitHub Pages shares its origin (<owner>.github.io, or the account's own domain) with every other page
+      // of that account, so what it saves is kept under its repository's name, filled in by Lamp in the published copy:
+      // two apps' 'notes' never meet.
       var here = window.location || {};
-      var published = /\.github\.io$/i.test(here.hostname || '') && /^\/([^\/]+)\//.exec(here.pathname || '');
-      var prefix = 'lamp:' + (published ? published[1] + ':' : '');
+      var scope = /*LAMP_PAGE_SCOPE*/null;
+      var prefix = 'lamp:' + (typeof scope === 'string' && scope ? scope + ':' : '');
       // Taken as the page loads: the wait before asking Lamp again is the page's, and a game's runtime takes away only
       // the timers the game's own code left running (`Lamp.controllers` renews its session through this).
       var browserTimeout = window.setTimeout;
