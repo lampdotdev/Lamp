@@ -165,7 +165,8 @@ enum GitHubRepo {
         // names what the wish was remixed from, not itself.
         let chain = Credits.read(tree.appendingPathComponent(Credits.file)) ?? credits
         let open = Publish.OpenInLamp(link: link, file: fileName)
-        let build = Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty)
+        let build = Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty,
+                          page: Publish.hasPage(project) ? (site ? "" : TVTemplate.webFolder + "/") : nil)
         // The icon the shared file carries, as it's drawn: never a picture of the app running, which could show the
         // person's data.
         let icon = fm.fileExists(atPath: tree.appendingPathComponent(LampFile.iconEntry).path) ? LampFile.iconEntry : nil
@@ -202,7 +203,10 @@ enum GitHubRepo {
             showcase.play = page?.url
             showcase.plays = Publish.pageUse(project) != .use
         }
-        try Data(readme(for: project, credits: credits, open: open, build: build, repo: repo, showcase: showcase).utf8)
+        // Never "Remixed from" itself: a wish put back where it came from.
+        var told = credits
+        if let repo { told.remixOf.removeAll { $0.url.map { Credits.Source.plain($0) == Credits.Source.plain(url(repo)) } ?? false } }
+        try Data(readme(for: project, credits: told, open: open, build: build, repo: repo, showcase: showcase).utf8)
             .write(to: tree.appendingPathComponent("README.md"))
         // A site's page at the root, as its repository has it, and Lamp's README with the rest in Lamp's folder.
         if site { try StaticSite.layOut(tree) }
@@ -261,6 +265,8 @@ enum GitHubRepo {
         var alone: Bool
         var app: String
         var others: Bool
+        /// Where a page that runs as it is (`Target.publishedPage`) is in the repository: "Web/", or "" for a site at its root.
+        var page: String? = nil
     }
 
     /// What a README shows of the wish before anything about Lamp: pictures and ideas, by their paths in the
@@ -395,6 +401,9 @@ enum GitHubRepo {
             text += "With Apple's Command Line Tools installed (`xcode-select --install`):\n\n```sh\nzsh build.sh\n```\n\n"
             if build.others { text += "That builds \(build.app); the wish's other apps, in their folders, are built by Lamp.\n\n" }
             text += "The AI inside the app, and anything it does with other apps or devices, goes through Lamp, so those need Lamp open on the same Mac.\n\n"
+        } else if let page = build.page {
+            text += "\n\n## Running it\n\nIt's a web page with no build step: serve " + (page.isEmpty ? "the repository's top folder" : "`\(page)`")
+                + " with any static web server and open it in a browser. The AI inside it, and anything it does with other apps or your Mac, goes through Lamp, so a browser shows it without them.\n\n"
         } else {
             text += "\n\n## Building it\n\nLamp builds this kind of app: it needs Xcode and signing on your Mac, which Lamp sets up. Open it in Lamp, above.\n\n"
         }
