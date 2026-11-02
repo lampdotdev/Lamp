@@ -283,7 +283,29 @@ a folder of Lamp's with the network open, never asking for a sign-in), or with n
 repository's records (`.git`, builds) and the shared file beside the code, held to a shared file's limits, and read as
 a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the same checks, Lamp's own files written
 afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
-the install does). A folder holding only a shared file opens that file. The chain's last link takes the repository's
+the install does). A folder holding only a shared file opens that file.
+
+A plain site (`StaticSite`: `index.html` at the root, no package.json, Jekyll config or Gemfile to build it first) opens
+the same way, as a web app that's a site (`ScreenKit.isSite`: `layout: site` in its mark, `site` in a shared file's
+manifest): the repository's root is its Web/, it's named after its page's title, and its APP.md says what it is. The
+wish keeps a web app's layout inside, so building, live changes (a page with no Lamp runtime is opened again, not
+swapped in place), Reload and the agent's rules are a web app's, with one rule of its own (`Rules.siteLayout`: keep the
+layout and its own ways of loading what it uses). Put on GitHub lays it out as it came (`StaticSite.layOut`): Web/ at
+the tree's root, so its own README is the repository's and GitHub Pages serves it from main as before (`Staged.site`,
+`Publish.servePage` with the repository's own branch, no page branch and no credit bar over the person's page), and everything
+else (lamp-app.json, credits.json, APP.md, Native.swift, the shared file, Lamp's README and buttons) in one hidden
+folder, `.lamp-wish/`, which neither clutters the site's root nor is served by Pages' Jekyll build. None of Lamp's own
+files go up (the Lamp that opens it writes them afresh) but lamp.js, with its license and the repository's name to keep
+its saves under (`LAMP_PAGE_SCOPE`), when the page loads it. Of a site's hidden files only those a web server reads at
+its top travel with it (`ScreenFiles.servedHidden`: `.nojekyll`, `.well-known/`), and are the wish's, so an update replaces them, or takes them away, like any of its files. An update goes to the branch the
+repository keeps its code on, as its clone checked it out, not always main. That
+folder is what Open from GitHub reads such a tree back by. A site opened from the person's own repository is put back
+there (`GitHubRepo.ownOrigin`, so its Pages address keeps working; any wish opened from their own repository is),
+with no license added, and only while GitHub has nothing the wish doesn't: otherwise the card asks for Check for
+Updates… first. The upload checks it again as it clones (`upload`'s `expected`: the commit the wish was opened at, or
+the one Lamp last pushed for any wish it keeps a record of), since a commit pushed on top of a newer tip would quietly
+undo what's there. A site keeps every folder it checked in, a `build/` or `node_modules/` its page loads included. Any Put on GitHub over a repository keeps the hidden files and folders at its top that a wish never
+carries (`.github/workflows`, `.gitignore`), with the tree's own over them file by file. The chain's last link takes the repository's
 address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
 The person's folder is only read, never changed or removed. The chain's last link also takes the commit the tree is
 at (`Credits.Remix.commit`, from the clone's HEAD, `RepoImport.repository`): the commit of its repository the wish

@@ -34,8 +34,12 @@ enum Publish {
 
     // MARK: GitHub
 
-    /// Where `gh` is: Homebrew's, or wherever the person's shell finds it.
+    /// Where `gh` is: Homebrew's, or wherever the person's shell finds it. Lamp Dev takes `LAMP_GH` from its environment
+    /// in its place, a stand-in to try Put on GitHub with against a local repository (git's own `insteadOf` sends the
+    /// pushes there), so nothing reaches GitHub itself.
     static func gh() async -> String? {
+        if Edition.isDev, let path = ProcessInfo.processInfo.environment["LAMP_GH"], path.hasPrefix("/"),
+           FileManager.default.isExecutableFile(atPath: path) { return path }
         for path in ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"] where FileManager.default.isExecutableFile(atPath: path) { return path }
         let found = await Subprocess.run("/bin/zsh", ["-lc", "command -v gh"], timeout: 10)
         let path = found.output.trimmed
@@ -73,6 +77,12 @@ enum Publish {
         var origin: RemixLink.Origin? = nil
     }
 
+    /// Gives a published copy of lamp.js the repository's name to keep what the page saves under (`LAMP_PAGE_SCOPE`).
+    static func scope(_ runtime: URL, to scope: String) throws {
+        guard let text = try? String(contentsOf: runtime, encoding: .utf8) else { return }
+        try Data(text.replacingOccurrences(of: "/*LAMP_PAGE_SCOPE*/null", with: GamePage.json([scope]).dropFirst().dropLast()).utf8).write(to: runtime)
+    }
+
     /// The license Lamp's runtime in the page is under, beside it, as MIT asks of a copy.
     static let runtimeLicense = "LAMP-LICENSE.txt"
 
@@ -89,17 +99,14 @@ enum Publish {
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
         guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { throw Failure(message: "\(project.name) has no page to play.") }
         for case let file as URL in items {
-            if file.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
+            if file.lastPathComponent.hasPrefix(".") { Sharing.skip(file, in: items); continue }
             let values = try? file.resourceValues(forKeys: Set(keys))
             guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
             let target = site.appendingPathComponent(Sharing.relativePath(of: file, in: web))
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
-        let runtime = site.appendingPathComponent("lamp.js")
-        if let text = try? String(contentsOf: runtime, encoding: .utf8) {
-            try Data(text.replacingOccurrences(of: "/*LAMP_PAGE_SCOPE*/null", with: GamePage.json([scope]).dropFirst().dropLast()).utf8).write(to: runtime)
-        }
+        try Publish.scope(site.appendingPathComponent("lamp.js"), to: scope)
         let anyBrowser = GamePage.anyBrowser
         try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
         guard let html = try? String(contentsOf: site.appendingPathComponent("index.html"), encoding: .utf8) else {
@@ -326,11 +333,13 @@ enum Publish {
         return (commit, true)
     }
 
-    /// Turns GitHub Pages on for `repo`'s page branch, or asks for a build when it's on, unless the page didn't change and
-    /// that commit is built or building already (a failed build is asked for again, so trying again can mend it); then
-    /// waits until GitHub says it built `commit`: an earlier build's "built" is the page as it was. Pages set by the
-    /// person to serve another branch are left as they are, and said so.
-    static func servePage(_ repo: String, commit: String, changed: Bool, gh: String, step: @escaping @Sendable (String) -> Void) async throws {
+    /// Turns GitHub Pages on for `repo`'s page branch (`branch`: a plain site's is main, served from its root), or asks
+    /// for a build when it's on, unless the page didn't change and that commit is built or building already (a failed
+    /// build is asked for again, so trying again can mend it); then waits until GitHub says it built `commit`: an
+    /// earlier build's "built" is the page as it was. Pages set by the person to serve another branch are left as they
+    /// are, and said so.
+    static func servePage(_ repo: String, commit: String, changed: Bool, gh: String, branch pageBranch: String = pageBranch,
+                          step: @escaping @Sendable (String) -> Void) async throws {
         let url = pageURL(repo)
         step("Turning on GitHub Pages…")
         let existing = await Subprocess.run(gh, ["api", "repos/\(repo)/pages", "--jq", ".source.branch"], mergeErrors: false, timeout: 30)
