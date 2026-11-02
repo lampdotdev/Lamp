@@ -841,6 +841,8 @@ enum GitHubRepo {
             } catch {
                 // The tree stays staged, so Put on GitHub can try again; a repository made on the way is kept (`upload`).
                 cards[project.id]?.kept = GitHubRepo.kept(for: project) ?? cards[project.id]?.kept
+                // The code may be up though its page isn't: a try again goes over what Lamp itself pushed, and only that.
+                if let pushed = GitHubRepo.kept(for: project)?.commit, pushed != before?.commit { cards[project.id]?.expected = pushed }
                 set(project, .failed(error.localizedDescription))
             }
         }
