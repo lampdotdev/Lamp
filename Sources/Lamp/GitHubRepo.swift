@@ -159,6 +159,8 @@ enum GitHubRepo {
         if runtime {
             try Data(mitLicense(holder: "Roo Code, Inc.", year: 2026).utf8)
                 .write(to: tree.appendingPathComponent("\(TVTemplate.webFolder)/\(Publish.runtimeLicense)"))
+            // Served as it is, so it keeps its saves apart from the account's other pages as a published page does.
+            if let repo { try Publish.scope(tree.appendingPathComponent(TVTemplate.supportFile), to: String(repo.split(separator: "/").last ?? "")) }
         }
         try Data(".build/\nbuild/\n.lamp/\n".utf8).write(to: tree.appendingPathComponent(".gitignore"))
         // The file's credits.json ends the chain with this wish, for whoever opens it; the README is this wish's own, so it
@@ -510,6 +512,8 @@ enum GitHubRepo {
 
         let work: URL
         var changed = true
+        // The repository's own branch, what its clone checked out; a new one's is main.
+        var branch = "main"
         if isNew {
             step("Preparing…")
             // A try after a failed one finds the tree committed already, and pushes that commit again.
@@ -529,6 +533,9 @@ enum GitHubRepo {
             try? fm.removeItem(at: clone)
             let cloned = await Subprocess.run(git, signedIn + ["clone", "-q", "--depth", "1", remote, clone.path], timeout: 600)
             guard cloned.ok else { throw Failure(message: "GitHub didn't give back \(repo): \(cloned.output.trimmed.suffix(200))") }
+            let checkedOut = await Subprocess.run(git, ["symbolic-ref", "--short", "HEAD"], cwd: clone, mergeErrors: false, timeout: 10)
+            guard checkedOut.ok, !checkedOut.output.trimmed.isEmpty else { throw Failure(message: "Lamp couldn't tell which branch \(repo) keeps its code on.") }
+            branch = checkedOut.output.trimmed
             if let expected, await head(git, in: clone) != expected {
                 throw Failure(message: "\(repo) has changes on GitHub that \(project.name) doesn't have, and putting it there would undo them.")
             }
@@ -568,7 +575,7 @@ enum GitHubRepo {
         }
         if changed {
             step("Uploading…")
-            let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:main"], cwd: work, timeout: 600)
+            let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:\(branch)"], cwd: work, timeout: 600)
             guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
         }
         var record = Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
@@ -576,7 +583,7 @@ enum GitHubRepo {
         // A site is served from the main branch as it is: Pages turned on for it, and waited for.
         if let site = staged.site, record.isPublic == true, let commit = record.commit {
             keep(record, for: project)
-            try await Publish.servePage(repo, commit: commit, changed: changed, gh: gh, branch: "main", step: step)
+            try await Publish.servePage(repo, commit: commit, changed: changed, gh: gh, branch: branch, step: step)
             record.page = site
             return (record, changed || kept(for: project)?.page != site)
         }

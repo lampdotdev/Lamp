@@ -292,10 +292,13 @@ wish keeps a web app's layout inside, so building, live changes (a page with no 
 swapped in place), Reload and the agent's rules are a web app's, with one rule of its own (`Rules.siteLayout`: keep the
 layout and its own ways of loading what it uses). Put on GitHub lays it out as it came (`StaticSite.layOut`): Web/ at
 the tree's root, so its own README is the repository's and GitHub Pages serves it from main as before (`Staged.site`,
-`Publish.servePage` with the main branch, no page branch and no credit bar over the person's page), and everything
+`Publish.servePage` with the repository's own branch, no page branch and no credit bar over the person's page), and everything
 else (lamp-app.json, credits.json, APP.md, Native.swift, the shared file, Lamp's README and buttons) in one hidden
 folder, `.lamp-wish/`, which neither clutters the site's root nor is served by Pages' Jekyll build. None of Lamp's own
-files go up (the Lamp that opens it writes them afresh) but lamp.js, with its license, when the page loads it. That
+files go up (the Lamp that opens it writes them afresh) but lamp.js, with its license and the repository's name to keep
+its saves under (`LAMP_PAGE_SCOPE`), when the page loads it. Of a site's hidden files only those a web server reads at
+its top travel with it (`ScreenFiles.servedHidden`: `.nojekyll`, `.well-known/`). An update goes to the branch the
+repository keeps its code on, as its clone checked it out, not always main. That
 folder is what Open from GitHub reads such a tree back by. A site opened from the person's own repository is put back
 there (`GitHubRepo.ownOrigin`, so its Pages address keeps working; any wish opened from their own repository is),
 with no license added, and only while GitHub has nothing the wish doesn't: otherwise the card asks for Check for

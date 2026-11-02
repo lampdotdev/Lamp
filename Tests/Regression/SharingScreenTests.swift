@@ -124,6 +124,8 @@ final class SharingScreenTests: XCTestCase {
         try write("*.pyc\n", to: ".gitignore", in: site)
         for name in ["a", "media", "z"] { try write("x", to: "\(name)/click.mp3", in: site) }
         try write("export {};\n", to: "vendor/three/build/three.module.js", in: site)
+        try write("", to: ".nojekyll", in: site)
+        try write("{}", to: ".well-known/assetlinks.json", in: site)
         XCTAssertTrue(RepoImport.holdsWish(site))
         let package = try RepoImport.open(folder: site)
         defer { try? fm.removeItem(at: package.folder) }
@@ -132,8 +134,9 @@ final class SharingScreenTests: XCTestCase {
         XCTAssertEqual(package.name, "Practice Field")
         XCTAssertTrue(Set(package.sources.map(package.path(of:))).isSuperset(of: ["Web/index.html", "Web/js/app.js", "Web/css/app.css",
                                                                                    "Web/vendor/three/build/three.module.js"]), "a site's build/ is what its page loads")
-        // A hidden file leaves out only itself, never the folder walked after it.
-        XCTAssertEqual(Set(package.webData.map(package.path(of:))), ["Web/a/click.mp3", "Web/media/click.mp3", "Web/z/click.mp3"])
+        // A hidden file leaves out only itself, never the folder walked after it; what a web server reads at the top goes.
+        XCTAssertEqual(Set((package.webData + package.sources).map(package.path(of:))).filter { !$0.hasSuffix(".js") && !$0.hasSuffix(".html") && !$0.hasSuffix(".css") && !$0.hasSuffix(".md") },
+                       Set(["Web/a/click.mp3", "Web/media/click.mp3", "Web/z/click.mp3", "Web/.nojekyll", "Web/.well-known/assetlinks.json"]))
 
         var app = try Template.scaffold(name: "Practice Field", platform: .mac, in: root)
         app.platform = .webApp
@@ -145,7 +148,8 @@ final class SharingScreenTests: XCTestCase {
         let staged = try GitHubRepo.stage(app, repo: "someone/practice", link: nil)
         defer { try? fm.removeItem(at: staged.folder.deletingLastPathComponent()) }
         func has(_ path: String) -> Bool { fm.fileExists(atPath: staged.folder.appendingPathComponent(path).path) }
-        for path in ["index.html", "js/app.js", "css/app.css", StaticSite.folder + "/lamp-app.json", StaticSite.folder + "/APP.md"] { XCTAssertTrue(has(path), path) }
+        for path in ["index.html", "js/app.js", "css/app.css", ".nojekyll", ".well-known/assetlinks.json",
+                     StaticSite.folder + "/lamp-app.json", StaticSite.folder + "/APP.md"] { XCTAssertTrue(has(path), path) }
         for path in ["Web", "build.sh", "Package.swift", "Sources", "lamp.js", "lamp-app.json", StaticSite.folder + "/build.sh"] { XCTAssertFalse(has(path), path) }
         XCTAssertEqual(try String(contentsOf: staged.folder.appendingPathComponent("README.md"), encoding: .utf8), "# Practice Field\n", "the site's own README")
         XCTAssertEqual(staged.site, "https://someone.github.io/practice/")

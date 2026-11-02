@@ -77,6 +77,12 @@ enum Publish {
         var origin: RemixLink.Origin? = nil
     }
 
+    /// Gives a published copy of lamp.js the repository's name to keep what the page saves under (`LAMP_PAGE_SCOPE`).
+    static func scope(_ runtime: URL, to scope: String) throws {
+        guard let text = try? String(contentsOf: runtime, encoding: .utf8) else { return }
+        try Data(text.replacingOccurrences(of: "/*LAMP_PAGE_SCOPE*/null", with: GamePage.json([scope]).dropFirst().dropLast()).utf8).write(to: runtime)
+    }
+
     /// The license Lamp's runtime in the page is under, beside it, as MIT asks of a copy.
     static let runtimeLicense = "LAMP-LICENSE.txt"
 
@@ -100,10 +106,7 @@ enum Publish {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
-        let runtime = site.appendingPathComponent("lamp.js")
-        if let text = try? String(contentsOf: runtime, encoding: .utf8) {
-            try Data(text.replacingOccurrences(of: "/*LAMP_PAGE_SCOPE*/null", with: GamePage.json([scope]).dropFirst().dropLast()).utf8).write(to: runtime)
-        }
+        try Publish.scope(site.appendingPathComponent("lamp.js"), to: scope)
         let anyBrowser = GamePage.anyBrowser
         try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
         guard let html = try? String(contentsOf: site.appendingPathComponent("index.html"), encoding: .utf8) else {
