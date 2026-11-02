@@ -1024,7 +1024,8 @@ final class Store: ObservableObject {
     /// (`reloadInTurn`), other work when it's done, and the chat says so meanwhile (`ReloadLine.queued`), since
     /// nothing else would seem to happen.
     @Published private(set) var reloadWhenFree: Set<String> = []
-    /// Update from the Original, asked for while the wish was busy: it starts when the wish is free (`finish`).
+    /// Update from the Original, asked for while the wish was busy: it starts when the wish is free (`finish`), for the
+    /// wish as the change left it (a change can make it another kind, which no longer takes its starter).
     private var originalUpdateWhenFree: Set<String> = []
     /// The holds the agent has heard of, by wish (`untoldHolds`).
     private var toldHolds: [String: Set<String>] = [:]
@@ -4507,7 +4508,7 @@ final class Store: ObservableObject {
                 await applyIconArt(project, spec: spec)
                 release(project)
                 if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
-                if originalUpdateWhenFree.remove(project.id) != nil { updateFromOriginal(project, opening: false) }
+                if originalUpdateWhenFree.remove(project.id) != nil { updateFromOriginal(current(project) ?? project, opening: false) }
                 fixHeldCrashes(project)
                 offerHeldDrawing(project)
                 startQueued(project)
@@ -4518,7 +4519,7 @@ final class Store: ObservableObject {
         }
         release(project)
         if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
-        if originalUpdateWhenFree.remove(project.id) != nil { updateFromOriginal(project, opening: false) }
+        if originalUpdateWhenFree.remove(project.id) != nil { updateFromOriginal(current(project) ?? project, opening: false) }
         if iconFallbackWhenFree.remove(project.id) != nil, let spec = Icons.load(project) {
             Task { await artworkWontCome(project, spec: spec, failed: false) }
         }
