@@ -114,6 +114,20 @@ enum Gallery {
             state.waitingForSetup = true
             state.lines = []
         },
+        screen("A message answered while building", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
+            state.busy = true
+            var answering = SidebarQueued(id: UUID(), text: "Can the title be bigger too?", attachments: [])
+            answering.sideReply = "Got it, I'll do that next."
+            var late = SidebarQueued(id: UUID(), text: "And what about the footer?", attachments: [])
+            late.sideAnswering = true
+            state.queued = [answering, late]
+        },
+        screen("A message with no answer", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
+            state.busy = true
+            var waiting = SidebarQueued(id: UUID(), text: "Can the title be bigger too?", attachments: [])
+            waiting.stillQueued = true
+            state.queued = [waiting]
+        },
         screen("An iPhone app, closed", group: "Chat screen", Array(finishedChat.prefix(11))) { state in
             state.toolbar?.play = SidebarPlay(open: false, enabled: true, help: "Use Today")
             state.tryOn = phoneTryOn

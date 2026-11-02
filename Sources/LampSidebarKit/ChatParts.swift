@@ -151,6 +151,34 @@ extension ChatLook {
         }
     }
 
+    /// Under a message: what Lamp said back while the turn went on, in the chat's one voice, or that it's saying it, or
+    /// that nothing came and the message just waits. It follows its message into the chat.
+    public struct SideLine: View {
+        let answering: Bool
+        let reply: String?
+        let stillQueued: Bool
+
+        public init(answering: Bool = false, reply: String? = nil, stillQueued: Bool = false) {
+            self.answering = answering
+            self.reply = reply
+            self.stillQueued = stillQueued
+        }
+
+        public var body: some View {
+            Group {
+                if let reply {
+                    ChatLook.AgentText(reply)
+                } else if answering {
+                    Label { Text("Answering…") } icon: { ProgressView().controlSize(.mini) }
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if stillQueued {
+                    Text("Still queued").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     /// Under the chat while Lamp waits for an app that was asked to quit and isn't responding: it may be stuck,
     /// or busy with something long, and only the person can say which. One click ends it, at the cost the line
     /// names, and what was waiting goes on.

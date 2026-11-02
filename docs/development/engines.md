@@ -150,6 +150,16 @@ A capability given to one engine must be given to all of them that can take it, 
   before Codex has saved the request). A run that hasn't gone 20 seconds after the interrupt is ended as Stop would
   end it. What the model was thinking or writing at that moment is lost; a message is the turn's once the resumed
   run's model is heard from.
+  With the experiment in Settings → Building on (`SideAnswer`, off by default, pi's only so far), a plain typed message
+  stays in this line as ever and a fork of the conversation answers it at once: pi's `--fork` of the session file into a
+  private folder outside the app, with `--no-tools`, no extension, its own key ticket and a short list of environment
+  variables, the model and system prompt the turn's run started with, and 30 seconds in all. It's skipped for a model on
+  this Mac, and for answers to cards, files, what was pointed at, requests sent again, a turn that has asked, paused or
+  waits on an approval, and a second message while one is being answered. The first whole assistant message ends the
+  run. The answer goes up only if its message still waits, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`,
+  never a line of the turn's, so `CatchUp`, folds and versions don't see it), and the message reaches the agent as ever
+  with a labeled receipt of what was said (`SideAnswer.receipt`), in the request or Send Now's handover, so it can't go
+  ahead of its message. Claude Code and Codex are not given this until their forks are proven the same way.
 - **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognized in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,

@@ -411,6 +411,12 @@ final class SidebarServer {
             queued.sendingNow = message.sendNow ? true : nil
             // Send Now is the group's: offered once, under the latest waiting message.
             queued.canSendNow = canSendNow && message.id == lastWaiting ? true : nil
+            switch message.side {
+            case .answering: queued.sideAnswering = true
+            case .answered(let reply): queued.sideReply = reply
+            case .stillQueued: queued.stillQueued = true
+            case nil: break
+            }
             return queued
         }
         let waiting = store.queued[project.id] ?? []
@@ -844,6 +850,7 @@ final class SidebarServer {
                     request.canGoBack = line.version != nil
                     request.canSendAgain = context.canSendAgain && line.canSendAgain
                     request.isLatest = line.id == context.latestRequest
+                    request.sideReply = line.sideReply
                     out.append(request)
                 case .agent:
                     out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))

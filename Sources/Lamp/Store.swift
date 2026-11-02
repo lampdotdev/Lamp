@@ -303,6 +303,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var notRun: Bool? = nil           // for commands of one name gathered as one row (`ChatItem.items`): none of them ran
     var part: Int? = nil              // in a new app's first build: the part of the agent's plan it came in (`TurnProgress.chapter(for:)`)
     var plan: [String]? = nil         // for that build's summary: the plan's parts, which its chapters are named by (`Chapters`)
+    var sideReply: String? = nil      // for a request: what was said beside the turn while it waited (`SideAnswer`), drawn under it and never a step or message of the turn
 
     /// A command's row stopped before it ran: by its own words, or, for commands gathered as one row, every one of them.
     var wasNotRun: Bool { notRun ?? text.hasPrefix(ChatLook.notRun) }
@@ -441,6 +442,11 @@ struct QueuedMessage: Identifiable {
     /// Lamp's own, carrying a paused request on once the person has pressed Reload (`Store.pause`): it waits in line
     /// until the held change is in, and so does everything sent behind it.
     var afterReload = false
+    /// The answer beside the turn while it waits (`SideAnswer`).
+    var side: SideState? = nil
+
+    enum SideState: Equatable { case answering, answered(String), stillQueued }
+    var sideReply: String? { if case .answered(let reply) = side { reply } else { nil } }
 }
 
 extension QueuedMessage {
@@ -452,6 +458,7 @@ extension QueuedMessage {
         if let card { saved["card"] = card.uuidString }
         if byLamp { saved["byLamp"] = true }
         if afterReload { saved["afterReload"] = true }
+        if let sideReply { saved["sideReply"] = sideReply }
         if let pointed, let picture = pointed.url {
             var target: [String: Any] = ["title": pointed.title, "picture": picture.path]
             if let detail = pointed.detail { target["detail"] = detail }
@@ -472,7 +479,8 @@ extension QueuedMessage {
         }
         self.init(text: saved["text"] as? String ?? "", attachments: attachments,
                   card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)),
-                  pointed: pointed, byLamp: saved["byLamp"] as? Bool ?? false, afterReload: saved["afterReload"] as? Bool ?? false)
+                  pointed: pointed, byLamp: saved["byLamp"] as? Bool ?? false, afterReload: saved["afterReload"] as? Bool ?? false,
+                  side: (saved["sideReply"] as? String).map(SideState.answered))
     }
 }
 
@@ -592,7 +600,8 @@ final class Store: ObservableObject {
             let own = message.kept.map { copy.dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
             var pointed = message.pointed
             if let picture = pointed?.url { pointed?.picture = try out(picture).path }
-            return QueuedMessage(text: message.text, attachments: try (message.attachments + own).map(out), pointed: pointed)
+            return QueuedMessage(text: message.text, attachments: try (message.attachments + own).map(out), pointed: pointed,
+                                 side: message.sideReply.map(QueuedMessage.SideState.answered))
         }
     }
     /// Where a message sent to `project` goes.
@@ -602,6 +611,8 @@ final class Store: ObservableObject {
     /// Wishes whose update is being set up (saved, copied, fetched), before its copy holds the job (`AppUpdates`).
     @Published var preparingUpdates: Set<String> = []
     @Published var queued: [String: [QueuedMessage]] = [:]
+    /// The answers being made beside running turns, by wish (`SideAnswer`).
+    private var sideRuns: [String: SideAnswer.Run] = [:]
     /// The turn in progress for each app. A new app's first turn stays here after it finishes, until the next
     /// message, for its chapters (`Chapters.segments`).
     @Published var progress: [String: TurnProgress] = [:]
@@ -859,6 +870,8 @@ final class Store: ObservableObject {
         var handed: [UUID] = []
         /// The engine running now, which takes messages while it works; nil between runs.
         var steering: Engine?
+        /// What built the turn's latest run, for an answer beside it (`SideAnswer`); nil when none can be made.
+        var sideRoute: SideAnswer.Route?
         /// Claude Code's input, from its start until it has answered.
         var input: AgentInput?
         /// The engine is running a tool: a message written to it now reaches the model with the tool's result.
@@ -1128,6 +1141,7 @@ final class Store: ObservableObject {
         reload()
         for project in wishes where project.decided { settleDecided(project) }
         restoreWaiting()
+        SideAnswer.clearAbandoned()
         for project in projects { discardIfUnused(project.id) }
         // The wishes Lamp comes with don't count: they're there before the welcome is.
         Onboarding.settle(hasApps: projects.contains { !Starters.isStarter($0) })
@@ -4028,7 +4042,8 @@ final class Store: ObservableObject {
             card = open.id
             saveChat(project)
         }
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
+        let waiting = QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed)
+        queued[project.id, default: []].append(waiting)
         // A message never waits behind Lamp's own checking: a play in the hidden copy stops, so the turn goes on to it.
         if let turn = turns[project.id], let stop = turn.stopHidden {
             turn.stoppedForMessage = true
@@ -4037,6 +4052,7 @@ final class Store: ObservableObject {
         // Keeping the wish's other places current gives way to a request: they're tried again once it's done.
         for app in apps(of: wish(of: project)) where turns[app.id]?.updatingPlaces == true { turns[app.id]?.cancel() }
         startQueued(project)
+        answerBeside(waiting, for: project)
         saveWaiting()
     }
 
@@ -4305,12 +4321,14 @@ final class Store: ObservableObject {
         else { return }
         for index in waiting.indices { waiting[index].sendNow = true }
         queued[project.id] = waiting
+        endSideAnswer(in: project)
         steer(project)
     }
 
     func unqueue(_ message: QueuedMessage, from project: LampProject) {
         // A first request waiting for setup has no chat yet: it can still be taken back.
         guard var waiting = queued[project.id] else { return }
+        if sideRuns[project.id]?.message == message.id { endSideAnswer(in: project) }
         var lines = logs[project.id] ?? []
         let reopened = Talk.unqueue(message, from: &waiting, lines: &lines)
         queued[project.id] = waiting
@@ -4348,6 +4366,7 @@ final class Store: ObservableObject {
               Self.startsNow(messages, changeHeld: holdsAnyBuild(project)),
               let owner = begin(project) else { return }
         queued[project.id] = nil
+        endSideAnswer(in: project)
         saveWaiting()
         // The request Lamp paused goes on: the chat says why the agent is back at work, since its own request is
         // hidden, as a crash fix's is (`byLamp`).
@@ -4668,6 +4687,10 @@ final class Store: ObservableObject {
                 if let name { if !names.contains(name) { names.append(name) } } else { pointed = nil }
             }
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            if let reply = message.sideReply, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].sideReply = reply
+                saveChat(project)
+            }
             if let pointed, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].pointed = pointed
                 saveChat(project)
@@ -4755,7 +4778,8 @@ final class Store: ObservableObject {
         turns[project.id]?.request = prompt
         turns[project.id]?.requests = asked
         turns[project.id]?.carriedSetAside = carried
-        let ran = await runAgent(prompt + notes + crashAside, files: files, sendsRequest: true, on: project)
+        let receipts = messages.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
+        let ran = await runAgent(prompt + receipts + notes + crashAside, files: files, sendsRequest: true, on: project)
         project = current(project) ?? project
         settleHolds(carriedHolds, reached: asked.last.map { Self.reachedAgent($0, in: logs[project.id] ?? []) } ?? ran, for: project)
         if let carried, let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []),
@@ -5161,6 +5185,8 @@ final class Store: ObservableObject {
         var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
+        turn.sideRoute = SideAnswer.route(env: run.env, engine: engine, local: Builder.piProvider == Builder.localProvider,
+                                          keyProvider: Builder.piProvider)
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
         // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
         let onLine: @MainActor (String) -> Void = { [self] line in
@@ -5426,6 +5452,7 @@ final class Store: ObservableObject {
                 let again = taken.isEmpty ? prompt
                     : prompt + "\n\n---\nThe person then sent this while you worked, oldest first:\n\n"
                         + (words.isEmpty ? Self.onlyFiles(names.count) : words)
+                        + taken.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
                         + Attachments.note(for: names, inlined: false) + PointedAt.note(for: taken.compactMap(\.pointed))
                 return await runAgent(again, files: files, sendsRequest: sendsRequest, afresh: true, on: current(project) ?? project)
             }
@@ -5464,6 +5491,7 @@ final class Store: ObservableObject {
         turn.handed += lines.map { chat[$0].id }
         let words = taken.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         return (words.isEmpty ? Self.onlyFiles(saved.count) : words)
+            + taken.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
             + Attachments.note(for: saved, inlined: false) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
             + GameFun.note(for: project, apps: apps(of: project), request: words)
             + Agent.midTurnNote
@@ -5486,13 +5514,58 @@ final class Store: ObservableObject {
         let handed = Set(turn.handed)
         turn.handed = []
         let again = chat.filter { handed.contains($0.id) }.map {
-            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], pointed: $0.pointed?.waiting(in: project))
+            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], pointed: $0.pointed?.waiting(in: project),
+                          side: $0.sideReply.map(QueuedMessage.SideState.answered))
         }
         chat.removeAll { handed.contains($0.id) }
         logs[project.id] = chat
         saveChat(project)
         queued[project.id, default: []].insert(contentsOf: again, at: 0)
     }
+
+    /// Starts an answer beside the turn for a message that stayed in line, when one can be made. The message is
+    /// queued first and stays queued: nothing here decides whether it reaches the agent, and nothing waits for this.
+    private func answerBeside(_ sent: QueuedMessage, for sender: LampProject) {
+        let project = Self.requestOwner(of: sender, among: projects)
+        guard SideAnswer.isOn, SideAnswer.canAnswer(sent), sideRuns[project.id] == nil, sideRuns.count < SideAnswer.mostAtOnce,
+              let turn = turns[project.id], let route = turn.sideRoute, !turn.asked, !turn.paused, !turn.stopped,
+              approvals[project.id] == nil, current(project)?.finding == false, readyFor(project),
+              !queueWaitsForReload(in: project), let waiting = queued[project.id],
+              let index = waiting.firstIndex(where: { $0.id == sent.id }),
+              let conversation = Conversation.transcript(of: .pi, session: route.session, in: project) else { return }
+        let accepted = ContinuousClock.now
+        queued[project.id]?[index].side = .answering
+        let run = SideAnswer.Run(message: sent.id)
+        sideRuns[project.id] = run
+        Task {
+            let outcome = await run.answer(SideAnswer.prompt(for: sent.text, ahead: index, at: Date()), from: conversation, route: route)
+            if sideRuns[project.id] === run { sideRuns[project.id] = nil }
+            settleSideAnswer(outcome, of: run, in: project, took: ContinuousClock.now - accepted)
+        }
+    }
+
+    /// The answer goes up only if its message still waits untouched: one the agent has taken, or that was taken back or
+    /// sent now, has moved on, and a late "I'll do that next" would be wrong.
+    private func settleSideAnswer(_ outcome: SideAnswer.Outcome, of run: SideAnswer.Run, in project: LampProject, took: Duration) {
+        let usage = outcome.usage
+        if usage.cost > 0 {
+            var spent = self.usage[project.id] ?? AppUsage()
+            spent.agentCost = (spent.agentCost ?? 0) + usage.cost
+            self.usage[project.id] = spent
+            saveUsage(project)
+        }
+        let index = queued[project.id]?.firstIndex { $0.id == run.message && !$0.sendNow }
+        let shown = outcome.reply != nil && index != nil
+        Conversation.note(project, engine: .pi, "side answer \(shown ? "shown" : "not shown")"
+            + " after \(took.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))"
+            + (outcome.failure.map { " (\($0))" } ?? "") + ", input \(usage.input), cache read \(usage.cacheRead),"
+            + " cache write \(usage.cacheWrite), output \(usage.output), cost \(usage.cost), waiting \(queued[project.id]?.count ?? 0)")
+        guard let index else { return }
+        queued[project.id]?[index].side = outcome.reply.map(QueuedMessage.SideState.answered) ?? .stillQueued
+        saveWaiting()
+    }
+
+    private func endSideAnswer(in project: LampProject) { sideRuns[project.id]?.cancel() }
 
     /// Claude Code takes the person's messages on its input: written while a tool runs, a message is there when
     /// the tool's result is, and the model reads both before it goes on.
@@ -6084,6 +6157,7 @@ final class Store: ObservableObject {
         // A turn still owns the app while awaiting a device check, even without a running subprocess.
         guard let turn = turns[project.id], !turn.stopped else { return }
         endApprovals(for: project)   // a command waiting for approval counts as denied
+        endSideAnswer(in: project)
         if away.personStopped(project.id) { reloadWhenFree.remove(project.id) }
         turn.cancel()
         setAsideChanges[project.id]?.afterStop = true   // no fix starts by itself after Stop (`fixHeldCrash`)

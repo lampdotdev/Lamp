@@ -1088,10 +1088,15 @@ enum Agent {
             "LAMP_TRIM_PICTURES": String(Conversation.trimAbove),
         ]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
-        // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
-        // the environment every shell command would inherit. The ticket is good for one answer, and pi spends
-        // it before the model has said anything: a command the agent runs later finds it used.
-        if let provider = Provider.keyProvider(Builder.piProvider) {
+        return env.merging(keyEnvironment(for: Builder.piProvider)) { $1 }
+    }
+
+    /// pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
+    /// the environment every shell command would inherit. The ticket is good for one answer, and pi spends
+    /// it before the model has said anything: a command the agent runs later finds it used.
+    static func keyEnvironment(for piProvider: String) -> [String: String] {
+        var env: [String: String] = [:]
+        if let provider = Provider.keyProvider(piProvider) {
             syncKeyFile()
             // No ticket unless pi is sure to spend it. It wouldn't if auth.json holds something else for
             // this provider (a sign-in of pi's, or a key that couldn't be taken out yet), or if Lamp was
@@ -1488,6 +1493,13 @@ enum KeyTicket {
         open = open.filter { Date().timeIntervalSince($0.value.issued) < lifetime }   // runs that never asked
         open[ticket] = (provider, Date())
         return ticket
+    }
+
+    /// A run that ended without asking: its ticket opens nothing from now on.
+    static func revoke(_ ticket: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        open[ticket] = nil
     }
 
     /// The key the ticket was issued for, the first time it's asked; nil for a used, old or made-up ticket.
