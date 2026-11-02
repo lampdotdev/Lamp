@@ -47,6 +47,20 @@ enum ScreenKit {
         isScreen(project) && (project.openPlaces.contains(.mac) || project.openPlaces.contains(.ios))
     }
 
+    /// A web app that's a plain site (`StaticSite`): its page is a repository's root, laid out as the repository has it,
+    /// and put back on GitHub that way. Said in its folder's mark, so a version restored keeps it; a shared file carries
+    /// it in its manifest (`Sharing.Manifest.site`).
+    static let siteLine = "layout: site"
+
+    static func isSite(_ project: LampProject) -> Bool {
+        project.platform == .webApp && AppFile.text(project.dir.appendingPathComponent(webAppPage.marker), in: project)?.contains(siteLine) == true
+    }
+
+    /// Marks a web app as a plain site; its mark keeps saying so through every write of Lamp's (`write`).
+    static func markSite(_ project: LampProject) throws {
+        try Template.write(webAppPage.says + siteLine + "\n", to: webAppPage.marker, for: project)
+    }
+
     static func isMade(_ dir: URL) -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(marker).path) }
     static func isWebAppMade(_ dir: URL) -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(webAppPage.marker).path) }
 
@@ -98,7 +112,7 @@ enum ScreenKit {
         let played = GameKit.playerPlist(game: false, scheme: page.scheme, canvas: fillsAnyShape(project) ? nil : (1920, 1080))
         try Template.write(buildSh.replacingOccurrences(of: "{{PLAYER_PLIST}}", with: played), to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
-        try Template.write(page.says, to: page.marker, for: project)
+        try Template.write(page.says + (isSite(project) ? siteLine + "\n" : ""), to: page.marker, for: project)
         // On Android: Lamp's Android app around the page, as a game's.
         if project.hasAndroid { try GameAndroid.write(for: project) }
     }
@@ -229,7 +243,7 @@ extension Agent {
     /// request's device line (`Rules.screenPlaces`), since a place may be given at any time.
     static func screenPrompt(for project: LampProject) -> String {
         let webApp = project.platform == .webApp
-        let page = webApp ? Rules.webAppPage(project.openPlaces) : [Rules.tvFrameworks, Rules.screenDesign(project.openPlaces), Rules.tvKeys]
+        let page = webApp ? Rules.webAppPage(project.openPlaces, site: ScreenKit.isSite(project)) : [Rules.tvFrameworks, Rules.screenDesign(project.openPlaces), Rules.tvKeys]
         let rules = [Rules.screenEdit, Rules.ask, Rules.shell] + page + [Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.screenLogs, Rules.screenTry, Rules.appMd, Rules.audience,
                      Skills.index(Skills.offered(project.platform)), Rules.begin, Rules.finish]
@@ -280,10 +294,21 @@ extension Agent.Rules {
     /// them off the request's device line). A web app is what an app made with web is, on the Mac first, so it's an app
     /// of the device it's on, not a screen across a room: what a TV asks (old browsers, the remote, the distance) is said
     /// for when it's on one.
-    static func webAppPage(_ places: [Destination]?) -> [String] {
+    static func webAppPage(_ places: [Destination]?, site: Bool = false) -> [String] {
         let tv = places.map { $0.contains { [.tv, .androidTV, .device].contains($0) } }
-        return [webAppFrameworks, webAppDesign(places)] + (tv == false ? [] : [tvKeys])
+        return [site ? siteLayout : webAppFrameworks, webAppDesign(places)] + (tv == false ? [] : [tvKeys])
     }
+
+    /// A plain site's (`StaticSite`): its repository's layout and its own ways are kept, since GitHub Pages serves its
+    /// root as it is and its address must go on working.
+    static let siteLayout = """
+    - This web app is a site kept as its repository lays it out: Web/ is the repository's root, which GitHub Pages \
+    serves as it is. Keep its layout, its files' names and its own ways of loading what it uses, wherever it loads \
+    them from now; add new files beside the ones there, with no build step and no npm. It doesn't load Lamp's \
+    lamp.js: add `<script src="lamp.js"></script>` before its own scripts only when a change needs Lamp's building \
+    blocks (below), and keep the page working without them when it's opened on the web. Its README.md is the \
+    repository's front page: keep it true to what the site does.
+    """
 
     static let webAppFrameworks = """
     - Write plain HTML, CSS and JavaScript in Web/, with no build step and no npm: what's in Web/ is what runs. Keep \

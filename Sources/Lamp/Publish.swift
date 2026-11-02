@@ -34,8 +34,12 @@ enum Publish {
 
     // MARK: GitHub
 
-    /// Where `gh` is: Homebrew's, or wherever the person's shell finds it.
+    /// Where `gh` is: Homebrew's, or wherever the person's shell finds it. Lamp Dev takes `LAMP_GH` from its environment
+    /// in its place, a stand-in to try Put on GitHub with against a local repository (git's own `insteadOf` sends the
+    /// pushes there), so nothing reaches GitHub itself.
     static func gh() async -> String? {
+        if Edition.isDev, let path = ProcessInfo.processInfo.environment["LAMP_GH"], path.hasPrefix("/"),
+           FileManager.default.isExecutableFile(atPath: path) { return path }
         for path in ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"] where FileManager.default.isExecutableFile(atPath: path) { return path }
         let found = await Subprocess.run("/bin/zsh", ["-lc", "command -v gh"], timeout: 10)
         let path = found.output.trimmed
@@ -320,11 +324,13 @@ enum Publish {
         return (commit, true)
     }
 
-    /// Turns GitHub Pages on for `repo`'s page branch, or asks for a build when it's on, unless the page didn't change and
-    /// that commit is built or building already (a failed build is asked for again, so trying again can mend it); then
-    /// waits until GitHub says it built `commit`: an earlier build's "built" is the page as it was. Pages set by the
-    /// person to serve another branch are left as they are, and said so.
-    static func servePage(_ repo: String, commit: String, changed: Bool, gh: String, step: @escaping @Sendable (String) -> Void) async throws {
+    /// Turns GitHub Pages on for `repo`'s page branch (`branch`: a plain site's is main, served from its root), or asks
+    /// for a build when it's on, unless the page didn't change and that commit is built or building already (a failed
+    /// build is asked for again, so trying again can mend it); then waits until GitHub says it built `commit`: an
+    /// earlier build's "built" is the page as it was. Pages set by the person to serve another branch are left as they
+    /// are, and said so.
+    static func servePage(_ repo: String, commit: String, changed: Bool, gh: String, branch pageBranch: String = pageBranch,
+                          step: @escaping @Sendable (String) -> Void) async throws {
         let url = pageURL(repo)
         step("Turning on GitHub Pages…")
         let existing = await Subprocess.run(gh, ["api", "repos/\(repo)/pages", "--jq", ".source.branch"], mergeErrors: false, timeout: 30)

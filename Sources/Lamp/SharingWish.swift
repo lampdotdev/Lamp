@@ -277,6 +277,8 @@ enum ScreenFiles {
             try? fm.removeItem(at: target)
             try fm.copyItem(at: file, to: target)
         }
+        // A plain site stays one, its mark written before Lamp's own files, which keep it.
+        if package.site { try ScreenKit.markSite(project) }
         try writeLamps(project)
     }
 }

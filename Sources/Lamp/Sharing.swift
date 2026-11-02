@@ -125,6 +125,9 @@ enum Sharing {
         var family: DeviceFamily?
         /// The wish's other apps, each in its folder (`Part`). Files from before wishes had them carry none.
         var parts: [Part]?
+        /// A web app that's a plain site, its page a repository's root (`ScreenKit.isSite`, `StaticSite`). An older
+        /// Lamp opens it as any web app.
+        var site: Bool? = nil
     }
 
     /// Which app a shared file is, so a Mac that already has it can take the new one as an update rather
@@ -312,7 +315,7 @@ enum Sharing {
                                     platform: root.platform, family: root.hasIOS ? root.family : nil,
                                     parts: parts.isEmpty ? nil : parts.map {
                                         Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.hasIOS ? $0.family : nil)
-                                    }))
+                                    }, site: parts.isEmpty && ScreenKit.isSite(root) ? true : nil))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
         // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
@@ -542,6 +545,8 @@ enum Sharing {
         /// The wish's other apps (`Part`), each read from its folder as the app at the root is, for the review and the
         /// install alike: a part's code reaches an app's folder only from here.
         var parts: [Part] = []
+        /// A web app that's a plain site (`Manifest.site`).
+        var site = false
     }
 
     /// An app file is a few source files and some attachments: anything much bigger isn't one, and a file
@@ -592,6 +597,7 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.site = platform == .webApp && manifest.site == true
         package.licences = (package.credits?.upstream ?? []).flatMap(\.termsFiles).filter(Credits.isLicenceFile).compactMap { path in
             let file = folder.appendingPathComponent(path)
             let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])

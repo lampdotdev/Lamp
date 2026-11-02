@@ -884,7 +884,10 @@ native only for what a page can't be (a menu bar icon, widgets, App Intents, Hea
 the person asks; an app made native before keeps its make. So its rules are an app's of the places it's on, not a
 screen's across a room (`Rules.webAppPage`): a Mac app's type and density in its window, touch on a phone, and the
 remote, old TV browsers and the tv-design skill only once it's on a TV. It's offered the app-kinds skill as a native
-app is.
+app is. A web app may be a plain site opened from GitHub, its page the repository's root ("Generated apps",
+`StaticSite`). Lamp's app around the page serves `Web/` at its own address with no web server, so what a site does
+that a browser allows only from a page of its own (Web Bluetooth, which WKWebView doesn't have) works on its
+published page, in a browser that has it, and not in Lamp.
 
 ## Screens
 

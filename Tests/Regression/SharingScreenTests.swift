@@ -16,7 +16,7 @@ final class SharingScreenTests: XCTestCase {
         // marks the kind, as the real one does last.
         ScreenFiles.writeLamps = { project in
             let page = ScreenKit.page(for: project.platform)
-            try Template.write(page.says, to: page.marker, for: project)
+            try Template.write(page.says + (ScreenKit.isSite(project) ? ScreenKit.siteLine + "\n" : ""), to: page.marker, for: project)
             try Template.write("// Lamp's script\n", to: TVTemplate.supportFile, for: project)
         }
     }
@@ -109,6 +109,48 @@ final class SharingScreenTests: XCTestCase {
         XCTAssertEqual(Sharing.format(withWidget: false, platform: .screen), 12)
         XCTAssertEqual(Sharing.format(withWidget: false, platform: .webApp), 12)
         XCTAssertEqual(Sharing.format(withWidget: false, platform: .tv), 10)
+    }
+
+    /// A plain site on GitHub (index.html at its root, no build step) opens as a web app whose page is the repository's
+    /// root, and goes back up laid out as it came: its files at the root, Lamp's in one hidden folder, none of Lamp's own
+    /// files, and its page served from there rather than a page branch. Opened again, it's the same site.
+    func testAPlainSiteKeepsItsLayoutBothWays() throws {
+        let fm = FileManager.default
+        let site = root.appendingPathComponent("practice")
+        try write("<!doctype html><title>Practice Field</title><script src=\"js/app.js\"></script>", to: "index.html", in: site)
+        try write("console.log('go');\n", to: "js/app.js", in: site)
+        try write("body { margin: 0 }\n", to: "css/app.css", in: site)
+        try write("# Practice Field\n", to: "README.md", in: site)
+        try write("*.pyc\n", to: ".gitignore", in: site)
+        XCTAssertTrue(RepoImport.holdsWish(site))
+        let package = try RepoImport.open(folder: site)
+        defer { try? fm.removeItem(at: package.folder) }
+        XCTAssertEqual(package.platform, .webApp)
+        XCTAssertTrue(package.site)
+        XCTAssertEqual(package.name, "Practice Field")
+        XCTAssertTrue(Set(package.sources.map(package.path(of:))).isSuperset(of: ["Web/index.html", "Web/js/app.js", "Web/css/app.css"]))
+
+        var app = try Template.scaffold(name: "Practice Field", platform: .mac, in: root)
+        app.platform = .webApp
+        try Template.saveMeta(app)
+        try fm.removeItem(at: app.dir.appendingPathComponent("Sources"))
+        try Sharing.install(package, into: app)
+        XCTAssertTrue(ScreenKit.isSite(app))
+
+        let staged = try GitHubRepo.stage(app, repo: "someone/practice", link: nil)
+        defer { try? fm.removeItem(at: staged.folder.deletingLastPathComponent()) }
+        func has(_ path: String) -> Bool { fm.fileExists(atPath: staged.folder.appendingPathComponent(path).path) }
+        for path in ["index.html", "js/app.js", "css/app.css", StaticSite.folder + "/lamp-app.json", StaticSite.folder + "/APP.md"] { XCTAssertTrue(has(path), path) }
+        for path in ["Web", "build.sh", "Package.swift", "Sources", "lamp.js", "lamp-app.json", StaticSite.folder + "/build.sh"] { XCTAssertFalse(has(path), path) }
+        XCTAssertEqual(try String(contentsOf: staged.folder.appendingPathComponent("README.md"), encoding: .utf8), "# Practice Field\n", "the site's own README")
+        XCTAssertEqual(staged.site, "https://someone.github.io/practice/")
+        XCTAssertNil(staged.page, "no page branch: Pages serves the root")
+
+        let again = try RepoImport.open(folder: staged.folder)
+        defer { try? fm.removeItem(at: again.folder) }
+        XCTAssertTrue(again.site)
+        XCTAssertTrue(Set(again.sources.map(again.path(of:))).isSuperset(of: ["Web/index.html", "Web/js/app.js"]))
+        XCTAssertFalse(fm.fileExists(atPath: again.folder.appendingPathComponent("Web/" + StaticSite.folder).path))
     }
 
     /// The Little House as its sender has it: its page with a copy of three.js beside it, its Native.swift, and Lamp's

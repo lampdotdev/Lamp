@@ -118,16 +118,20 @@ enum RepoImport {
 
     /// The wish in a folder laid out as Put on GitHub lays a repository out: the shared file's contents at the top
     /// (`lamp-app.json` and the code), read as a shared file is once copied into a folder of Lamp's own, with Lamp's
-    /// own files, the repository's README and license and the shared file beside them left where they are. A folder
+    /// own files, the repository's README and license and the shared file beside them left where they are; a site's
+    /// page at the top and the rest in Lamp's folder (`StaticSite`); or a plain site, as a new web app. A folder
     /// holding only a shared file opens that file. The folder itself is never changed: it may be the person's.
     static func open(folder: URL, fetched: RepoArchive.Fetched? = nil) throws -> Sharing.Package {
         let fm = FileManager.default
         let repository = fetched.map { (url: $0.url, commit: Optional($0.commit)) } ?? repository(of: folder)
-        if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) {
+        // A site's tree (`StaticSite`): put up by Lamp with its page at the root, or a plain site Lamp hasn't seen.
+        let site = StaticSite.holdsWish(folder) || (!fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path)
+                                                     && !hasSharedFile(folder) && StaticSite.isPlain(folder))
+        if site || fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) {
             let copy = Sharing.workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
             var opened = false
             defer { if !opened { try? fm.removeItem(at: copy) } }
-            try copyTree(folder, to: copy)
+            if site { try StaticSite.unpack(folder, into: copy, repository: repository?.url) } else { try copyTree(folder, to: copy) }
             var package = try Sharing.open(unpacked: copy)
             package.credits = naming(package.credits, repository: repository?.url, commit: repository?.commit, name: package.name, identity: package.identity)
             opened = true
@@ -146,15 +150,20 @@ enum RepoImport {
 
     /// Whether a fetched tree is a wish (laid out as Put on GitHub lays one out, or holding a shared file) rather than
     /// someone's own project, which `open` can't read.
+    /// A plain site (`StaticSite.isPlain`) is one too: it opens as a web app, laid out as it is.
     static func holdsWish(_ folder: URL) -> Bool {
         let fm = FileManager.default
-        if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) { return true }
-        return ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).contains { $0.hasSuffix(".lampapp") }
+        if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) || StaticSite.holdsWish(folder) { return true }
+        return hasSharedFile(folder) || StaticSite.isPlain(folder)
+    }
+
+    private static func hasSharedFile(_ folder: URL) -> Bool {
+        ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).contains { $0.hasSuffix(".lampapp") }
     }
 
     /// The tree as a shared file unpacks: every regular file but the repository's own records and builds, and the shared
     /// file beside the code, which would double what's counted. Held to what a shared file may hold.
-    private static func copyTree(_ from: URL, to: URL) throws {
+    static func copyTree(_ from: URL, to: URL) throws {
         let fm = FileManager.default
         let skipped: Set<String> = [".git", ".build", "build", ".lamp", "node_modules"]
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey]
