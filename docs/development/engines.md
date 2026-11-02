@@ -152,8 +152,12 @@ A capability given to one engine must be given to all of them that can take it, 
   run's model is heard from.
   With the experiment in Settings → Building on (`SideAnswer`, off by default, pi's only so far), a plain typed message
   stays in this line as ever and a fork of the conversation answers it at once: pi's `--fork` of the session file into a
-  private folder outside the app, with `--no-tools`, no extension, its own key ticket and a short list of environment
-  variables, the model and system prompt the turn's run started with, and 30 seconds in all. It's skipped for a model on
+  private folder outside the app, with its own key ticket and a short list of environment variables, the model, system
+  prompt, tools and tool definitions the turn's run started with, and 30 seconds in all. What the provider sees stays the
+  builder's so its cache of the conversation still fits: the same tools, the builder's folder in the system prompt and its
+  session id (`guardsSideAnswer` in `lamp-tools.ts`). None of the tools can run: that function's `tool_call` handler refuses
+  every call before it executes, and pi only warns when an extension won't load, so the fork runs in `--mode rpc` and is
+  sent the prompt only once `get_commands` lists the guard's command (`SideAnswer.guardCommand`). It's skipped for a model on
   this Mac, and for answers to cards, files, what was pointed at, requests sent again, a turn that has asked, paused or
   waits on an approval, and a second message while one is being answered. The first whole assistant message ends the
   run. The answer goes up only if its message still waits, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`,

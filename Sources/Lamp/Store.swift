@@ -5186,8 +5186,10 @@ final class Store: ObservableObject {
         var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
+        // The definitions as this run read them, kept only when they may be asked for.
+        let definitions = SideAnswer.isOn ? run.env["LAMP_TOOLS_JSON"].flatMap { FileManager.default.contents(atPath: $0) } : nil
         turn.sideRoute = SideAnswer.route(env: run.env, engine: engine, local: Builder.piProvider == Builder.localProvider,
-                                          keyProvider: Builder.piProvider)
+                                          keyProvider: Builder.piProvider, definitions: definitions, folder: project.dir.path)
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
         // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
         let onLine: @MainActor (String) -> Void = { [self] line in
@@ -5539,7 +5541,7 @@ final class Store: ObservableObject {
         let run = SideAnswer.Run(message: sent.id)
         sideRuns[project.id] = run
         Task {
-            let outcome = await run.answer(SideAnswer.prompt(for: sent.text, ahead: index, at: Date()), from: conversation, route: route)
+            let outcome = await run.answer(SideAnswer.prompt(for: sent.text), from: conversation, route: route)
             if sideRuns[project.id] === run { sideRuns[project.id] = nil }
             settleSideAnswer(outcome, of: run, in: project, took: ContinuousClock.now - accepted)
         }

@@ -85,7 +85,9 @@ extension ChatLook {
 
     /// A message waiting for the current change to finish. It can still be taken back. The latest of its group has
     /// the group's caption, and, where the agent can take them while it works, Send Now for the whole group
-    /// (`sendNow`); once that's asked, the caption says they're on their way.
+    /// (`sendNow`); once that's asked, the caption says they're on their way. One Lamp has already answered (`answered`,
+    /// `SideLine`) reads as any message of the conversation: its bubble is a sent one, with no caption, and Unsend and Send
+    /// Now come up beside it under the pointer, in the same place either way so nothing moves.
     public struct QueuedRow<Chips: View>: View {
         let text: String
         let waitingForSetup: Bool
@@ -94,9 +96,11 @@ extension ChatLook {
         let place: QueuedPlace
         let onRemove: () -> Void
         let sendNow: (() -> Void)?
+        let answered: Bool
         let chips: Chips
+        @State private var pointerOver = false
 
-        public init(text: String, waitingForSetup: Bool, waitingForReload: Bool = false, sending: Bool = false,
+        public init(text: String, waitingForSetup: Bool, waitingForReload: Bool = false, sending: Bool = false, answered: Bool = false,
                     place: QueuedPlace = QueuedPlace(last: true, count: 1, first: true), onRemove: @escaping () -> Void,
                     sendNow: (() -> Void)? = nil, @ViewBuilder chips: () -> Chips) {
             self.text = text
@@ -106,25 +110,37 @@ extension ChatLook {
             self.place = place
             self.onRemove = onRemove
             self.sendNow = sendNow
+            self.answered = answered
             self.chips = chips()
         }
+
+        /// Sent now, or held for setup or Reload, it says so whatever was answered.
+        private var quiet: Bool { answered && !sending && !waitingForSetup && !waitingForReload }
 
         public var body: some View {
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 6) { chips }
                 HStack(spacing: 6) {
+                    if quiet, let sendNow {
+                        Button("Send Now", action: sendNow).buttonStyle(.link).font(.caption)
+                            .help("Send this to the agent while it works")
+                            .opacity(pointerOver ? 1 : 0)
+                    }
                     Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.plain)
                         .help("Unsend")
                         .accessibilityLabel("Unsend")
-                    UserBubble(text, waiting: true)
+                        .opacity(!quiet || pointerOver ? 1 : 0)
+                    UserBubble(text, waiting: !quiet)
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
                 .frame(maxWidth: 480 + 22 + ChatLook.tailRoom, alignment: .trailing)
                 .padding(.leading, 40)
-                if place.last { caption.padding(.trailing, ChatLook.tailRoom) }
+                if place.last, !quiet { caption.padding(.trailing, ChatLook.tailRoom) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+            .contentShape(Rectangle())
+            .onHover { pointerOver = $0 }
         }
 
         @ViewBuilder private var caption: some View {

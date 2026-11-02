@@ -1,10 +1,12 @@
 import Foundation
 
 /// A short answer beside a running turn: a message sent while the agent works is queued as ever, and a fork of the
-/// conversation with no tools says something back at once. The builder stays the only writer, and the message still
-/// reaches it, with what was said (`receipt`). An experiment, off by default, and pi's only for now: pi's `--fork` copies
-/// a conversation it's writing and closes a call still running with its own "No result provided", so nothing of the
-/// engine's is patched around. Claude Code's and Codex's forks are still to be proven the same.
+/// conversation says something back at once. The builder stays the only writer, and the message still reaches it, with
+/// what was said (`receipt`). An experiment, off by default, and pi's only for now: pi's `--fork` copies a conversation
+/// it's writing and closes a call still running with its own "No result provided", so nothing of the engine's is patched
+/// around. The fork is sent the builder's tools, word for word, so the provider's cache of the conversation still fits,
+/// and can run none of them: Lamp's extension refuses every call before it runs (`guardCommand`, lamp-tools.ts).
+/// Claude Code's and Codex's forks are still to be proven the same.
 enum SideAnswer {
     static let switchKey = "experimentSideAnswer"
     static var isOn: Bool { isOn(in: .standard) }
@@ -21,6 +23,9 @@ enum SideAnswer {
     /// pi has no setting for this, and says what was generated only as the message ends, so this keeps a long answer
     /// from being shown; it limits nothing billed.
     static let tokenLimit = 2048
+    /// The extension registers this only after the handler that refuses every tool call. pi merely warns when an
+    /// extension won't load, which would leave its own tools live, so the fork is told nothing until this is listed.
+    static let guardCommand = "lamp-side-answer-guard"
 
     /// What built the turn when its run started, so a change in Settings meanwhile doesn't change what answers.
     struct Route: Equatable {
@@ -31,16 +36,24 @@ enum SideAnswer {
         var model: String
         var system: String
         var session: String
+        var tools: String
+        var extensionFile: String
+        /// The tools' definitions as the builder was given them, which Lamp rewrites as devices come and go.
+        var definitions: Data
+        /// Where the builder works: the fork doesn't, but it's in the system prompt the cache is keyed on.
+        var folder: String
     }
 
     /// The running turn's route, read from the engine's own launch. Nil for a model on this Mac, whose server can't
     /// take a second request without slowing the builder.
-    static func route(env: [String: String], engine: Engine, local: Bool, keyProvider: String) -> Route? {
+    static func route(env: [String: String], engine: Engine, local: Bool, keyProvider: String, definitions: Data?, folder: String) -> Route? {
         guard engine == .pi, !local, let executable = env["LAMP_PI"], let configFolder = env["PI_CODING_AGENT_DIR"],
               let provider = env["LAMP_PROVIDER"], let model = env["LAMP_MODEL"], let system = env["LAMP_SYSTEM"],
-              let session = env["LAMP_SESSION"] else { return nil }
+              let session = env["LAMP_SESSION"], let tools = env["LAMP_TOOL_NAMES"], let extensionFile = env["LAMP_TOOLS"]?.nilIfEmpty,
+              let definitions else { return nil }
         return Route(executable: executable, configFolder: configFolder, provider: provider, keyProvider: keyProvider,
-                     model: model, system: system, session: session)
+                     model: model, system: system, session: session, tools: tools, extensionFile: extensionFile,
+                     definitions: definitions, folder: folder)
     }
 
     /// A plain typed message can be answered; one that answers a card, carries files or a pointed-at part, is sent
@@ -51,21 +64,18 @@ enum SideAnswer {
             && !message.byLamp && !message.afterReload
     }
 
-    /// What the fork is asked. Its role comes after the conversation it inherited, with the facts it may promise from,
-    /// and the person's words apart from both.
-    static func prompt(for text: String, ahead: Int, at time: Date) -> String {
-        let place = ahead == 0
-            ? "This message waits for the work under way to end, and is next after it."
-            : "This message waits for the work under way to end, and \(ahead) earlier \(ahead == 1 ? "message waits" : "messages wait") ahead of it, so say it's been added to what's next."
-        return """
-        You are answering briefly while work in this conversation continues. Use the same voice and language as the \
-        conversation. Your only job is to answer or acknowledge this message. You have no tools and cannot inspect or \
-        change the app. Answer from what is already known; say when you cannot tell. Do not start work, delegate, ask a \
-        follow-up, or claim something has been done. In one or two sentences, at most 80 words, answer the question or \
-        acknowledge the requested change. Only describe timing using the queue facts supplied by Lamp. Do not make \
-        additional promises.
-
-        Queue facts from Lamp, as of \(ISO8601DateFormatter().string(from: time)): \(place) Earlier requests already taken are being worked on, not waiting.
+    /// What the fork is asked. Its role comes after the conversation it inherited, and the person's words apart from it.
+    /// It says what a person would say back and no more: a word about the line, or about what can't be known yet, reads
+    /// as hedging, and the agent answers properly in its own time.
+    static func prompt(for text: String) -> String {
+        """
+        You are replying in one breath while work in this conversation continues, as a person on the team would. Use \
+        the same voice and language as the conversation. If the message asks for a change or for work, say only \
+        something like "Sure, I'll make that change." or "Sure, I'll handle that." and nothing more. Only if it asks a \
+        real question, answer it directly in a sentence or two from what you already know, or say in a few words that \
+        you're not sure. Never mention a queue, waiting, order or timing, or what can't be known yet. Don't claim \
+        anything is done, don't ask anything back, and don't call a tool: tools are unavailable for execution here, so \
+        any call is refused.
 
         The person's message, word for word:
 
@@ -86,11 +96,11 @@ enum SideAnswer {
         """
     }
 
-    /// Reads pi's `--mode json` output for the one thing a run may come to: a whole, finished assistant message. A
-    /// failed attempt isn't the end of a run, since pi tries again by itself; a tool call is, though there are none to
-    /// call: it means the run isn't what Lamp started.
+    /// Reads pi's `--mode rpc` output for the one thing a run may come to: a whole, finished assistant message. A
+    /// failed attempt isn't the end of a run, since pi tries again by itself; a tool call is. The call ends only once pi
+    /// says how it came out, so a refusal is told from a tool that ran, which would mean the guard isn't what Lamp started.
     struct Reader {
-        enum Verdict: Equatable { case going, answered(String), failed(String) }
+        enum Verdict: Equatable { case going, guarded, answered(String), failed(String) }
 
         var input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0.0
 
@@ -98,8 +108,20 @@ enum SideAnswer {
             guard let data = line.data(using: .utf8),
                   let event = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return .going }
             switch event["type"] as? String {
-            case "tool_execution_start":
-                return .failed("called a tool")
+            case "response":
+                guard event["command"] as? String == "get_commands" else {
+                    return event["success"] as? Bool == false ? .failed("prompt refused") : .going
+                }
+                let commands = (event["data"] as? [String: Any])?["commands"] as? [[String: Any]] ?? []
+                return commands.contains { $0["name"] as? String == SideAnswer.guardCommand && $0["source"] as? String == "extension" }
+                    ? .guarded : .failed("no guard")
+            case "tool_execution_end":
+                let result = event["result"] as? [String: Any]
+                let words = (result?["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
+                let name = event["toolName"] as? String ?? "tool"
+                return .failed(event["isError"] as? Bool == true && words == SideAnswer.refusal ? "blocked \(name)" : "\(name) ran")
+            case "agent_settled":
+                return .failed("ended without an answer")
             case "auto_retry_end":
                 return event["success"] as? Bool == false ? .failed("retries ran out") : .going
             case "message_end":
@@ -111,7 +133,7 @@ enum SideAnswer {
                 cacheWrite += usage?["cacheWrite"] as? Int ?? 0
                 cost += (usage?["cost"] as? [String: Any])?["total"] as? Double ?? 0
                 let blocks = message["content"] as? [[String: Any]] ?? []
-                if blocks.contains(where: { $0["type"] as? String == "toolCall" }) { return .failed("called a tool") }
+                if blocks.contains(where: { $0["type"] as? String == "toolCall" }) { return .going }
                 switch message["stopReason"] as? String {
                 case "stop":
                     let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }
@@ -151,22 +173,25 @@ enum SideAnswer {
         }
 
         /// Runs in a private empty folder outside the app, with an environment of its own: no token, none of Lamp's
-        /// agent routes, none of the builder's flags beyond its system prompt, and a key ticket that's this run's.
+        /// agent routes, and a key ticket that's this run's. Nothing is asked of the model until pi lists the guard.
         func answer(_ prompt: String, from conversation: URL, route: Route) async -> Outcome {
             let folder = SideAnswer.folder.appendingPathComponent(UUID().uuidString)
             let sessions = folder.appendingPathComponent("sessions")
             try? FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true,
                                                      attributes: [.posixPermissions: 0o700])
             defer { try? FileManager.default.removeItem(at: folder) }
+            let definitions = folder.appendingPathComponent("tools.json")
+            guard (try? route.definitions.write(to: definitions)) != nil else { return Outcome(failure: "couldn't start") }
             let keys = Agent.keyEnvironment(for: route.keyProvider)
             defer { if let ticket = keys["LAMP_KEY_TICKET"] { KeyTicket.revoke(ticket) } }
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: route.executable)
-            process.arguments = SideAnswer.arguments(prompt: prompt, conversation: conversation, sessions: sessions, route: route)
+            process.arguments = SideAnswer.arguments(conversation: conversation, sessions: sessions, route: route)
             process.currentDirectoryURL = folder
-            process.environment = SideAnswer.environment(route: route, keys: keys)
-            process.standardInput = FileHandle.nullDevice
+            process.environment = SideAnswer.environment(route: route, keys: keys, definitions: definitions)
+            let input = Pipe()
+            process.standardInput = input
             process.standardError = FileHandle.nullDevice
             let pipe = Pipe()
             process.standardOutput = pipe
@@ -184,6 +209,11 @@ enum SideAnswer {
                 return Outcome(failure: "couldn't start")
             }
             self.process = process
+            func say(_ command: [String: Any]) {
+                guard let line = try? JSONSerialization.data(withJSONObject: command) else { return }
+                try? input.fileHandleForWriting.write(contentsOf: line + Data([10]))
+            }
+            say(["id": "guard", "type": "get_commands"])
             let deadline = Task { [weak self] in
                 try? await Task.sleep(for: SideAnswer.timeLimit)
                 guard !Task.isCancelled else { return }
@@ -195,6 +225,7 @@ enum SideAnswer {
             reading: for await line in lines {
                 switch outcome.usage.read(line) {
                 case .going: break
+                case .guarded: say(["id": "ask", "type": "prompt", "message": prompt])
                 case .answered(let reply): outcome.reply = reply; break reading
                 case .failed(let reason): outcome.failure = reason; break reading
                 }
@@ -202,6 +233,7 @@ enum SideAnswer {
             // The answer is what was asked for: whatever pi would do after it (a compaction, a retry) isn't.
             if process.isRunning { Subprocess.terminateTree(process) }
             for await _ in exit {}
+            try? input.fileHandleForWriting.close()
             pipe.fileHandleForReading.readabilityHandler = nil
             self.process = nil
             if cancelled {
@@ -218,19 +250,25 @@ enum SideAnswer {
     static var folder: URL { Edition.supportFolder.appendingPathComponent("side-answers") }
     static func clearAbandoned() { try? FileManager.default.removeItem(at: folder) }
 
-    /// `--no-tools` is what takes the tools away, whatever the prompt says, and with no `-e` no extension of Lamp's
-    /// loads, so the routes that steer the turn and reach the app aren't there either.
-    static func arguments(prompt: String, conversation: URL, sessions: URL, route: Route) -> [String] {
-        ["--mode", "json", "--provider", route.provider, "--model", route.model, "--no-tools", "--no-extensions",
-         "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve", "--session-dir", sessions.path,
-         "--fork", conversation.path, "--session-id", "side-" + UUID().uuidString.lowercased(),
-         "--append-system-prompt", route.system, "--", prompt]
+    /// What the extension's guard answers every tool call with, and how a refusal is known in pi's output.
+    static let refusal = "Tools can't run while answering beside the work."
+
+    /// The builder's own tools and extension, in rpc mode so the guard can be seen before the prompt is sent. The fork
+    /// keeps a session id of its own; the extension sends the builder's to the provider.
+    static func arguments(conversation: URL, sessions: URL, route: Route) -> [String] {
+        ["--mode", "rpc", "--provider", route.provider, "--model", route.model, "--tools", route.tools, "--no-extensions",
+         "-e", route.extensionFile, "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve",
+         "--session-dir", sessions.path, "--fork", conversation.path, "--session-id", "side-" + UUID().uuidString.lowercased(),
+         "--append-system-prompt", route.system]
     }
 
     /// A list of what's allowed, not Lamp's environment with parts taken out.
-    static func environment(route: Route, keys: [String: String]) -> [String: String] {
+    /// With none of the routes or the token the tools' own code would need, a tool has nothing to reach even past the guard.
+    static func environment(route: Route, keys: [String: String], definitions: URL) -> [String: String] {
         var env = keys.merging(["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "PI_CODING_AGENT_DIR": route.configFolder,
-                                "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0"]) { $1 }
+                                "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "LAMP_TOOLS_JSON": definitions.path,
+                                "LAMP_SIDE_GUARD": guardCommand, "LAMP_SIDE_REFUSAL": refusal,
+                                "LAMP_SIDE_FOLDER": route.folder, "LAMP_SIDE_SESSION": route.session]) { $1 }
         let own = ProcessInfo.processInfo.environment
         var names = ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG"]
         if let provider = Provider.keyProvider(route.keyProvider) { names.append(provider.envVar) }

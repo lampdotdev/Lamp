@@ -144,7 +144,9 @@ the desk forward (⌘[).
 
 An answer made beside a running turn ("Messages sent while the agent works" in the engines guide) is part of the message
 it answers, in the state and on the screen (`SidebarQueued.sideReply`, `SidebarLine.sideReply`, `ChatLook.SideLine`): under
-it while it waits and when it goes into the chat, "Answering…" until then, "Still queued" when none comes.
+it while it waits and when it goes into the chat, "Answering…" until then, "Still queued" when none comes. Once answered,
+the message reads as any sent message, with no caption, and Unsend and Send Now come up beside it under the pointer
+(`ChatLook.QueuedRow`'s `answered`).
 
 What only Lamp could hold is handed to it, as Share hands over the file it makes: a setup card's header is in the chat,
 with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a hand-drawn icon, are in Lamp's sheet
