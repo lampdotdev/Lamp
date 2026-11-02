@@ -190,7 +190,7 @@ enum StarterRepos {
         let fm = FileManager.default
         let site = root.appendingPathComponent("page-\(starter.folder.lastPathComponent)")
         try? fm.removeItem(at: site)
-        let html = try Publish.copyPage(of: project, into: site)
+        let html = try Publish.copyPage(of: project, into: site, scope: String(repo.split(separator: "/").last ?? ""))
         let index = site.appendingPathComponent("index.html")
         let credits = Credits.load(project)
         let ideas = starter.tweaks.map { RemixIdea(text: $0.title, symbol: $0.symbol ?? "sparkles") }

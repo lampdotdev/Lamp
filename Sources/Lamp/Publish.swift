@@ -84,7 +84,9 @@ enum Publish {
     /// hidden file or a link), a game's told it's in no one device (`GamePage.anyBrowser`), with what lamp-game.js needs
     /// beside it (lamp-device.js, lamp-build.js), and Lamp's license. Returns its index.html as it is, for the credit bar
     /// (`withCreditBar`) to go over.
-    static func copyPage(of project: LampProject, into site: URL) throws -> String {
+    /// `scope` is the repository's name, which what the page saves is kept under (lamp.js's `LAMP_PAGE_SCOPE`): every page
+    /// of an account shares one origin, on github.io or the account's own domain.
+    static func copyPage(of project: LampProject, into site: URL, scope: String) throws -> String {
         let fm = FileManager.default
         try fm.createDirectory(at: site, withIntermediateDirectories: true)
         let web = project.dir.appendingPathComponent(GameKit.webFolder)
@@ -97,6 +99,10 @@ enum Publish {
             let target = site.appendingPathComponent(Sharing.relativePath(of: file, in: web))
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
+        }
+        let runtime = site.appendingPathComponent("lamp.js")
+        if let text = try? String(contentsOf: runtime, encoding: .utf8) {
+            try Data(text.replacingOccurrences(of: "/*LAMP_PAGE_SCOPE*/null", with: GamePage.json([scope]).dropFirst().dropLast()).utf8).write(to: runtime)
         }
         let anyBrowser = GamePage.anyBrowser
         try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }

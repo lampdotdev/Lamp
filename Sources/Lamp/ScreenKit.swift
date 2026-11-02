@@ -428,8 +428,10 @@ extension Agent.Rules {
     """
 
     /// Where a screen is shown, for the request's device line.
+    /// What a TV's browser asks is said only where one shows it: a web app on the Mac alone is a Mac app.
     static func screenPlaces(_ project: LampProject) -> String {
-        "It's shown on \(GameKit.spoken(project.openPlaces).replacingOccurrences(of: "your ", with: "the person's ")), and Try On points at the "
-            + "\(GameKit.placeName(project.destination)) now. Keep it within what a TV's browser draws smoothly: plain HTML and CSS, few animations."
+        let tv = project.platform == .screen || project.openPlaces.contains { [.tv, .androidTV, .device].contains($0) }
+        return "It's shown on \(GameKit.spoken(project.openPlaces).replacingOccurrences(of: "your ", with: "the person's ")), and Try On points at the "
+            + "\(GameKit.placeName(project.destination)) now." + (tv ? " Keep it within what a TV's browser draws smoothly: plain HTML and CSS, few animations." : "")
     }
 }

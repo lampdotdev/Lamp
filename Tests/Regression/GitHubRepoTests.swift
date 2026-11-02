@@ -25,7 +25,10 @@ final class GitHubRepoTests: XCTestCase {
         let game = LampProject(id: "hopper", name: "Hopper", exe: "Hopper", dir: dir, platform: .game)
         XCTAssertTrue(Publish.hasPage(game))
         let site = root.appendingPathComponent("page")
-        let html = try Publish.copyPage(of: game, into: site)
+        try "var scope = /*LAMP_PAGE_SCOPE*/null;".write(to: web.appendingPathComponent("lamp.js"), atomically: true, encoding: .utf8)
+        let html = try Publish.copyPage(of: game, into: site, scope: "hopper")
+        // What the page saves is kept under its repository's name, wherever the account's pages are served.
+        XCTAssertEqual(try String(contentsOf: site.appendingPathComponent("lamp.js"), encoding: .utf8), "var scope = \"hopper\";")
         XCTAssertTrue(html.contains("game.js"))
         for path in [GamePage.deviceFile, GamePage.buildFile, Publish.runtimeLicense, ".nojekyll"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: site.appendingPathComponent(path).path), path)
