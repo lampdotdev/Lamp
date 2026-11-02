@@ -265,8 +265,8 @@ struct DeskDevices: View {
         }
         .opacity(state == .away ? 0.5 : 1)
         .contextMenu {
-            if Self.offersSetUp(device, team: team) {
-                Button("Set Up…") { _ = DeviceNextStep.takeFurther(device, store: store) }
+            if Self.offersSetUp(device, team: team) || state == .setUp {
+                Button("Set Up…") { act(device, state: .setUp) }
             }
             if Self.keptByLamp(device) {
                 Button("Reconnect…") { reconnect(device) }
@@ -324,7 +324,9 @@ struct DeskDevices: View {
         case .here: break
         case .ready: wishFor(Self.words(for: device))
         case .found: wishFor(Self.label(device))
-        case .setUp: _ = DeviceNextStep.takeFurther(device, store: store)
+        // A step Lamp can't take from here (an Apple team to choose, for a phone) is taken in Settings → Building, where
+        // the team is chosen.
+        case .setUp: if !DeviceNextStep.takeFurther(device, store: store) { SettingsMenu.show(tab: "building") }
         case .away: break
         }
     }

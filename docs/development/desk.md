@@ -107,7 +107,7 @@ what was only found that Lamp makes apps for or controls, each kind in the order
 server, an appliance), then every other host, a click setting one up, opened with a look over the whole network
 (`refreshDevices(everything:)`); then Add a Device (`AddDeviceSheet`). Settings has no list of devices: this is the one.
 A green dot is ready, and a click puts "for my <device>" in the bar; "Set up" and an amber dot is a step to take, and a
-click takes it where Lamp can from here (`DeviceNextStep.takeFurther`; its tip says the step otherwise). A right-click
+click takes it (`DeviceNextStep.takeFurther`, Settings → Building where Lamp can't from here: a phone's Apple team). A right-click
 has Set Up… (`DeskDevices.offersSetUp`), and Reconnect… and Forget… for a device Lamp set up itself. A device's name is short and plain (`DeskDevices.label`: a found one by its model,
 never an address or a serial); what else is known is in its tip a moment after the pointer comes onto it (`DeviceTip`),
 never its address. macOS refusing the network is `LocalNetworkRefused` under the list.
