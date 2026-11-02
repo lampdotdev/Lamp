@@ -445,6 +445,82 @@ final class GameRetiredPartTests: XCTestCase {
         XCTAssertTrue(whole)
     }
 
+    func testWhatADisposeListenerHandsToAKeptPoolIsSpared() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            live.keep('pool', () => ({ items: window.pool = [] }));
+            const version = \(version);
+            for (const name of ['a', 'b']) live.keep(name, () => {
+                const g = new THREE.Group(), mesh = own(); g.add(mesh); scene.add(g);
+                if (version === 1) {
+                    window[name] = mesh;
+                    mesh.geometry.addEventListener('dispose', () => { window.disposedGeometries = (window.disposedGeometries || []).concat(name); });
+                    if (name === 'a') mesh.geometry.addEventListener('dispose', () => { window.pool.push(window.b); });
+                }
+                return g;
+            }, { inputs: [scene], from: ['v\(version)'] });
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        files.text["v2"] = "2"
+        try await change("game.js")
+        try await pastEmptying()
+        let disposed = try await value("(window.disposedGeometries || []).join()") as? String
+        XCTAssertEqual(disposed, "a", "b's mesh went into a kept pool as a was disposed of, before b went")
+    }
+
+    func testAnObjectPutInAKeptPoolDuringARunStaysInItsScene() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            live.keep('pool', () => ({ items: window.pool = [] }));
+            const version = \(version);
+            const part = name => live.keep(name, () => {
+                const g = new THREE.Group(), mesh = own(); g.add(mesh); scene.add(g);
+                if (version === 1) { window[name] = g; window[name + 'Geometry'] = mesh.geometry; }
+                return g;
+            }, { inputs: [scene], from: ['v\(version)'] });
+            part('a');
+            await new Promise(next => setTimeout(next, 0));
+            if (version === 2) window.pool.push(window.b);
+            part('b');
+            await new Promise(next => setTimeout(next, 0));
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        files.text["v2"] = "2"
+        try await change("game.js")
+        try await pastEmptying()
+        let stays = try await yes("b.parent === scene && b.children.length === 1 && window.cached.has(bGeometry)")
+        XCTAssertTrue(stays, "what's kept by name stays in its scene, whenever it came to be kept")
+    }
+
+    func testAThrowingRemovalListenerLeavesTheRestToGo() async throws {
+        func parts(_ version: Int) -> String {
+            guard version == 1 else { return "" }
+            return """
+            const group = () => { const g = new THREE.Group(); g.add(own()); scene.add(g); return g; };
+            live.keep('two', () => {
+                const first = group(), second = group();
+                first.addEventListener('removed', () => { throw new Error('from a listener'); });
+                window.parts = { first, second, firstGeometry: first.children[0].geometry, secondGeometry: second.children[0].geometry };
+                return { first, second };
+            });
+            live.keep('other', () => { const g = group(); window.parts.other = g; window.parts.otherGeometry = g.children[0].geometry; return g; });
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        try await change("game.js")
+        try await pastEmptying()
+        let gone = try await yes("""
+            !parts.first.parent && !parts.second.parent && !parts.other.parent
+                && !window.cached.has(parts.firstGeometry) && !window.cached.has(parts.secondGeometry) && !window.cached.has(parts.otherGeometry)
+            """)
+        XCTAssertTrue(gone, "one listener's throw costs only itself")
+    }
+
     func testARunThatFailsOpensThePageAgainWithItsPartsWhole() async throws {
         try await open(Self.game(Self.goes(1)))
         files.text["game.js"] = Self.game(Self.goes(2), top: "if (window.opens === 1) throw new Error('no');")
