@@ -140,8 +140,9 @@ on the desk, and Lamp makes it for there:
   you through each device's developer mode (Samsung's and LG's, Roku's, Android's debugging over a cable or Wi‑Fi,
   the Xbox's Dev Mode and Device Portal), with Lamp checking each step. **Try On** in a wish's toolbar picks where it
   opens, and **Play** puts it there.
-- **Screens and web apps** (a family dashboard, a photo frame, a cozy room) are one page that fills whatever it's on:
-  the Mac, an iPad, a TV or a frame. A wish on several screens keeps one set of data for all of them, and Lamp keeps a
+- **Web apps** are what an app is made as unless it needs something only a Mac or iPhone app has (the menu bar, a
+  widget, Siri, Health): one page that fills whatever it's on, the Mac, an iPad, a TV or a frame (a family
+  dashboard, a photo frame, a cozy room). A wish on several screens keeps one set of data for all of them, and Lamp keeps a
   copy on the Mac, so a screen that opens on its own still gets it.
 - **Games** are three.js or Phaser (or TypeScript), with free 3D models, art, sounds and music to use. Phones on the
   same Wi‑Fi join as controllers by scanning a code, on the Mac, an iPhone or iPad, a TV or the Xbox.

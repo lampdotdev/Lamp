@@ -228,10 +228,12 @@ extension Agent {
     /// The rules for a screen: the TV app's rules for the page (it's the same page), with where it's shown in the
     /// request's device line (`Rules.screenPlaces`), since a place may be given at any time.
     static func screenPrompt(for project: LampProject) -> String {
-        let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.screenDesign(project.openPlaces), Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
+        let webApp = project.platform == .webApp
+        let page = webApp ? Rules.webAppPage(project.openPlaces) : [Rules.tvFrameworks, Rules.screenDesign(project.openPlaces), Rules.tvKeys]
+        let rules = [Rules.screenEdit, Rules.ask, Rules.shell] + page + [Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.screenLogs, Rules.screenTry, Rules.appMd, Rules.audience,
-                     Skills.index(Skills.offered(.screen)), Rules.begin, Rules.finish]
-        return (Rules.screenHeader + "\n\nRules:\n" + rules.joined())
+                     Skills.index(Skills.offered(project.platform)), Rules.begin, Rules.finish]
+        return ((webApp ? Rules.webAppHeader : Rules.screenHeader) + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "puts the change into its window on this Mac")
@@ -239,11 +241,13 @@ extension Agent {
 
     /// The rules for a screen that's one of a wish's apps, in a folder of its own: the screen's own, for the files
     /// there, without those about the wish as a whole.
-    static func screenPrompt(part folder: String, alone: Bool = false) -> String {
-        let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.screenDesign(nil), Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
+    static func screenPrompt(part folder: String, alone: Bool = false, webApp: Bool = false) -> String {
+        let page = webApp ? Rules.webAppPage(nil) : [Rules.tvFrameworks, Rules.screenDesign(nil), Rules.tvKeys]
+        let rules = [Rules.screenEdit] + page + [Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.screenLogs, Rules.screenTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
-                     Skills.index(Skills.offered(.screen))]
-        return (Rules.partHeader("a web app, a page in Web/ shown full screen, at home on the Mac and shown on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
+                     Skills.index(Skills.offered(webApp ? .webApp : .screen))]
+        let what = webApp ? "a web app, a page in Web/ filling its window or screen" : "a web app, a page in Web/ shown full screen"
+        return (Rules.partHeader(what + ", at home on the Mac and shown on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
@@ -260,6 +264,45 @@ extension Agent.Rules {
     it in its window on this Mac, the one the person sees, and in a preview on this Mac at any other shape. The \
     request's device line says where it's shown: never say it's on a device it isn't on. Read APP.md first for context.
     """
+
+    /// A web app's header: a page filling its window or screen, an app on the Mac first, never "full screen" as a
+    /// screen's is.
+    static let webAppHeader = """
+    You are Lamp's builder agent. The current directory is a web app: a page (HTML, CSS and JavaScript in Web/), the \
+    same page wherever it's shown, filling the window or screen it's on. Its home is the person's Mac, where it's an \
+    app in its own window; it's shown on any other device that takes a page (make_app_for's table of devices) once \
+    it's put there. You try it in its window on this Mac, the one the person sees, and in a preview on this Mac at any \
+    other shape. The request's device line says where it's shown: never say it's on a device it isn't on. Read APP.md \
+    first for context.
+    """
+
+    /// What a web app's page is written with and how it's laid out, for the places it's shown (`places`, or nil to read
+    /// them off the request's device line). A web app is what an app made with web is, on the Mac first, so it's an app
+    /// of the device it's on, not a screen across a room: what a TV asks (old browsers, the remote, the distance) is said
+    /// for when it's on one.
+    static func webAppPage(_ places: [Destination]?) -> [String] {
+        let tv = places.map { $0.contains { [.tv, .androidTV, .device].contains($0) } }
+        return [webAppFrameworks, webAppDesign(places)] + (tv == false ? [] : [tvKeys])
+    }
+
+    static let webAppFrameworks = """
+    - Write plain HTML, CSS and JavaScript in Web/, with no build step and no npm: what's in Web/ is what runs. Keep \
+    libraries, fonts and pictures in Web/ beside the page rather than loading them from the internet, so the app \
+    opens offline. The app can fetch from https APIs that allow it (no key you don't have); its AI comes from Lamp \
+    (below). When it's on a Samsung or LG TV (the request's device line says), the oldest of their browsers are about \
+    as old as Chrome 79: then no optional chaining (?.) or ?? or other syntax newer than 2019, and no top-level await.
+    """
+
+    static func webAppDesign(_ places: [Destination]?) -> String { """
+    - Make it an app of the device it's on, laid out as a responsive web page that fills its window or screen, never \
+    as a fixed canvas scaled like a picture: CSS grid and flexbox that share out the space, and media queries that \
+    change the layout with its shape (side by side when wide, stacked when narrow, fewer columns on a phone). On the \
+    Mac it's an app in a window of any size: a Mac app's type and density, controls the keyboard reaches, nothing that \
+    needs a touch or hover alone. On an iPhone, iPad or Android device it's touched: targets large enough to tap, and \
+    room for the notch and the home bar (`env(safe-area-inset-*)`). On a TV it's seen from across a room and driven \
+    with a remote's arrows and OK (the tv-design skill). Before you finish, look at it in the places it's shown, and \
+    only those: \(shapesToLook(places)). When it's put somewhere new, look at it in that place's shapes too.
+    """ }
 
     static var screenEdit: String { """
     - Make the change the user asks for by editing the page's files in Web/ (index.html, style.css, app.js and any \
@@ -360,8 +403,10 @@ extension Agent.Rules {
     """
 
     /// Where a screen is shown, for the request's device line.
+    /// What a TV's browser asks is said only where one shows it: a web app on the Mac alone is a Mac app.
     static func screenPlaces(_ project: LampProject) -> String {
-        "It's shown on \(GameKit.spoken(project.openPlaces).replacingOccurrences(of: "your ", with: "the person's ")), and Try On points at the "
-            + "\(GameKit.placeName(project.destination)) now. Keep it within what a TV's browser draws smoothly: plain HTML and CSS, few animations."
+        let tv = project.platform == .screen || project.openPlaces.contains { [.tv, .androidTV, .device].contains($0) }
+        return "It's shown on \(GameKit.spoken(project.openPlaces).replacingOccurrences(of: "your ", with: "the person's ")), and Try On points at the "
+            + "\(GameKit.placeName(project.destination)) now." + (tv ? " Keep it within what a TV's browser draws smoothly: plain HTML and CSS, few animations." : "")
     }
 }

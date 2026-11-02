@@ -28,6 +28,8 @@ final class WebAppPreviewPlacesTests: XCTestCase {
     func testTheShapesLookedAtAreThoseOfItsPlaces() {
         let mac = Agent.screenPrompt(for: webApp([.mac]))
         XCTAssertTrue(mac.contains("on the Mac " + Agent.Rules.macLook))
+        XCTAssertFalse(Agent.Rules.screenPlaces(webApp([.mac])).contains("TV"), "a Mac web app's device note asks nothing of a TV")
+        XCTAssertTrue(Agent.Rules.screenPlaces(webApp([.mac, .tv])).contains("a TV's browser"))
         for other in ["1920x1080", "820x1180", "390x844", "1280x800"] { XCTAssertFalse(mac.contains(other), other) }
 
         let tv = Agent.screenPrompt(for: webApp([.mac, .tv]))

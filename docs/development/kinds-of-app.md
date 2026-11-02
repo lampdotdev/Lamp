@@ -80,8 +80,9 @@ What each device can run is one table of facts, `Places` (`Sources/Lamp/Places/P
 TVs), then a row per device integration that declares apps, read from its JSON's `supports` ("web", "native") or, when
 it says nothing, from what its `app` declares. Each row says whether a **web** build (a page in a host of Lamp's, and which: `PageHost`) and a
 **native** build (the device's own code: `apple`, `android`, `android-tv` or the integration's) can exist there, and how
-each gets onto the device, or why it can't. It holds facts only, never a preference: which make and which devices an
-app gets is the agent's choice. `IntegrationCheck.problems` refuses a `supports` that names a make the integration has
+each gets onto the device, or why it can't. It holds facts only, never a preference, beyond the one make each row
+gives when the person names none (`Place.defaultMake`: web wherever the row has a host for a page, native where it
+hasn't): which make and which devices an app gets is the agent's choice, by the web-or-native skill. `IntegrationCheck.problems` refuses a `supports` that names a make the integration has
 no files for. Its reason for a make it can't run is its own `runs` (what the device runs, in a sentence the person
 would follow: a Roku's says BrightScript channels and the remote, no pages, no 3D), so a game or a screen given a Roku as
 a place is refused with that (`Places.refusal`, in `AppKinds.target`), and the agent's rules (`deviceRules`) have it say so in its own
