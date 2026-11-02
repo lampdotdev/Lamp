@@ -59,7 +59,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,use_icon_picture,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -902,7 +902,9 @@ enum Agent {
         ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))), `tint` (hex main \
         color of the object) and, for a game, `game: true` (its icon is painted rich and in 3D instead of glass, and \
         `subject` is its hero). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
-        they ask for a different icon or the app is now about something else. Never create icon files yourself.
+        they ask for a different icon or the app is now about something else. Never create icon files yourself. When the person gives \
+        a picture to be the icon (an attachment, an .icns included), call `use_icon_picture` with its path: Lamp uses it as it is and \
+        marks icon.json `picture: true`. Leave that design as it is; to give them a newly designed icon instead, remove `picture`.
         """
 
         static let about = """

@@ -14,6 +14,12 @@ struct IconSpec: Codable, Equatable {
     var tint: String            // hex main color of the object; colors the symbol on light backgrounds
     /// A game's icon is a rich painting filling the tile, not glass (`Icons.gamePrompt`).
     var game = false
+    /// The artwork is a finished icon the person gave (`use_icon_picture`), filling the tile as it is. Lamp never
+    /// paints artwork for such a design.
+    var picture = false
+
+    /// Whether the artwork is the whole tile, lit already, rather than an object set in glass on the background.
+    var fillsTile: Bool { game || picture }
 
     init(subject: String, symbol: String, background: String, tint: String, game: Bool = false) {
         self.subject = subject
@@ -23,7 +29,7 @@ struct IconSpec: Codable, Equatable {
         self.game = game
     }
 
-    private enum Keys: String, CodingKey { case subject, symbol, background, tint, game, art_prompt, foreground }
+    private enum Keys: String, CodingKey { case subject, symbol, background, tint, game, picture, art_prompt, foreground }
 
     /// Also reads the older format (`art_prompt`, a two-color `background`, `foreground`).
     init(from decoder: Decoder) throws {
@@ -40,6 +46,7 @@ struct IconSpec: Codable, Equatable {
             background = Icons.nearestBackground(to: colors.last ?? "").name
         }
         game = try c.decodeIfPresent(Bool.self, forKey: .game) ?? false
+        picture = try c.decodeIfPresent(Bool.self, forKey: .picture) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -49,6 +56,7 @@ struct IconSpec: Codable, Equatable {
         try c.encode(background, forKey: .background)
         try c.encode(tint, forKey: .tint)
         if game { try c.encode(game, forKey: .game) }
+        if picture { try c.encode(picture, forKey: .picture) }
     }
 }
 
@@ -339,7 +347,7 @@ enum Icons {
         // The key artwork has always had, so a picture someone chose in Image Playground is still found; a game's is
         // apart, since a painting filling the tile and a design for glass don't stand in for each other.
         let key = "v2|\(spec.subject.trimmed)|\(background(named: spec.background).name)|\(spec.tint.trimmed.lowercased())"
-            + (spec.game ? "|game" : "")
+            + (spec.game ? "|game" : "") + (spec.picture ? "|picture" : "")
         return SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16).description
     }
 
@@ -437,8 +445,8 @@ enum Icons {
     /// canvases, sized to Apple's grid so every icon has the same breathing room. Artwork is split into a layer for
     /// each of its colors (`pieces`), so each part is a piece of glass of its own, as in Lamp's icon.
     static func foregroundLayers(_ spec: IconSpec, art: NSImage?) -> [NSBitmapImageRep] {
-        // A game's painting is the whole tile, cropped by its edges.
-        if let art, spec.game {
+        // A game's painting, or the person's own icon, is the whole tile, cropped by its edges.
+        if let art, spec.fillsTile {
             return [canvas(1024) { rect in
                 let scale = max(1024 / max(1, art.size.width), 1024 / max(1, art.size.height))
                 let drawn = NSSize(width: art.size.width * scale, height: art.size.height * scale)
@@ -532,11 +540,11 @@ enum Icons {
             NSGradient(colors: [NSColor.white.withAlphaComponent(bg.isLight ? 0.5 : 0.22), .clear])?
                 .draw(in: NSRect(x: 0, y: rect.midY, width: rect.width, height: rect.height / 2), angle: -90)
 
-            // A game's painting is lit already.
-            for layer in layers where spec.game {
+            // A game's painting, or the person's own icon, is lit already.
+            for layer in layers where spec.fillsTile {
                 layer.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
             }
-            for (index, layer) in layers.enumerated() where !spec.game {
+            for (index, layer) in layers.enumerated() where !spec.fillsTile {
                 NSGraphicsContext.saveGraphicsState()
                 let shadow = NSShadow()
                 shadow.shadowColor = NSColor.black.withAlphaComponent(bg.isLight || index > 0 ? 0.18 : 0.3)
@@ -697,8 +705,9 @@ enum Icons {
             let name = index == 0 ? "foreground" : "foreground-\(index)"
             try layer.representation(using: .png, properties: [:])?
                 .write(to: url.appendingPathComponent("Assets/\(name).png"))
-            // Icon Composer lists the top group first. A game's painting has its own light and depth: no glass.
-            groups.insert(spec.game ? [
+            // Icon Composer lists the top group first. A game's painting, or the person's own icon, has its own
+            // light and depth: no glass.
+            groups.insert(spec.fillsTile ? [
                 "layers": [["image-name": "\(name).png", "name": name, "glass": false]],
                 "shadow": ["kind": "none", "opacity": 0.5],
                 "translucency": ["enabled": false, "value": 0.5],
@@ -1047,6 +1056,77 @@ enum Icons {
             throw AppAI.Failure(message: "Couldn't cut out the generated artwork.")
         }
         return NSImage(cgImage: cut, size: NSSize(width: cut.width, height: cut.height))
+    }
+
+    /// A picture the person gave as the icon's artwork, as PNG, and whether it fills the tile. A finished icon fills
+    /// it: what's solid in it is near square and nearly all of that square (a macOS icon's rounded square, cropped
+    /// out of its margins and shadow, or a square picture with nothing see-through). Anything else is an object: one
+    /// with see-through surroundings already is used as it is, cropped to what's in it, and one on its own background
+    /// is cut out, as Image Playground's are. An .icns gives its largest picture.
+    static func ownPicture(_ data: Data) throws -> (png: Data, fills: Bool) {
+        let unreadable = AppAI.Failure(message: "Lamp can't read that file as a picture. PNG, JPEG, HEIC, TIFF, PDF and .icns files work.")
+        guard let image = largestImage(in: data) else { throw unreadable }
+        // At most 1024 pixels on a side, which is all the icon draws, in a bitmap whose pixels can be counted.
+        let scale = min(1, 1024 / CGFloat(max(image.width, image.height)))
+        let w = max(1, Int(CGFloat(image.width) * scale)), h = max(1, Int(CGFloat(image.height) * scale))
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let pixels = context.data?.bindMemory(to: UInt8.self, capacity: w * h * 4) else { throw unreadable }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        // What's solid: a macOS icon's soft shadow is left out, being mostly see-through.
+        var minX = w, minY = h, maxX = -1, maxY = -1, solid = 0
+        for y in 0..<h { for x in 0..<w where pixels[(y * w + x) * 4 + 3] > 127 {
+            solid += 1
+            minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+        } }
+        guard solid > 0 else { throw AppAI.Failure(message: "That picture is empty: there's nothing in it to show.") }
+        let bw = maxX - minX + 1, bh = maxY - minY + 1
+        // The context's rows run bottom up, a CGImage's top down.
+        guard let cropped = context.makeImage()?.cropping(to: CGRect(x: minX, y: h - 1 - maxY, width: bw, height: bh)) else { throw unreadable }
+        let squareness = Double(min(bw, bh)) / Double(max(bw, bh))
+        let fullness = Double(solid) / Double(bw * bh)
+        func png(_ image: CGImage, side: Int?) throws -> Data {
+            var image = image
+            if let side, let square = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                                space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                square.interpolationQuality = .high
+                square.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+                image = square.makeImage() ?? image
+            }
+            let data = NSMutableData()
+            guard let output = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else { throw unreadable }
+            CGImageDestinationAddImage(output, image, nil)
+            guard CGImageDestinationFinalize(output) else { throw unreadable }
+            return data as Data
+        }
+        // A rounded square with Apple's corners is about 96% of its square; a circle, 79%.
+        if squareness > 0.95, fullness > 0.9 { return (try png(cropped, side: 1024), true) }
+        if solid < w * h * 98 / 100 { return (try png(cropped, side: nil), false) }
+        let cut = try cutOut(try png(image, side: nil))
+        guard let tiff = cut.tiffRepresentation, let data = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+        else { throw unreadable }
+        return (data, false)
+    }
+
+    /// The largest picture in a file: an .icns holds the icon at several sizes, a PDF or SVG is drawn at 1024 pixels.
+    private static func largestImage(in data: Data) -> CGImage? {
+        if let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0 {
+            func width(_ index: Int) -> Int {
+                (CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any])?[kCGImagePropertyPixelWidth] as? Int ?? 0
+            }
+            let index = (0..<CGImageSourceGetCount(source)).max { width($0) < width($1) } ?? 0
+            // Read no larger than the icon needs, so a huge picture is never unpacked whole.
+            let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 1024,
+                           kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary
+            if let image = CGImageSourceCreateThumbnailAtIndex(source, index, options) { return image }
+        }
+        guard let image = NSImage(data: data), image.size.width > 0, image.size.height > 0 else { return nil }
+        var rect = NSRect(origin: .zero, size: image.size.width >= image.size.height
+            ? NSSize(width: 1024, height: 1024 * image.size.height / image.size.width)
+            : NSSize(width: 1024 * image.size.width / image.size.height, height: 1024))
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 
     /// True for artwork made by `cutOut` (an object with transparent surroundings), rather than an opaque square.

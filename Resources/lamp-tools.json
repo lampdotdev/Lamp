@@ -577,6 +577,29 @@
     }
   },
   {
+    "name": "use_icon_picture",
+    "label": "Use a picture as the icon",
+    "description": "Makes a picture the person gave the wish's icon, in place of the one Lamp designed: an attachment in Attachments/, or another picture in the app's folder. Takes PNG, JPEG, HEIC, TIFF, PDF and macOS .icns files. A finished icon (a rounded square, or a square picture) is used as it is, filling the icon; anything else is taken as one object, cut out and set on the icon's background. Saved in icon.json as `picture: true`, so it goes on the app as an icon change does, and Undo takes it back. The reply shows the icon as it now looks. Only when the person asks for their picture to be the icon.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The picture, relative to the wish's folder, e.g. Attachments/Logo.icns"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
     "name": "connectors",
     "label": "Connectors",
     "description": "Lists the services an app can connect to: the person's own accounts (Notion, Linear, Airtable, GitHub, Home Assistant and more) and open data (weather, exchange rates, food products), or, with service set, how to build on one. Call it before writing code for a service the person uses that the accounts on this device can't reach, or for weather, exchange rates or food data.",
