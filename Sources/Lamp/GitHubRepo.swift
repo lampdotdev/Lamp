@@ -12,8 +12,8 @@ import LampSidebarKit
 /// makes the app on any Mac with Apple's tools and no Lamp), the shared file itself (what Lamp opens today), a README
 /// that says what it is, how to remix it with Lamp and what it's based on, an MIT license when the person wants one, and
 /// the wish's picture when they include it, which shows whatever is in the app at the time.
-/// A web game in a public repository also gets its page, to play in any browser, on the repository's `gh-pages` branch,
-/// served by GitHub Pages (`Publish`), which the README's Play in your browser links.
+/// A web game or a web app in a public repository also gets its page, to play or use in any browser, on the repository's
+/// `gh-pages` branch, served by GitHub Pages (`Publish`), which the README's Play (or Open) in your browser links.
 /// The wish's own git history stays on the Mac: it holds every version and the chat's attachments, so each Put on
 /// GitHub is one commit of the wish as it is now, on top of the last.
 enum GitHubRepo {
@@ -27,7 +27,7 @@ enum GitHubRepo {
     /// pushed, which a later share names on the chain (`Sharing.export`); nil from a Lamp before it was kept.
     /// `isPublic` is what GitHub said after the last push, and `version` the wish's own version that push carried: a
     /// remix starts from the repository only while both hold (`remixOrigin`). Nil from a Lamp before they were kept.
-    /// `page` is the game's page's address, once GitHub has put it up. `picture` is whether the person had the README
+    /// `page` is the page's address (a web game's or a web app's), once GitHub has put it up. `picture` is whether the person had the README
     /// show the wish's picture, which an update keeps to.
     struct Repo: Codable, Equatable {
         var repo: String   // "owner/name"
@@ -86,7 +86,7 @@ enum GitHubRepo {
         /// Where the README's Open in Lamp goes, in a public repository (`remixLink`): what the card names as its remix
         /// link, in place of the Share Link a private one's README uses.
         var remix: String? = nil
-        /// A web game's page, for the page branch, in a public repository.
+        /// A web game's or a web app's page, for the page branch, in a public repository.
         var page: Page? = nil
 
         /// The page as staged beside the tree: its folder, its index.html before the credit bar (which goes over it as
@@ -167,14 +167,14 @@ enum GitHubRepo {
             try picture.write(to: file)
             showcase.preview = previewPicture
         }
-        if isPublic, repo != nil { try writeButtons(in: tree); showcase.remix = true }
-        // A web game plays as a page too, staged here so it's checked and shown before anything goes up: only in a public
+        if isPublic, repo != nil { try writeButtons(in: tree, page: Publish.pageUse(project)); showcase.remix = true }
+        // A web game or a web app is a page too, staged here so it's checked and shown before anything goes up: only in a public
         // repository, since GitHub serves a private one's page only on a paid plan.
         var page: Staged.Page?
         if withPage, isPublic, let repo, Publish.hasPage(project) {
             let site = work.appendingPathComponent("page")
             let html = try Publish.copyPage(of: project, into: site)
-            try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, usesRapier: GameKit.usesRapier(project)).utf8)
+            try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, site: site).utf8)
                 .write(to: site.appendingPathComponent("README.md"))
             let leaks = ShareCheck.secrets(in: site, known: Sharing.knownSecrets(project))
             if let first = leaks.first {
@@ -185,6 +185,7 @@ enum GitHubRepo {
                                suggestions: RemixSuggestions.load(project) ?? RemixOffer.fallback,
                                about: AppDescription.description(of: project), url: Publish.pageURL(repo))
             showcase.play = page?.url
+            showcase.plays = Publish.pageUse(project) != .use
         }
         try Data(readme(for: project, credits: credits, open: open, build: build, repo: repo, showcase: showcase).utf8)
             .write(to: tree.appendingPathComponent("README.md"))
@@ -255,8 +256,9 @@ enum GitHubRepo {
         /// The folder of its reel (loop.webp, reel.mp4): GitHub plays no video a README holds, so the README shows the
         /// silent loop and links the video, which GitHub plays with its sound.
         var reel: String? = nil
-        /// Where it plays in a browser, for a game whose page is up.
+        /// Where it plays in a browser, for a game whose page is up, or where it's used, for an app's (`plays` false).
         var play: String? = nil
+        var plays = true
         /// What to ask for first, and the line that offers them ("Make Hours fit your work").
         var ideas: [String] = []
         var ideasTitle: String? = nil
@@ -267,18 +269,20 @@ enum GitHubRepo {
         var remix = false
     }
 
-    /// The README's buttons, in the repository's pictures (`Starters.picturesFolder`): Open in Lamp, and for a game
-    /// with a page, Play in your browser before it, since someone who hasn't tried a thing wants to try it first.
+    /// The README's buttons, in the repository's pictures (`Starters.picturesFolder`): Open in Lamp, and for a wish with
+    /// a page, Play (a game) or Open (an app) in your browser before it, since someone who hasn't tried a thing wants to
+    /// try it first.
     static let openButton = ".github/open-in-lamp.svg"
     /// The wish's picture, as the desk shows it, when the person chose to show it.
     static let previewPicture = ".github/preview.png"
     static let playButton = ".github/play-in-browser.svg"
+    static let useButton = ".github/open-in-browser.svg"
 
     /// The buttons drawn as lamp.dev's are, words alone: Open in Lamp in the paper's color on ink, Play in your browser
     /// in ink on the stripes' yellow. Each is edged so it holds on GitHub's dark theme as on its light one.
-    static let openWidth = 164, playWidth = 220
+    static let openWidth = 164, playWidth = 220, useWidth = 224
 
-    static func writeButtons(in tree: URL) throws {
+    static func writeButtons(in tree: URL, page: Publish.PageUse?) throws {
         func button(_ words: String, width: Int, fill: String, ink: String, edge: String) -> String {
             """
             <svg xmlns="http://www.w3.org/2000/svg" width="\(width)" height="48" viewBox="0 0 \(width) 48" role="img" aria-label="\(words)">\
@@ -288,8 +292,12 @@ enum GitHubRepo {
 
             """
         }
-        let buttons = [(openButton, button("Open in Lamp", width: openWidth, fill: "#1b1a17", ink: "#f2ecda", edge: "#f2ecda")),
-                       (playButton, button("Play in your browser", width: playWidth, fill: "#f6b81c", ink: "#1b1a17", edge: "#1b1a17"))]
+        var buttons = [(openButton, button("Open in Lamp", width: openWidth, fill: "#1b1a17", ink: "#f2ecda", edge: "#f2ecda"))]
+        switch page {
+        case .play: buttons.append((playButton, button("Play in your browser", width: playWidth, fill: "#f6b81c", ink: "#1b1a17", edge: "#1b1a17")))
+        case .use: buttons.append((useButton, button("Open in your browser", width: useWidth, fill: "#f6b81c", ink: "#1b1a17", edge: "#1b1a17")))
+        case nil: break
+        }
         for (path, svg) in buttons {
             let file = tree.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -316,7 +324,7 @@ enum GitHubRepo {
         let remix = showcase.remix ? repo : nil
         var links: [String] = []
         if remix == nil {
-            if let play = showcase.play { links.append("<a href=\"\(play)\"><b>Play it in your browser</b></a>") }
+            if let play = showcase.play { links.append("<a href=\"\(play)\"><b>\(showcase.plays ? "Play" : "Open") it in your browser</b></a>") }
             links.append("<a href=\"#remix-it-with-lamp\">Remix it with Lamp</a>")
         }
         if build.alone { links.append("<a href=\"#build-it-yourself\">Build it yourself</a>") }
@@ -325,7 +333,8 @@ enum GitHubRepo {
         if let remix {
             var buttons: [String] = []
             if let play = showcase.play {
-                buttons.append("<a href=\"\(Publish.escaped(play))\"><img src=\"\(playButton)\" width=\"\(playWidth)\" height=\"48\" alt=\"Play in your browser\"></a>")
+                let (button, width, words) = showcase.plays ? (playButton, playWidth, "Play in your browser") : (useButton, useWidth, "Open in your browser")
+                buttons.append("<a href=\"\(Publish.escaped(play))\"><img src=\"\(button)\" width=\"\(width)\" height=\"48\" alt=\"\(words)\"></a>")
             }
             buttons.append("<a href=\"\(Publish.escaped(remixLink(remix)))\"><img src=\"\(openButton)\" width=\"\(openWidth)\" height=\"48\" alt=\"Open in Lamp\"></a>")
             text += "<p align=\"center\">" + buttons.joined(separator: "&nbsp;&nbsp;") + "</p>\n\n"
@@ -794,7 +803,7 @@ enum GitHubRepo {
             URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "repo" }?.value
                 .map { "lamp.dev, from " + $0.replacingOccurrences(of: "https://", with: "") }
         }
-        // A game's page: where it will play, or plays; none in a private repository, which the card says.
+        // A page: where it will play or be used, or is; none in a private repository, which the card says.
         let isPublic = card.isPublic ?? !card.isPrivate
         let page = (card.staged?.page?.url ?? (isPublic ? card.kept?.page : nil)).map { $0.replacingOccurrences(of: "https://", with: "") }
         var pageUp = false
@@ -805,6 +814,7 @@ enum GitHubRepo {
                            update: card.kept != nil, canPut: card.canPut, isPrivate: card.isPrivate, license: card.license,
                            canChooseLicense: card.staged.map { GitHubRepo.canOfferLicense($0.credits) } ?? true,
                            page: page, pageUp: pageUp, privateGame: !isPublic && Publish.hasPage(project),
+                           plays: Publish.pageUse(project).map { $0 == .play },
                            picture: card.thumbnail, showsPicture: card.showsPicture)
     }
 }

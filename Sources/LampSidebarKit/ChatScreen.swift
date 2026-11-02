@@ -172,7 +172,7 @@ private struct Chat: View {
                     RepoCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo, url: card.url,
                              credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, size: card.size, copied: card.copied, update: card.update,
                              canPut: card.canPut, isPrivate: card.isPrivate, license: card.license, canChooseLicense: card.canChooseLicense,
-                             page: card.page, pageUp: card.pageUp ?? false, privateGame: card.privateGame ?? false,
+                             page: card.page, pageUp: card.pageUp ?? false, privateGame: card.privateGame ?? false, plays: card.plays ?? true,
                              picture: card.picture.flatMap(NSImage.init(data:)), showsPicture: card.showsPicture ?? false,
                              put: { link.send(.repo(.put)) }, fix: { link.send(.repo(.fix)) }, makeLink: { link.send(.repo(.makeLink)) },
                              setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },

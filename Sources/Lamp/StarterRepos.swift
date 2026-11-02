@@ -172,7 +172,7 @@ enum StarterRepos {
             showcase.reel = "\(Starters.picturesFolder)/\(Starters.showcaseFolder)"
         }
         let page = try stagePage(project, starter: starter, repo: repo, in: root)
-        if page != nil { showcase.play = Publish.pageURL(repo) }
+        if page != nil { showcase.play = Publish.pageURL(repo); showcase.plays = Publish.pageUse(project) != .use }
         let (app, parts) = Sharing.layout(of: project)
         let build = GitHubRepo.Build(alone: app.platform.target.recipe.buildsAlone, app: app.platform.target.identity.name, others: !parts.isEmpty)
         // Its credits are what it's based on; the chain would name only the starter itself, which is this page.
@@ -182,11 +182,11 @@ enum StarterRepos {
         return (tree, page)
     }
 
-    /// A game's page as Put on GitHub stages one to play in any browser (`Publish.copyPage`), with the credit bar, the starter's
+    /// A page as Put on GitHub stages one to play or use in any browser (`Publish.copyPage`), with the credit bar, the starter's
     /// changes in its Remix panel (whose request goes with the starter's id, so Lamp copies it) and Lamp's site for the rest: nothing else (no shared file, which differs every time
-    /// it's made). Nil for a starter that isn't a game with a page.
+    /// it's made). Nil for a starter whose app isn't a page (`Publish.hasPage`).
     static func stagePage(_ project: LampProject, starter: Starters.Starter, repo: String, in root: URL) throws -> URL? {
-        guard project.holdsApp, GameKit.isGame(project), GameKit.engine(project) == .web else { return nil }
+        guard Publish.hasPage(project) else { return nil }
         let fm = FileManager.default
         let site = root.appendingPathComponent("page-\(starter.folder.lastPathComponent)")
         try? fm.removeItem(at: site)
@@ -199,7 +199,7 @@ enum StarterRepos {
         try Data(Publish.withCreditBar(html, credits: credits, open: open,
                                        suggestions: ideas.isEmpty ? RemixOffer.fallback : ideas, name: project.name,
                                        about: AppDescription.description(of: project)).utf8).write(to: index)
-        try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, usesRapier: GameKit.usesRapier(project)).utf8)
+        try Data(Publish.pageReadme(for: project, credits: credits, repo: repo, site: site).utf8)
             .write(to: site.appendingPathComponent("README.md"))
         let leaks = ShareCheck.secrets(in: site, known: [])
         if let first = leaks.first { throw Sharing.ImportError("\(project.name)'s page holds something shaped like a key.", detail: "It's in \(first).") }

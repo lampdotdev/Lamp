@@ -933,6 +933,10 @@ enum Gallery {
         repo("Game, up", stage: .done(unchanged: false), up: true, remix: true, game: true),
         repo("Game, up and copied", stage: .done(unchanged: false), up: true, copied: true, remix: true, game: true),
         repo("Game, up, wide", stage: .done(unchanged: false), up: true, width: 480, remix: true, game: true),
+        // A web app, whose page goes up beside its code to be used in a browser.
+        repo("Web app, ready", stage: .ready, remix: true, webApp: true),
+        repo("Web app, private", stage: .ready, isPrivate: true, webApp: true),
+        repo("Web app, up", stage: .done(unchanged: false), up: true, remix: true, webApp: true),
     ]
 
     /// The card that sends a remix's changes back to the repository it came from, from checking them to the pull
@@ -976,7 +980,7 @@ enum Gallery {
 
     private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
                              canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false, isPrivate: Bool = false,
-                             game: Bool = false, picture: Bool? = nil) -> Entry {
+                             game: Bool = false, webApp: Bool = false, picture: Bool? = nil) -> Entry {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
@@ -986,8 +990,9 @@ enum Gallery {
                                 openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
                                 canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: isPrivate, license: canChooseLicense,
-                                canChooseLicense: canChooseLicense, page: game && !isPrivate && ready ? "someone.github.io/new-york/" : nil,
-                                pageUp: game && up && { if case .done = stage { true } else { false } }(), privateGame: game && isPrivate,
+                                canChooseLicense: canChooseLicense, page: (game || webApp) && !isPrivate && ready ? "someone.github.io/new-york/" : nil,
+                                pageUp: (game || webApp) && up && { if case .done = stage { true } else { false } }(), privateGame: (game || webApp) && isPrivate,
+                                plays: !webApp,
                                 picture: picture == nil ? nil : folder.flatMap { folder in
                                     ["\(Starters.listingFolder)/preview.png", "\(Starters.treeFolder)/\(Starters.picturesFolder)/preview.png"]
                                         .lazy.compactMap { NSImage(contentsOf: folder.appendingPathComponent($0)) }.first },

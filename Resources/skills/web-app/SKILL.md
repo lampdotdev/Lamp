@@ -30,6 +30,15 @@ opening comment for the whole list. What it gives:
 - **Lamp.controllers** and `Lamp.phonePage`: phones on the same Wi‑Fi as controllers or a second screen; the
   phone-controllers skill first.
 
+## On the web, without Lamp
+
+Put on GitHub gives a web app a page anyone opens in a browser, with no Lamp anywhere: the page as it is, with
+lamp.js. There, `LampAI.isAvailable` answers false and its calls fail with a sentence saying the page is away from
+Lamp, `LampNative.available` is false, and `Lamp.wish` can't reach the wish's other apps; `LampStore` and `LampAssets`
+work as they do everywhere. So every feature that leans on Lamp keeps the app usable without it: the app's own buttons
+for everything AI would do, example content where the person's own things would be, and a short line where something
+needs Lamp, never an error or an empty screen.
+
 ## Doing things for the person
 
 `LampAI.act(request, { about, context, tools, history, onStep })` runs a short loop: the AI picks calls among the

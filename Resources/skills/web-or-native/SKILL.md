@@ -23,7 +23,7 @@ Xbox. Where there's none (an Apple TV, an Apple Watch, a Roku), it's native. A g
 skill says what it's drawn with). One app across several devices is web where every one of them takes a page.
 
 A web app is one page that goes anywhere: the person can open it on another device later without it being written
-again. On a Mac, an iPhone or an iPad the app around the page still reaches
+again, and Put on GitHub gives it a link anyone can open in a browser without Lamp. On a Mac, an iPhone or an iPad the app around the page still reaches
 the person's mail, calendar, reminders, contacts, photos and location (`LampNative`, the web-app skill).
 
 Make it **native** only when it needs something a page can't be:

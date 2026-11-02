@@ -33,6 +33,14 @@ final class GitHubRepoTests: XCTestCase {
         let readme = GitHubRepo.readme(for: game, credits: Credits(), open: Publish.OpenInLamp(), build: GitHubRepo.Build(alone: false, app: "Game", others: false),
                                        repo: "someone/hopper", showcase: GitHubRepo.Showcase(play: Publish.pageURL("someone/hopper"), remix: true))
         XCTAssertTrue(readme.contains("<a href=\"https://someone.github.io/hopper/\"><img src=\"\(GitHubRepo.playButton)\""), readme)
+
+        // A web app's page goes up the same way, to be used rather than played.
+        let app = LampProject(id: "notes", name: "Notes", exe: "Notes", dir: dir, platform: .webApp)
+        XCTAssertEqual(Publish.pageUse(app), .use)
+        XCTAssertNil(Publish.pageUse(LampProject(id: "tally", name: "Tally", exe: "Tally", dir: dir, platform: .mac)))
+        let used = GitHubRepo.readme(for: app, credits: Credits(), open: Publish.OpenInLamp(), build: GitHubRepo.Build(alone: false, app: "Web App", others: false),
+                                     repo: "someone/notes", showcase: GitHubRepo.Showcase(play: Publish.pageURL("someone/notes"), plays: false, remix: true))
+        XCTAssertTrue(used.contains("<img src=\"\(GitHubRepo.useButton)\""), used)
     }
 
     func testTheStagedRepositoryBuildsOnItsOwnAndOpensInLamp() throws {

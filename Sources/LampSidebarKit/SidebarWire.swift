@@ -811,18 +811,21 @@ public struct SidebarRepo: Codable, Equatable {
     public var isPrivate: Bool
     public var license: Bool
     public var canChooseLicense: Bool
-    /// A web game's page: where it plays ("someone.github.io/new-york"), going up with the code or up already, and whether
-    /// it's up now. Nil for a wish that isn't one, or a private repository, which gets none (`privateGame`).
+    /// A web game's or a web app's page: where it plays ("someone.github.io/new-york"), going up with the code or up
+    /// already, and whether it's up now. Nil for a wish that isn't one, or a private repository, which gets none
+    /// (`privateGame`, kept by that name for a page of any kind). `plays` is whether it's played (a game) or used; nil
+    /// from a Lamp before web apps had pages, played.
     public var page: String?
     public var pageUp: Bool?
     public var privateGame: Bool?
+    public var plays: Bool?
     /// The picture of the wish the README can show (a small copy, as PNG), and whether it will.
     public var picture: Data?
     public var showsPicture: Bool?
 
     public init(name: String, icon: Data?, stage: RepoCard.Stage, repo: String?, url: String?, credit: String?, openInLamp: String?,
                 notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
-                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil, picture: Data? = nil, showsPicture: Bool? = nil) {
+                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil, plays: Bool? = nil, picture: Data? = nil, showsPicture: Bool? = nil) {
         self.name = name
         self.icon = icon
         self.stage = stage
@@ -841,6 +844,7 @@ public struct SidebarRepo: Codable, Equatable {
         self.page = page
         self.pageUp = pageUp
         self.privateGame = privateGame
+        self.plays = plays
         self.picture = picture
         self.showsPicture = showsPicture
     }
