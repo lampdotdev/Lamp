@@ -86,6 +86,12 @@ enum SideAnswer {
         """
     }
 
+    /// What goes with a request sent again: the answer it was given, as long as it's the same request. New words are a
+    /// new message, which that answer wasn't to.
+    static func kept(_ line: LogLine, sentAs text: String) -> QueuedMessage.SideState? {
+        line.text.trimmed == text.trimmed ? line.sideReply.map(QueuedMessage.SideState.answered) : nil
+    }
+
     /// What the agent is told with the request: never as something it said itself, and granting nothing.
     static func receipt(_ reply: String) -> String {
         """
@@ -100,10 +106,22 @@ enum SideAnswer {
     /// Reads pi's `--mode rpc` output for the one thing a run may come to: a whole, finished assistant message. A
     /// failed attempt isn't the end of a run, since pi tries again by itself; a tool call is. The call ends only once pi
     /// says how it came out, so a refusal is told from a tool that ran, which would mean the guard isn't what Lamp started.
+    /// Words written before a call are still the answer, already paid for, once pi says the call didn't run.
     struct Reader {
         enum Verdict: Equatable { case going, guarded, answered(String), failed(String) }
 
         var input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0.0
+        /// The tool a call was refused, for the log, and the words held back until that's known.
+        var refused: String?
+        private var held: String?
+
+        /// Words that may be shown, or why they can't.
+        private func accepted(_ text: String) -> Verdict {
+            if text.isEmpty { return .failed("said nothing") }
+            if text.utf8.count > SideAnswer.replyLimit { return .failed("answer too long") }
+            if output >= SideAnswer.tokenLimit { return .failed("wrote too much") }
+            return .answered(text)
+        }
 
         mutating func read(_ line: String) -> Verdict {
             guard let data = line.data(using: .utf8),
@@ -120,10 +138,12 @@ enum SideAnswer {
                 let result = event["result"] as? [String: Any]
                 let words = (result?["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
                 let name = event["toolName"] as? String ?? "tool"
-                if event["isError"] as? Bool == false { return .failed("\(name) ran") }
+                if event["isError"] as? Bool != true { return .failed("\(name) ran") }
+                if words == SideAnswer.refusal { refused = name }
+                if let held { return .answered(held) }
                 return .failed(words == SideAnswer.refusal ? "blocked \(name)" : "\(name) failed")
             case "agent_settled":
-                return .failed("ended without an answer")
+                return held.map(Verdict.answered) ?? .failed("ended without an answer")
             case "auto_retry_end":
                 return event["success"] as? Bool == false ? .failed("retries ran out") : .going
             case "message_end":
@@ -135,15 +155,14 @@ enum SideAnswer {
                 cacheWrite += usage?["cacheWrite"] as? Int ?? 0
                 cost += (usage?["cost"] as? [String: Any])?["total"] as? Double ?? 0
                 let blocks = message["content"] as? [[String: Any]] ?? []
-                if blocks.contains(where: { $0["type"] as? String == "toolCall" }) { return .going }
+                let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined().trimmed
+                if blocks.contains(where: { $0["type"] as? String == "toolCall" }) {
+                    if case .answered(let words) = accepted(text) { held = words }
+                    return .going
+                }
                 switch message["stopReason"] as? String {
                 case "stop":
-                    let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }
-                        .joined().trimmed
-                    if text.isEmpty { return .failed("said nothing") }
-                    if text.utf8.count > SideAnswer.replyLimit { return .failed("answer too long") }
-                    if output >= SideAnswer.tokenLimit { return .failed("wrote too much") }
-                    return .answered(text)
+                    return accepted(text)
                 case "error": return .going
                 default: return .failed(message["stopReason"] as? String ?? "ended without an answer")
                 }
@@ -183,6 +202,8 @@ enum SideAnswer {
                                                      attributes: [.posixPermissions: 0o700])
             defer { try? FileManager.default.removeItem(at: folder) }
             let definitions = folder.appendingPathComponent("tools.json")
+            let home = folder.appendingPathComponent("home")
+            try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
             guard (try? route.definitions.write(to: definitions)) != nil else { return Outcome(failure: "couldn't start") }
             let keys = Agent.keyEnvironment(for: route.keyProvider)
             defer { if let ticket = keys["LAMP_KEY_TICKET"] { KeyTicket.revoke(ticket) } }
@@ -191,7 +212,7 @@ enum SideAnswer {
             process.executableURL = URL(fileURLWithPath: route.executable)
             process.arguments = SideAnswer.arguments(conversation: conversation, sessions: sessions, route: route)
             process.currentDirectoryURL = folder
-            process.environment = SideAnswer.environment(route: route, keys: keys, definitions: definitions)
+            process.environment = SideAnswer.environment(route: route, keys: keys, definitions: definitions, home: home)
             let input = Pipe()
             // A write after pi has gone (a cancel can land between the two) fails instead of ending Lamp.
             _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
@@ -267,14 +288,15 @@ enum SideAnswer {
     }
 
     /// A list of what's allowed, not Lamp's environment with parts taken out.
-    /// None of the routes or the token Lamp's tools need. pi's own tools need neither, so the guard is what stops those.
-    static func environment(route: Route, keys: [String: String], definitions: URL) -> [String: String] {
-        var env = keys.merging(["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "PI_CODING_AGENT_DIR": route.configFolder,
+    /// None of the routes or the token Lamp's tools need. pi's own tools need neither, so the guard is what stops those;
+    /// a home folder that's thrown away with the run leaves anything that gets past it none of the person's to find there.
+    static func environment(route: Route, keys: [String: String], definitions: URL, home: URL) -> [String: String] {
+        var env = keys.merging(["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": home.path, "PI_CODING_AGENT_DIR": route.configFolder,
                                 "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "LAMP_TOOLS_JSON": definitions.path,
                                 "LAMP_SIDE_GUARD": guardCommand, "LAMP_SIDE_REFUSAL": refusal,
                                 "LAMP_SIDE_FOLDER": route.folder, "LAMP_SIDE_SESSION": route.session]) { $1 }
         let own = ProcessInfo.processInfo.environment
-        var names = ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG"]
+        var names = ["USER", "LOGNAME", "TMPDIR", "LANG"]
         if let provider = Provider.keyProvider(route.keyProvider) { names.append(provider.envVar) }
         for name in names { env[name] = own[name] }
         return env

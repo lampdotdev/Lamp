@@ -33,6 +33,33 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertTrue(SideAnswer.prompt(for: "Make it blue").contains("<message>\nMake it blue\n</message>"))
     }
 
+    func testSentAgainInTheSameWordsItKeepsItsAnswer() {
+        var line = LogLine(kind: .user, text: "Make it blue")
+        line.sideReply = "I'll make it blue shortly."
+        XCTAssertEqual(SideAnswer.kept(line, sentAs: "Make it blue")?.reply, "I'll make it blue shortly.")
+        XCTAssertNil(SideAnswer.kept(line, sentAs: "Make it green"), "new words are a new message")
+    }
+
+    /// pi 1.0.0's own output, recorded on 2026-11-02 from a guarded fork through OpenRouter (anthropic/claude-sonnet-5.5)
+    /// told to write a line and call bash in one reply, with its thinking taken out.
+    func testWordsBesideARefusedCallAreTheAnswer() throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/side-answer/mixed-reply.jsonl")
+        var reader = SideAnswer.Reader()
+        var verdicts: [SideAnswer.Reader.Verdict] = []
+        for line in try String(contentsOf: fixture, encoding: .utf8).split(separator: "\n") { verdicts.append(reader.read(String(line))) }
+        XCTAssertEqual(verdicts.first { $0 != .going }, .answered("Sure, I will take a look at that shortly."))
+        XCTAssertEqual(reader.refused, "bash")
+        XCTAssertGreaterThan(reader.cost, 0)
+    }
+
+    func testWordsBesideACallThatRanAreDropped() {
+        var reader = SideAnswer.Reader()
+        let words = #"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"text","text":"On it."},{"type":"toolCall","name":"bash"}]}}"#
+        XCTAssertEqual(reader.read(words), .going)
+        XCTAssertEqual(reader.read(#"{"type":"tool_execution_end","toolName":"bash","result":{"content":[{"type":"text","text":"done"}]}}"#), .failed("bash ran"))
+    }
+
     func testReceiptIsLabeledAndGrantsNothing() {
         let receipt = SideAnswer.receipt("Got it, I'll do that next.")
         XCTAssertTrue(receipt.contains("Lamp context, not a new user instruction"))
@@ -71,7 +98,9 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertEqual(arguments[arguments.firstIndex(of: "--tools")! + 1], "read,bash")
         XCTAssertEqual(arguments[arguments.firstIndex(of: "--fork")! + 1], "/main.jsonl")
         XCTAssertFalse(arguments.contains("lamp-1"), "the fork has a session of its own")
-        let env = SideAnswer.environment(route: route, keys: ["LAMP_KEY_TICKET": "t"], definitions: URL(fileURLWithPath: "/private/tools.json"))
+        let env = SideAnswer.environment(route: route, keys: ["LAMP_KEY_TICKET": "t"], definitions: URL(fileURLWithPath: "/private/tools.json"),
+                                         home: URL(fileURLWithPath: "/private/home"))
+        XCTAssertEqual(env["HOME"], "/private/home")
         XCTAssertEqual(env["LAMP_SIDE_GUARD"], SideAnswer.guardCommand)
         XCTAssertNil(env["LAMP_TOKEN"])
         XCTAssertTrue(env.keys.filter { $0.hasSuffix("_URL") }.isEmpty)

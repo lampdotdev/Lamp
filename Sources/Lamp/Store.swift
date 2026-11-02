@@ -445,8 +445,11 @@ struct QueuedMessage: Identifiable {
     /// The answer beside the turn while it waits (`SideAnswer`).
     var side: SideState? = nil
 
-    enum SideState: Equatable { case answering, answered(String), stillQueued }
-    var sideReply: String? { if case .answered(let reply) = side { reply } else { nil } }
+    enum SideState: Equatable {
+        case answering, answered(String), stillQueued
+        var reply: String? { if case .answered(let reply) = self { reply } else { nil } }
+    }
+    var sideReply: String? { side?.reply }
 }
 
 extension QueuedMessage {
@@ -5567,7 +5570,7 @@ final class Store: ObservableObject {
         let shown = outcome.reply != nil && stillTrue
         Conversation.note(project, engine: .pi, "side answer \(shown ? "shown" : "not shown")"
             + " after \(took.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))"
-            + (outcome.failure.map { " (\($0))" } ?? "") + ", input \(usage.input), cache read \(usage.cacheRead),"
+            + (outcome.failure.map { " (\($0))" } ?? "") + (usage.refused.map { " (refused \($0))" } ?? "") + ", input \(usage.input), cache read \(usage.cacheRead),"
             + " cache write \(usage.cacheWrite), output \(usage.output), cost \(usage.cost), waiting \(queued[project.id]?.count ?? 0)")
         guard let index, queued[project.id]?[index].sendNow == false else { return }
         queued[project.id]?[index].side = shown ? outcome.reply.map(QueuedMessage.SideState.answered) : .stillQueued
@@ -8655,7 +8658,7 @@ final class Store: ObservableObject {
         // They keep what they had taken back themselves: it's the chat's only record of it.
         var again = chat[first..<index].filter { $0.kind == .user }.map {
             QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [],
-                          pointed: $0.pointed?.waiting(in: project))
+                          pointed: $0.pointed?.waiting(in: project), side: SideAnswer.kept($0, sentAs: $0.text))
         }
         let folder = project.dir.appendingPathComponent(Attachments.folder).standardizedFileURL
         let own = attachments.filter { $0.standardizedFileURL.deletingLastPathComponent() == folder }
@@ -8672,7 +8675,8 @@ final class Store: ObservableObject {
             (request.tookBack ?? []) + (Self.reachedAgent(request.id, in: chat) ? [Self.label(for: request)] : [])
         }.filter { $0 != text }
         again.append(QueuedMessage(text: text, attachments: attachments.filter { !own.contains($0) },
-                                   kept: own.map(\.lastPathComponent), replaces: replaces, tookBack: gone, pointed: pointed))
+                                   kept: own.map(\.lastPathComponent), replaces: replaces, tookBack: gone, pointed: pointed,
+                                   side: SideAnswer.kept(line, sentAs: text)))
         logs[project.id] = Array(chat[..<first])
         saveChat(project)
         progress[project.id] = nil   // a new app's chapters belong to the request that's gone
