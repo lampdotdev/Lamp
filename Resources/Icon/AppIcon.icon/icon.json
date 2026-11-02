@@ -1,50 +1,81 @@
 {
-  "fill": {
-    "automatic-gradient": "srgb:0.94902,0.92549,0.85490,1.00000"
-  },
-  "groups": [
+  "fill-specializations" : [
     {
-      "layers": [
-        {
-          "name": "sheet",
-          "image-name": "sheet.png",
-          "glass": true
-        }
-      ],
-      "shadow": {
-        "kind": "neutral",
-        "opacity": 0.6
-      },
-      "translucency": {
-        "enabled": false,
-        "value": 0.5
-      },
-      "specular": true,
-      "lighting": "combined"
+      "value" : {
+        "automatic-gradient" : "display-p3:0.04700,0.05684,0.08782,1.00000"
+      }
     },
     {
-      "layers": [
-        {
-          "name": "stripes",
-          "image-name": "stripes.png",
-          "glass": false
-        }
-      ],
-      "shadow": {
-        "kind": "none",
-        "opacity": 0.5
-      },
-      "translucency": {
-        "enabled": false,
-        "value": 0.5
-      },
-      "specular": false,
-      "lighting": "combined"
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "display-p3:0.06795,0.07791,0.10779,1.00000",
+          "display-p3:0.04700,0.05684,0.08782,1.00000"
+        ]
+      }
     }
   ],
-  "supported-platforms": {
-    "squares": [
-      "macOS"
-    ]
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "logo.png",
+          "name" : "logo",
+          "position" : {
+            "scale" : 0.5,
+            "translation-in-points" : [
+              0,
+              -10.5
+            ]
+          }
+        },
+        {
+          "glass-specializations" : [
+            {
+              "value" : true
+            },
+            {
+              "appearance" : "dark",
+              "value" : true
+            }
+          ],
+          "hidden" : false,
+          "image-name" : "rainbow.png",
+          "name" : "rainbow",
+          "opacity-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : 0
+            },
+            {
+              "appearance" : "tinted",
+              "value" : 0
+            }
+          ],
+          "position" : {
+            "scale" : 0.5,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "name" : "Group",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
   }
 }

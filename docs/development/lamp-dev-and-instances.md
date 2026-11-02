@@ -5,7 +5,7 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 ## Two Lamps on one Mac
 
 A build from source is **Lamp Dev**, a separate app from the Lamp people install: its own name and icon (DEV
-written on the icon's paper), bundle id (`dev.lamp.host.dev`), folders (`~/Library/Application Support/Lamp Dev`,
+written on the icon's white square), bundle id (`dev.lamp.host.dev`), folders (`~/Library/Application Support/Lamp Dev`,
 `~/Applications/Lamp Dev Apps`, `~/Library/Logs/Lamp Dev`), gateway and model-server ports, URL scheme
 (`lamp-dev://`) and Keychain entries, and no self-updating. `Sources/Lamp/Edition.swift` is the one place
 these come from, read off the bundle id that `build.sh` writes (`FLAVOR=dev` by default; `release.sh` passes
