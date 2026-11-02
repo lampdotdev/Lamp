@@ -8,8 +8,8 @@ plain "Lamp x.y.z" line.
 ## 0.31.1
 
 - Put on GitHub can show a picture of your wish in its README: the card shows the picture, so you can leave it out.
-- Games keep running smoothly through many changes: a change no longer leaves the last version's memory behind, so
-  the game doesn't slow down or freeze for longer each time.
+- Games hold on to much less memory from one change to the next, so they slow down and stand still far less as you
+  keep changing them.
 - Update from the Original, asked for while a change is under way, now waits for it to finish instead of holding
   Lamp still behind an alert.
 
