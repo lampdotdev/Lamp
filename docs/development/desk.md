@@ -237,7 +237,8 @@ credits and starter.md move to the pin, and it's built again out of sight with t
 prebuilt copy when it's the starter's (`PrebuiltStarters`), so a release costs no build for an unchanged copy. One open
 or busy then, or one whose starter couldn't be fetched, waits for the next launch. A changed copy isn't touched: its chat gets a card, once for each newer
 starter (`NewerOriginalLine`, "A newer original is available" with Update), the panel says the same with Update beside
-it, and its menu has Update from the Original (`Store.updateFromOriginal`), which merges the starter this Lamp pins (fetched first)
+it, and its menu has Update from the Original (`Store.updateFromOriginal`; asked for while the wish is busy, it waits for
+it and the chat says so, never an alert), which merges the starter this Lamp pins (fetched first)
 into the person's changes as an update from GitHub merges (`Store.mergeUpdate`, `Upstream`: three ways, against the
 commit the copy has, fetched when it can be and else the version it began with), the agent settling only what both
 sides changed. Wish Info's Check for Updates… compares a starter's copy with the pin, never GitHub's latest
