@@ -1068,6 +1068,7 @@ final class Store: ObservableObject {
             endApprovals(for: project)
             pids += turn.cancel()
         }
+        for run in sideRuns.values { run.cancel() }
         return pids + Subprocess.stopping
     }
 
@@ -5529,7 +5530,7 @@ final class Store: ObservableObject {
         let project = Self.requestOwner(of: sender, among: projects)
         guard SideAnswer.isOn, SideAnswer.canAnswer(sent), sideRuns[project.id] == nil, sideRuns.count < SideAnswer.mostAtOnce,
               let turn = turns[project.id], let route = turn.sideRoute, !turn.asked, !turn.paused, !turn.stopped,
-              approvals[project.id] == nil, current(project)?.finding == false, readyFor(project),
+              approvals[project.id] == nil, current(project)?.finding == false, !project.isDeviceSetup, readyFor(project),
               !queueWaitsForReload(in: project), let waiting = queued[project.id],
               let index = waiting.firstIndex(where: { $0.id == sent.id }),
               let conversation = Conversation.transcript(of: .pi, session: route.session, in: project) else { return }
@@ -5554,14 +5555,20 @@ final class Store: ObservableObject {
             self.usage[project.id] = spent
             saveUsage(project)
         }
-        let index = queued[project.id]?.firstIndex { $0.id == run.message && !$0.sendNow }
-        let shown = outcome.reply != nil && index != nil
+        let index = queued[project.id]?.firstIndex { $0.id == run.message }
+        // Sent now, it no longer waits, so no promise goes up and nothing more is said under it.
+        if let index, queued[project.id]?[index].sendNow == true { queued[project.id]?[index].side = nil }
+        // The turn may have asked or paused while the fork worked: what it would say about what's next is out of date.
+        let turn = turns[project.id]
+        let stillTrue = index != nil && queued[project.id]?[index!].sendNow == false && turn?.asked == false && turn?.paused == false
+            && !queueWaitsForReload(in: project)
+        let shown = outcome.reply != nil && stillTrue
         Conversation.note(project, engine: .pi, "side answer \(shown ? "shown" : "not shown")"
             + " after \(took.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))"
             + (outcome.failure.map { " (\($0))" } ?? "") + ", input \(usage.input), cache read \(usage.cacheRead),"
             + " cache write \(usage.cacheWrite), output \(usage.output), cost \(usage.cost), waiting \(queued[project.id]?.count ?? 0)")
-        guard let index else { return }
-        queued[project.id]?[index].side = outcome.reply.map(QueuedMessage.SideState.answered) ?? .stillQueued
+        guard let index, queued[project.id]?[index].sendNow == false else { return }
+        queued[project.id]?[index].side = shown ? outcome.reply.map(QueuedMessage.SideState.answered) : .stillQueued
         saveWaiting()
     }
 

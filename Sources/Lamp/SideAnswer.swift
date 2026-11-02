@@ -171,12 +171,12 @@ enum SideAnswer {
             let pipe = Pipe()
             process.standardOutput = pipe
 
+            guard !cancelled else { return Outcome(failure: "cancelled") }
             let (lines, output) = AsyncStream<String>.makeStream()
             let splitter = LineSplitter(limit: SideAnswer.outputLimit, output)
             pipe.fileHandleForReading.readabilityHandler = { splitter.read(from: $0) }
             let (exit, exited) = AsyncStream<Void>.makeStream()
             process.terminationHandler = { _ in exited.finish() }
-            guard !cancelled else { return Outcome(failure: "cancelled") }
             do {
                 try process.run()
             } catch {
