@@ -3896,6 +3896,16 @@ final class Store: ObservableObject {
         }
         let taken = lineup.changes.filter { !$0.here && picked.contains($0.id) }.map(\.title)
         let leftOut = lineup.changes.filter { $0.here && !picked.contains($0.id) }.map(\.title)
+        // Work taken in keeps its credit and license: their credits join this copy's, as an update's do, saved with the
+        // last version the mix made.
+        if let last = taken.last, let credits = lineup.package.credits {
+            try? Credits.add(credits, to: project)
+            if await Versions.hasUnsavedChanges(project),
+               await Versions.git("git add -A -- \(Credits.file) && \(Versions.commit) -q --amend --no-edit", cwd: project.dir) == 0,
+               let head = await Versions.head(project) {
+                VersionTitles.save(last, for: head, in: project)
+            }
+        }
         Versions.rememberMixed(project, taken: taken, leftOut: leftOut)
         versionsRevision += 1
         showChat(project.id)

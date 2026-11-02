@@ -9,7 +9,7 @@ struct MixHistory: Codable {
     static let folder = "History"
     static let file = "history.json"
     static let picture = "picture.jpg"
-    /// The most versions a file carries: the latest, the oldest dropped.
+    /// The most versions a file carries: the latest, with all before them as one.
     static let limit = 40
     /// Where an origin copy's run starts: the version it was first shared at.
     static let startFile = ".lamp/mix-start"
@@ -41,14 +41,23 @@ struct MixHistory: Codable {
         let out = stage.appendingPathComponent(folder)
         try? fm.createDirectory(at: out, withIntermediateDirectories: true)
         // One sandboxed run for the whole history: each version's line, what it changed, and its changed files
-        // unpacked into its folder.
+        // unpacked into its folder. A run longer than the limit keeps its latest versions, and everything before them
+        // goes as one version ("E"), from where the copies met to the last one left out, so the run still starts there.
         let script = """
         out=\(Sandbox.quoted(out.path)); n=0
-        git rev-list --first-parent --reverse \(start.commit)..HEAD | tail -n \(limit) | while read -r c; do
+        all=$(git rev-list --first-parent --reverse \(start.commit)..HEAD); count=$(printf '%s\\n' "$all" | grep -c .)
+        {
+          if [ "$count" -gt \(limit) ]; then
+            echo "\(start.commit) $(printf '%s\\n' "$all" | sed -n "$((count - \(limit)))p") E"
+            printf '%s\\n' "$all" | tail -n \(limit) | while read -r c; do echo "$c^ $c -"; done
+          else
+            printf '%s\\n' "$all" | while read -r c; do [ -n "$c" ] && echo "$c^ $c -"; done
+          fi
+        } | while read -r p c kind; do
           n=$((n+1)); d="$out/$n"; mkdir -p "$d"
-          git log -1 --format="V%x1f$n%x1f%H%x1f%ct%x1f%(trailers:key=\(Mix.trailer),valueonly,separator=%x2C)%x1f%s" "$c"
-          git -c core.quotePath=false diff-tree -r --no-renames --no-commit-id --name-status "$c^" "$c"
-          git diff-tree -r --no-renames --no-commit-id --name-only -z --diff-filter=AMT "$c^" "$c" > "$d.paths"
+          git log -1 --format="V%x1f$n%x1f%H%x1f%ct%x1f%(trailers:key=\(Mix.trailer),valueonly,separator=%x2C)%x1f$kind%x1f%s" "$c"
+          git -c core.quotePath=false diff-tree -r --no-renames --no-commit-id --name-status "$p" "$c"
+          git diff-tree -r --no-renames --no-commit-id --name-only -z --diff-filter=AMT "$p" "$c" > "$d.paths"
           if [ -s "$d.paths" ]; then xargs -0 git archive --format=tar "$c" -- < "$d.paths" | /usr/bin/tar -x -C "$d"; fi
           rm -f "$d.paths"
         done
@@ -59,10 +68,11 @@ struct MixHistory: Codable {
         var versions: [Version] = []
         for line in listed.output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
             if line.hasPrefix("V\u{1f}") {
-                let parts = line.split(separator: "\u{1f}", maxSplits: 5, omittingEmptySubsequences: false).map(String.init)
-                guard parts.count == 6, let id = Credits.validCommit(parts[2]), let seconds = TimeInterval(parts[3]) else { continue }
-                versions.append(Version(id: id, title: titles[id] ?? parts[5], date: Date(timeIntervalSince1970: seconds),
-                                        mixed: Credits.validCommit(parts[4].split(separator: ",").first.map(String.init)),
+                let parts = line.split(separator: "\u{1f}", maxSplits: 6, omittingEmptySubsequences: false).map(String.init)
+                guard parts.count == 7, let id = Credits.validCommit(parts[2]), let seconds = TimeInterval(parts[3]) else { continue }
+                let title = parts[5] == "E" ? "Earlier changes" : titles[id] ?? parts[6]
+                versions.append(Version(id: id, title: title, date: Date(timeIntervalSince1970: seconds),
+                                        mixed: parts[5] == "E" ? nil : Credits.validCommit(parts[4].split(separator: ",").first.map(String.init)),
                                         folder: parts[1], changed: [], removed: []))
             } else if !versions.isEmpty, let tab = line.firstIndex(of: "\t") {
                 let status = line[..<tab], path = String(line[line.index(after: tab)...])

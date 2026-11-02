@@ -196,50 +196,71 @@ enum Mix {
 
     // MARK: Playing back
 
-    /// The changes picked, played back in order from where the copies met: the tree it comes to, and for each change
-    /// the files it couldn't take as they were because an earlier one changed them too.
-    static func replay(_ picked: [Change], in lineup: Lineup) async throws -> (tree: String, overlaps: [String: [String]]) {
+    /// A playback: the changes in the order played, and the tree before the first and after each.
+    struct Played {
+        var ordered: [Change]
+        var trees: [String]
+        var tree: String { trees.last ?? "" }
+    }
+
+    /// The changes picked, played back in order from where the copies met: what it comes to, and for each change the
+    /// files it couldn't take as they were because an earlier one changed them too. `resuming` is an earlier playback
+    /// whose first changes are the same: those aren't played again, and their overlaps aren't said again.
+    static func replay(_ picked: [Change], in lineup: Lineup, resuming: Played? = nil) async throws -> (played: Played, overlaps: [String: [String]]) {
         let ordered = picked.sorted { $0.date < $1.date }
+        var shared = 0
+        if let resuming {
+            while shared < ordered.count, shared < resuming.ordered.count, shared + 1 < resuming.trees.count,
+                  ordered[shared].id == resuming.ordered[shared].id { shared += 1 }
+        }
+        let first = resuming.map { $0.trees[shared] } ?? lineup.start
         let index = lineup.project.dir.appendingPathComponent(".lamp/mix/index")
         let script = """
         I="$LAMP_INDEX"; t="$LAMP_START"; echo "T $t"
+        # An older git merges commits only, merge base included: each tree goes in as a commit of its own.
+        mk() { git -c user.name=Lamp -c user.email=lamp@localhost commit-tree "$1" -m mix < /dev/null; }
         while IFS=' ' read -r id p c; do
           [ -z "$c" ] && continue
           echo "S $id"
-          out=$(git merge-tree --write-tree --name-only --no-messages --merge-base="$p" "$t" "$c"); s=$?
+          pc=$(mk "$p") && tc=$(mk "$t") && cc=$(mk "$c") || exit 3
+          out=$(git merge-tree --write-tree --name-only --no-messages --merge-base="$pc" "$tc" "$cc"); s=$?
           if [ $s -eq 1 ]; then
-            printf '%s\\n' "$out" | sed -n '2,$p' | while IFS= read -r f; do [ -n "$f" ] && echo "O $f"; done
-            out=$(git merge-tree --write-tree --name-only --no-messages -X theirs --merge-base="$p" "$t" "$c"); s=$?
+            printf '%s\n' "$out" | sed -n '2,$p' | while IFS= read -r f; do [ -n "$f" ] && echo "O $f"; done
+            # The later change wins: line by line where git can (-X theirs), else whole files. A git too old for -X
+            # leaves the first answer's conflicts to the whole-file way.
+            later=$(git merge-tree --write-tree --name-only --no-messages -X theirs --merge-base="$pc" "$tc" "$cc"); s=$?
+            if [ $s -le 1 ]; then out="$later"; else s=1; fi
             if [ $s -eq 1 ]; then
-              GIT_INDEX_FILE="$I" git read-tree "$(printf '%s\\n' "$out" | head -n 1)" || exit 3
-              printf '%s\\n' "$out" | sed -n '2,$p' | while IFS= read -r f; do
+              GIT_INDEX_FILE="$I" git read-tree "$(printf '%s\n' "$out" | head -n 1)" || exit 3
+              printf '%s\n' "$out" | sed -n '2,$p' | while IFS= read -r f; do
                 [ -z "$f" ] && continue
                 e=$(git ls-tree "$c" -- "$f")
-                if [ -n "$e" ]; then printf '%s\\n' "$e" | GIT_INDEX_FILE="$I" git update-index --index-info
+                if [ -n "$e" ]; then printf '%s\n' "$e" | GIT_INDEX_FILE="$I" git update-index --index-info
                 else GIT_INDEX_FILE="$I" git update-index --force-remove -- "$f"; fi
               done
               out=$(GIT_INDEX_FILE="$I" git write-tree) || exit 3
-            elif [ $s -ne 0 ]; then exit 3; fi
+            fi
           elif [ $s -ne 0 ]; then exit 3; fi
-          t=$(printf '%s\\n' "$out" | head -n 1)
+          t=$(printf '%s\n' "$out" | head -n 1)
           echo "T $t"
         done <<< "$LAMP_STEPS"
         """
-        let steps = ordered.map { "\($0.id) \($0.before) \($0.after)" }.joined(separator: "\n")
-        let ran = await run(script, in: lineup.project, env: ["LAMP_INDEX": index.path, "LAMP_START": lineup.start, "LAMP_STEPS": steps])
+        let steps = ordered[shared...].map { "\($0.id) \($0.before) \($0.after)" }.joined(separator: "\n")
+        let ran = await run(script, in: lineup.project, env: ["LAMP_INDEX": index.path, "LAMP_START": first, "LAMP_STEPS": steps])
         guard ran.status == 0 else { throw Failure(message: "Lamp couldn't play the changes back.") }
-        var tree = lineup.start
+        var trees = Array(resuming?.trees.prefix(shared) ?? [])
         var overlaps: [String: [String]] = [:]
         var current = ""
         for line in ran.output.split(separator: "\n").map(String.init) {
-            if line.hasPrefix("T "), let id = Credits.validCommit(String(line.dropFirst(2))) { tree = id }
+            if line.hasPrefix("T "), let id = Credits.validCommit(String(line.dropFirst(2))) { trees.append(id) }
             if line.hasPrefix("S ") { current = String(line.dropFirst(2)) }
             if line.hasPrefix("O ") {
                 let path = String(line.dropFirst(2))
                 if !Upstream.isLeftOut(path, in: lineup.project), !(overlaps[current]?.contains(path) ?? false) { overlaps[current, default: []].append(path) }
             }
         }
-        return (tree, overlaps)
+        guard trees.count == ordered.count + 1 else { throw Failure(message: "Lamp couldn't play the changes back.") }
+        return (Played(ordered: ordered, trees: trees), overlaps)
     }
 
     /// What a selection comes to: each change in it that a later one in it overlaps, with the later one's title.
@@ -293,8 +314,11 @@ enum Mix {
         var parent = lineup.head
         var tree = headTree
         var saved: [(commit: String, title: String)] = []
+        // Each plan is the one before with one more change of theirs, so it picks up where they part.
+        var last: Played? = nil
         for plan in plans {
-            let played = try await replay(plan.changes, in: lineup)
+            let played = try await replay(plan.changes, in: lineup, resuming: last).played
+            last = played
             let listed = await run("git -c core.quotePath=false ls-tree -r --name-only \(played.tree)", in: project)
             guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read what the mix came to.") }
             let dropped = listed.output.split(separator: "\n").map(String.init).filter { !$0.hasPrefix("\"") && Upstream.isLeftOut($0, in: project) }

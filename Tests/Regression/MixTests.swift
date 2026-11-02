@@ -113,6 +113,30 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(text(yours), "A-you-again\nb\nc\nd\nE-them\n")
     }
 
+    /// A run longer than a file carries keeps its latest versions and folds the rest into one, so what the earliest
+    /// brought (a new file here) still comes over.
+    func testALongRunFoldsItsEarliestVersionsIntoOne() async throws {
+        let (yours, theirs, _, _) = try await copies()
+        try commit(theirs, "Add a helper", at: 450, ["Sources/Extra.swift": "// helper\n"])
+        for step in 1...MixHistory.limit {
+            try commit(theirs, "Step \(step)", at: 500 + step, ["Sources/App.swift": "A-them\nb\nc\(step)\nd\nE-them\n"])
+        }
+        let stage = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
+        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: stage)
+        let history = try XCTUnwrap(MixHistory.read(in: stage))
+        XCTAssertEqual(history.versions.count, MixHistory.limit + 1)
+        XCTAssertEqual(history.versions.first?.title, "Earlier changes")
+        XCTAssertEqual(Set(history.versions.first?.changed ?? []), ["Sources/App.swift", "Sources/Extra.swift"])
+
+        let package = Sharing.Package(name: "Coin Flip", identity: identity, folder: stage, sources: [], attachments: [], fileCount: 0)
+        let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
+        _ = try await Mix.apply(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertEqual(text(yours, "Sources/Extra.swift"), "// helper\n")
+        XCTAssertEqual(text(yours), "A-them\nb\nc\(MixHistory.limit)\nd\nE-them\n")
+    }
+
     func testTheirCopyLinesUpWithTheOriginalsNewerFile() async throws {
         // The other way round: the original's file, opened in the copy, starts where the copy was given it.
         let (yours, theirs, _, _) = try await copies()

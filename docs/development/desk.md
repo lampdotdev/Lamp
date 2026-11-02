@@ -335,7 +335,9 @@ Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`),
 
 - **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
   the copies met (a copy's since it arrived, naming the version it was given; an original's since it was first
-  shared, `.lamp/mix-start`), each with its title, time and the files it changed as they were after it. Only what a
+  shared, `.lamp/mix-start`), each with its title, time and the files it changed as they were after it. A run
+  longer than `MixHistory.limit` keeps its latest versions and carries the rest as one ("Earlier changes"), so it
+  always starts where the copies met. Only what a
   shared file carries (`Upstream.isLeftOut`), through the same check for keys; a key in an old version or a history
   too big to send drops History/, never the share.
 - **Where they met.** The run's base when it's in this copy's history (the file came back), else this copy's
@@ -346,7 +348,9 @@ Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`),
   one replaces in part. Lamp's own files stay as this copy has them.
 - **Saving.** On top of this copy's history, never rewriting it: one version leaving out what of yours was taken
   out, then one per change of theirs taken in, under its title, with `Lamp-Mixed: <their commit>` so neither copy
-  offers it again. The agent is told (`Versions.rememberMixed`) and the app is built (`Store.mix`).
+  offers it again. Their credits join this copy's when anything of theirs is taken, as an update's do. The agent is
+  told (`Versions.rememberMixed`) and the app is built (`Store.mix`). Every git it runs works on commits, so a git
+  without `merge-tree -X` still mixes, a later change then winning whole files.
 
 Not yet: a review of the code in History/ beyond what the file's own review read (an early change of theirs taken
 without a later one brings code no review saw), Android's package rename, a wish of several apps (untried), and
