@@ -894,9 +894,9 @@ enum Sharing {
             newArtwork = GlassArt.load(from: Icons.glassURL(project, spec: spec)) != glass
             try? Icons.save(glass, for: project, spec: spec)
         // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons, but a
-        // game's painting fills its tile.
+        // game's painting, or the sender's own icon, fills its tile.
         } else if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-           spec.game || Icons.isCutOut(art) {
+           spec.fillsTile || Icons.isCutOut(art) {
             let url = Icons.artURL(project, spec: spec)
             newArtwork = (try? Data(contentsOf: url)) != art
             try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1115,19 +1115,19 @@ extension Sharing {
         if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
             return await Icons.preview(spec, art: .glass(glass))
         }
-        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png"), game: spec.game)
+        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png"), fillsTile: spec.fillsTile)
             .map(Icons.Artwork.picture))
     }
 
-    /// The artwork, when it's a cut-out object (what `finishImport` keeps) no larger than Lamp paints them.
+    /// The artwork, when it's a cut-out object (what `finishImport` keeps), or fills the tile, no larger than Lamp paints them.
     /// The size comes from the file's header, so a picture made to exhaust memory is never unpacked.
-    private static func artwork(at url: URL, game: Bool) -> NSImage? {
+    private static func artwork(at url: URL, fillsTile: Bool) -> NSImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               max(width, height) <= 4096,
-              let art = try? Data(contentsOf: url), game || Icons.isCutOut(art) else { return nil }
+              let art = try? Data(contentsOf: url), fillsTile || Icons.isCutOut(art) else { return nil }
         return NSImage(data: art)
     }
 

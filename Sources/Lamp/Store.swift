@@ -2068,7 +2068,7 @@ final class Store: ObservableObject {
     static func deviceSetupRefusal(route: String, request: Gateway.Request) -> (Int, [String: Any])? {
         let refusal = (400, ["error": "This conversation sets up a device; no app is made here. Write or fix the device's integration with device_integration, and tell the person to make a wish on Lamp's desk for anything to put on it."] as [String: Any])
         switch route {
-        case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/art", "/agent/assets", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
+        case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/art", "/agent/assets", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
              "/agent/setup", "/agent/connectors", "/agent/lampify":
             return refusal
         case "/agent/talk":
@@ -6562,6 +6562,7 @@ final class Store: ObservableObject {
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "remove_app": (status, answer) = await agentRemove(arguments, for: project)
             case "rename_app": (status, answer) = await agentRename(arguments, for: project)
+            case "use_icon_picture": (status, answer) = await agentIconPicture(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "lampify": (status, answer) = await lampify(arguments, for: project)
@@ -12034,7 +12035,7 @@ final class Store: ObservableObject {
     /// Whether this design's artwork is on its way, drawn by Lamp: the icon is the blueprint until it comes. Not for a
     /// starter's own design (its artwork came with it), nor while the person draws icons themselves, nor once drawing it failed.
     private func awaitsArtwork(_ project: LampProject, spec: IconSpec) -> Bool {
-        !Starters.keepsShippedDesign(project) && !AppAI.iconsByHand && !spec.subject.trimmed.isEmpty
+        !Starters.keepsShippedDesign(project) && !AppAI.iconsByHand && !spec.subject.trimmed.isEmpty && !spec.picture
             && !artFailed.contains(Icons.artKey(project, spec: spec)) && (GlassIcons.canDraw || AppAI.imageRoute != nil)
     }
 
@@ -12195,7 +12196,8 @@ final class Store: ObservableObject {
     private func upgradeIconArt(_ project: LampProject) {
         // A part's artwork is its wish's: drawn once, for the wish, and given to each of its apps (`iconToParts`).
         let project = wish(of: project)
-        guard !Starters.keepsShippedDesign(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
+        // The person's own picture is never painted over, nor painted again once its artwork is gone.
+        guard !Starters.keepsShippedDesign(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty, !spec.picture,
               Icons.artwork(project, spec: spec) == nil else { return }
         // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
         guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
@@ -12341,29 +12343,77 @@ final class Store: ObservableObject {
                 log(project, .status, "\(project.name)'s icon changed while that picture was being prepared, so it wasn't used.")
                 return
             }
-            let url = Icons.artURL(project, spec: spec)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try png.write(to: url)
-            // The person's picture takes the place of a glass design drawn for the same icon.
-            try? FileManager.default.removeItem(at: Icons.glassURL(project, spec: spec))
-            // The icon on show was made with other artwork, or none, on the wish's other apps too.
-            for app in [project] + parts(of: project) { artApplied[app.id] = nil }
-            // As with generated artwork: a turn that has the app installs the picture when it ends. The chat
-            // shows it at once and says so, or picking it would look like nothing happened.
-            guard begin(project) != nil else {
-                pendingIconArt.insert(project.id)
-                let preview = await Icons.preview(spec, art: NSImage(data: png).map(Icons.Artwork.picture))
-                if exists(project), Icons.load(project) == spec {
-                    icons[project.id] = preview
-                    log(project, .status, "Your picture is \(project.name)'s icon now. It goes on the app when this turn ends.")
-                }
-                return
-            }
-            await applyIconArt(project, spec: spec)
-            finish(project)
+            try await adoptIconArt(png, spec: spec, for: project, saying: true)
         } catch {
             log(project, .status, "That picture couldn't become \(project.name)'s icon: \(error.localizedDescription)")
         }
+    }
+
+    /// `use_icon_picture`: a picture the person gave (an attachment, or another file in the wish's folder) as the
+    /// icon. A finished icon fills the tile as it is, marked `picture` in icon.json so Lamp never paints over it;
+    /// anything else is an object, cut out as a picture from Image Playground is. The reply shows the icon.
+    func agentIconPicture(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        let wish = self.wish(of: project)
+        guard let spec = Icons.load(wish) else { return (400, ["error": "The wish has no icon yet: build its app first, then give it the picture."]) }
+        let given = (arguments["path"] as? String)?.trimmed ?? ""
+        guard !given.isEmpty else { return (400, ["error": "Say in `path` which picture, e.g. Attachments/Logo.icns."]) }
+        // Read as Lamp reads the app's own files: inside the wish's folder, through no link.
+        let url = URL(fileURLWithPath: given, relativeTo: wish.dir).standardizedFileURL
+        guard let data = AppFile.read(url, in: wish) else {
+            return (404, ["error": "There's no picture at \(given) in the wish's folder. Attachments are in Attachments/."])
+        }
+        let made: (png: Data, fills: Bool)
+        do {
+            made = try await Task.detached { try Icons.ownPicture(data) }.value
+        } catch {
+            return (400, ["error": error.localizedDescription])
+        }
+        guard exists(wish), turns[project.id] === owner, !owner.stopped else {
+            return (409, ["error": "The request was stopped, so the icon wasn't changed."])
+        }
+        var changed = spec
+        changed.picture = made.fills
+        do {
+            if changed != spec { Icons.save(changed, for: wish) }
+            try await adoptIconArt(made.png, spec: changed, for: wish, saying: false)
+        } catch {
+            return (500, ["error": "Lamp couldn't keep the picture: \(error.localizedDescription)"])
+        }
+        let how = made.fills ? "It's used as it is, filling the icon." : "It was taken as one object, cut out and set on the icon's background."
+        let text = "\(given) is the icon now. \(how) It goes on the app when this request ends; Undo takes it back."
+        // The icon as Lamp shows it, so the agent sees what became of a picture it may not have been able to open: a
+        // small PNG, since its corners are see-through.
+        guard Privacy.sharesPictures, let tiff = icons[wish.id]?.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]),
+              let preview = Previews.destination(for: "icon.png", under: ".lamp/runtime/previews", in: wish),
+              (try? png.write(to: preview, options: .atomic)) != nil else { return (200, ["text": text]) }
+        return (200, ["text": text + " It follows, as Lamp shows it.", "screenshots": [preview.path]])
+    }
+
+    /// Keeps a picture as the icon's artwork for this design, in place of any glass design, and puts it on the app:
+    /// at once when nothing has the app, else when the turn that has it ends, showing it in Lamp meanwhile.
+    private func adoptIconArt(_ png: Data, spec: IconSpec, for project: LampProject, saying: Bool) async throws {
+        let url = Icons.artURL(project, spec: spec)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try png.write(to: url)
+        // The person's picture takes the place of a glass design drawn for the same icon.
+        try? FileManager.default.removeItem(at: Icons.glassURL(project, spec: spec))
+        // The icon on show was made with other artwork, or none, on the wish's other apps too.
+        for app in [project] + parts(of: project) { artApplied[app.id] = nil }
+        // As with generated artwork: a turn that has the app installs the picture when it ends. The chat
+        // shows it at once and says so, or picking it would look like nothing happened.
+        guard begin(project) != nil else {
+            pendingIconArt.insert(project.id)
+            let preview = await Icons.preview(spec, art: NSImage(data: png).map(Icons.Artwork.picture))
+            if exists(project), Icons.load(project) == spec {
+                icons[project.id] = preview
+                if saying { log(project, .status, "Your picture is \(project.name)'s icon now. It goes on the app when this turn ends.") }
+            }
+            return
+        }
+        await applyIconArt(project, spec: spec)
+        finish(project)
     }
 
     /// Gives apps made before icons existed an icon, once.
@@ -12874,7 +12924,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -13239,6 +13289,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/rename" {
             return await agentRename((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/icon" {
+            return Self.withPictureData(await agentIconPicture((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
         }
         if route == "/agent/steer" {
             guard turns[project.id]?.steering == .pi else { return (200, [:]) }

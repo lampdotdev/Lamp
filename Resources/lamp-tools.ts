@@ -25,6 +25,7 @@
  *   reply says how to adapt the code and gives a new app's rules.
  * - `remove_app`: takes one of the wish's apps away, by its folder; its versions keep it.
  * - `rename_app`: gives the wish the name the person asked for, as Rename on the desk does.
+ * - `use_icon_picture`: makes a picture the person gave the wish's icon; the reply shows the icon.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
  * - `lampify`: gives an app made from someone's project on GitHub its credit at one pinned commit, the project's
@@ -637,6 +638,21 @@ const renameApp = defineTool({
 	},
 });
 
+const useIconPicture = defineTool({
+	...spec("use_icon_picture"),
+	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		const url = process.env.LAMP_ICON_URL;
+		if (!url) throw new Error("Lamp isn't available to change the icon.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+		});
+		return pictureReply(response, ctx.model, "Lamp couldn't use that picture as the icon.");
+	},
+});
+
 const connectors = defineTool({
 	...spec("connectors"),
 	async execute(_toolCallId, params, signal) {
@@ -764,6 +780,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(makeAppFor);
 	pi.registerTool(removeApp);
 	pi.registerTool(renameApp);
+	pi.registerTool(useIconPicture);
 	pi.registerTool(connectors);
 	pi.registerTool(lampify);
 	pi.registerTool(networkDevices);
