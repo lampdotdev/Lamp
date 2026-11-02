@@ -96,5 +96,7 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertEqual(reader.read(blocked), .failed("blocked bash"))
         let ran = #"{"type":"tool_execution_end","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"done"}]}}"#
         XCTAssertEqual(reader.read(ran), .failed("bash ran"))
+        let refusedByPi = #"{"type":"tool_execution_end","toolName":"bash","isError":true,"result":{"content":[{"type":"text","text":"Tool bash not found"}]}}"#
+        XCTAssertEqual(reader.read(refusedByPi), .failed("bash failed"))
     }
 }

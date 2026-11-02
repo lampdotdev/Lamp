@@ -97,10 +97,12 @@ extension ChatLook {
         let onRemove: () -> Void
         let sendNow: (() -> Void)?
         let answered: Bool
+        let groupAnswered: Bool
         let chips: Chips
         @State private var pointerOver = false
 
         public init(text: String, waitingForSetup: Bool, waitingForReload: Bool = false, sending: Bool = false, answered: Bool = false,
+                    groupAnswered: Bool = false,
                     place: QueuedPlace = QueuedPlace(last: true, count: 1, first: true), onRemove: @escaping () -> Void,
                     sendNow: (() -> Void)? = nil, @ViewBuilder chips: () -> Chips) {
             self.text = text
@@ -111,6 +113,7 @@ extension ChatLook {
             self.onRemove = onRemove
             self.sendNow = sendNow
             self.answered = answered
+            self.groupAnswered = groupAnswered
             self.chips = chips()
         }
 
@@ -121,9 +124,9 @@ extension ChatLook {
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 6) { chips }
                 HStack(spacing: 6) {
-                    if quiet, let sendNow {
-                        Button("Send Now", action: sendNow).buttonStyle(.link).font(.caption)
-                            .help("Send this to the agent while it works")
+                    if quiet, groupAnswered, let sendNow {
+                        Button(place.count > 1 ? "Send All Now" : "Send Now", action: sendNow).buttonStyle(.link).font(.caption)
+                            .help(place.count > 1 ? "Send these to the agent while it works" : "Send this to the agent while it works")
                             .opacity(pointerOver ? 1 : 0)
                     }
                     Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
@@ -136,7 +139,8 @@ extension ChatLook {
                 // The width limit goes around the button too, so it stays next to the bubble.
                 .frame(maxWidth: 480 + 22 + ChatLook.tailRoom, alignment: .trailing)
                 .padding(.leading, 40)
-                if place.last, !quiet { caption.padding(.trailing, ChatLook.tailRoom) }
+                // A message still unanswered beside it keeps the group's caption, and Send Now in it.
+                if place.last, !(quiet && groupAnswered) { caption.padding(.trailing, ChatLook.tailRoom) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .contentShape(Rectangle())

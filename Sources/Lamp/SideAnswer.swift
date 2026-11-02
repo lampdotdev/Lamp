@@ -119,7 +119,8 @@ enum SideAnswer {
                 let result = event["result"] as? [String: Any]
                 let words = (result?["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
                 let name = event["toolName"] as? String ?? "tool"
-                return .failed(event["isError"] as? Bool == true && words == SideAnswer.refusal ? "blocked \(name)" : "\(name) ran")
+                if event["isError"] as? Bool == false { return .failed("\(name) ran") }
+                return .failed(words == SideAnswer.refusal ? "blocked \(name)" : "\(name) failed")
             case "agent_settled":
                 return .failed("ended without an answer")
             case "auto_retry_end":
@@ -191,6 +192,8 @@ enum SideAnswer {
             process.currentDirectoryURL = folder
             process.environment = SideAnswer.environment(route: route, keys: keys, definitions: definitions)
             let input = Pipe()
+            // A write after pi has gone (a cancel can land between the two) fails instead of ending Lamp.
+            _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
             process.standardInput = input
             process.standardError = FileHandle.nullDevice
             let pipe = Pipe()
@@ -210,7 +213,7 @@ enum SideAnswer {
             }
             self.process = process
             func say(_ command: [String: Any]) {
-                guard let line = try? JSONSerialization.data(withJSONObject: command) else { return }
+                guard !cancelled, let line = try? JSONSerialization.data(withJSONObject: command) else { return }
                 try? input.fileHandleForWriting.write(contentsOf: line + Data([10]))
             }
             say(["id": "guard", "type": "get_commands"])
@@ -263,7 +266,7 @@ enum SideAnswer {
     }
 
     /// A list of what's allowed, not Lamp's environment with parts taken out.
-    /// With none of the routes or the token the tools' own code would need, a tool has nothing to reach even past the guard.
+    /// None of the routes or the token Lamp's tools need. pi's own tools need neither, so the guard is what stops those.
     static func environment(route: Route, keys: [String: String], definitions: URL) -> [String: String] {
         var env = keys.merging(["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "PI_CODING_AGENT_DIR": route.configFolder,
                                 "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "LAMP_TOOLS_JSON": definitions.path,
