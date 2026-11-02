@@ -349,6 +349,102 @@ final class GameRetiredPartTests: XCTestCase {
         XCTAssertTrue(fresh)
     }
 
+    /// A table whose reading is counted: each look through what's kept reads `rows` once.
+    private static let countedTable = """
+        live.keep('table', () => {
+            const table = {};
+            Object.defineProperty(table, 'rows', { enumerable: true, get() { window.looks = (window.looks || 0) + 1; return 1; } });
+            return { table };
+        });
+        """
+
+    func testARunThatBuildsManyPartsLooksThroughWhatsKeptOnce() async throws {
+        func parts(_ version: Int) -> String {
+            Self.countedTable + (0..<8).map { i in
+                "live.keep('part\(i)', () => { /* \(version) */ const g = new THREE.Group(); g.add(own()); scene.add(g); return g; }, { inputs: [scene] });"
+            }.joined(separator: "\n")
+        }
+        try await open(Self.game(parts(1)))
+        try await js("window.looks = 0")
+        files.text["game.js"] = Self.game(parts(2))
+        try await change("game.js")
+        try await pastEmptying()
+        let looks = try await number("window.looks")
+        XCTAssertGreaterThan(looks, 0)
+        XCTAssertLessThanOrEqual(looks, 3, "one for the run's parts, one to decide what's disposed of, one to take them apart")
+    }
+
+    func testAPartWithNoObjectsGoesWithoutALookThroughWhatsKept() async throws {
+        func plain(_ version: Int) -> String {
+            Self.countedTable + "live.keep('plain', () => ({ version: \(version), dispose() { window.plainGone = (window.plainGone || 0) + 1; } }));"
+        }
+        try await open(Self.game(plain(1)))
+        try await js("window.looks = 0")
+        files.text["game.js"] = Self.game(plain(2))
+        try await change("game.js")
+        try await until("its dispose ran") { try await self.number("window.plainGone || 0") == 1 }
+        try await pastEmptying()
+        let looks = try await number("window.looks")
+        XCTAssertEqual(looks, 0)
+    }
+
+    func testAPartLeavesItsSceneAndItsDisposeRunsWhileTheRunGoesOn() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            \(Self.goes(version))
+            live.keep('mine', () => ({ version: \(version) }), { dispose() { window.mineGone = (window.mineGone || 0) + 1; } });
+            await new Promise(next => setTimeout(next, 0));
+            window.childrenInRun = scene.children.length; window.goneInRun = window.mineGone || 0;
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        try await change("game.js")
+        let children = try await number("window.childrenInRun"), gone = try await number("window.goneInRun")
+        XCTAssertEqual(children, 1, "the old part is out of the scene the run's code looks at")
+        XCTAssertEqual(gone, 1, "a part's own dispose doesn't wait for the run's end")
+    }
+
+    func testWhatTwoPartsShareIsDisposedOfOnceWhenBothGo() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            const both = window.both = window.both || (() => { const geo = new THREE.BoxGeometry(1, 1, 1); geo.addEventListener('dispose', () => { window.bothDisposed = (window.bothDisposed || 0) + 1; }); return geo; })();
+            const version = \(version);
+            for (const name of ['a', 'b']) live.keep(name, () => {
+                const g = new THREE.Group(); g.add(new THREE.Mesh(version === 1 ? both : new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial())); scene.add(g);
+                (window.made = window.made || []).push({ g });
+                return g;
+            }, { inputs: [scene], from: ['v\(version)'] });
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        files.text["v2"] = "2"
+        try await change("game.js")
+        try await emptied("made[0]")
+        try await emptied("made[1]")
+        let disposed = try await number("window.bothDisposed")
+        XCTAssertEqual(disposed, 1)
+    }
+
+    func testAnObjectTheNewPartAlsoHoldsStaysWhole() async throws {
+        func part(_ version: Int) -> String {
+            """
+            live.keep('goes', () => { /* \(version) */
+                const g = window.same = window.same || (() => { const made = new THREE.Group(); made.add(own()); scene.add(made); return made; })();
+                return { g, version: \(version) };
+            }, { inputs: [scene] });
+            """
+        }
+        try await open(Self.game(part(1)))
+        try await js("window.keptMesh = same.children[0]; window.keptGeometry = keptMesh.geometry")
+        files.text["game.js"] = Self.game(part(2))
+        try await change("game.js")
+        try await pastEmptying()
+        let whole = try await yes("same.parent === scene && same.children[0] === keptMesh && keptMesh.geometry === keptGeometry && window.cached.has(keptGeometry)")
+        XCTAssertTrue(whole)
+    }
+
     func testARunThatFailsOpensThePageAgainWithItsPartsWhole() async throws {
         try await open(Self.game(Self.goes(1)))
         files.text["game.js"] = Self.game(Self.goes(2), top: "if (window.opens === 1) throw new Error('no');")
