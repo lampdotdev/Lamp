@@ -258,10 +258,10 @@ the last one merged in by Update from GitHub…, or the last one Put on GitHub p
 version of its own history the file was made from; shown nowhere, it's what an update is merged from and a contribution
 goes back on top of, "Generated apps"). The same wish put somewhere else is a link of its own
 (`Remix.sameLink`), so the chain keeps where a wish came from beside where it was put; `Credits.origin(own:)` is the
-former. The info panel, the About window and a repository's README link the chain. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
+former. The About window and a repository's README link the chain. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
 `.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was
 changed is still shown and shared. Lamp keeps only what passes `Credits.checked`, from the agent and from a shared file
-alike. It's shown first in the wish's info panel and, for a Mac app, in its About window (Credits.html, written into the
+alike. It's shown in a Mac app's About window (Credits.html, written into the
 bundle by `Store.stageSigned`, and asked of Lamp as the window opens, so a credit added since the install shows:
 "Generated apps"). In a shared file it's credits.json at the root, which an older Lamp ignores, so the
 file's format isn't raised for it.
@@ -273,8 +273,8 @@ index ("3D scenes and games"), both open licenses to `ShareCheck`, so a wish usi
 other.
 
 Pictures `make_art` paints are marked as made with AI twice: in the PNG itself (IPTC's digital source type
-`trainedAlgorithmicMedia` in its XMP, `AIMark`), and in the wish's `generated` list, which the info panel and About
-window count ("3 pictures made with AI") while the files are there.
+`trainedAlgorithmicMedia` in its XMP, `AIMark`), and in the wish's `generated` list, which the About
+window counts ("3 pictures made with AI") while the files are there.
 
 Before a wish leaves the Mac (a shared file now, a published page too), `ShareCheck` decides whether it may: work under
 an open license goes with its license and credit; under a share-alike one (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) it goes

@@ -195,7 +195,7 @@ A capability given to one engine must be given to all of them that can take it, 
   app's such as Ollama). Don't add another provider without asking: fewer choices in setup was the point.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
-  Settings → Apps (an app's info panel only shows what answers it), and dispatched by kind in `AppAI.dispatch`. The default
+  Settings → Apps, and dispatched by kind in `AppAI.dispatch`. The default
   (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
   OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers lists each provider and
   sign-in with its state, not what it's used for: that's in the menus that choose it. Decisions

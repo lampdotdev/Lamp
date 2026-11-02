@@ -38,8 +38,8 @@ click goes the same way, `Store.openChat`); a wish that opens no Mac window is u
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
-(`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over and Send Changes Back… where they apply, Wish Info
-(its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
+(`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over, Send Changes Back… and Check for Updates…
+(Review Update… once there's one, for a wish that follows a repository on GitHub: `DeskEntry.followsRepository`) where they apply, then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
 A row under Starter apps has no ⋯ (above), and its side panel offers Open and Remix it; the arrows move the pick through
 both sections, and File's commands act on no wish while a starter not on the desk yet is picked.
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
@@ -64,8 +64,7 @@ or a wish opened from GitHub or a file is already the person's own copy, so the 
 
 A wish that arrived from somewhere and has been changed since (`Store.original(toStartAgain:)`: its files differ from
 the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
-original" in the panel, with Start Over beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
-creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Over in its menu
+original" in the panel, with Start Over beside it; the same is Start Over in its menu
 (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. It starts
 the conversation again too, since one about a game that's gone would steer the next request: every engine's
 conversation is set aside (`Conversation.setAside`, "How big a conversation grows" in the engines guide), so the next
@@ -79,7 +78,7 @@ wish's chat as the chat's Share menu does. A remix link from the site lands the 
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
-open the starter itself), and the shuffle mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
+open the starter itself), and the wand mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
 wish's menu and File → Duplicate…, which, like Copy Wish File and Name This Version…, acts on the row picked while the
 desk is in front and otherwise on the chat in front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
 to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
@@ -104,10 +103,12 @@ is for and Settings is no place to find that out. Until Lamp has looked on the n
 invitation to, whose Find My Devices is the look macOS asks about; from then on the desk looks each time it's shown or
 Lamp comes to the front, at most once a minute (`lookForDevices`), and the list is this Mac, then the person's own, then
 what was only found that Lamp makes apps for or controls, each kind in the order people make most for
-(`DeskDevices.ranked`), then "N More" for what Lamp could only learn (a server, an appliance; it opens Settings → Your
-Devices, where the whole network is) and Add a Device (`AddDeviceSheet`). A green dot is ready, and a click puts "for my
-<device>" in the bar; "Set up" and an amber dot is a step to take, and a click takes it (`DeviceNextStep.takeFurther`,
-Settings where Lamp can't from here). A device's name is short and plain (`DeskDevices.label`: a found one by its model,
+(`DeskDevices.ranked`), then "N More", which opens in place the rest of the network: what Lamp could only learn (a
+server, an appliance), then every other host, a click setting one up, opened with a look over the whole network
+(`refreshDevices(everything:)`); then Add a Device (`AddDeviceSheet`). Settings has no list of devices: this is the one.
+A green dot is ready, and a click puts "for my <device>" in the bar; "Set up" and an amber dot is a step to take, and a
+click takes it where Lamp can from here (`DeviceNextStep.takeFurther`; its tip says the step otherwise). A right-click
+has Set Up… (`DeskDevices.offersSetUp`), and Reconnect… and Forget… for a device Lamp set up itself. A device's name is short and plain (`DeskDevices.label`: a found one by its model,
 never an address or a serial); what else is known is in its tip a moment after the pointer comes onto it (`DeviceTip`),
 never its address. macOS refusing the network is `LocalNetworkRefused` under the list.
 
@@ -241,8 +242,9 @@ it, and its menu has Update from the Original (`Store.updateFromOriginal`; asked
 it and the chat says so, never an alert), which merges the starter this Lamp pins (fetched first)
 into the person's changes as an update from GitHub merges (`Store.mergeUpdate`, `Upstream`: three ways, against the
 commit the copy has, fetched when it can be and else the version it began with), the agent settling only what both
-sides changed. Wish Info's Check for Updates… compares a starter's copy with the pin, never GitHub's latest
-(`Store.followsShippedStarter`). Start Over on a starter's copy goes back to the version it arrived as and then on to
+sides changed. A starter's copy is compared with the pin, never GitHub's latest (`Store.followsShippedStarter`), so it has
+no Check for Updates…: a wish from GitHub has it, and the side panel says what was last heard of its updates with the
+button that checks or reviews them. Start Over on a starter's copy goes back to the version it arrived as and then on to
 the starter as this Lamp ships it (`Starters.original`), behind or merged up to it since, in the same hold and as one
 version (`Store.startOverBegun`), so it lands on the current starter with the chat started over ("Started over from the latest original"), one Undo away; a wish from
 GitHub or a shared file still goes back to what arrived.

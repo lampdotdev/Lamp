@@ -58,7 +58,20 @@ enum AppUpdates {
     }
 
     static func route(of project: LampProject) -> Route? {
-        route(for: AppInfoView.located(Credits.load(project)), own: GitHubRepo.kept(for: project)?.url)
+        route(for: located(Credits.load(project)), own: GitHubRepo.kept(for: project)?.url)
+    }
+
+    /// Where the wish came from, when that's a repository on GitHub: the chain's last link naming one that isn't where
+    /// this wish was put (`Credits.origin`), a starter's link filled in for a copy made before starters named theirs
+    /// (`Starters.located`).
+    static func origin(of project: LampProject) -> Credits.Remix? {
+        located(Credits.load(project)).origin(own: GitHubRepo.kept(for: project)?.url)
+    }
+
+    static func located(_ credits: Credits) -> Credits {
+        var credits = credits
+        credits.remixOf = credits.remixOf.map(Starters.located)
+        return credits
     }
 
     // MARK: Checking
@@ -384,7 +397,7 @@ extension Store {
     func reviewUpdate(_ project: LampProject) {
         // The copy itself: its chat is where its update is.
         if AppUpdates.Job.load(project) != nil { return showChat(project.id) }
-        // A starter's copy takes the starter this Lamp pins, from its chat (Wish Info is there).
+        // A starter's copy takes the starter this Lamp pins.
         if Self.followsShippedStarter(project) { return updateFromOriginal(project, opening: false) }
         // Being set up: one copy at a time.
         if preparingUpdates.contains(project.id) { return }

@@ -85,7 +85,6 @@ public struct SidebarState: Codable, Equatable {
     public var versions: [SidebarVersion]?
     /// Older versions than those in `versions`, sent when asked (`SidebarCommand.earlierVersions`).
     public var hasEarlierVersions: Bool?
-    public var info: [SidebarInfoSection]?
     /// The wish's file after Share…, for the sidebar's own share menu: sent once, since only the sidebar can show
     /// that menu where the button is, and it can't read Lamp's files.
     public var sharing: SidebarSharing?
@@ -232,21 +231,18 @@ public struct SidebarToolbar: Codable, Equatable {
     /// It has versions to look back at.
     public var hasVersions: Bool
     public var details: Bool
-    /// What the app's AI has cost ("AI: 3 calls · $0.02"), when it has used any.
-    public var usage: String?
     /// Play and Stop, for a wish that doesn't run as a Mac window beside this chat: nil beside a Mac app, which is open.
     public var play: SidebarPlay?
 
-    public init(canUndo: Bool, canShare: Bool, hasVersions: Bool, details: Bool, usage: String?) {
+    public init(canUndo: Bool, canShare: Bool, hasVersions: Bool, details: Bool) {
         self.canUndo = canUndo
         self.canShare = canShare
         self.hasVersions = hasVersions
         self.details = details
-        self.usage = usage
     }
 }
 
-public enum SidebarPanel: String, Codable { case versions, info }
+public enum SidebarPanel: String, Codable { case versions }
 
 /// The bar's Play, or its Stop while the wish is open where Try On points.
 public struct SidebarPlay: Codable, Equatable {
@@ -427,42 +423,6 @@ public struct SidebarVersion: Codable, Equatable, Identifiable {
     }
 }
 
-/// A part of the app's info panel: its rows, and the buttons under them (`SidebarCommand.infoAction`).
-public struct SidebarInfoSection: Codable, Equatable, Identifiable {
-    public var id: String { title ?? "" }
-    public var title: String?
-    public var rows: [SidebarInfoRow]
-    public var buttons: [SidebarInfoButton]
-
-    public init(title: String?, rows: [SidebarInfoRow], buttons: [SidebarInfoButton] = []) {
-        self.title = title
-        self.rows = rows
-        self.buttons = buttons
-    }
-}
-
-/// A fact: its label and its value, or Not Ready when nothing answers.
-public struct SidebarInfoRow: Codable, Equatable {
-    public var label: String
-    public var value: String?
-
-    public init(label: String, value: String?) {
-        self.label = label
-        self.value = value
-    }
-}
-
-public struct SidebarInfoButton: Codable, Equatable {
-    public var title: String
-    /// What it does, Lamp's to know.
-    public var action: String
-
-    public init(title: String, action: String) {
-        self.title = title
-        self.action = action
-    }
-}
-
 public struct SidebarSharing: Codable, Equatable {
     public var id: UUID
     public var file: SidebarFile
@@ -628,8 +588,6 @@ public enum SidebarCommand: Codable, Equatable {
     case earlierVersions
     /// A version's name, or (empty) none.
     case nameVersion(String, String)
-    /// A button in the info panel.
-    case infoAction(String)
     /// The Share Link card: open it, or what was done on it.
     case wishLink(SidebarWishLinkCommand)
     /// The Put on GitHub card: open it, or what was done on it.

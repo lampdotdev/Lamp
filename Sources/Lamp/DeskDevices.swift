@@ -5,15 +5,16 @@ import LampSidebarKit
 /// Lamp is made for and Settings is no place to find that out. Until Lamp has looked on the network it's an invitation
 /// to, whose button is the look that has macOS ask about the local network; from then on the desk looks each time it's
 /// shown, and the list is the devices Lamp makes apps for, the likeliest first. A ready one, or one only found that
-/// Lamp has nothing to set up for, puts itself in the bar; one that isn't ready takes its next step; the rest of the
-/// network is in Settings → Your Devices.
+/// Lamp has nothing to set up for, puts itself in the bar; one that isn't ready takes its next step. The rest of the
+/// network opens under More, in place, and a right-click has what can be done to a device: Set Up…, Reconnect…, Forget….
 struct DeskDevices: View {
     @EnvironmentObject private var store: Store
     @AppStorage(Store.localNetworkAskedKey) private var asked = false
     @AppStorage("appleTeam") private var team = ""
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @Environment(\.openSettings) private var openSettings
     @State private var adding = false
+    /// Everything else on the network is shown, under the devices offered.
+    @State private var showingAll = false
+    @State private var forgetting: Device?
     /// Puts "for my <device>" in the wish bar.
     let wishFor: (String) -> Void
 
@@ -28,6 +29,11 @@ struct DeskDevices: View {
             if asked { list } else { invitation }
         }
         .sheet(isPresented: $adding) { AddDeviceSheet(onPaper: true) }
+        .confirmationDialog(forgetting.map { "Forget \($0.name)?" } ?? "", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
+            Button("Forget", role: .destructive) { if let device = forgetting { forget(device) } }
+        } message: {
+            Text("Lamp forgets how to reach it and what you typed for it. To use it again, set it up from the start.")
+        }
     }
 
     private var invitation: some View {
@@ -59,12 +65,26 @@ struct DeskDevices: View {
         let ranked = Self.ranked(found, team: team)
         return VStack(alignment: .leading, spacing: 2) {
             ForEach(ranked) { device in row(device) }
-            // What Lamp could only learn (a server, an appliance) is counted, never listed: it's in Settings.
-            if !found.couldLearn.isEmpty {
-                DeskChip(help: "All your devices, in Settings", action: showAll) {
-                    Image(systemName: "ellipsis").frame(width: 18)
-                    Text("\(found.couldLearn.count) More").foregroundStyle(Paper.muted)
+            // What Lamp could only learn (a server, an appliance), then every other host on the network, opened in place.
+            // Opening it looks over the whole network (`refreshDevices(everything:)`), which only then knows its hosts.
+            if showingAll {
+                ForEach(found.couldLearn) { device in row(device) }
+                ForEach(found.others) { host in hostRow(host) }
+                if found.unnamed > 0 {
+                    Text(found.unnamed == 1 ? "1 more with a private address, most likely a phone, tablet or computer"
+                         : "\(found.unnamed) more with private addresses, most likely phones, tablets and computers")
+                        .font(.system(size: 12)).foregroundStyle(Paper.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
                 }
+            }
+            let more = found.couldLearn.count + found.others.count + found.unnamed
+            DeskChip(help: showingAll ? "Show only the devices Lamp makes apps for" : "Everything else on your network", action: {
+                withAnimation(.easeOut(duration: 0.25)) { showingAll.toggle() }
+                if showingAll { store.refreshDevices(everything: true) }
+            }) {
+                Image(systemName: showingAll ? "chevron.up" : "ellipsis").frame(width: 18)
+                Text(showingAll ? "Fewer" : more > 0 ? "\(more) More" : "More").foregroundStyle(Paper.muted)
             }
             DeskChip(help: "Plug in a phone or tablet, or set up another device", action: { adding = true }) {
                 // While Lamp looks, the plus turns, so the list doesn't move for it.
@@ -79,6 +99,61 @@ struct DeskDevices: View {
             if store.localNetworkRefused, !store.lookingForDevices { LocalNetworkRefused().padding(.top, 6) }
         }
         .animation(.easeOut(duration: 0.25), value: ranked.map(\.id))
+    }
+
+    /// A host nothing of Lamp's works with: what it is, and the names it goes by on the network. A click sets it up: the
+    /// agent works out what it is and whether anything can reach it. The router and this Mac aren't for that.
+    private func hostRow(_ host: NetworkHost) -> some View {
+        let settable = !host.isGateway && !host.isThisMac
+        return DeskChip(help: HomeNetwork.facts(host), action: settable ? { store.setUpDevice(HomeNetwork.device(for: host)) } : nil) {
+            Image(systemName: host.isGateway ? "wifi.router" : "network").frame(width: 18)
+            Text(HomeNetwork.label(host)).lineLimit(1).truncationMode(.tail)
+        }
+        .foregroundStyle(Paper.muted)
+    }
+
+    /// A device Lamp set up itself, on the network: the ones Reconnect and Forget are for. A phone's pairing is the
+    /// Mac's, and an Android device's is the device's own.
+    static func keptByLamp(_ device: Device) -> Bool {
+        if AndroidTVs.isRecord(device.id) { return true }
+        return device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
+    }
+
+    /// Whether a device's right-click offers Set Up…: one not set up with Lamp, or part-way, that Lamp can take further
+    /// from here (`DeviceNextStep.takeFurther`). A device only found, even one an app can already control, is set up
+    /// this way rather than told its first step: that's for the setup it opens.
+    static func offersSetUp(_ device: Device, team: String) -> Bool {
+        guard device.id != Device.macID, !device.isAway else { return false }
+        if device.kind.isTV || device.kind == .other { return !device.isSetUp || { if case .needs = device.setup(team: team) { true } else { false } }() }
+        return device.kind.isPhone && (!device.paired || !device.developerMode)
+    }
+
+    /// Reconnect: a TV's setup window, checked again from where it stands; another device's setup from the start, its
+    /// certificate let go, so a reset device or one whose developer mode was turned on again is trusted afresh.
+    private func reconnect(_ device: Device) {
+        if AndroidTVs.isRecord(device.id) {
+            AndroidWiFi.shared.show(host: device.address)
+        } else if device.kind.isTV {
+            TVs.reconnect(device.id)
+            store.refreshDevices()
+            TVSetup.shared.show(device.udid)
+        } else {
+            DeviceSetupModel.for(device).reconnect()
+            DeviceSetupWindow.show(device)
+        }
+    }
+
+    private func forget(_ device: Device) {
+        if AndroidTVs.isRecord(device.id) {
+            AndroidTVs.forget(device.id)
+        } else if device.kind.isTV {
+            TVs.forget(device.id)
+        } else {
+            DeviceSetupModel.discard(device.id)
+            Integrations.forget(device.id)
+        }
+        forgetting = nil
+        store.refreshDevices()
     }
 
     /// `found` is a device only seen on the network that Lamp has no setup for (a speaker, say): an app talks to it
@@ -174,7 +249,7 @@ struct DeskDevices: View {
     private func row(_ device: Device) -> some View {
         let state = Self.state(of: device, team: team)
         let name = state == .here ? "This Mac" : Self.label(device)
-        return DeskChip(help: name, tip: tip(device, name: name, state: state), action: state == .here ? nil : { act(device, state: state) }) {
+        return DeskChip(help: name, tip: tip(device, name: name, state: state), action: state == .here || state == .away ? nil : { act(device, state: state) }) {
             Image(systemName: device.symbol).frame(width: 18)
             Text(name).lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 4)
@@ -189,11 +264,20 @@ struct DeskDevices: View {
             }
         }
         .opacity(state == .away ? 0.5 : 1)
+        .contextMenu {
+            if Self.offersSetUp(device, team: team) {
+                Button("Set Up…") { _ = DeviceNextStep.takeFurther(device, store: store) }
+            }
+            if Self.keptByLamp(device) {
+                Button("Reconnect…") { reconnect(device) }
+                Button("Forget \(device.name)…") { forgetting = device }
+            }
+        }
         .accessibilityValue(state == .setUp ? "Not set up" : state == .away ? "Not on this network" : state == .found ? "Found on your network" : "Ready")
     }
 
     /// What's known of a device, for its tip: what it is, what it's called at home, where it is, where its setup
-    /// stands and what a click does. Never its address: that's for Settings' list and the agent.
+    /// stands and what a click does. Never its address: that's for a host's own tip and the agent.
     private func tip(_ device: Device, name: String, state: Standing) -> DeviceTip {
         var lines: [String] = []
         let what = [Self.brand(device.maker), device.model].filter { !$0.isEmpty && !Self.isNoise($0) }
@@ -210,6 +294,9 @@ struct DeskDevices: View {
             called.append(each)
         }
         if !called.isEmpty { lines.append("Called \(called.prefix(2).joined(separator: ", ")) on your network") }
+        // An app on a phone signed with a free account stops opening after a week: said where the phone is.
+        let stopped = store.projects.filter { PhoneRenewals.stoppedOpening($0, on: device.udid) }.map(\.name)
+        if !stopped.isEmpty { lines.append("\(TeamLimits.list(stopped)) stopped opening. Open \(stopped.count == 1 ? "it" : "each") and press Play.") }
         switch device.reach {
         case .thisMac: break
         case .cable: lines.append("Plugged into this Mac")
@@ -228,7 +315,7 @@ struct DeskDevices: View {
         case .found:
             return DeviceTip(title: name, lines: lines, status: nil, hint: "Click to wish for something for it.")
         case .away:
-            return DeviceTip(title: name, lines: lines, status: ("Not on this network just now", .secondary), hint: "Click to see all your devices.")
+            return DeviceTip(title: name, lines: lines, status: ("Not on this network just now", .secondary), hint: nil)
         }
     }
 
@@ -237,14 +324,9 @@ struct DeskDevices: View {
         case .here: break
         case .ready: wishFor(Self.words(for: device))
         case .found: wishFor(Self.label(device))
-        case .setUp: if !DeviceNextStep.takeFurther(device, store: store) { showAll() }
-        case .away: showAll()
+        case .setUp: _ = DeviceNextStep.takeFurther(device, store: store)
+        case .away: break
         }
-    }
-
-    private func showAll() {
-        settingsTab = "building"
-        openSettings()
     }
 }
 

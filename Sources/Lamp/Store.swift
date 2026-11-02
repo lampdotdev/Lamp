@@ -2793,7 +2793,7 @@ final class Store: ObservableObject {
     /// before (`DeskDevices`): never as a wish starts, or as Lamp opens before its first look, which show what Lamp
     /// already knows (`showKnownDevices`).
     ///
-    /// `everything` is for where the person is looking at what's on the network (Your Devices, Add a New Device,
+    /// `everything` is for where the person is looking at what's on the network (More under the desk's devices, Add a New Device,
     /// `network_devices`): it also sweeps this Mac's subnet, reads the neighbor table and browses every Bonjour service
     /// (`HomeNetwork.look`), for the hosts nothing of Lamp's knows. Any other look leaves the last of those as they are.
     func refreshDevices(everything: Bool = false) {
@@ -3816,7 +3816,7 @@ final class Store: ObservableObject {
         }
         // Where the wish came from, and the commit it has of it, read before the credits move on; a wish from a shared
         // file has no repository, and is merged against the version that arrived.
-        let origin = AppInfoView.origin(of: project)
+        let origin = AppUpdates.origin(of: project)
         let source = origin?.url.flatMap(RepoImport.source(from:))
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
         let place = original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish"
@@ -4245,21 +4245,38 @@ final class Store: ObservableObject {
             }
             if let color = suggestion?.color, Icons.load(project) == nil { iconColors[project.id] = color }
         }
-        if Icons.load(project) == nil {
-            let designing = project
-            let color = iconColors[project.id]
-            iconDesigns[project.id] = Task {
-                let spec = await Icons.design(for: designing, brief: brief, background: color)
-                if Icons.load(designing) == nil {
-                    Icons.save(spec, for: designing)
-                    await renderIcon(designing, spec: spec)
-                    // The artwork takes a minute or two; the build takes longer. Started now, it's usually
-                    // there by the time the app first opens, instead of swapping in afterwards.
-                    upgradeIconArt(designing)
-                }
-                iconDesigns[designing.id] = nil
+        if Icons.load(project) == nil { designIcon(project, brief: brief) }
+        return project
+    }
+
+    /// The icon designed from what was asked, while the agent builds: one not designed yet, or the stand-in a design
+    /// that found nothing to answer it left (`Icons.isStandIn`), which a design under way since mustn't be replaced by.
+    private func designIcon(_ project: LampProject, brief: String) {
+        let designing = project
+        let color = iconColors[project.id]
+        iconDesigns[project.id] = Task {
+            let spec = await Icons.design(for: designing, brief: brief, background: color)
+            if Icons.load(designing).map(Icons.isStandIn) ?? true {
+                Icons.save(spec, for: designing)
+                await renderIcon(designing, spec: spec)
+                // The artwork takes a minute or two; the build takes longer. Started now, it's usually
+                // there by the time the app first opens, instead of swapping in afterwards.
+                upgradeIconArt(designing)
             }
+            iconDesigns[designing.id] = nil
         }
+    }
+
+    /// A wish still untitled at a later request because its first naming found nothing to answer it (`bootstrap`,
+    /// with the AI out of reach): named now from everything asked, with the icon designed that the stand-in held the
+    /// place of. What it runs on was settled since, by the agent, so it's left as it is.
+    private func nameAgain(_ project: LampProject, brief: String) async -> LampProject {
+        var project = project
+        let suggestion = await AppName.suggest(for: brief, devices: devices)
+        progress[project.id]?.naming = false
+        if let name = suggestion?.name { project = await performRename(project, to: name) }
+        if let color = suggestion?.color, Icons.load(project).map(Icons.isStandIn) ?? true { iconColors[project.id] = color }
+        if Icons.load(project).map(Icons.isStandIn) ?? true { designIcon(project, brief: brief) }
         return project
     }
 
@@ -4342,15 +4359,17 @@ final class Store: ObservableObject {
         let names = project.isDeviceSetup ? false
             : project.finding ? spoken && project.untitled && !messages.contains { $0.card != nil } : !spoken
         let first = names
+        // The first request's naming found nothing to answer it (the AI couldn't be reached): this one names it, from
+        // everything asked so far, and designs the icon the stand-in has held the place of (`nameAgain`).
+        let namesAgain = !names && spoken && project.untitled && !project.finding && !project.isDeviceSetup
         let stillFinding = project.makesNoApp && !names
         // Still a new app until a request has made its first version: after the agent only asked questions,
         // the answers start the build and get its chapters. An imported app has already been built. Not
         // while a wish is being found: there's nothing to build yet.
         let newApp = Template.isScaffold(project) && !hasVersions(project) && (!project.makesNoApp || names)
         progress[project.id] = TurnProgress(newApp: newApp)
-        // Only the first message names the app (bootstrap). A later one, after the agent only asked questions,
-        // finds it untitled if that naming failed, and mustn't show a naming that isn't happening.
-        progress[project.id]?.naming = first && project.untitled
+        // The first message names the app (bootstrap), and a later one when that naming found nothing to answer it.
+        progress[project.id]?.naming = (first || namesAgain) && project.untitled
         let kind = project.platform.target.identity.analytics
         if newApp && first {
             Analytics.capture(.appFirstRequest, ["kind": kind, "has_attachments": messages.contains { !$0.attachments.isEmpty }])
@@ -4375,6 +4394,11 @@ final class Store: ObservableObject {
                     reload()
                     project = current(project) ?? project
                 }
+                if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
+            } else if namesAgain {
+                let untitled = project
+                let words = (logs[project.id] ?? []).filter { $0.kind == .user }.map(\.text).filter { !$0.isEmpty }
+                project = await nameAgain(project, brief: words.joined(separator: "\n\n"))
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
             // A wish that opens on a TV or a device, or has a part that does (a screen or a game beside its Mac app), is

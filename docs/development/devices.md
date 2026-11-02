@@ -67,7 +67,7 @@ on again) is refused until the person reconnects it: the step's check or the ins
 where its setup card goes (`DeviceReconnectCard`, `DeviceSetupModel.certificateChanged`), and Reconnect lets the kept
 certificate go and starts its setup over from the first step (`reconnect`, `Integrations.startOver`), so the sign-in goes
 only to the device whose new certificate the first request keeps; an app waiting on it goes on once that setup is done.
-Only the person's click trusts a new certificate. Settings → Your Devices has Reconnect… and Forget… for every device
+Only the person's click trusts a new certificate. A device's right-click on the desk has Reconnect… and Forget… for every device
 Lamp set up itself (an integration's, a TV; not a phone, whose pairing is the Mac's), Forget taking its record, its
 certificates and keys, what was typed for it and its approvals (`Integrations.forget`, `TVs.forget`, `AndroidTVs.forget`).
 
@@ -149,7 +149,7 @@ name (`Store.isMacHost`), since a web page can't choose its Host and these devic
 **When Lamp looks.** A look (`Store.refreshDevices`) runs devicectl for the phones, adb for Android's and one search
 of the local network for the TVs and devices, and each of these can have macOS ask whether Lamp may use the local network:
 devicectl finds phones over Wi‑Fi too, and macOS counts the tools Lamp runs as Lamp. So Lamp looks only once the person
-is doing something with a device: Settings → Your Devices, Add a New Device and Look Again, Try On opening (Lamp's and the
+is doing something with a device: the desk's devices (shown once Lamp has looked before, and More), Add a New Device and Look Again, Try On opening (Lamp's and the
 chat's, `SidebarCommand.tryOnOpened`), pairing, a device's setup, Play on a phone, a TV or a device, a game given the
 Xbox, `device_integration`; a wish named for a phone, a TV or a device (`AppName.Suggestion.forPhone`, `forDevice`, then
 `Store.lookForWish`, which names the wish again when the look found a TV or device Lamp didn't know); and the first
@@ -173,8 +173,8 @@ integration share: an integration's `find.ssdp` target and the description its i
 answers (`Scan.answers(for:)`, `describedAt`), never a search of their own, the integrations look at once, and a
 device's answers are waited for a few seconds (`Integrations.lookTimeout`), not an install's thirty. A recheck of the
 phones alone (`refreshAppleDevices`) replaces only Apple's part of the list.
-**The whole network** (`HomeNetwork`, HomeNetwork.swift). Where the person is looking at what's there (Your Devices,
-Add a New Device and its Look Again, `network_devices`: `refreshDevices(everything: true)`), the look also finds what
+**The whole network** (`HomeNetwork`, HomeNetwork.swift). Where the person is looking at what's there (More under
+the desk's devices, Add a New Device and its Look Again, `network_devices`: `refreshDevices(everything: true)`), the look also finds what
 SSDP and the integrations don't, and every other look leaves the last of it as it was. Never at launch or on a timer.
 It sends one datagram (a byte to the discard port, 9) to each address of this Mac's own subnet, sixteen at a time,
 paced, so the Mac asks who has each one and its neighbor table fills (`Sweep`); no nmap, raw socket or admin. The
@@ -193,16 +193,16 @@ device. Each address is one `NetworkHost`: hardware address and maker, randomize
 Bonjour services and the names they go by, its SSDP server and the UPnP description Lamp read (`HomeNetwork.merge`).
 Hosts are kept in memory only (`Store.hosts`).
 
-Settings → Your Devices lists, in this order (`HomeNetwork.List`): the person's devices, set up with Lamp (away ones
-too); then, under "Found on your network, not set up", what Lamp makes apps for or controls that's only found (the kits'
+The desk's devices, down its side (`DeskDevices`), list in this order (`HomeNetwork.List`, ranked by `DeskDevices.ranked`):
+the person's devices, set up with Lamp (away ones too); then what Lamp makes apps for or controls that's only found (the kits'
 devices, what integrations find, `Integrations.devices`, and what a starter controls, `HomeNetwork.controlled`, a Sonos
-so far); then the devices Lamp could learn:
+so far); then, under More, opened in place and looking over the whole network as it opens, the devices Lamp could learn:
 those that answered the SSDP scan that nothing knows, read from their UPnP description (routers left out), and hosts
 that offer a Bonjour service that isn't plumbing (`HomeNetwork.couldLearn`, `device(for:)`, named by maker and model,
-never by the names they go by); then everything else, folded under Everything Else on Your Network: the router, this
+never by the names they go by); then everything else: the router, this
 Mac's other addresses, printers, Apple's devices (by the model their records give, `NetworkHost.apple`: an app can't
 reach them the way it reaches others), appliances and hosts that said nothing but their maker, each with the names it
-goes by on this Mac only and Set Up… (but the router and this Mac; a device found this way is known by
+goes by on this Mac only, and a click sets it up (but the router and this Mac; a device found this way is known by
 `found:<address>#<hardware address>`, read from the neighbor table as Set Up… is pressed, so a conversation is reopened,
 linked to an integration's device and given a host's facts only for the same hardware, and one that began without a
 hardware address never is), whose setup note asks the agent to work out what it
@@ -220,9 +220,9 @@ every request in it carries `Agent.deviceSetupNote` in place of the app's notes,
 waiting") stays about the device. Lamp refuses the app tools there (`Store.deviceSetupRefusal`: looks, use, versions,
 art, kinds, connectors, `write_wish`), leaving the integration, skills, notes and the chat's cards. When
 `device_integration` keeps an integration it looks for the device at once, puts each found one's next step in that
-chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup"). Every device in that group shows only Set Up… (Pair… for a phone), never its first setup step ("Turn on developer mode
-on it"): that step is for the setup window Set Up… opens (`DevicesSection.end`). A device set up with Lamp shows its
-next step beside it.
+chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup"). Every device in that group offers Set Up… (Pair… for a phone) in its right-click on the desk, never its first setup
+step ("Turn on developer mode on it"): that step is for the setup window Set Up… opens (`DeskDevices.offersSetUp`). A
+device set up with Lamp says its next step in its tip.
 
 **Windows packages.** A declared app kind may say `wrap: "msix"`: the package step leaves a zip of the app's files and
 Lamp makes the package itself (`MSIX`, MSIX.swift), with nothing outside Lamp: the zip read as plain files only (no
@@ -309,7 +309,7 @@ devices as well as Lamp.
 
 **What's on the network, for the agent** (`network_devices`, NetworkDevices.swift): a wish that controls, plays to or
 reads the person's devices starts from what's there, not from a question about what they own. The tool waits for a
-fresh look (`Store.devicesNow`: the same look as Settings → Your Devices, with the wait for macOS's question on the first; a look still going after 45 s is said to be, never answered with the last one's list) and
+fresh look (`Store.devicesNow`: the same look as the desk's More, with the wait for macOS's question on the first; a look still going after 45 s is said to be, never answered with the last one's list) and
 answers with each device on the network: its name, maker, model and address, what it said to the SSDP search, and what
 Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an integration's device, or nothing), the
 devices set up with Lamp apart from the possible ones (above), which it says may not be the person's. Phones,

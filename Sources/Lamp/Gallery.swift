@@ -304,7 +304,7 @@ enum Gallery {
                                  draft: "", draftVersion: 0, attachments: [])
         state.workingActivitySince = shown?.activitySince
         state.workingSteps = shown == nil ? nil : SidebarServer.liveSteps(lines, project: wish, details: details, doing: shown?.activity)
-        state.toolbar = SidebarToolbar(canUndo: !lines.isEmpty, canShare: true, hasVersions: !lines.isEmpty, details: details, usage: nil)
+        state.toolbar = SidebarToolbar(canUndo: !lines.isEmpty, canShare: true, hasVersions: !lines.isEmpty, details: details)
         state.canDictate = true
         return state
     }

@@ -425,6 +425,11 @@ enum Icons {
             .first { words.contains($0) }?.trimmed
     }
 
+    /// The stand-in `design` gives when nothing answered: a later request designs the icon again.
+    static func isStandIn(_ spec: IconSpec) -> Bool {
+        spec.symbol == "cube.fill" && spec.subject == "a glossy rounded cube"
+    }
+
     static func fallback(for name: String) -> IconSpec {
         let colored = backgrounds.filter { !$0.isLight }
         let index = abs(name.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) }) % colored.count

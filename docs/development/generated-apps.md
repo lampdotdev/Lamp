@@ -197,7 +197,7 @@ chat, never over it: the chat is drawn by another process, which takes every cli
 is told outright to take mouse events (`ignoresMouseEvents` off): its glass is drawn by the window server, so its own
 pixels are clear, and a clear window lets clicks on clear pixels through. The panel takes the keyboard for the message box
 without becoming the main window. The chat's bar is one row drawn by the extension (`ChatBar`): a red close button like a
-window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then the buttons: Wish Info,
+window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then the buttons:
 Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
 once, so the extension keeps it as it's read, `Link.sharing`, as one lasting file per wish in a folder of its own under
 its caches folder, since Lamp's process draws every wish's chat and one wish's share mustn't remove another's; each share
@@ -211,8 +211,7 @@ The bar is laid out one way at every width, beside an app and in Lamp's panel al
 it where they show), and a button for the rest, which pressed stays lit and puts the rest, Versions beside Undo, in the
 title's place. Play shows only once there's something to play: during a first build Lamp opens the app itself. The room between the buttons moves the chat. ⌘` goes
 through the app's windows with each open chat right after its window (`LampSidebar.watchCycling`), since macOS leaves
-panels out of its own cycle. Versions and Wish Info show as panels in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
-`AppInfoView.sections`). An app's chat is in one place at a time: when it opens beside the app, Lamp's panel for it
+panels out of its own cycle. Versions shows as a panel in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away). An app's chat is in one place at a time: when it opens beside the app, Lamp's panel for it
 closes (`MagicPanel.chatOpenedInApp`). Where there's no Mac window to put it beside (a wish not yet made or being found,
 a menu bar app, a widget, a background app, an iPhone app, an app built by a Lamp from before the sidebar) the chat is in
 Lamp's panel, and setup cards' keys, sign-ins and Image Playground are in Lamp's sheet (`SetupSheet`), "The chat's one
@@ -292,8 +291,8 @@ in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept re
 its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
 A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
 `Remix.sameLink`): the chain keeps where it came from, and `Credits.origin(own:)`, the last link naming a repository
-that isn't the wish's own, is what the info panel's Visit and Check for Updates… and Send Changes Back go by
-(`AppInfoView.origin`).
+that isn't the wish's own, is what Check for Updates… and Send Changes Back go by
+(`AppUpdates.origin`).
 
 A Mac without Apple's tools has no git (`/usr/bin/git` only opens their installer), so a repository link fetches the
 archive GitHub makes of one commit (`RepoArchive`), over a session of its own with no cookies, nothing of the person's
@@ -378,7 +377,7 @@ review once it's ready. A base that's no longer on GitHub fails the fetch rather
 from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
 
 A wish whose chain names where it came from is updated as it was opened
-(`AppInfoView.updateFromRepository`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
+(Review Update… in the desk's menu, `Store.reviewUpdate`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
 which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that
 waits for the welcome, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's
 copy or a second copy made with Keep Both is the one updated). A wish unchanged since it arrived
@@ -465,7 +464,7 @@ window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)",
 none. A change that goes into the open app (`LiveReload`, `PageLive`) installs nothing, so a credit the same change added
 (work the agent brought in) would wait for the next install: the app's About command
 (`LampAbout` in LampSupport, through `LampCommands`) asks Lamp for the page as it is now (`/app/credits`) and shows that,
-and the bundle's page only when Lamp doesn't answer within a moment. Only `Credits.basis` is "Based on", there, in the info panel, the README and the credit
+and the bundle's page only when Lamp doesn't answer within a moment. Only `Credits.basis` is "Based on", there, in the README and the credit
 bar; everything else, and a library in a wish with no basis, is "Uses".
 
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code

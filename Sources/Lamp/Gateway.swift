@@ -394,7 +394,7 @@ enum AppAI {
         return anthropicModels.first { $0.id == "sonnet" }!
     }
 
-    /// The same for one app: its own choice (info panel), else Settings'.
+    /// The same for one app: its own choice (one an earlier Lamp let it make), else Settings'.
     @MainActor static func awayModel(for choice: String?) -> Provider.ListedModel {
         anthropicModels.first { $0.id == choice } ?? awayModel
     }
@@ -432,7 +432,7 @@ enum AppAI {
     /// The route Settings chose for apps, when it can still answer; else the default.
     @MainActor static var model: TextRoute { route(for: UserDefaults.standard.string(forKey: "appModel")) }
 
-    /// The text route for one app: its own choice (info panel), or Settings', when it can answer; else the
+    /// The text route for one app: its own choice (one an earlier Lamp let it make), or Settings', when it can answer; else the
     /// default.
     @MainActor static func route(for choice: String?) -> TextRoute {
         chosenRoute(for: choice) ?? defaultRoute

@@ -61,28 +61,3 @@ Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay 
 llama.cpp for a GGUF model) is one orange line under it, "Needs a one-time …", with its button and then its progress
 in the button's place, as a model's download shows. A PR that adds to Settings says which tab, and why the option needs to exist at all.
 
-### The app's info panel
-
-The info panel (Wish Info, ⓘ in the chat's bar: `InfoPanel`, in the chat's place, from the rows of
-`AppInfoView.sections`) shows facts about one app; it chooses nothing. What
-belongs: what the app has cost, what answers its AI (from `AppAI.resolve`, so it's what really answers),
-how Lamp builds it, and where it lives. What doesn't: menus, switches, explanations, upgrade offers, or
-anything that's the same for every app and already in Settings.
-
-- **Credits first.** A wish built on someone else's work starts with Credits: what it's based on and its license,
-  what else it uses, and the wishes it was remixed from (`AppInfoView.creditsSection`), with one button to the page of
-  the work it's based on. A wish with none has no such section. Its buttons act on where the wish came from: Check for
-  Updates… (Update from the Original for a starter's copy, which follows the starter this Lamp ships rather than its
-  repository), and Start Over for a wish changed since it arrived (its "Your copy" row says so).
-- **Read-only.** A thing that can be changed is changed in Settings: each section ends in one small button
-  that opens the tab where it's chosen ("Configure Providers…", "Building Settings…"). The only exception is
-  undoing what an app was left with by an earlier Lamp ("Use Settings' Choices", shown only when there is
-  something to undo).
-- **Facts, not notes.** A row is a label and its value. Nothing answers: `NotReadyBadge` as the value, with
-  no sentence under it; the fix is in Settings, one button away. No footers or captions.
-- **Fit the width.** Rows are a grouped form's labeled values, in a chat as narrow as 320 points. Keep values
-  short (`AppInfoView.short`), so most rows fit on one line there.
-- **Current.** Lamp makes the rows again with every state it sends while the panel is open, and sends one when
-  Settings, a key or the app's own choices change (`SidebarServer.start`), so a value never outlives what it
-  describes.
-

@@ -157,7 +157,7 @@ extension TryOnMenu {
     /// Every list's last section: all the devices, and looking again; and when macOS refused the last look on the
     /// network, the way to allow Lamp there.
     @MainActor static func look(_ store: Store) -> Section {
-        var items = [Item(id: "settings", title: "All Your Devices…", symbol: "gearshape"),
+        var items = [Item(id: "settings", title: "All Your Devices…", symbol: "macbook.and.iphone"),
                      Item(id: "look", title: "Look for Devices Again", symbol: "arrow.clockwise")]
         if store.localNetworkRefused {
             items.insert(Item(id: "localnetwork", title: "Allow Lamp on Your Local Network…", symbol: "wifi.exclamationmark"), at: 1)
@@ -288,8 +288,8 @@ extension Store {
             showChat(wish.id)
             return
         case "settings":
-            // Every device Lamp knows, with where its setup stands, is in Settings → Building.
-            SettingsMenu.show(tab: "building")
+            // Every device Lamp knows, with where its setup stands, is down the desk's side.
+            showDesk()
             return
         case "look":
             refreshDevices()
