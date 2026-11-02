@@ -5,6 +5,17 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.32.0
+
+- New starter: Chores, a to-do list you type into in plain words ("call mom friday 6pm"), with projects, labels and
+  smart lists.
+- Give Lamp a picture or an icon file and ask for it to be the app's icon: it uses it as is.
+- The desk answers every click again, and opening an app brings it to the front with its chat.
+- Your devices are on the desk, where "More" shows every other one Lamp can find on your network.
+- Check for Updates… for a wish from GitHub is in its ⋯ menu on the desk, where Wish Info used to be.
+- The wand in an app always opens its chat, and a wish whose first naming didn't work gets its name at the next
+  request.
+
 ## 0.31.1
 
 - Put on GitHub can show a picture of your wish in its README: the card shows the picture, so you can leave it out.
