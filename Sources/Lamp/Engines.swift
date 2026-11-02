@@ -130,7 +130,7 @@ enum Builder {
     /// The model saved for one of pi's providers, chosen or not.
     static func piModel(for provider: String) -> String {
         if let saved = UserDefaults.standard.string(forKey: "piModel.\(provider)"), !saved.isEmpty { return saved }
-        if provider == localProvider { return LocalModels.installedIDs().first ?? "" }
+        if provider == localProvider { return LocalModels.scan().first(where: \.runs)?.id ?? "" }
         return Provider.defaultModel
     }
 
@@ -145,6 +145,9 @@ enum Builder {
                 if installed.isEmpty { return "Download a model in Settings → AI Providers → Native Mac AI." }
                 if let model = installed.first(where: { $0.id == piModel }), model.format == .mlx, LocalModels.mlxServerPath == nil {
                     return "\(model.name) needs a one-time install before it can run: click Install beside it in Settings → AI Providers → Native Mac AI."
+                }
+                if let model = installed.first(where: { $0.id == piModel }), !model.runs {
+                    return ErrorMessages.localModelCantRun(model.name)
                 }
             default:
                 if KeyStore.openRouterKey == nil { return "Add your OpenRouter key." }

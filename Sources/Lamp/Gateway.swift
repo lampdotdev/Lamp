@@ -269,7 +269,7 @@ enum AppAI {
             // Installed, and not known to be signed out: a signed-out sign-in can't answer, and the setup offer
             // should be to sign in rather than to say it's set up.
             case .engine(let engine, _): available = EngineInstall.path(for: engine) != nil && EngineSignIn.known[engine] != false
-            case .localModel(_, let model): available = LocalModels.shared.installed.contains { $0.id == model }
+            case .localModel(_, let model): available = LocalModels.shared.installed.contains { $0.id == model && $0.runs }
             }
             return TextRoute(id: id, label: "\(name) via \(via ?? group)", group: group, name: name, kind: kind, available: available)
         }

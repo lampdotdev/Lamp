@@ -739,11 +739,11 @@ private struct LampAgentOptions: View {
 
     /// "installed:<id>" for a model on this Mac, "spec:<id>" for one to download.
     private func defaultLocalChoice() -> String {
-        if Builder.piProvider == Builder.localProvider, local.installed.contains(where: { $0.id == Builder.piModel }) {
+        if Builder.piProvider == Builder.localProvider, local.installed.contains(where: { $0.id == Builder.piModel && $0.runs }) {
             return "installed:" + Builder.piModel
         }
         if let recommended, let id = local.installedID(for: recommended) { return "installed:" + id }
-        if let first = local.installed.first { return "installed:" + first.id }
+        if let first = local.installed.first(where: \.runs) { return "installed:" + first.id }
         return recommended.map { "spec:" + $0.id } ?? ""
     }
 
@@ -755,7 +755,7 @@ private struct LampAgentOptions: View {
     @ViewBuilder private var onThisMac: some View {
         note("Free and private: Lamp runs the model right here. Smaller models make simpler apps.")
         Picker("", selection: $localChoice) {
-            ForEach(local.installed) { Text("\($0.name) (on this Mac)").tag("installed:" + $0.id) }
+            ForEach(local.installed.filter(\.runs)) { Text("\($0.name) (on this Mac)").tag("installed:" + $0.id) }
             ForEach(LocalModels.catalog.filter { !local.isInstalled($0) }) { spec in
                 Text(spec.name + (spec == recommended ? " (recommended)" : "")).tag("spec:" + spec.id)
             }

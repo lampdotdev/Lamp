@@ -88,7 +88,7 @@ enum Provider {
 
     /// What went wrong with a call, as far as the person can do something about it.
     enum FailureKind: Equatable {
-        case authentication, quota, busy, connection, unreachable, outdated, other
+        case authentication, quota, busy, connection, unreachable, unloadable, outdated, other
 
         init?(status: Int, code: String?) {
             switch status {
@@ -109,6 +109,7 @@ enum Provider {
         case .busy: ErrorMessages.providerBusy
         case .connection: ErrorMessages.connectionFailed
         case .unreachable: ErrorMessages.localServerUnreachable
+        case .unloadable: ErrorMessages.localModelFailed
         case .outdated: "\(name) needs updating: \(raw.prefix(160))"
         case .other: ErrorMessages.aiFailed(String(raw.prefix(160)))
         }
@@ -133,6 +134,11 @@ enum Provider {
         }
         if text.contains("connection refused") || text.contains("econnrefused") {
             return .unreachable
+        }
+        // llama-server's router, for a model its worker couldn't load ("model name=… failed to load"): reached, so not
+        // `unreachable`, and not the provider's to fix.
+        if text.contains("model name="), text.contains("failed to load") {
+            return .unloadable
         }
         if text.contains("requires a newer version") || text.contains("upgrade") {
             return .outdated

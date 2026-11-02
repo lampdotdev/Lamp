@@ -27,6 +27,8 @@ enum BugReport {
             return "The connection to the AI failed."
         case ErrorMessages.localServerUnreachable:
             return "The local model server could not be reached."
+        case ErrorMessages.localModelFailed:
+            return "The local model failed to load."
         default:
             if message.hasPrefix(ErrorMessages.openFailedPrefix) {
                 return "The app could not be opened."
@@ -39,6 +41,9 @@ enum BugReport {
             }
             if message.hasSuffix(ErrorMessages.authenticationFailedSuffix) {
                 return "The AI key or sign-in did not work."
+            }
+            if message.hasSuffix(ErrorMessages.localModelCantRunSuffix) {
+                return "The chosen local model is too new for the bundled model server."
             }
             if message.hasSuffix(ErrorMessages.quotaExceededSuffix) {
                 return "The AI account is out of credit or quota."

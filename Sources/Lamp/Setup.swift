@@ -759,7 +759,7 @@ struct BuildingSettings: View {
             items.append(TextChoice(id: "pi-other:openrouter", label: "Other model…"))
             groups.append(TextGroup(title: Provider.openRouter, items: items))
         }
-        var onMac = local.installed.filter { !LocalModels.isDecisionModel($0.id) }
+        var onMac = local.installed.filter { $0.runs && !LocalModels.isDecisionModel($0.id) }
             .map { TextChoice(id: "pi:\(Builder.localProvider):\($0.id)", label: $0.name) }
         if onMac.isEmpty { onMac.append(TextChoice(id: "pi-other:\(Builder.localProvider)", label: "No models yet")) }
         groups.append(TextGroup(title: "Native Mac AI", items: onMac))
@@ -1958,7 +1958,7 @@ struct ModelPicker: View {
         loading = true
         defer { loading = false }
         switch provider {
-        case Builder.localProvider: models = local.installed.filter { !LocalModels.isDecisionModel($0.id) }.map(\.id)
+        case Builder.localProvider: models = local.installed.filter { $0.runs && !LocalModels.isDecisionModel($0.id) }.map(\.id)
         default: models = await Agent.listModels()
         }
         if provider == "openrouter" {   // suggested models first
@@ -2090,6 +2090,7 @@ private struct LocalAISheet: View {
                 if needsMLX, let error = tools.errors[.mlx] { Text(error).font(.caption).foregroundStyle(.red) }
                 if needsServer { Text("Needs a one-time download before it can run.").font(.caption).foregroundStyle(.orange) }
                 if needsServer, let error = local.errors[LocalModels.serverID] { Text(error).font(.caption).foregroundStyle(.red) }
+                if !model.runs { Text("Too new for this Lamp to run.").font(.caption).foregroundStyle(.orange) }
             }
             Spacer()
             if needsMLX {
@@ -2102,7 +2103,7 @@ private struct LocalAISheet: View {
                 } else {
                     Button("Download") { local.getServer() }
                 }
-            } else if !inUse {
+            } else if !inUse && model.runs {
                 if decides {
                     Button("Use for Decisions") {
                         if let local = AppAI.decisionModels.first(where: { $0.provider == "local" }) { decisionModel = local.id }
