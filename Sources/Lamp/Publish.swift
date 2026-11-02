@@ -2,21 +2,29 @@ import AppKit
 import Foundation
 import LampSidebarKit
 
-/// A web game's page, to play in any browser: Web/ as the app plays it, with Lamp's credit bar over it ("Based on Slop
-/// New York by Mr.doob", Open in Lamp, Remix…), put on GitHub Pages from the person's own GitHub account through GitHub's
+/// A page to play or use in any browser, a web game's or a web app's: Web/ as the app shows it, with Lamp's credit bar
+/// over it ("Based on Slop New York by Mr.doob", Open in Lamp, Remix…), put on GitHub Pages from the person's own GitHub account through GitHub's
 /// own command-line tool (`gh`) and their sign-in there. Nothing goes through Lamp's servers: the person's account holds
 /// the page, under GitHub's terms, and Lamp pays nothing for its plays.
 ///
 /// Put on GitHub puts it up beside the wish's code, on the same repository's `gh-pages` branch (`GitHubRepo.stage`,
 /// `GitHubRepo.upload`), and a starter's repository gets its page the same way (`StarterRepos.stagePage`). The page
-/// carries Lamp's game runtime (lamp-game.js, lamp.js), which is MIT-licensed, so its license goes beside it. What's
+/// carries Lamp's runtime (lamp.js, and a game's lamp-game.js), which is MIT-licensed, so its license goes beside it.
+/// What in the page needs Lamp (its AI, the wish's other apps, `LampNative`) isn't there, and lamp.js says so to the
+/// page as it does anywhere Lamp can't be reached, so the app goes on working without it (the web-app skill). What's
 /// staged is held to the checks every share is (`ShareCheck`), and searched for keys and secrets before anything leaves.
 /// This enum holds what both share: the page, its credit bar, its README, the sign-in and turning Pages on.
 enum Publish {
-    /// A wish whose one app is a web game: its page is the whole game, so it can be played as a page.
-    static func hasPage(_ project: LampProject) -> Bool {
-        project.holdsApp && GameKit.isGame(project) && GameKit.engine(project) == .web
-            && Parts.folders(in: project.dir).isEmpty
+    /// Whether a published page is played or used: what its button and its card say.
+    enum PageUse: Equatable { case play, use }
+
+    /// A wish whose one app is a page that runs in any browser (a web game, a web app: `Target.publishedPage`): its page
+    /// is the whole app, so it can be played or used as a page.
+    static func hasPage(_ project: LampProject) -> Bool { pageUse(project) != nil }
+
+    static func pageUse(_ project: LampProject) -> PageUse? {
+        guard project.holdsApp, Parts.folders(in: project.dir).isEmpty else { return nil }
+        return project.platform.target.publishedPage(project)
     }
 
     struct Failure: LocalizedError {
@@ -68,11 +76,13 @@ enum Publish {
     /// The license Lamp's runtime in the page is under, beside it, as MIT asks of a copy.
     static let runtimeLicense = "LAMP-LICENSE.txt"
 
-    /// Copies the game's page as the app plays it into `site` (Web/: its own files and Lamp's runtime beside them, never
-    /// a hidden file or a link), told it's in no one device (`GamePage.anyBrowser`), with what lamp-game.js needs beside
-    /// it (lamp-device.js, lamp-build.js) and Lamp's license. Returns its index.html as it is, for the credit bar
+    /// Copies the page as the app shows it into `site` (Web/: its own files and Lamp's runtime beside them, never a
+    /// hidden file or a link), a game's told it's in no one device (`GamePage.anyBrowser`), with what lamp-game.js needs
+    /// beside it (lamp-device.js, lamp-build.js), and Lamp's license. Returns its index.html as it is, for the credit bar
     /// (`withCreditBar`) to go over.
-    static func copyPage(of project: LampProject, into site: URL) throws -> String {
+    /// `scope` is the repository's name, which what the page saves is kept under (lamp.js's `LAMP_PAGE_SCOPE`): every page
+    /// of an account shares one origin, on github.io or the account's own domain.
+    static func copyPage(of project: LampProject, into site: URL, scope: String) throws -> String {
         let fm = FileManager.default
         try fm.createDirectory(at: site, withIntermediateDirectories: true)
         let web = project.dir.appendingPathComponent(GameKit.webFolder)
@@ -86,6 +96,10 @@ enum Publish {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
+        let runtime = site.appendingPathComponent("lamp.js")
+        if let text = try? String(contentsOf: runtime, encoding: .utf8) {
+            try Data(text.replacingOccurrences(of: "/*LAMP_PAGE_SCOPE*/null", with: GamePage.json([scope]).dropFirst().dropLast()).utf8).write(to: runtime)
+        }
         let anyBrowser = GamePage.anyBrowser
         try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
         guard let html = try? String(contentsOf: site.appendingPathComponent("index.html"), encoding: .utf8) else {
@@ -97,18 +111,27 @@ enum Publish {
         return html
     }
 
-    /// The page's README, on its branch: where it plays, where the wish is, what it's based on, and whose its runtime is.
-    static func pageReadme(for project: LampProject, credits: Credits, repo: String, usesRapier: Bool) -> String {
-        var text = "# \(project.name), to play\n\n"
+    /// The page's README, on its branch: where it plays, where the wish is, what it's based on, and whose its runtime
+    /// is, naming only the runtime's files and libraries the page in `site` has.
+    static func pageReadme(for project: LampProject, credits: Credits, repo: String, site: URL) -> String {
+        func has(_ path: String) -> Bool { FileManager.default.fileExists(atPath: site.appendingPathComponent(path).path) }
+        let plays = pageUse(project) != .use
+        var text = "# \(project.name), \(plays ? "to play" : "to use")\n\n"
         if let line = AppDescription.description(of: project) { text += line + "\n\n" }
-        text += "**Play it:** \(pageURL(repo))\n\n"
+        text += "**\(plays ? "Play" : "Open") it:** \(pageURL(repo))\n\n"
         text += "The wish itself, to open in [Lamp](https://lamp.dev) and change, is on the [main branch](\(GitHubRepo.url(repo))).\n\n"
         text += creditsSection(credits)
-        text += "`lamp-game.js`, `lamp-phaser.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp-build.js` and `lamp.js` are the game's runtime, "
-            + "written by Lamp under the MIT license (`\(runtimeLicense)`). three.js is MIT (`three/LICENSE`), and so are Phaser (`phaser/LICENSE.md`) "
-            + "and the QR code encoder inside `lamp.js` (its license is there)."
-        text += usesRapier ? " `rapier/` is Rapier, its physics, under the Apache License 2.0 (`rapier/LICENSE`).\n" : "\n"
-        return text
+        let runtime = ["lamp-game.js", "lamp-phaser.js", "lamp-controllers.js", GamePage.deviceFile, GamePage.buildFile, "lamp.js"].filter(has)
+        if !runtime.isEmpty {
+            let named = runtime.map { "`\($0)`" }
+            text += (named.count == 1 ? named[0] + " is" : named.dropLast().joined(separator: ", ") + " and " + named.last! + " are")
+                + " \(plays ? "the game's" : "the app's") runtime, written by Lamp under the MIT license (`\(runtimeLicense)`)."
+        }
+        let libraries = [("three/LICENSE", "three.js is MIT (`three/LICENSE`)."), ("phaser/LICENSE.md", "Phaser is MIT (`phaser/LICENSE.md`)."),
+                         ("lamp.js", "The QR code encoder inside `lamp.js` is MIT (its license is there)."),
+                         ("rapier/LICENSE", "`rapier/` is Rapier, its physics, under the Apache License 2.0 (`rapier/LICENSE`).")]
+        for (path, line) in libraries where has(path) { text += " " + line }
+        return text + "\n"
     }
 
     static func escaped(_ text: String) -> String {

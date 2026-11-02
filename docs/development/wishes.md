@@ -292,22 +292,28 @@ for anything shaped like a key (a private key, the prefixes services give their 
 naming the file. The person's data isn't in the folder (an app keeps it in its container) and the chat's attachments
 never ship.
 
-### Publishing a game as a page
+### Publishing a page
 
-A wish whose one app is a web game (`Publish.hasPage`) gets a page anyone plays in a browser when it's Put on GitHub
+A wish whose one app is a page that runs in any browser (`Publish.hasPage`, asked of its kind: `Target.publishedPage`, a
+web game's played, a web app's or a screen's used) gets a page anyone plays or uses in a browser when it's Put on GitHub
 to a public repository ("Generated apps"): the same repository, on its `gh-pages` branch (`Publish.pageBranch`), served by
-GitHub Pages at `https://<owner>.github.io/<repository>/`, which the README's Play in your browser links and the
+GitHub Pages at `https://<owner>.github.io/<repository>/`, which the README's Play in your browser (Open in your browser for an app) links and the
 repository's website points to (`GitHubRepo.offerWebsite`, over the remix link Lamp set there before, never over one the
 person set). It's the person's under GitHub's terms, through `gh` and their sign-in there, never Lamp's servers, so it
 costs Lamp nothing however often it's played. A private repository gets none, since GitHub serves a private
 repository's page only on a paid plan: the card says so in one line under Public. Before anything goes up the Put on
 GitHub card shows where the page plays beside where the code goes, and the page is staged with the tree
 (`GitHubRepo.stage`, `Staged.Page`) so it's held to the same checks: what `ShareCheck` refuses or warns of is the
-tree's, and the staged page is searched for secrets again. What goes up is Web/ as the app plays it (`Publish.copyPage`):
+tree's, and the staged page is searched for secrets again. What goes up is Web/ as the app shows it (`Publish.copyPage`):
 its files and Lamp's runtime, with lamp-device.js and lamp-build.js as any copy of a game's page has them (`GamePage`,
 told it's in no one device, `GamePage.anyBrowser`), Lamp's MIT license beside its runtime (`Publish.runtimeLicense`),
-credits.json with this wish at the end of the chain, a README with the credits and licenses (`Publish.pageReadme`) and
-`.nojekyll`; and over the page Lamp's credit bar ("Based on Slop New York by Mr.doob · Open in Lamp · Remix…",
+credits.json with this wish at the end of the chain, a README with the credits and the licenses of what the page holds
+(`Publish.pageReadme`) and `.nojekyll`. What in the page needs Lamp isn't there: lamp.js answers `LampAI.isAvailable`
+with false and its calls with a failure that says the page is away from Lamp, `LampNative.available` is false and
+`Lamp.wish` says it can't reach the wish's other apps, so the page goes on as it does on a device away from the Mac
+(the web-app skill tells the agent so). What the page saves with `LampStore` is kept under its repository's name, written
+into the published lamp.js (`LAMP_PAGE_SCOPE`, `Publish.copyPage`), since every page of an account shares one origin,
+on `<owner>.github.io` or the account's own domain; and over the page Lamp's credit bar ("Based on Slop New York by Mr.doob · Open in Lamp · Remix…",
 `Publish.withCreditBar`, settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding
 its link on a narrow screen). Its Open in Lamp is the wish's Share Link when the person has made one (`Publish.OpenInLamp`:
 that page works for someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with
@@ -318,7 +324,8 @@ the same (`Publish.pushPage`); Pages is turned on for that branch, or asked to b
 it built that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten
 minutes (`Publish.servePage`). Pages the person set to serve another branch are left alone, and the card says so. The code
 is kept as soon as it's up, so a page that fails is tried again by Put on GitHub on top of it. Where the page plays is
-kept with the repository (`GitHubRepo.Repo.page`), and the card's done state offers Play and Copy Page Link.
+kept with the repository (`GitHubRepo.Repo.page`), and the card's done state offers Play (Open Page for an app) and
+Copy Page Link.
 
 Publish as Web Page…, which made a repository of its own holding only the page, was an experiment in Lamp Dev while
 Lamp's runtime had no license that let anyone pass it on; Lamp is MIT now, and Put on GitHub with its page does what it
