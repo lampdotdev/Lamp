@@ -136,7 +136,8 @@ public struct RepoCard: View {
                     Text("Put \(name) on GitHub").font(.title3.bold())
                     // What the person accepts: what goes, and where.
                     Text("Its code goes up as a repository on your GitHub account: what a shared wish file holds, with the files that build it."
-                         + (page == nil ? "" : " Its page goes up too, for anyone to play in a browser.") + " Never your chat or the app's data.")
+                         + (page == nil ? "" : " Its page goes up too, for anyone to play in a browser.")
+                         + (picture == nil ? " Never your chat or the app's data." : " Your chat stays on this Mac. If you include the picture, anything visible in it goes on GitHub too."))
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

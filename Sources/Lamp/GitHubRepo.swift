@@ -10,7 +10,8 @@ import LampSidebarKit
 /// credits.json and the licenses it names; never the chat, the app's data or a key), unpacked so the code reads on
 /// GitHub, with Lamp's own files beside it (build.sh, Package.swift, LampSupport.swift and the rest, so `zsh build.sh`
 /// makes the app on any Mac with Apple's tools and no Lamp), the shared file itself (what Lamp opens today), a README
-/// that says what it is, how to remix it with Lamp and what it's based on, and an MIT license when the person wants one.
+/// that says what it is, how to remix it with Lamp and what it's based on, an MIT license when the person wants one, and
+/// the wish's picture when they include it, which shows whatever is in the app at the time.
 /// A web game in a public repository also gets its page, to play in any browser, on the repository's `gh-pages` branch,
 /// served by GitHub Pages (`Publish`), which the README's Play in your browser links.
 /// The wish's own git history stays on the Mac: it holds every version and the chat's attachments, so each Put on
