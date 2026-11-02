@@ -87,7 +87,7 @@ extension ChatLook {
     /// the group's caption, and, where the agent can take them while it works, Send Now for the whole group
     /// (`sendNow`); once that's asked, the caption says they're on their way. One Lamp has already answered (`answered`,
     /// `SideLine`) reads as any message of the conversation: its bubble is a sent one, with no caption, and Unsend and Send
-    /// Now come up beside it under the pointer, in the same place either way so nothing moves.
+    /// Now come up beside it under the pointer or keyboard focus, in the same place either way so nothing moves.
     public struct QueuedRow<Chips: View>: View {
         let text: String
         let waitingForSetup: Bool
@@ -100,6 +100,7 @@ extension ChatLook {
         let groupAnswered: Bool
         let chips: Chips
         @State private var pointerOver = false
+        @FocusState private var focused: Bool
 
         public init(text: String, waitingForSetup: Bool, waitingForReload: Bool = false, sending: Bool = false, answered: Bool = false,
                     groupAnswered: Bool = false,
@@ -119,6 +120,9 @@ extension ChatLook {
 
         /// Sent now, or held for setup or Reload, it says so whatever was answered.
         private var quiet: Bool { answered && !sending && !waitingForSetup && !waitingForReload }
+        /// Not quite nothing: at an opacity of 0 SwiftUI takes a view out of the accessibility tree and keyboard focus,
+        /// and this keeps them for VoiceOver and the keyboard, with nothing to see.
+        private var controlsOpacity: Double { !quiet || pointerOver || focused ? 1 : 0.001 }
 
         public var body: some View {
             VStack(alignment: .trailing, spacing: 6) {
@@ -127,13 +131,15 @@ extension ChatLook {
                     if quiet, groupAnswered, let sendNow {
                         Button(place.count > 1 ? "Send All Now" : "Send Now", action: sendNow).buttonStyle(.link).font(.caption)
                             .help(place.count > 1 ? "Send these to the agent while it works" : "Send this to the agent while it works")
-                            .opacity(pointerOver ? 1 : 0)
+                            .focused($focused)
+                            .opacity(controlsOpacity)
                     }
                     Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.plain)
                         .help("Unsend")
                         .accessibilityLabel("Unsend")
-                        .opacity(!quiet || pointerOver ? 1 : 0)
+                        .focused($focused)
+                        .opacity(controlsOpacity)
                     UserBubble(text, waiting: !quiet)
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
