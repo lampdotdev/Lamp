@@ -324,3 +324,30 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
 5. Run `scripts/check-starters.sh <folder>` and `swift test --filter StartersTests`, update the count of wishes above,
    and commit starter.md with the change; look at the repository's README on GitHub.
 
+## Mixing copies
+
+An experiment, only in Lamp Dev (Settings → Experimental, `Mix.switchKey`): a button beside Settings at the desk's foot
+opens a window of its own (`MixWindow.swift`, the one window besides the desk while it's an experiment) where someone
+else's copy of a wish is dropped. Lamp finds your copy by the file's identity (`Store.copy(of:among:)`), saves what's
+unsaved, and lines up every change either of you made since the copies last met on one timeline by date: yours on
+the left, theirs on the right, each a switch that's in (lit, toward the middle) or out (dimmed, nudged to its side).
+Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would.
+
+- **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
+  the copies met (a copy's since it arrived, naming the version it was given; an original's since it was first
+  shared, `.lamp/mix-start`), each with its title, time and the files it changed as they were after it. Only what a
+  shared file carries (`Upstream.isLeftOut`), through the same check for keys; a key in an old version or a history
+  too big to send drops History/, never the share.
+- **Where they met.** The run's base when it's in this copy's history (the file came back), else this copy's
+  arrival when the run starts at, or passes, the version it was given (`Mix.lineUp`). Copies with no such version
+  aren't mixed.
+- **Playing back.** What's in is replayed in date order from where they met with `git merge-tree -X theirs`: the
+  later change wins wherever two touch the same lines (`Mix.replay`), and the window marks an earlier change a later
+  one replaces in part. Lamp's own files stay as this copy has them.
+- **Saving.** On top of this copy's history, never rewriting it: one version leaving out what of yours was taken
+  out, then one per change of theirs taken in, under its title, with `Lamp-Mixed: <their commit>` so neither copy
+  offers it again. The agent is told (`Versions.rememberMixed`) and the app is built (`Store.mix`).
+
+Not yet: a review of the code in History/ beyond what the file's own review read (an early change of theirs taken
+without a later one brings code no review saw), Android's package rename, a wish of several apps (untried), and
+running their copy beside yours.

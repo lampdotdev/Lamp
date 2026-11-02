@@ -3875,6 +3875,39 @@ final class Store: ObservableObject {
     private static let updateFailed = "Lamp couldn't update this app. It's just as it was."
     private static let updateChangedIcon = " Only its icon may have changed."
 
+    /// Mixes what was picked of two copies into this one (`Mix.apply`), owning the wish as an update does, then builds
+    /// it as a merged update is built. The wish's files must be as its latest version has them: the mix window saves
+    /// what's unsaved before lining the copies up.
+    func mix(_ picked: Set<String>, in lineup: Mix.Lineup) async throws {
+        guard let project = current(lineup.project), begin(project) != nil else {
+            throw Mix.Failure(message: "“\(lineup.project.name)” is busy right now. Try again when it's done.")
+        }
+        defer { finish(project) }
+        guard await !Versions.hasUnsavedChanges(project) else {
+            throw Mix.Failure(message: "Your copy changed while this was open. Drop their copy here again.")
+        }
+        let iconFile = project.dir.appendingPathComponent("icon.json")
+        let iconBefore = try? Data(contentsOf: iconFile)
+        guard try await Mix.apply(picked, in: lineup) > 0 else { return }
+        // The icon's pictures live outside the versions: theirs go in when the mix brought their icon's design.
+        let iconAfter = try? Data(contentsOf: iconFile)
+        if iconAfter != iconBefore, iconAfter == (try? Data(contentsOf: lineup.package.folder.appendingPathComponent("icon.json"))) {
+            _ = try? Sharing.installArtwork(lineup.package, into: project)
+        }
+        let taken = lineup.changes.filter { !$0.here && picked.contains($0.id) }.map(\.title)
+        let leftOut = lineup.changes.filter { $0.here && !picked.contains($0.id) }.map(\.title)
+        Versions.rememberMixed(project, taken: taken, leftOut: leftOut)
+        versionsRevision += 1
+        showChat(project.id)
+        log(project, .status, "Mixed. Building it now…")
+        if await build(project) == nil {
+            await installReportingCrash(project)
+        } else {
+            log(project, .error, ErrorMessages.appDoesNotBuild)
+        }
+        await rebuildParts(of: current(project) ?? project, onlyChanged: true)
+    }
+
     private func finishImport(_ package: Sharing.Package, request: String? = nil) {
         let project: LampProject
         do {

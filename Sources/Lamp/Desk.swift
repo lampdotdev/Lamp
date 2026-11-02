@@ -9,6 +9,8 @@ import AVFoundation
 /// a new copy of it to become something else.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.openWindow) private var openWindow
+    @AppStorage(Mix.switchKey) private var mixOn = false
     @StateObject private var dictation = Dictation()
     @State private var hasMicrophone = true
     @FocusState private var barFocused: Bool
@@ -159,16 +161,31 @@ struct WishDesk: View {
                 }
                 .padding(.horizontal, 12).padding(.top, Self.top).padding(.bottom, 20)
             }
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Paper.muted)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
+            HStack(spacing: 4) {
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Paper.muted)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings (⌘,)")
+                .accessibilityLabel("Settings")
+                // The mix window, while mixing copies is an experiment (Settings → Experimental).
+                if mixOn && Edition.isDev {
+                    Button { openWindow(id: "mix") } label: {
+                        Image(systemName: "arrow.triangle.merge")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Paper.muted)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mix Copies")
+                    .accessibilityLabel("Mix Copies")
+                }
             }
-            .buttonStyle(.plain)
-            .help("Settings (⌘,)")
-            .accessibilityLabel("Settings")
             .padding(.leading, 14).padding(.bottom, 12)
         }
         .frame(width: 220)

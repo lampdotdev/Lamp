@@ -571,6 +571,21 @@ enum Versions {
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 
+    /// Remembers that the user mixed changes from another copy of this wish into it (`Mix`), so the agent reads the files
+    /// again on the next request.
+    static func rememberMixed(_ project: LampProject, taken: [String], leftOut: [String]) {
+        var said = taken.isEmpty ? "" : " It took in: \(taken.map { "“\($0)”" }.joined(separator: ", "))."
+        if !leftOut.isEmpty { said += " It left out these earlier changes made here: \(leftOut.map { "“\($0)”" }.joined(separator: ", "))." }
+        let note = """
+
+
+        Note from Lamp: before this message, the user mixed changes from another person's copy of this wish into it, \
+        each saved as a version of its own; where two changes touched the same lines, the later one won.\(said) The \
+        files may no longer match what you remember from this conversation: read them again before editing.
+        """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
     /// Remembers that a request was taken back and sent again in other words, so the agent hears about it
     /// with the new one. Its conversation still holds the old request and everything that followed it.
     static func remember(_ project: LampProject, tookBack request: String) {
