@@ -96,6 +96,23 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(log.split(separator: "\n"), ["Shout the first line", "Left out “Whisper the first line”"])
     }
 
+    /// A change of theirs taken earlier isn't offered again, but the next one is still measured against it: taking it
+    /// brings only what it did, never their earlier edit back over a newer one of yours.
+    func testALaterChangeIsMeasuredAgainstTheirEarlierOnes() async throws {
+        let (yours, _, package, history) = try await copies()
+        let first = try await Mix.lineUp(package, history: history, with: yours.project)
+        _ = try await Mix.apply([first.changes[0].id, first.changes[1].id], in: first)
+        XCTAssertEqual(text(yours), "A-you\nb\nc\nd\ne\n")
+        // Newer than their first-line change, older than their last-line one.
+        try commit(yours, "Whisper it again", at: 350, ["Sources/App.swift": "A-you-again\nb\nc\nd\ne\n"])
+
+        let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
+        let last = try XCTUnwrap(lineup.changes.first { !$0.here })
+        XCTAssertEqual(lineup.changes.filter { !$0.here }.map(\.title), ["Shout the last line"])
+        _ = try await Mix.apply(Set(lineup.changes.filter(\.here).map(\.id) + [last.id]), in: lineup)
+        XCTAssertEqual(text(yours), "A-you-again\nb\nc\nd\nE-them\n")
+    }
+
     func testTheirCopyLinesUpWithTheOriginalsNewerFile() async throws {
         // The other way round: the original's file, opened in the copy, starts where the copy was given it.
         let (yours, theirs, _, _) = try await copies()

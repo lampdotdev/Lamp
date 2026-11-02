@@ -111,7 +111,11 @@ enum Mix {
         let yourIDs = Set(yours.map(\.id))
         let mixedHere = Set(yours.compactMap(\.mixed))
         let sent = Set(history.versions.map(\.id))
-        theirs = theirs.filter { !yourIDs.contains($0.id) && !mixedHere.contains($0.id) && !($0.mixed.map(yourIDs.contains) ?? false) }
+        // Only which are offered: every one of theirs is still rebuilt below, since each is the one before it with its
+        // files put in place, and one left out of the chain would leave its changes in the next one's.
+        func offered(_ version: MixHistory.Version) -> Bool {
+            !yourIDs.contains(version.id) && !mixedHere.contains(version.id) && !(version.mixed.map(yourIDs.contains) ?? false)
+        }
 
         // Your changes, by the trees around each; a version that touched nothing a mix carries isn't one.
         var changes: [Change] = []
@@ -163,11 +167,12 @@ enum Mix {
         let trees = kept.isEmpty ? [] : try await edit(plan, index: index, in: project)
         var before = start
         for (version, after) in zip(kept, trees) {
+            defer { before = after }
+            guard offered(version) else { continue }
             let paths = (version.changed + version.removed).filter { !Upstream.isLeftOut($0, in: project) }
             let picture = version.changed.first(where: isPicture).map { MixHistory.url(of: $0, in: version, package: package.folder) }
             changes.append(Change(id: version.id, side: .them, title: version.title, date: version.date, before: before, after: after,
                                   files: paths, here: false, picture: picture))
-            before = after
         }
         // Your pictures, from your versions, into a folder of the window's.
         for (offset, change) in changes.enumerated() where change.here {
