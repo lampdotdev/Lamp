@@ -91,7 +91,7 @@ enum Publish {
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
         guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { throw Failure(message: "\(project.name) has no page to play.") }
         for case let file as URL in items {
-            if file.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
+            if file.lastPathComponent.hasPrefix(".") { Sharing.skip(file, in: items); continue }
             let values = try? file.resourceValues(forKeys: Set(keys))
             guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
             let target = site.appendingPathComponent(Sharing.relativePath(of: file, in: web))

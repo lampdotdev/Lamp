@@ -122,6 +122,7 @@ final class SharingScreenTests: XCTestCase {
         try write("body { margin: 0 }\n", to: "css/app.css", in: site)
         try write("# Practice Field\n", to: "README.md", in: site)
         try write("*.pyc\n", to: ".gitignore", in: site)
+        for name in ["a", "media", "z"] { try write("x", to: "\(name)/click.mp3", in: site) }
         XCTAssertTrue(RepoImport.holdsWish(site))
         let package = try RepoImport.open(folder: site)
         defer { try? fm.removeItem(at: package.folder) }
@@ -129,6 +130,8 @@ final class SharingScreenTests: XCTestCase {
         XCTAssertTrue(package.site)
         XCTAssertEqual(package.name, "Practice Field")
         XCTAssertTrue(Set(package.sources.map(package.path(of:))).isSuperset(of: ["Web/index.html", "Web/js/app.js", "Web/css/app.css"]))
+        // A hidden file leaves out only itself, never the folder walked after it.
+        XCTAssertEqual(Set(package.webData.map(package.path(of:))), ["Web/a/click.mp3", "Web/media/click.mp3", "Web/z/click.mp3"])
 
         var app = try Template.scaffold(name: "Practice Field", platform: .mac, in: root)
         app.platform = .webApp

@@ -629,6 +629,12 @@ enum Sharing {
         return package
     }
 
+    /// Leaves a hidden item out of a walk of a folder: a folder's insides with it. Only a folder's: told to skip after
+    /// a file, the enumerator skips the next folder it comes to instead (a site's .gitignore took its media/ with it).
+    static func skip(_ item: URL, in items: FileManager.DirectoryEnumerator) {
+        if (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { items.skipDescendants() }
+    }
+
     /// Whether a kind is an app around a page: a web app or a screen (`ScreenKit`), or a web game. Its page travels as
     /// its code, with the Swift beside it, and the review reads it as a page.
     static func isPage(_ platform: Platform) -> Bool {

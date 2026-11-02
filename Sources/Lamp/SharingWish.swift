@@ -15,7 +15,7 @@ enum TVFiles {
         for folder in folders {
             guard let items = fm.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: Array(keys)) else { continue }
             for case let url as URL in items {
-                if url.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
+                if url.lastPathComponent.hasPrefix(".") { Sharing.skip(url, in: items); continue }
                 let values = try? url.resourceValues(forKeys: keys)
                 guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
                 if TVTemplate.isLamps(Sharing.relativePath(of: url, in: root)) { continue }
@@ -179,7 +179,7 @@ enum GameFiles {
         for folder in [GameKit.webFolder, GameKit.sourceFolder, TVTemplate.phoneFolder] {
             guard let items = fm.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: Array(keys)) else { continue }
             for case let url as URL in items {
-                if url.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
+                if url.lastPathComponent.hasPrefix(".") { Sharing.skip(url, in: items); continue }
                 let values = try? url.resourceValues(forKeys: keys)
                 guard values?.isRegularFile == true, values?.isSymbolicLink != true, !isLamps(Sharing.relativePath(of: url, in: root)) else { continue }
                 if TVFiles.codeExtensions.contains(url.pathExtension.lowercased()) { code.append(url) } else { data.append(url) }
@@ -236,7 +236,7 @@ enum ScreenFiles {
         for folder in ["Sources", TVTemplate.webFolder] {
             guard let items = fm.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: Array(keys)) else { continue }
             for case let url as URL in items {
-                if url.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
+                if url.lastPathComponent.hasPrefix(".") { Sharing.skip(url, in: items); continue }
                 let values = try? url.resourceValues(forKeys: keys)
                 let relative = Sharing.relativePath(of: url, in: root)
                 guard values?.isRegularFile == true, values?.isSymbolicLink != true, !isLamps(relative) else { continue }
