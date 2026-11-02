@@ -325,7 +325,11 @@ game is written to keep the player's place through one:
     manage what a run builds around it: every render pipeline, pass and effect made in a run gets an explicit teardown in
     the game's `dispose`, the pipeline first and the scene pass it reads last, each step safe if an earlier one throws,
     and never `renderer.dispose()`. A build hands on only the data a later consumer needs: one closure kept at a module's
-    top level holds everything the function that made it gathered. A big table that doesn't
+    top level holds everything the function that made it gathered. A reusable generated texture needs an explicit kept
+    owner and what invalidates it (a `keep` with `from`, or the kept object it's made from); a transient one needs
+    teardown, and not every texture at a module's top level belongs in `keep`. Keeping a compound object doesn't dispose
+    what's nested in it, so its `keep` takes a `dispose`, and a custom `dispose` spares what another owner still uses,
+    since it replaces the runtime's own. A big table that doesn't
     change as it's played is built inside `keep`, with what it's read from in `from`, so a run reuses it; what changes
     as it's played stays out of `keep`. Name the file's address outside the build (`const address = new URL('./x.bin',
     import.meta.url)`): the runtime writes `import.meta` out differently each run, so a build that names it is built
