@@ -238,6 +238,20 @@ enum Agent {
     colors and type across the app."), then carry on with it in mind.
     """
 
+    /// The person has heard back already (`SideAnswer`), so a reply here would say it to them twice. It says so only
+    /// when that's true of everything handed over: a message nobody has answered still reads as never heard.
+    static let midTurnAnsweredNote = """
+
+
+    Note from Lamp: the person sent this while you were working, and has already been answered, as above. Don't \
+    acknowledge or restate it: carry on with your next step with it in mind, and speak up only to correct what they \
+    were told.
+    """
+
+    static func midTurnNote(for messages: [QueuedMessage]) -> String {
+        messages.allSatisfy { $0.sideReply != nil } ? midTurnAnsweredNote : midTurnNote
+    }
+
     /// With each request to an app that's updated in place (LiveReload): which changes keep it open. Here and
     /// not in the system prompt, since it depends on the app's kind.
     static let liveNote = """

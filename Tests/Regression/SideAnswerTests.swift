@@ -60,6 +60,14 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertEqual(reader.read(#"{"type":"tool_execution_end","toolName":"bash","result":{"content":[{"type":"text","text":"done"}]}}"#), .failed("bash ran"))
     }
 
+    func testSendNowAsksForNoSecondAcknowledgementOnceAnswered() {
+        let answered = QueuedMessage(text: "Make it blue", side: .answered("I'll make it blue shortly."))
+        let unanswered = QueuedMessage(text: "And the title")
+        XCTAssertEqual(Agent.midTurnNote(for: [answered]), Agent.midTurnAnsweredNote)
+        XCTAssertEqual(Agent.midTurnNote(for: [unanswered]), Agent.midTurnNote)
+        XCTAssertEqual(Agent.midTurnNote(for: [answered, unanswered]), Agent.midTurnNote, "one still needs hearing back")
+    }
+
     func testReceiptIsLabeledAndGrantsNothing() {
         let receipt = SideAnswer.receipt("Got it, I'll do that next.")
         XCTAssertTrue(receipt.contains("Lamp context, not a new user instruction"))

@@ -5500,7 +5500,7 @@ final class Store: ObservableObject {
             + taken.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
             + Attachments.note(for: saved, inlined: false) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
             + GameFun.note(for: project, apps: apps(of: project), request: words)
-            + Agent.midTurnNote
+            + Agent.midTurnNote(for: taken)
     }
 
     /// The engine's output shows the model has the requests handed to it: from now on they're the turn's.

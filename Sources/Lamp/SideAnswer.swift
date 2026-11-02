@@ -65,13 +65,15 @@ enum SideAnswer {
     }
 
     /// What the fork is asked. It's told what's going on and left to find its own words: quoted examples come back
-    /// word for word. This goes after the conversation it inherited, not in the system prompt, whose every byte the
+    /// word for word. A message handed over mid-turn ends its inherited history with something to do, which it would
+    /// otherwise take up, so it's told that isn't its own. This goes after the conversation it inherited, not in the system prompt, whose every byte the
     /// provider's cache is keyed on, and the person's words stay apart from it.
     static func prompt(for text: String) -> String {
         """
         You are an answer-only model in this conversation. The main agent is in the middle of a turn, and the person \
         has just sent the message below and is waiting to hear back. The main agent gets the message when it's ready, \
-        so your job is only to let them know they've been heard. If they want something changed or done, acknowledge \
+        and everything before it is the main agent's too: don't continue that work, even if an earlier message asks \
+        for it. Your job is only to let them know they've been heard, in words. If they want something changed or done, acknowledge \
         what they want in your own words, as the agent would mid-task, and that it'll happen shortly. If they ask you \
         to run something, just say you'll do it shortly: tools can't run here, and any call is refused. If they ask a \
         real question, give a real answer from what you already know. Keep it short and natural, in the conversation's \

@@ -164,7 +164,8 @@ A capability given to one engine must be given to all of them that can take it, 
   request keeps its answer and receipt (`SideAnswer.kept`). The answer goes up only if its message still waits, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`,
   never a line of the turn's, so `CatchUp`, folds and versions don't see it), and the message reaches the agent as ever
   with a labeled receipt of what was said (`SideAnswer.receipt`), in the request or Send Now's handover, so it can't go
-  ahead of its message. Claude Code and Codex are not given this until their forks are proven the same way.
+  ahead of its message. A handover whose messages have all been answered tells the agent not to acknowledge them again
+  (`Agent.midTurnNote(for:)`), so the person hears back once. Claude Code and Codex are not given this until their forks are proven the same way.
 - **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognized in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,
