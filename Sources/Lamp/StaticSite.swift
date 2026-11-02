@@ -41,7 +41,7 @@ enum StaticSite {
     static func unpack(_ tree: URL, into copy: URL, repository: String?) throws {
         let fm = FileManager.default
         let web = copy.appendingPathComponent(TVTemplate.webFolder)
-        try RepoImport.copyTree(tree, to: web)
+        try RepoImport.copyTree(tree, to: web, skipped: [".git"])
         let lamps = web.appendingPathComponent(folder)
         if fm.fileExists(atPath: lamps.path) {
             for item in try fm.contentsOfDirectory(at: lamps, includingPropertiesForKeys: nil) {

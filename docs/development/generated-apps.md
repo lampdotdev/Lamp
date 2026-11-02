@@ -299,7 +299,9 @@ files go up (the Lamp that opens it writes them afresh) but lamp.js, with its li
 folder is what Open from GitHub reads such a tree back by. A site opened from the person's own repository is put back
 there (`GitHubRepo.ownOrigin`, so its Pages address keeps working; any wish opened from their own repository is),
 with no license added, and only while GitHub has nothing the wish doesn't: otherwise the card asks for Check for
-Updates… first. Any Put on GitHub over a repository keeps the hidden files and folders at its top that a wish never
+Updates… first. The upload checks it again as it clones (`upload`'s `expected`: the commit the wish was opened at, or
+the one Lamp last pushed for any wish it keeps a record of), since a commit pushed on top of a newer tip would quietly
+undo what's there. A site keeps every folder it checked in, a `build/` or `node_modules/` its page loads included. Any Put on GitHub over a repository keeps the hidden files and folders at its top that a wish never
 carries (`.github/workflows`, `.gitignore`), with the tree's own over them file by file. The chain's last link takes the repository's
 address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
 The person's folder is only read, never changed or removed. The chain's last link also takes the commit the tree is

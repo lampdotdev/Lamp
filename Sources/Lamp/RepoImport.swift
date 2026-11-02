@@ -164,9 +164,10 @@ enum RepoImport {
 
     /// The tree as a shared file unpacks: every regular file but the repository's own records and builds, and the shared
     /// file beside the code, which would double what's counted. Held to what a shared file may hold.
-    static func copyTree(_ from: URL, to: URL) throws {
+    /// `skipped` are the folders left out wherever they are: a wish's builds and Lamp's records; a site keeps every
+    /// folder but git's, since a `build/` or `node_modules/` it checked in is what its page loads.
+    static func copyTree(_ from: URL, to: URL, skipped: Set<String> = [".git", ".build", "build", ".lamp", "node_modules"]) throws {
         let fm = FileManager.default
-        let skipped: Set<String> = [".git", ".build", "build", ".lamp", "node_modules"]
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .isDirectoryKey, .fileSizeKey]
         guard let items = fm.enumerator(at: from, includingPropertiesForKeys: Array(keys)) else { throw Sharing.ImportError("Lamp couldn't read the folder.") }
         try fm.createDirectory(at: to, withIntermediateDirectories: true)

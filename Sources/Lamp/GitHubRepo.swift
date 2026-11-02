@@ -478,7 +478,10 @@ enum GitHubRepo {
     /// there, then a web game's page on the page branch, with Pages turned on for it; `step` hears what it's doing.
     /// `changed` is false when the repository already had the wish (and its page) as it is. The record returned names
     /// the commit up there now. Once the code is up it's kept, so a page that fails to go up is tried again on top of it.
-    static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool,
+    /// `expected` is the commit the repository must be at for the wish to go over it: the one Lamp last pushed, or for
+    /// the person's own repository the wish was opened from, the one it was opened at. A repository that has moved on
+    /// since is refused rather than overwritten (a push of a commit on top of its tip would quietly undo what's there).
+    static func upload(_ staged: Staged, of project: LampProject, to repo: String, gh: String, login: String, isNew: Bool, expected: String? = nil,
                        isPrivate: Bool, license: Bool, picture: Bool? = nil,
                        step: @escaping @Sendable (String) -> Void) async throws -> (repo: Repo, changed: Bool) {
         let fm = FileManager.default
@@ -526,6 +529,9 @@ enum GitHubRepo {
             try? fm.removeItem(at: clone)
             let cloned = await Subprocess.run(git, signedIn + ["clone", "-q", "--depth", "1", remote, clone.path], timeout: 600)
             guard cloned.ok else { throw Failure(message: "GitHub didn't give back \(repo): \(cloned.output.trimmed.suffix(200))") }
+            if let expected, await head(git, in: clone) != expected {
+                throw Failure(message: "\(repo) has changes on GitHub that \(project.name) doesn't have, and putting it there would undo them.")
+            }
             // The wish takes the place of what's there, but for what a wish never carries: a hidden file or folder at the
             // top (the person's .github/workflows, .gitignore, an editor's settings) stays as it is, with the tree's own
             // over it file by file. Lamp's folder in a site's repository is Lamp's, and goes whole.
@@ -543,12 +549,14 @@ enum GitHubRepo {
             // so it's compared with only its time left out; the archive follows the manifest.
             // The chain names the commit up there (`Sharing.export`), which each push moves on: the credits compare
             // without it, so real credit changes count and the bookkeeping doesn't.
-            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)lamp-app.json", ":(exclude)*.lampapp", ":(exclude)\(Credits.file)"], cwd: clone, timeout: 60).ok {
-                let before = await Subprocess.run(git, ["show", "HEAD:lamp-app.json"], cwd: clone, mergeErrors: false, timeout: 30)
-                let credits = await Subprocess.run(git, ["show", "HEAD:\(Credits.file)"], cwd: clone, mergeErrors: false, timeout: 30)
-                if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("lamp-app.json")),
+            // A site's are in Lamp's folder (`StaticSite.layOut`).
+            let at = fm.fileExists(atPath: tree.appendingPathComponent("\(StaticSite.folder)/lamp-app.json").path) ? StaticSite.folder + "/" : ""
+            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)\(at)lamp-app.json", ":(exclude)\(at)*.lampapp", ":(exclude)\(at)\(Credits.file)"], cwd: clone, timeout: 60).ok {
+                let before = await Subprocess.run(git, ["show", "HEAD:\(at)lamp-app.json"], cwd: clone, mergeErrors: false, timeout: 30)
+                let credits = await Subprocess.run(git, ["show", "HEAD:\(at)\(Credits.file)"], cwd: clone, mergeErrors: false, timeout: 30)
+                if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("\(at)lamp-app.json")),
                    manifestsMatch(Data(before.output.utf8), after),
-                   creditsMatch(credits.ok ? Data(credits.output.utf8) : nil, try? Data(contentsOf: clone.appendingPathComponent(Credits.file))) {
+                   creditsMatch(credits.ok ? Data(credits.output.utf8) : nil, try? Data(contentsOf: clone.appendingPathComponent(at + Credits.file))) {
                     changed = false
                 }
             }
@@ -639,7 +647,7 @@ enum GitHubRepo {
     /// rather than beside it, so a site's Pages address goes on working. Nil for anyone else's, or one GitHub doesn't
     /// answer for.
     /// `behind` says why it can't go up yet: the repository has moved on from the commit the wish has.
-    static func ownOrigin(of project: LampProject, login: String, gh: String) async -> (repo: String, isPublic: Bool, behind: String?)? {
+    static func ownOrigin(of project: LampProject, login: String, gh: String) async -> (repo: String, isPublic: Bool, commit: String?, behind: String?)? {
         guard let origin = AppUpdates.origin(of: project), let url = origin.url, let source = RepoImport.source(from: url), source.ref == nil,
               source.owner.lowercased() == login.lowercased() else { return nil }
         let repo = "\(source.owner)/\(source.name)"
@@ -648,7 +656,7 @@ enum GitHubRepo {
         let now = head.output.split(whereSeparator: \.isWhitespace).first.map(String.init)
         let behind = head.ok && now != nil && now != origin.commit
             ? "\(repo) has changes on GitHub that \(project.name) doesn't have yet. Check for Updates… first, then put it on GitHub." : nil
-        return (repo, isPublic, behind)
+        return (repo, isPublic, origin.commit, behind)
     }
 
     /// Whether anyone can read the repository, as GitHub says now; nil when it can't be asked.
@@ -680,6 +688,8 @@ enum GitHubRepo {
         /// The repository is the person's own one the wish was opened from (`ownOrigin`): it's put back there as an
         /// update, adding no license, though Lamp has no record of putting it up.
         var existing = false
+        /// The commit the repository must still be at when it goes up (`upload`'s `expected`).
+        var expected: String?
         var copied = false
         var icon: Data?
         /// The choices made before it goes up the first time. Once it's up, `license` is the repository's (`Repo.license`):
@@ -733,7 +743,9 @@ enum GitHubRepo {
             let isPublic: Bool
             // The README offers a remix by link only where anyone can read it: as GitHub says for one that's up, as
             // chosen for a new one (choosing again stages it again, `setPrivate`).
-            if let known = GitHubRepo.kept(for: project)?.repo {
+            if let kept = GitHubRepo.kept(for: project) {
+                let known = kept.repo
+                cards[project.id]?.expected = kept.commit
                 repo = known
                 isPublic = await GitHubRepo.isPublic(known, gh: gh) ?? false
             } else if let own = await GitHubRepo.ownOrigin(of: project, login: login, gh: gh) {
@@ -742,6 +754,7 @@ enum GitHubRepo {
                 repo = own.repo
                 isPublic = own.isPublic
                 cards[project.id]?.existing = true
+                cards[project.id]?.expected = own.commit
                 cards[project.id]?.license = false
             } else {
                 repo = await Publish.freeName(for: project, login: login, gh: gh)
@@ -809,6 +822,7 @@ enum GitHubRepo {
             do {
                 let id = project.id
                 let uploaded = try await GitHubRepo.upload(staged, of: project, to: repo, gh: gh, login: login, isNew: isNew,
+                                                                  expected: isNew ? nil : card.expected,
                                                                   isPrivate: card.isPrivate, license: card.license,
                                                                   picture: card.picture == nil ? before?.picture : card.showsPicture) { step in
                     Task { @MainActor in GitHubRepoCards.shared.cards[id]?.stage = .working(step) }
