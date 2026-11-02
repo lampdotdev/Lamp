@@ -29,11 +29,8 @@ final class SideAnswerTests: XCTestCase {
         for message in others { XCTAssertFalse(SideAnswer.canAnswer(message), message.text) }
     }
 
-    func testTheWordsStandApartAndTheQueueIsNotMentioned() {
-        let prompt = SideAnswer.prompt(for: "Make it blue")
-        XCTAssertTrue(prompt.contains("<message>\nMake it blue\n</message>"))
-        XCTAssertTrue(prompt.contains("Sure, I'll make that change."))
-        XCTAssertFalse(prompt.contains("next in line"))
+    func testThePersonsWordsStandApart() {
+        XCTAssertTrue(SideAnswer.prompt(for: "Make it blue").contains("<message>\nMake it blue\n</message>"))
     }
 
     func testReceiptIsLabeledAndGrantsNothing() {

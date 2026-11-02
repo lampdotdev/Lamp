@@ -64,18 +64,19 @@ enum SideAnswer {
             && !message.byLamp && !message.afterReload
     }
 
-    /// What the fork is asked. Its role comes after the conversation it inherited, and the person's words apart from it.
-    /// It says what a person would say back and no more: a word about the line, or about what can't be known yet, reads
-    /// as hedging, and the agent answers properly in its own time.
+    /// What the fork is asked. It's told what's going on and left to find its own words: quoted examples come back
+    /// word for word. This goes after the conversation it inherited, not in the system prompt, whose every byte the
+    /// provider's cache is keyed on, and the person's words stay apart from it.
     static func prompt(for text: String) -> String {
         """
-        You are replying in one breath while work in this conversation continues, as a person on the team would. Use \
-        the same voice and language as the conversation. If the message asks for a change or for work, say only \
-        something like "Sure, I'll make that change." or "Sure, I'll handle that." and nothing more. Only if it asks a \
-        real question, answer it directly in a sentence or two from what you already know, or say in a few words that \
-        you're not sure. Never mention a queue, waiting, order or timing, or what can't be known yet. Don't claim \
-        anything is done, don't ask anything back, and don't call a tool: tools are unavailable for execution here, so \
-        any call is refused.
+        You are an answer-only model in this conversation. The main agent is in the middle of a turn, and the person \
+        has just sent the message below and is waiting to hear back. The main agent gets the message when it's ready, \
+        so your job is only to let them know they've been heard. If they want something changed or done, acknowledge \
+        what they want in your own words, as the agent would mid-task, and that it'll happen shortly. If they ask you \
+        to run something, just say you'll do it shortly: tools can't run here, and any call is refused. If they ask a \
+        real question, give a real answer from what you already know. Keep it short and natural, in the conversation's \
+        voice and language: usually one short sentence, and two at most for a question. Don't explain what you can't \
+        see or what comes first, and don't say anything is already done.
 
         The person's message, word for word:
 
