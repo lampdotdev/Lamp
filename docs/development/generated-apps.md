@@ -297,7 +297,7 @@ else (lamp-app.json, credits.json, APP.md, Native.swift, the shared file, Lamp's
 folder, `.lamp-wish/`, which neither clutters the site's root nor is served by Pages' Jekyll build. None of Lamp's own
 files go up (the Lamp that opens it writes them afresh) but lamp.js, with its license and the repository's name to keep
 its saves under (`LAMP_PAGE_SCOPE`), when the page loads it. Of a site's hidden files only those a web server reads at
-its top travel with it (`ScreenFiles.servedHidden`: `.nojekyll`, `.well-known/`). An update goes to the branch the
+its top travel with it (`ScreenFiles.servedHidden`: `.nojekyll`, `.well-known/`), and are the wish's, so an update replaces them, or takes them away, like any of its files. An update goes to the branch the
 repository keeps its code on, as its clone checked it out, not always main. That
 folder is what Open from GitHub reads such a tree back by. A site opened from the person's own repository is put back
 there (`GitHubRepo.ownOrigin`, so its Pages address keeps working; any wish opened from their own repository is),
