@@ -1,5 +1,5 @@
-// Makes the development build's icon: the release icon with DEV written in bold on its paper, near the top right
-// corner, so the two Lamps tell apart in the Dock; or Lamp Nightly's, with NIGHTLY there.
+// Makes the development build's icon: the release icon with DEV written in bold on its white square, so the two
+// Lamps tell apart in the Dock; or Lamp Nightly's, with NIGHTLY there.
 // Usage: swift scripts/dev-icon.swift Resources/AppIcon.png out.icns [DEV|NIGHTLY]
 import AppKit
 
@@ -8,20 +8,20 @@ guard arguments.count == 3 || arguments.count == 4, let source = NSImage(content
     FileHandle.standardError.write(Data("usage: dev-icon.swift <AppIcon.png> <out.icns> [DEV|NIGHTLY]\n".utf8)); exit(1)
 }
 let word = arguments.count > 3 ? arguments[3] : "DEV"
-// The ink the site prints on the same paper.
+// The ink the site prints on its paper.
 let ink = NSColor(srgbRed: 0x1b / 255.0, green: 0x1a / 255.0, blue: 0x17 / 255.0, alpha: 1)
 let size = 1024.0
 let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
     source.draw(in: rect)
-    // The paper is the icon's top right, above and right of the stripes' L; the word sits in from its corner far
-    // enough to clear the curve, and a longer word is set smaller so it stays on the paper.
-    let right = size * 0.8, top = size * 0.8, room = size * 0.46
-    var font = NSFont.systemFont(ofSize: size * 0.15, weight: .bold)
+    // The white square spans 456 to 754 across and 271 to 571 down the 1024-point icon; the word is centered on
+    // it, and a longer word is set smaller so it clears the rounded corners.
+    let center = CGPoint(x: size * 605 / 1024, y: size - size * 421 / 1024), room = size * 0.23
+    var font = NSFont.systemFont(ofSize: size * 0.1, weight: .bold)
     let width = NSAttributedString(string: word, attributes: [.font: font]).size().width
     if width > room { font = NSFont.systemFont(ofSize: font.pointSize * room / width, weight: .bold) }
     let text = NSAttributedString(string: word, attributes: [.font: font, .foregroundColor: ink])
     let box = text.size()
-    text.draw(at: CGPoint(x: right - box.width, y: top - font.ascender))
+    text.draw(at: CGPoint(x: center.x - box.width / 2, y: center.y - box.height / 2))
     return true
 }
 let iconset = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dev-icon-\(ProcessInfo.processInfo.processIdentifier).iconset")
