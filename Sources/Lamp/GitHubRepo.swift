@@ -545,7 +545,7 @@ enum GitHubRepo {
             // A site's hidden files that travel with its page (`ScreenFiles.servedHidden`) are the wish's too: replaced, or
             // taken away when the wish has none.
             let site = fm.fileExists(atPath: tree.appendingPathComponent("\(StaticSite.folder)/lamp-app.json").path)
-            let wishes: Set<String> = [StaticSite.folder].union(site ? ScreenFiles.servedHidden : [])
+            let wishes = Set([StaticSite.folder]).union(site ? ScreenFiles.servedHidden : [])
             for item in try fm.contentsOfDirectory(at: clone, includingPropertiesForKeys: nil)
             where item.lastPathComponent != ".git" && (!item.lastPathComponent.hasPrefix(".") || wishes.contains(item.lastPathComponent)) {
                 try fm.removeItem(at: item)
