@@ -69,32 +69,21 @@ final class AppUpdatesTests: XCTestCase {
 
     // MARK: What the person reads
 
-    func testCreditsOfferTheSameButtonForEveryKindOfWish() throws {
-        let adapted = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [slop]), own: nil, update: .available))
-        XCTAssertEqual(adapted.rows.first { $0.label == "Updates" }?.value, "An update is available")
-        XCTAssertEqual(adapted.buttons.last?.title, "Review Update…")
-        XCTAssertEqual(adapted.buttons.last?.action, AppInfoView.updateFromRepository)
-
-        let remix = Credits.Remix(name: "New York", url: "https://github.com/someone/new-york", commit: "abcdef1")
-        let wish = try XCTUnwrap(AppInfoView.creditsSection(Credits(remixOf: [remix]), own: nil, update: .upToDate))
-        XCTAssertEqual(wish.rows.first { $0.label == "Updates" }?.value, "Your app is up to date")
-        XCTAssertEqual(wish.buttons.last?.title, "Check for Updates…")
-
-        // An update being prepared, or ready, is reviewed from the same button, never checked for again.
-        for state in [AppUpdates.Availability.preparing, .ready] {
-            let section = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [slop]), own: nil, update: state))
-            XCTAssertEqual(section.buttons.last?.title, "Review Update…")
+    func testTheSameItemChecksAndReviewsForEveryKindOfWish() {
+        XCTAssertEqual(AppUpdates.Availability.available.line, "An update is available")
+        XCTAssertEqual(AppUpdates.Availability.upToDate.line, "Your app is up to date")
+        // An update being prepared, or ready, is reviewed from the same item, never checked for again.
+        for state in [AppUpdates.Availability.available, .preparing, .ready] {
+            XCTAssertEqual(DeskWishMenu.updateTitle(reviews: state.reviews), "Review Update…")
         }
-
-        let unchecked = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [slop]), own: nil))
-        XCTAssertNil(unchecked.rows.first { $0.label == "Updates" })
-        XCTAssertEqual(unchecked.buttons.last?.title, "Check for Updates…")
-
-        // Nothing to update from: no button.
+        for state in [AppUpdates.Availability.checking, .upToDate, .failed] {
+            XCTAssertEqual(DeskWishMenu.updateTitle(reviews: state.reviews), "Check for Updates…")
+        }
+        // Nothing to update from: nothing to check.
         var pinned = slop
         pinned.commit = nil
-        let none = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [pinned]), own: nil, update: nil))
-        XCTAssertFalse(none.buttons.contains { $0.action == AppInfoView.updateFromRepository })
+        XCTAssertNil(AppUpdates.route(for: Credits(upstream: [pinned]), own: nil))
+        XCTAssertNotNil(AppUpdates.route(for: Credits(upstream: [slop]), own: nil))
     }
 
     func testNothingThePersonReadsNamesWhereTheUpdateComesFrom() {

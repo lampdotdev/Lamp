@@ -159,11 +159,8 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertNil(credits.basedOn)
         XCTAssertNil(AppUpdates.route(of: try XCTUnwrap(store.projects.first { $0.id == wish.id })), "a library's updates aren't the app's")
 
-        // Nowhere it's shown is the library what the app is based on: the info panel, the About window, the README, the
-        // published page's credit bar.
-        let section = try XCTUnwrap(AppInfoView.creditsSection(credits, own: nil))
-        XCTAssertFalse(section.rows.contains { $0.label == "Based on" }, "\(section.rows.map(\.label))")
-        XCTAssertTrue(section.rows.contains { $0.label == "d3-celestial" })
+        // Nowhere it's shown is the library what the app is based on: the About window, the README, the published
+        // page's credit bar.
         let about = try XCTUnwrap(credits.aboutPage)
         XCTAssertFalse(about.contains("Based on"), about)
         XCTAssertTrue(about.contains("Uses <a href=\"https://github.com/ofrohn/d3-celestial\">d3-celestial</a>"), about)
@@ -179,7 +176,6 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertEqual(legacy.basis?.name, "Slop New York")
         XCTAssertEqual(Credits(upstream: legacy.upstream.reversed()).basis?.name, "Slop New York", "never the one marked as only used")
         XCTAssertTrue(try XCTUnwrap(Credits(upstream: legacy.upstream.reversed()).aboutPage).contains("<p>Based on <a href=\"https://github.com/mrdoob/slop-newyork\">Slop New York</a> by Mr.doob</p>"))
-        XCTAssertEqual(AppInfoView.creditsSection(legacy, own: nil)?.rows.first { $0.label == "Based on" }?.value, "Slop New York by Mr.doob")
     }
 
     func testTwoProjectsNeverShareALicenseFolder() async throws {

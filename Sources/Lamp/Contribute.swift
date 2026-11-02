@@ -19,7 +19,7 @@ enum Contribute {
     /// Where the changes would go, and the commit they're on top of. Nil for a wish that didn't come from a repository
     /// on GitHub, or came from one before Lamp recorded the commit (open it from there again to get one).
     static func origin(of project: LampProject) -> (source: RepoImport.Source, commit: String)? {
-        guard let link = AppInfoView.origin(of: project), let source = link.url.flatMap(RepoImport.source(from:)),
+        guard let link = AppUpdates.origin(of: project), let source = link.url.flatMap(RepoImport.source(from:)),
               let commit = link.commit else { return nil }
         return (source, commit)
     }

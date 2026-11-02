@@ -2,7 +2,7 @@ import XCTest
 @testable import Lamp
 
 /// A device Lamp only found on the network may be a neighbor's: it's told apart from the person's own, set up with Lamp,
-/// in what the agent and the naming call are told, in Your Devices, and in which device an app goes on by itself.
+/// in what the agent and the naming call are told, on the desk, and in which device an app goes on by itself.
 @MainActor
 final class PossibleDevicesTests: XCTestCase {
     /// A TV that answered the network's scan and was never set up.
@@ -92,7 +92,7 @@ final class PossibleDevicesTests: XCTestCase {
         XCTAssertTrue(text.contains("Upstairs TV"), text)
     }
 
-    // MARK: Your Devices
+    // MARK: The desk's devices
 
     func testYourDevicesKeepsFoundOnesOutOfThePersons() {
         let rokuFound = roku("FOUND", kept: false, address: "10.0.0.41"), rokuMine = roku("MINE", kept: true, address: "10.0.0.42")
@@ -100,15 +100,14 @@ final class PossibleDevicesTests: XCTestCase {
         XCTAssertEqual(Set(list.works.map(\.id)), [keptTV.id, rokuMine.id])
     }
 
-    /// A device only found shows Set Up… and nothing else: its first setup step is for the setup window. One set up with
-    /// Lamp still shows its next step.
-    func testAFoundDeviceRowOffersOnlySetUp() {
+    /// A device only found offers Set Up… on the desk: its first setup step is for the setup window. One set up with
+    /// Lamp and ready offers none; Forget and Reconnect are for the ones Lamp set up itself.
+    func testAFoundDeviceOffersSetUp() {
         let rokuFound = roku("FOUND", kept: false, address: "10.0.0.41")
-        XCTAssertEqual(DevicesSection.end(for: foundTV, setup: foundTV.setup()), .setUp)
-        XCTAssertEqual(DevicesSection.end(for: rokuFound, setup: rokuFound.setup()), .setUp)
-        var keptHere = keptTV
-        keptHere.connected = true
-        XCTAssertEqual(DevicesSection.end(for: keptHere, setup: .needs("Turn on Developer Mode on it")), .step("Turn on Developer Mode on it"))
+        XCTAssertTrue(DeskDevices.offersSetUp(foundTV, team: ""))
+        XCTAssertTrue(DeskDevices.offersSetUp(rokuFound, team: ""))
+        XCTAssertFalse(DeskDevices.offersSetUp(Device(id: Device.macID, kind: .mac, maker: "Apple", model: "Mac", modelID: "", name: "This Mac",
+                                                      os: "macOS", osVersion: "27", reach: .thisMac), team: ""))
     }
 
     /// A found device an app can already control, a Sonos speaker, offers Set Up… like every other found device.
@@ -118,7 +117,7 @@ final class PossibleDevicesTests: XCTestCase {
         let list = HomeNetwork.List(devices: [sonos], hosts: [])
         XCTAssertEqual(list.possible.map(\.id), [sonos.id])
         XCTAssertNotNil(list.controls[sonos.id])
-        XCTAssertEqual(DevicesSection.end(for: sonos, setup: sonos.setup()), .setUp)
+        XCTAssertTrue(DeskDevices.offersSetUp(sonos, team: ""))
     }
 
     /// A TV chosen under Try On and forgotten since keeps a way into its setup beside its ticked row.

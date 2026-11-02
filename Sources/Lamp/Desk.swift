@@ -58,7 +58,7 @@ struct WishDesk: View {
     private static let top: CGFloat = 14
 
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
-    /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
+    /// A device's setup conversation isn't a wish: it's reached from the device, down the desk's side.
     private var wishes: [LampProject] { store.wishes.filter { !$0.isDeviceSetup } }
 
     private var sections: DeskList.Sections {
@@ -200,8 +200,9 @@ struct WishDesk: View {
                     .padding(.top, 6).padding(.bottom, 24)
                 }
                 .scrollContentBackground(.hidden)
-                // Up and down move the pick, the list following it; Return opens it.
-                .focusable()
+                // Up and down move the pick, the list following it; Return opens it. Focusable for keys alone: focusable
+                // to clicks too, the list took every click inside it for itself, and no row, Open or heading got one.
+                .focusable(interactions: .edit)
                 .focusEffectDisabled()
                 .focused($listFocused)
                 .onKeyPress(.upArrow) { step(-1, scroller) }
@@ -350,6 +351,7 @@ struct WishDesk: View {
                 .font(.system(size: 15))
                 .lineLimit(1...5)
                 .focused($barFocused)
+                .onChange(of: barFocused, initial: true) { if barFocused { NoTextCompletion.inFocusedBox() } }
                 .onSubmit { send() }
             if hasWish {
                 Button { send() } label: {
@@ -1374,12 +1376,6 @@ extension Store {
         ContributeCards.shared.open(project)
     }
 
-    /// Wish Info from the desk: the wish's chat, on its info panel, with its credits first.
-    func showInfo(_ project: LampProject) {
-        SidebarServer.shared.show(.info, for: project)
-        open(fromDesk: project)
-    }
-
     /// Change… on a wish: its chat beside it in its own window, opening it when it's closed, for a Mac app with
     /// windows that has been made; anything else (a wish still being found, a menu bar app, a widget, an iPhone
     /// app) in Lamp's panel, beside whatever shows it or on its own (`ChatPanel`).
@@ -1507,6 +1503,18 @@ extension Store {
                 break
             }
             openWish(project)
+        }
+    }
+}
+
+/// macOS offers completions of its own under a box of more than one line, in a pop-up that can stay over what's below
+/// it with nothing in it, taking every click there: the desk's list, under its bar, took none. Nothing the desk's boxes
+/// are for is completed from a dictionary, so the box being typed in is told not to (the text view behind a SwiftUI box
+/// is only reached as the window's first responder, once it has focus).
+enum NoTextCompletion {
+    @MainActor static func inFocusedBox() {
+        DispatchQueue.main.async {
+            (NSApp.keyWindow?.firstResponder as? NSTextView)?.isAutomaticTextCompletionEnabled = false
         }
     }
 }

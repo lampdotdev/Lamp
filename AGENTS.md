@@ -97,5 +97,5 @@ Read the guide for the part you're changing before you change it. A section name
 | [live changes](docs/development/live-reload.md) | A change going into an open app: `LiveReload`, `LiveSlots`, the live copy, statics, removed properties and files, the live cases |
 | [app extensions](docs/development/app-extensions.md) | 3D scenes and games, widgets, Home Screen widgets and Live Activities, Apple Watch, App Intents, share extensions and Spotlight |
 | [services](docs/development/services.md) | Services the person already uses: sign-in on the service's page, personal tokens, open data, the app's secrets |
-| [interface](docs/development/interface.md) | Any screen: Settings, the welcome, the chat's cards, the gallery, the app's info panel |
+| [interface](docs/development/interface.md) | Any screen: Settings, the welcome, the chat's cards, the gallery |
 | [website](docs/development/website.md) | `site/` (lamp.dev) |

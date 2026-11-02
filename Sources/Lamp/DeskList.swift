@@ -39,6 +39,9 @@ struct DeskEntry: Equatable, Sendable {
     var icon: URL?
     /// This Lamp ships a newer version of the starter it's a copy of: Update from the Original brings it in (`Starters.newer`).
     var newerOriginal = false
+    /// It follows a repository on GitHub it came from, for Check for Updates… (`AppUpdates.route`): never a starter's copy
+    /// that follows the starter this Lamp ships, whose updates are Update from the Original.
+    var followsRepository = false
 
     nonisolated static func read(_ project: LampProject, apps: [LampProject]) -> DeskEntry {
         let credits = Credits.load(project)
@@ -67,7 +70,9 @@ struct DeskEntry: Equatable, Sendable {
                          ideas: Starters.starter(of: project)?.tweaks.map(\.title) ?? [],
                          sendsBack: Contribute.canContribute(project),
                          shipsOriginal: starter != nil, starter: starter,
-                         newerOriginal: Starters.newer(for: project) != nil)
+                         newerOriginal: Starters.newer(for: project) != nil,
+                         followsRepository: AppUpdates.route(for: AppUpdates.located(credits), own: GitHubRepo.kept(for: project)?.url) != nil
+                            && !(Starters.isStarter(project) && Starters.shipped(of: project)?.commit != nil))
     }
 }
 
@@ -433,8 +438,13 @@ struct DeskListRow: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2, perform: open)
-        .onTapGesture(perform: select)
+        // One tap that picks the row at once and opens it on the second click, by the click count AppKit gives. A tap for
+        // two clicks beside one for one held each click back until a second couldn't come, and a list redrawn meanwhile
+        // (a turn under way, the wishes read again) dropped it: the row was never picked.
+        .onTapGesture {
+            select()
+            if NSApp.currentEvent?.clickCount == 2 { open() }
+        }
         .onHover { hovered = $0 }
         .background {
             // Dragged out of Lamp it's the wish's shared file, or the app itself in the Dock or the Applications folder.
@@ -532,6 +542,18 @@ struct DeskDetail: View {
                                   : "Bring in the newer \(project.title). Undo takes it back.")
                     }
                 }
+                // Where it came from on GitHub: what was last heard of its updates, with the one button that checks or
+                // reviews them. Asking for it checks by itself when the last check is a day old.
+                if let project, row.entry?.followsRepository == true, let update = store.updateAvailability(of: project) {
+                    HStack(spacing: 8) {
+                        Text(update.line).font(.system(size: 13)).foregroundStyle(Paper.muted)
+                        Button(update.reviews ? "Review" : "Check Again") {
+                            if update.reviews { store.reviewUpdate(project) } else { store.checkForUpdates(project) }
+                        }
+                        .buttonStyle(PaperButtonStyle(.outline, height: 26))
+                        .disabled(store.busy.contains(project.id) || update == .checking)
+                    }
+                }
                 if let project, row.entry?.changedFromOriginal == true {
                     HStack(spacing: 8) {
                         Text("Changed from the original").font(.system(size: 13)).foregroundStyle(Paper.muted)
@@ -572,9 +594,12 @@ struct DeskDetail: View {
                 .font(.system(size: 14))
                 .lineLimit(2...5)
                 .focused($focused)
+                .onChange(of: focused) { if focused { NoTextCompletion.inFocusedBox() } }
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(Paper.page, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Paper.rule, lineWidth: 1))
+                // Focused as the desk's bar is: the edge darkens while it's being typed in.
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focused ? Paper.ink.opacity(0.4) : Paper.rule, lineWidth: 1))
                 .onSubmit(send)
             if !(row.entry?.ideas ?? []).isEmpty {
                 IdeaChips(ideas: row.entry?.ideas ?? []) { idea in
@@ -582,7 +607,7 @@ struct DeskDetail: View {
                     focused = true
                 }
             }
-            Button(action: send) { Label("Remix", systemImage: "shuffle") }
+            Button(action: send) { Label("Remix", systemImage: "wand.and.sparkles") }
                 .buttonStyle(PaperButtonStyle(.outline, height: 34))
                 .help(change.trimmed.isEmpty ? "Open \(item.title) with its chat" : "Ask for this change in \(item.title)'s chat")
         }
@@ -631,7 +656,7 @@ struct DeskWishMore: View {
 }
 
 /// What can be done with a wish from the desk. Changing it is Open and the side panel's box; a new copy, going back to
-/// the original and sending changes back are here, each only where it applies, then the wish's own menu (`AppMenu`).
+/// the original, sending changes back and its updates are here, each only where it applies, then the wish's own menu (`AppMenu`).
 /// Open leads only the right-click: behind ⋯ it's the button beside it, and first under the pointer it would open the
 /// wish on a click meant for the menu.
 struct DeskWishMenu: View {
@@ -670,11 +695,22 @@ struct DeskWishMenu: View {
         if entry?.sendsBack == true, entry?.changedFromOriginal == true {
             Button("Send Changes Back…") { store.sendChangesBack(project) }
         }
-        Button("Wish Info") { store.showInfo(project) }
-            .disabled(project.untitled)
+        // A wish from someone's repository on GitHub follows it: Check for Updates… asks, and once there's an update,
+        // Review Update… brings it in (`AppUpdates`). A starter's copy follows the starter this Lamp ships instead
+        // (Update from the Original, above).
+        if entry?.followsRepository == true {
+            let reviews = store.updateAvailability(of: project)?.reviews == true
+            Button(Self.updateTitle(reviews: reviews)) {
+                if reviews { store.reviewUpdate(project) } else { store.checkForUpdates(project) }
+            }
+            .disabled(busy)
+        }
         Divider()
         AppMenu(project: project)
     }
+
+    /// The one item for a wish's updates: it checks, and once there's one (being prepared, or ready), reviews it.
+    static func updateTitle(reviews: Bool) -> String { reviews ? "Review Update…" : "Check for Updates…" }
 }
 
 /// The changes a starter suggests, as small buttons that put one in the change box.

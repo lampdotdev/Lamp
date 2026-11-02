@@ -865,7 +865,7 @@ struct BuildingSettings: View {
             // A phone in the list needs a team before an app can go on it, so the team is chosen here even
             // before there is an iPhone app.
             PhoneSigningSection(phoneApps: hasPhoneApps || store.devices.contains { $0.kind.isPhone })
-            DevicesSection()
+            PhoneOpeningSection()
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -1007,178 +1007,22 @@ struct PhoneSigningSection: View {
     }
 }
 
-/// Every device Lamp knows about, in Building: this Mac, and the iPhones, iPads and Apple Watches it can see,
-/// each by its exact model and software, with where its setup stands and the one thing that takes it further.
-/// Nothing is set up in advance: a device is set up when the person asks, here or when a wish needs it. Where
-/// an app opens is chosen per app under Try On, which lists the same phones.
-struct DevicesSection: View {
+/// Keeping apps on the person's phones opening, in Building: shown once an app is on a phone, which is when it does
+/// something, and while it's on, so it can always be turned off: Lamp keeps opening at login until it is. The phones
+/// themselves are on the desk, down its side.
+struct PhoneOpeningSection: View {
     @EnvironmentObject private var store: Store
-    @AppStorage("appleTeam") private var team = ""
     @AppStorage(PhoneRenewals.staysOpenKey) private var keepOpening = false
-    @State private var adding = false
-    @State private var forgetting: Device?
-    @State private var showingEverything = false
 
     var body: some View {
-        let list = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
-        Section("Your Devices") {
-            // The person's devices; then what's only found on the network, which may be a neighbor's: what Lamp makes apps
-            // for or controls, then what it could learn, each offering Set Up… alike; then the rest of the network, folded.
-            ForEach(list.works) { device in
-                row(device)
-            }
-            if !list.possible.isEmpty || !list.couldLearn.isEmpty {
-                Text("Found on your network, not set up").font(.caption).foregroundStyle(.secondary)
-                ForEach(list.possible + list.couldLearn) { device in
-                    row(device)
-                }
-            }
-            if !list.others.isEmpty || list.unnamed > 0 {
-                DisclosureGroup(isExpanded: $showingEverything) {
-                    ForEach(list.others) { host in hostRow(host) }
-                    if list.unnamed > 0 {
-                        Text(list.unnamed == 1 ? "1 more with a private address, most likely a phone, tablet or computer"
-                             : "\(list.unnamed) more with private addresses, most likely phones, tablets and computers")
-                            .foregroundStyle(.secondary)
-                    }
-                } label: {
-                    Text("Everything Else on Your Network (\(list.others.count + list.unnamed))")
-                }
-            }
-            if store.localNetworkRefused, !store.lookingForDevices { LocalNetworkRefused() }
-            HStack {
-                if store.lookingForDevices { LookingForDevices() }
-                Spacer()
-                Button("Add a New Device…") { adding = true }.controlSize(.small)
-            }
-            // Shown once an app is on a phone, which is when it does something, and while it's on, so it can always be
-            // turned off: Lamp keeps opening at login until it is.
-            if keepOpening || PhoneRenewals.anyOnPhones(store.projects) {
+        if keepOpening || PhoneRenewals.anyOnPhones(store.projects) {
+            Section("Your Phones") {
                 SettingsCheckboxes {
                     Toggle("Keep apps on your phones opening", isOn: Binding(get: { keepOpening }, set: { store.keepPhoneAppsOpening($0) }))
                         .checkboxNote("Lamp opens when you log in and keeps running with its window closed, to put them back before Apple stops them opening.")
                 }
             }
         }
-        .onAppear { store.refreshDevices(everything: true) }
-        .sheet(isPresented: $adding) { AddDeviceSheet() }
-        .confirmationDialog(forgetting.map { "Forget \($0.name)?" } ?? "", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
-            Button("Forget", role: .destructive) { if let device = forgetting { forget(device) } }
-        } message: {
-            Text("Lamp forgets how to reach it and what you typed for it. To use it again, set it up from the start.")
-        }
-    }
-
-    /// What a device's row shows at its end. One only found on the network shows Set Up… and nothing else, even one an
-    /// app can already control: what its setup asks first ("Turn on developer mode on it") is for the setup that button
-    /// opens, not a warning on a device the person may never set up. A device set up with Lamp shows its next step, if
-    /// it has one.
-    enum RowEnd: Equatable { case away(String), ready, setUp, step(String), words(String) }
-
-    static func end(for device: Device, setup: Device.Setup) -> RowEnd {
-        if device.isAway { return .away(device.status) }
-        guard device.isSetUp else { return .setUp }
-        switch setup {
-        case .ready: return .ready
-        case .talkOnly: return .words(setup.words)
-        case .needs(let step): return .step(step)
-        }
-    }
-
-    /// A device Lamp set up itself, on the network: the ones Reconnect and Forget are for. A phone's pairing is the
-    /// Mac's, and an Android device's is the device's own.
-    private func keptByLamp(_ device: Device) -> Bool {
-        if AndroidTVs.isRecord(device.id) { return true }
-        return device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
-    }
-
-    /// Reconnect: a TV's setup window, checked again from where it stands; another device's setup from the start, its
-    /// certificate let go, so a reset device or one whose developer mode was turned on again is trusted afresh.
-    private func reconnect(_ device: Device) {
-        if AndroidTVs.isRecord(device.id) {
-            AndroidWiFi.shared.show(host: device.address)
-        } else if device.kind.isTV {
-            TVs.reconnect(device.id)
-            store.refreshDevices()
-            TVSetup.shared.show(device.udid)
-        } else {
-            DeviceSetupModel.for(device).reconnect()
-            DeviceSetupWindow.show(device)
-        }
-    }
-
-    private func forget(_ device: Device) {
-        if AndroidTVs.isRecord(device.id) {
-            AndroidTVs.forget(device.id)
-        } else if device.kind.isTV {
-            TVs.forget(device.id)
-        } else {
-            DeviceSetupModel.discard(device.id)
-            Integrations.forget(device.id)
-        }
-        forgetting = nil
-        store.refreshDevices()
-    }
-
-    /// A host nothing of Lamp's works with: what it is, and the names it goes by on the network, on this Mac only.
-    private func hostRow(_ host: NetworkHost) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: host.isGateway ? "wifi.router" : "network").foregroundStyle(.secondary).frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(HomeNetwork.label(host))
-                Text((host.names.prefix(2) + [host.address]).joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            // The agent works out what it is and whether anything can reach it; the router and this Mac aren't for that.
-            if !host.isGateway, !host.isThisMac {
-                Button("Set Up…") { store.setUpDevice(HomeNetwork.device(for: host)) }.controlSize(.small)
-            }
-        }
-        .help(HomeNetwork.facts(host))
-    }
-
-    private func row(_ device: Device) -> some View {
-        let setup = device.setup(team: team)
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: device.symbol).foregroundStyle(.secondary).frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(device.name)
-                Text(device.line).font(.caption).foregroundStyle(.secondary)
-                let stopped = store.projects.filter { PhoneRenewals.stoppedOpening($0, on: device.udid) }.map(\.name)
-                if !stopped.isEmpty {
-                    Label("\(TeamLimits.list(stopped)) stopped opening. Open \(stopped.count == 1 ? "it" : "each") and press Play.", systemImage: "exclamationmark.circle.fill")
-                        .font(.caption).foregroundStyle(.orange)
-                }
-            }
-            Spacer()
-            switch Self.end(for: device, setup: setup) {
-            case .away(let words):
-                Text(words).foregroundStyle(.secondary)
-                    .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
-            case .ready:
-                Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
-            case .setUp:
-                DeviceNextStep(device: device)
-            case .step(let step):
-                Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
-                DeviceNextStep(device: device)
-            case .words(let words):
-                Text(words).foregroundStyle(.secondary)
-            }
-            if keptByLamp(device) {
-                Menu {
-                    Button("Reconnect…") { reconnect(device) }
-                    Button("Forget \(device.name)…") { forgetting = device }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Reconnect or forget \(device.name)")
-            }
-        }
-        .accessibilityElement(children: .contain)
     }
 }
 
@@ -1833,7 +1677,7 @@ struct ProviderLogo: View {
         ZStack {
             shape.fill(.white)
             if id == "lamp" {
-                Image(systemName: "shuffle")
+                Image(systemName: "wand.and.sparkles")
                     .font(.system(size: size * 0.45, weight: .semibold)).foregroundStyle(.black)
             } else if id == Builder.localProvider {
                 Image(systemName: "desktopcomputer")

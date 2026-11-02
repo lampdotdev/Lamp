@@ -191,7 +191,6 @@ private struct Chat: View {
             } else {
                 switch state.panel {
                 case .versions: VersionsPanel(state: state)
-                case .info: InfoPanel(state: state)
                 case nil: chat
                 }
             }
@@ -693,7 +692,7 @@ extension View {
 
 /// The bar at the top of the chat, one row: the red button that closes the chat, what the chat is for, and its
 /// buttons (for a wish that isn't a Mac app beside the chat, Play or Stop and Try On's device button first), the same at
-/// every width: Undo, and a button for the rest, which pressed stays lit and puts them in the title's place: Wish Info,
+/// every width: Undo, and a button for the rest, which pressed stays lit and puts them in the title's place:
 /// Share, Agent Details, Delete and Versions. Each does what its button in Lamp's window does: the sidebar only passes the click on. Closing
 /// and the room between the buttons, which moves the chat, are the app's to do (`Host`): the panel is its window.
 struct ChatBar: View {
@@ -730,7 +729,7 @@ struct ChatBar: View {
                                    on: more, plain: true) {
                             withAnimation(.snappy(duration: 0.2)) { more.toggle() }
                         }
-                        .help(more ? "Show the title again" : "Wish info, sharing, agent details, delete and versions")
+                        .help(more ? "Show the title again" : "Sharing, agent details, delete and versions")
                         // Changed where it stands, the symbol simply filled: not faded or slid in as a new button.
                         .transaction { $0.animation = nil }
                     }
@@ -846,10 +845,6 @@ struct ChatBar: View {
 
     /// What the button for the rest shows (Versions goes beside Undo, the two being about the same thing).
     @ViewBuilder private func rest(_ state: SidebarState, _ toolbar: SidebarToolbar) -> some View {
-        ToolButton("info.circle", "Wish Info", on: state.panel == .info) {
-            link.send(.panel(state.panel == .info ? nil : .info))
-        }
-        .help(toolbar.usage.map { "Usage, cost and models. \($0)" } ?? "Usage, cost and models")
         Menu {
             Button("Share Link…") { link.send(.wishLink(.open)) }
             Button("Put on GitHub…") { link.send(.repo(.open)) }
@@ -1201,50 +1196,6 @@ struct VersionsPanel: View {
             shape.fill(.quaternary)
                 .frame(width: width, height: height)
                 .overlay(Image(systemName: "macwindow").foregroundStyle(.tertiary))
-        }
-    }
-}
-
-/// The wish's info, in place of the chat: what it has cost, what answers its AI, how Lamp builds it and where it
-/// lives, the same rows as Lamp's info panel. It chooses nothing: its buttons lead to where things are chosen.
-struct InfoPanel: View {
-    @EnvironmentObject private var link: ChatLink
-    let state: SidebarState
-
-    var body: some View {
-        Form {
-            ForEach(state.info ?? []) { section in
-                Section {
-                    ForEach(section.rows, id: \.label) { row in
-                        LabeledContent(row.label) {
-                            if let value = row.value {
-                                Text(value).textSelection(.enabled)
-                            } else {
-                                HStack(spacing: 4) { Image(systemName: "exclamationmark.circle.fill"); Text("Not Ready") }
-                                    .foregroundStyle(.orange)
-                            }
-                        }
-                    }
-                } header: {
-                    if let title = section.title { Text(title) }
-                } footer: {
-                    if !section.buttons.isEmpty {
-                        // One under another: the panel is narrow.
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(section.buttons, id: \.action) { button in
-                                Button(button.title) { link.send(.infoAction(button.action)) }
-                            }
-                        }
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .overlay {
-            if state.info == nil { ProgressView().controlSize(.small) }
         }
     }
 }

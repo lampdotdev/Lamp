@@ -346,13 +346,6 @@ final class SidebarServer {
         local.push()
     }
 
-    /// A wish's chat opened from the desk on one of its panels (Wish Info): what the bar's buttons open, kept until the
-    /// chat is shown, which reads it as it connects.
-    func show(_ panel: SidebarPanel, for project: LampProject) {
-        panels[project.id] = panel
-        scheduleUpdate()
-    }
-
     private func scheduleUpdate() {
         guard !pending, !connections.isEmpty || !locals.isEmpty else { return }
         pending = true
@@ -451,7 +444,7 @@ final class SidebarServer {
         if !untold && !project.makesNoApp {
             let made = history?.made ?? false
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
-                                         hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
+                                         hasVersions: history?.saved ?? false, details: details)
             toolbar.canContribute = Contribute.canContribute(project) && made ? true : nil
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
@@ -478,9 +471,6 @@ final class SidebarServer {
             let versions = versions(for: project, busy: busy)
             state.versions = versions.list
             state.hasEarlierVersions = versions.more
-        case .info:
-            state.info = AppInfoView.sections(for: project, models: AppModels.load(project), store: store,
-                                              changedFromOriginal: changedFromOriginal(project, busy: busy, lines: log.count))
         case nil: break
         }
         state.sharing = sharing.removeValue(forKey: project.id)
@@ -605,25 +595,6 @@ final class SidebarServer {
     private var panels: [String: SidebarPanel] = [:]
     /// The wish's file after Share…, until it's been sent.
     private var sharing: [String: SidebarSharing] = [:]
-
-    /// Whether each wish has changed since it arrived, for its info panel's credits, read again (it asks git) when a turn
-    /// starts or ends and when the chat changes.
-    private var originals: [String: (key: String, changed: Bool)] = [:]
-
-    private func changedFromOriginal(_ project: LampProject, busy: Bool, lines: Int) -> Bool {
-        let key = "\(busy) \(lines)"
-        let known = originals[project.id]?.changed ?? false
-        if originals[project.id]?.key != key {
-            originals[project.id] = (key, known)
-            Task { [weak self] in
-                let changed = await Store.shared.original(toStartAgain: project) != nil
-                guard let self, self.originals[project.id]?.key == key else { return }
-                self.originals[project.id] = (key, changed)
-                if changed != known { self.scheduleUpdate() }
-            }
-        }
-        return known
-    }
 
     /// What the toolbar knows of each app's history, read again as Lamp's window reads it: when a turn starts or ends
     /// and when the chat changes.
@@ -1388,11 +1359,6 @@ final class SidebarServer {
             case .copy: cards.copy(project)
             case .close: cards.close(project)
             }
-        case .infoAction(let action):
-            AppInfoView.perform(action, for: project) { tab in
-                SettingsMenu.show(tab: tab)
-            }
-            scheduleUpdate()
         case .tryOn(let id):
             // One of the wish's other apps: "part:<its id>:<what>".
             if id.hasPrefix("part:"), let part = store.parts(of: project).first(where: { id.hasPrefix("part:\($0.id):") }) {
