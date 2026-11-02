@@ -267,7 +267,7 @@ extension Store {
             if reading {
                 return (200, ["text": "Lamp's copy of \(snapshot.owner)/\(snapshot.name) at commit \(snapshot.commit), for reading: \(snapshot.folder.path)\nNothing was credited and nothing was made. To make an app from it, call lampify without read_only, with commit \(snapshot.commit)."])
             }
-            guard !RepoImport.holdsWish(snapshot.folder) else {
+            guard !RepoImport.holdsWish(snapshot.folder, sites: false) else {
                 return (400, ["error": "\(source.owner)/\(source.name) is a Lamp wish already: don't rebuild it. Tell the person to open it with File → Open from GitHub… and paste \(address)."])
             }
             let adapted = arguments["adapted"] as? Bool ?? true

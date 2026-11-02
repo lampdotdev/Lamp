@@ -150,11 +150,12 @@ enum RepoImport {
 
     /// Whether a fetched tree is a wish (laid out as Put on GitHub lays one out, or holding a shared file) rather than
     /// someone's own project, which `open` can't read.
-    /// A plain site (`StaticSite.isPlain`) is one too: it opens as a web app, laid out as it is.
-    static func holdsWish(_ folder: URL) -> Bool {
+    /// A plain site (`StaticSite.isPlain`) opens too, as a web app laid out as it is, unless `sites` is false: making an
+    /// app from someone's project (`GitHubProjects`) asks only whether it's a wish already.
+    static func holdsWish(_ folder: URL, sites: Bool = true) -> Bool {
         let fm = FileManager.default
         if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) || StaticSite.holdsWish(folder) { return true }
-        return hasSharedFile(folder) || StaticSite.isPlain(folder)
+        return hasSharedFile(folder) || (sites && StaticSite.isPlain(folder))
     }
 
     private static func hasSharedFile(_ folder: URL) -> Bool {
