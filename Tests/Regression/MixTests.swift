@@ -137,6 +137,22 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(text(yours), "A-them\nb\nc\(MixHistory.limit)\nd\nE-them\n")
     }
 
+    /// Their credits come with their work, but this copy's link keeps the version it was given: a mix that took only
+    /// part of their file mustn't make this copy's next file claim to start where theirs ended.
+    func testTheirCreditsComeWithoutMovingWhereThisCopyStarts() async throws {
+        let (_, theirs, _, _) = try await copies()
+        let given = Credits.load(theirs.project).remixOf.last?.commit
+        var incoming = Credits()
+        incoming.remixOf = [Credits.Remix(name: "Coin Flip", wish: identity, commit: String(repeating: "f", count: 40))]
+        incoming.generated = [Credits.Generated(file: "Assets/skyline.png")]
+        try FileManager.default.createDirectory(at: theirs.project.dir.appendingPathComponent("Assets"), withIntermediateDirectories: true)
+        try Data([0]).write(to: theirs.project.dir.appendingPathComponent("Assets/skyline.png"))
+        try Credits.add(Mix.creditsTaken(incoming), to: theirs.project)
+        let now = Credits.load(theirs.project)
+        XCTAssertEqual(now.remixOf.last?.commit, given)
+        XCTAssertEqual(now.generated.map(\.file), ["Assets/skyline.png"])
+    }
+
     func testTheirCopyLinesUpWithTheOriginalsNewerFile() async throws {
         // The other way round: the original's file, opened in the copy, starts where the copy was given it.
         let (yours, theirs, _, _) = try await copies()

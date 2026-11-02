@@ -3896,9 +3896,9 @@ final class Store: ObservableObject {
         }
         let taken = lineup.changes.filter { !$0.here && picked.contains($0.id) }.map(\.title)
         let leftOut = lineup.changes.filter { $0.here && !picked.contains($0.id) }.map(\.title)
-        // Work taken in keeps its credit and license: their credits join this copy's, as an update's do, saved with the
-        // last version the mix made.
-        if let last = taken.last, let credits = lineup.package.credits {
+        // Work taken in keeps its credit and license: their credits join this copy's, saved with the last version the
+        // mix made. Only the work's (`Mix.creditsTaken`): where this copy stands in the wish's history stays its own.
+        if let last = taken.last, let credits = lineup.package.credits.map(Mix.creditsTaken) {
             try? Credits.add(credits, to: project)
             if await Versions.hasUnsavedChanges(project),
                await Versions.git("git add -A -- \(Credits.file) && \(Versions.commit) -q --amend --no-edit", cwd: project.dir) == 0,

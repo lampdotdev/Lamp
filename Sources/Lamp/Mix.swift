@@ -348,6 +348,15 @@ enum Mix {
         return saved.count
     }
 
+    /// What of their credits joins this copy's when their work is taken: the work it uses (its sources, licenses and
+    /// generated pictures), never the chain. A link's commit there is the version their file was made at, and taking it
+    /// would tell this copy's next file it starts from there, when it was taken only in part.
+    static func creditsTaken(_ credits: Credits) -> Credits {
+        var credits = credits
+        credits.remixOf = []
+        return credits
+    }
+
     // MARK: Git
 
     /// Builds trees in an index of the mix's own: each block of `plan` starts from a tree (`FROM <tree>`, or `FROM -`
