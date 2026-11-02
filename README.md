@@ -18,7 +18,7 @@ Lamp comes with apps to start from, on its desk under **Starter apps**:
   </tr>
 </table>
 
-And Lamp's own [Buzzer Beater](https://github.com/lampdotdev/buzzerbeater), [Universal Remote](https://github.com/lampdotdev/universalremote), [Fireside](https://github.com/lampdotdev/fireside), [Local Crossings](https://github.com/lampdotdev/localcrossings), [Today](https://github.com/lampdotdev/today), [Disk Map](https://github.com/lampdotdev/diskmap), [Hours](https://github.com/lampdotdev/hours), [Wedding Words](https://github.com/lampdotdev/weddingwords), [Transcriber](https://github.com/lampdotdev/transcriber), [Tidy Up](https://github.com/lampdotdev/tidyup) and [Site-to-App](https://github.com/lampdotdev/sitetoapp).
+And Lamp's own [Buzzer Beater](https://github.com/lampdotdev/buzzerbeater), [Universal Remote](https://github.com/lampdotdev/universalremote), [Fireside](https://github.com/lampdotdev/fireside), [Local Crossings](https://github.com/lampdotdev/localcrossings), [Today](https://github.com/lampdotdev/today), [Disk Map](https://github.com/lampdotdev/diskmap), [Hours](https://github.com/lampdotdev/hours), [Wedding Words](https://github.com/lampdotdev/weddingwords), [Transcriber](https://github.com/lampdotdev/transcriber), [Tidy Up](https://github.com/lampdotdev/tidyup) and [Site-to-App](https://github.com/lampdotdev/sitetoapp), and Bruno Bergher's [Chores](https://github.com/lampdotdev/chores).
 
 Change one and it's yours; the original stays under Starter apps. Every starter is a repository on GitHub
 (github.com/lampdotdev), and anything made with Lamp can be shared as a file, a link or a GitHub repository for
