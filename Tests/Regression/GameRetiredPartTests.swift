@@ -480,6 +480,27 @@ final class GameRetiredPartTests: XCTestCase {
         XCTAssertTrue(stays, "what's kept by name stays in its scene, whenever it came to be kept")
     }
 
+    func testANamedPropertyOfAKeptArrayStaysHeld() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            live.keep('pool', () => ({ items: window.pool = [] }));
+            const version = \(version);
+            live.keep('goes', () => {
+                const mesh = own(); scene.add(mesh);
+                if (version === 1) { window.pool.saved = mesh; window.savedGeometry = mesh.geometry; }
+                return mesh;
+            }, { inputs: [scene], from: ['v\(version)'] });
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        files.text["v2"] = "2"
+        try await change("game.js")
+        try await pastEmptying()
+        let stays = try await yes("pool.saved.parent === scene && pool.saved.geometry === savedGeometry && window.cached.has(savedGeometry)")
+        XCTAssertTrue(stays, "an array's named properties are looked through as its items are")
+    }
+
     func testAThrowingRemovalListenerLeavesTheRestToGo() async throws {
         func parts(_ version: Int) -> String {
             guard version == 1 else { return "" }

@@ -1862,7 +1862,7 @@ function keptRoots() {
         seen.add(v);
         // Another library's object can throw on being read: what can't be read can't be told to be held.
         let each = [];
-        try { each = Array.isArray(v) ? v.slice() : [...(v instanceof Map ? v.values() : v instanceof Set ? v : Object.values(v))]; } catch (e) {}
+        try { each = v instanceof Map ? [...v.values()] : v instanceof Set ? [...v] : Object.values(v); } catch (e) {}
         for (const x of each) walk(x, depth - 1);
     };
     for (const k of kept.values()) {
