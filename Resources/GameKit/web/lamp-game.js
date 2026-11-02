@@ -1748,62 +1748,33 @@ function own(made, waiting) {
 // `spare` holds the geometry and materials a part that replaces this one goes on using (made once and shared by both,
 // so the new part's shaders were compiled long ago): those stay, and so does whatever the game still holds elsewhere
 // (`stillHeld`). A part with a `dispose` of its own takes care of everything it made, and one with no three.js objects
-// has nothing to look for. What's kept can be big tables, too long to look through for every part of a run that builds
-// many: its parts leave their scenes as they go, and are taken care of together as the run ends (`letGoNow`).
+// has nothing to look for. What the game's listeners throw costs only the object they were told of.
 function letGo(k, spare = new Set()) {
     // A part built in the background lets go of the one it replaced once it's let go of itself.
     if (k.replaces) { letGo(k.replaces); k.replaces = null; }
     Promise.resolve(k.value).then(v => {
         try {
             if (k.dispose) return k.dispose(v);
-            const objects = objectsOf(v);
-            if (!objects.length) return finish(v);
-            // A part that's a plain object of three.js objects ({ group, heights }) lets go of each. Out of its scene at
-            // once during a run, as the code running may look at the scene; what's kept by name stays there.
-            const staying = !runningAgain ? objects : objects.filter(o => { if (keptByName(o)) return true; o.removeFromParent(); return false; });
-            letGone.push({ k, v, objects, staying, spare });
-            if (!runningAgain) letGoSoon();
+            const failed = e => log(`Lamp: letting go of ${k.key} kept in ${k.path} failed (${e && e.message || e}).`);
+            const parts = objectsOf(v);
+            if (parts.length) {
+                // A part that's a plain object of three.js objects ({ group, heights }) lets go of each, out of its scene
+                // first, or the scene would count as still holding it.
+                const roots = keptRoots(), objects = parts.filter(o => !roots.has(o));
+                for (const o of objects) { try { o.removeFromParent(); } catch (e) { failed(e); } }
+                const held = stillHeld(roots);
+                for (const o of objects) {
+                    // A scene still being drawn waits: disposed of now, the renderer would only make it all again, and
+                    // nothing would dispose of that. It's disposed of when it's taken apart.
+                    if (held.has(o)) { retire(o, true); continue; }
+                    disposeTree(o, spare, held, failed);
+                    retire(o);
+                }
+            }
+            if (v && !v.isObject3D && typeof v.dispose === 'function') v.dispose();
+            else if (v && !v.isObject3D && typeof v.destroy === 'function') v.destroy(true);
         } catch (e) { log(`Lamp: letting go of ${k.key} kept in ${k.path} failed (${e && e.message || e}).`); }
     }, () => {});
-}
-const finish = v => {
-    if (v && !v.isObject3D && typeof v.dispose === 'function') v.dispose();
-    else if (v && !v.isObject3D && typeof v.destroy === 'function') v.destroy(true);
-};
-// The parts on their way out, for one look at what's kept. Until then a run asks of each value kept only once, as an
-// object in the old part is rarely in anything else, and the look here is what decides what's disposed of.
-let letGone = [], letGoDue = false, rootsOfValue = new WeakMap();
-function letGoSoon() {
-    if (letGoDue) return;
-    letGoDue = true;
-    queueMicrotask(() => { letGoDue = false; letGoNow(); });
-}
-function letGoNow() {
-    const list = letGone.splice(0);
-    rootsOfValue = new WeakMap();
-    if (!list.length) return;
-    let roots, held;
-    const gone = new Set(), failed = (k, e) => log(`Lamp: letting go of ${k.key} kept in ${k.path} failed (${e && e.message || e}).`);
-    try {
-        roots = keptRoots();
-        // Out of their scenes first, or a scene would count as still holding them.
-        for (const { staying } of list) for (const o of staying) if (!roots.has(o)) o.removeFromParent();
-        held = stillHeld(roots);
-    } catch (e) { for (const { k } of list) failed(k, e); return; }
-    for (const { k, v, objects, spare } of list) {
-        try {
-            for (const o of objects) {
-                if (roots.has(o) || gone.has(o)) continue;
-                gone.add(o);
-                // A scene still being drawn waits: disposed of now, the renderer would only make it all again, and
-                // nothing would dispose of that. It's disposed of when it's taken apart.
-                if (held.has(o)) { retire(o, true); continue; }
-                disposeTree(o, spare, held, gone);
-                retire(o);
-            }
-            finish(v);
-        } catch (e) { failed(k, e); }
-    }
 }
 
 // A part let go of can go on being reachable: a module runs again as a new module, and the browser keeps the one it
@@ -1816,8 +1787,8 @@ function letGoNow() {
 //
 // Only roots are remembered, weakly: a part nothing holds simply goes, and this list keeps nothing alive.
 const retired = [], blanks = new Map();
-function disposeTree(root, spare, held, gone = new Set()) {
-    const dispose = thing => { if (spare.has(thing) || held.has(thing) || gone.has(thing)) return; gone.add(thing); thing.dispose(); };
+function disposeTree(root, spare, held, failed = e => { throw e; }) {
+    const dispose = thing => { if (spare.has(thing) || held.has(thing)) return; try { thing.dispose(); } catch (e) { failed(e); } };
     root.traverse(o => {
         if (o.geometry) dispose(o.geometry);
         for (const m of [o.material].flat()) if (m && m.dispose) dispose(m);
@@ -1881,37 +1852,26 @@ function blankOf(thing) {
 // What the game keeps by name: the three.js objects, geometry and materials of every part kept (with its pools,
 // however they're held, so a detached object counts), of what's being built or waiting to be swapped in, and the
 // cameras registered. `stillHeld` is all that with what hangs under it, and every scene the renderer is drawing.
-function rootsIn(v, depth, roots, seen) {
-    if (!v || typeof v !== 'object' || seen.has(v) || ArrayBuffer.isView(v) || v instanceof ArrayBuffer || (globalThis.Node && v instanceof Node)) return;
-    if (v.isObject3D || v.isBufferGeometry || v.isMaterial) { roots.add(v); return; }
-    if (depth <= 0) return;
-    seen.add(v);
-    // Another library's object can throw on being read: what can't be read can't be told to be held.
-    let each = [];
-    try { each = [...(v instanceof Map ? v.values() : v instanceof Set ? v : Object.values(v))]; } catch (e) {}
-    for (const x of each) rootsIn(x, depth - 1, roots, seen);
-}
 function keptRoots() {
     const roots = new Set(), seen = new Set();
-    for (const k of kept.values()) {
-        rootsIn(k.made, 3, roots, seen);
-        if (k.replaces) rootsIn(k.replaces.made, 3, roots, seen);
-        if (k.pending) rootsIn(k.pending.value, 3, roots, seen);
-    }
-    for (const entry of cameras.values()) rootsIn(entry, 2, roots, seen);
-    return roots;
-}
-// Whether what's kept by name has this object, each value being looked through once between `letGoNow`s.
-function keptByName(o) {
-    const has = v => {
-        if (!v || typeof v !== 'object') return false;
-        let roots = rootsOfValue.get(v);
-        if (!roots) { roots = new Set(); rootsIn(v, 3, roots, new Set()); rootsOfValue.set(v, roots); }
-        return roots.has(o);
+    const walk = (v, depth) => {
+        if (!v || typeof v !== 'object') return;
+        if (v.isObject3D || v.isBufferGeometry || v.isMaterial) { roots.add(v); return; }
+        // What's kept can be big tables: a row at the last depth has been dealt with by here.
+        if (depth <= 0 || seen.has(v) || ArrayBuffer.isView(v) || v instanceof ArrayBuffer || (globalThis.Node && v instanceof Node)) return;
+        seen.add(v);
+        // Another library's object can throw on being read: what can't be read can't be told to be held.
+        let each = [];
+        try { each = Array.isArray(v) ? v.slice() : [...(v instanceof Map ? v.values() : v instanceof Set ? v : Object.values(v))]; } catch (e) {}
+        for (const x of each) walk(x, depth - 1);
     };
-    for (const k of kept.values()) if (has(k.made) || (k.replaces && has(k.replaces.made)) || (k.pending && has(k.pending.value))) return true;
-    for (const entry of cameras.values()) { const roots = new Set(); rootsIn(entry, 2, roots, new Set()); if (roots.has(o)) return true; }
-    return false;
+    for (const k of kept.values()) {
+        walk(k.made, 3);
+        if (k.replaces) walk(k.replaces.made, 3);
+        if (k.pending) walk(k.pending.value, 3);
+    }
+    for (const entry of cameras.values()) walk(entry, 2);
+    return roots;
 }
 function stillHeld(roots = keptRoots()) {
     const held = new Set();
@@ -2620,7 +2580,6 @@ function ranAgain(again) {
     // No old frame held (a page with no canvas to picture): on screen at the next frame.
     if (!curtain && !again.change.quiet) after(0, () => { if (shownFor === again.change.gen) { tellHost(shownFor, 'shown'); shownFor = null; } });
     for (const [id, k] of kept) if (!k.used) { if (k.pending) stopBuilding(k); letGo(k); kept.delete(id); }
-    letGoSoon();
     // What a part built in the background replaced goes once the new one is on screen, not in its first frames.
     for (const k of kept.values()) if (k.used && k.replaces) { const old = k.replaces, spare = usedBy(k.made); k.replaces = null; after(1000, () => letGo(old, spare)); }
     for (const list of [cameras, states]) for (const [id, entry] of list) if (!entry.used) list.delete(id);
@@ -2664,7 +2623,6 @@ function firstDrawn(cost) {
 function ranAgainFailed(again, e) {
     if (runningAgain !== again) return new Promise(() => {});
     runningAgain = null;
-    letGoNow();
     log(`Error: ${e && e.message || e}`);
     reopen({ ...again.change, why: `the game's code run again failed (${e && e.message || e})` }, again.state);
     return new Promise(() => {});

@@ -358,22 +358,6 @@ final class GameRetiredPartTests: XCTestCase {
         });
         """
 
-    func testARunThatBuildsManyPartsLooksThroughWhatsKeptOnce() async throws {
-        func parts(_ version: Int) -> String {
-            Self.countedTable + (0..<8).map { i in
-                "live.keep('part\(i)', () => { /* \(version) */ const g = new THREE.Group(); g.add(own()); scene.add(g); return g; }, { inputs: [scene] });"
-            }.joined(separator: "\n")
-        }
-        try await open(Self.game(parts(1)))
-        try await js("window.looks = 0")
-        files.text["game.js"] = Self.game(parts(2))
-        try await change("game.js")
-        try await pastEmptying()
-        let looks = try await number("window.looks")
-        XCTAssertGreaterThan(looks, 0)
-        XCTAssertLessThanOrEqual(looks, 3, "one for the run's parts, one to decide what's disposed of, one to take them apart")
-    }
-
     func testAPartWithNoObjectsGoesWithoutALookThroughWhatsKept() async throws {
         func plain(_ version: Int) -> String {
             Self.countedTable + "live.keep('plain', () => ({ version: \(version), dispose() { window.plainGone = (window.plainGone || 0) + 1; } }));"
