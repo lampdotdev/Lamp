@@ -1024,6 +1024,8 @@ final class Store: ObservableObject {
     /// (`reloadInTurn`), other work when it's done, and the chat says so meanwhile (`ReloadLine.queued`), since
     /// nothing else would seem to happen.
     @Published private(set) var reloadWhenFree: Set<String> = []
+    /// Update from the Original, asked for while the wish was busy: it starts when the wish is free (`finish`).
+    private var originalUpdateWhenFree: Set<String> = []
     /// The holds the agent has heard of, by wish (`untoldHolds`).
     private var toldHolds: [String: Set<String>] = [:]
 
@@ -4505,6 +4507,7 @@ final class Store: ObservableObject {
                 await applyIconArt(project, spec: spec)
                 release(project)
                 if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
+                if originalUpdateWhenFree.remove(project.id) != nil { updateFromOriginal(project, opening: false) }
                 fixHeldCrashes(project)
                 offerHeldDrawing(project)
                 startQueued(project)
@@ -4515,6 +4518,7 @@ final class Store: ObservableObject {
         }
         release(project)
         if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
+        if originalUpdateWhenFree.remove(project.id) != nil { updateFromOriginal(project, opening: false) }
         if iconFallbackWhenFree.remove(project.id) != nil, let spec = Icons.load(project) {
             Task { await artworkWontCome(project, spec: spec, failed: false) }
         }
@@ -7727,11 +7731,13 @@ final class Store: ObservableObject {
     /// Lamp's bundle, the agent settling only what both sides changed. Undo takes either back.
     func updateFromOriginal(_ project: LampProject, opening: Bool = true) {
         guard let starter = Starters.newer(for: project) else { return newerOriginalTaken(project) }
+        // Asked for while a change is under way (often from the chat beside the app, where an alert in Lamp's window would
+        // go unseen and hold Lamp still until it's answered): it waits for the wish, and the chat says so.
         guard begin(project) != nil else {
-            let alert = NSAlert()
-            alert.messageText = "“\(project.name)” is busy right now"
-            alert.informativeText = "Try again when it's done."
-            alert.runModal()
+            if opening { open(fromDesk: project) }
+            if originalUpdateWhenFree.insert(project.id).inserted {
+                log(project, .status, "\(project.name) will be updated from the original once this change is done.")
+            }
             return
         }
         if opening { open(fromDesk: project) }

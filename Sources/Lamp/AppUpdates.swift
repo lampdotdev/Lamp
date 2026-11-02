@@ -424,11 +424,11 @@ extension Store {
         Starters.isStarter(project) && Starters.shipped(of: project)?.commit != nil
     }
 
+    /// Said in the wish's chat, not in an alert: asked for from the chat beside the app, an alert in Lamp's window goes
+    /// unseen and holds Lamp still until it's answered.
     private func tellBusy(_ project: LampProject) {
-        let alert = NSAlert()
-        alert.messageText = "“\(project.name)” is busy right now"
-        alert.informativeText = "Try again when it's done."
-        alert.runModal()
+        log(project, .status, "\(project.name) is busy with a change. Review the update again when it's done.")
+        showChat(project.id)
     }
 
     /// A copy of the wish as it is now, unsaved changes included, made as a shared file of it would be opened
