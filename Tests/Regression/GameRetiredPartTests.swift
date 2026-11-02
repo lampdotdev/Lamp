@@ -349,6 +349,183 @@ final class GameRetiredPartTests: XCTestCase {
         XCTAssertTrue(fresh)
     }
 
+    /// A table whose reading is counted: each look through what's kept reads `rows` once.
+    private static let countedTable = """
+        live.keep('table', () => {
+            const table = {};
+            Object.defineProperty(table, 'rows', { enumerable: true, get() { window.looks = (window.looks || 0) + 1; return 1; } });
+            return { table };
+        });
+        """
+
+    func testAPartWithNoObjectsGoesWithoutALookThroughWhatsKept() async throws {
+        func plain(_ version: Int) -> String {
+            Self.countedTable + "live.keep('plain', () => ({ version: \(version), dispose() { window.plainGone = (window.plainGone || 0) + 1; } }));"
+        }
+        try await open(Self.game(plain(1)))
+        try await js("window.looks = 0")
+        files.text["game.js"] = Self.game(plain(2))
+        try await change("game.js")
+        try await until("its dispose ran") { try await self.number("window.plainGone || 0") == 1 }
+        try await pastEmptying()
+        let looks = try await number("window.looks")
+        XCTAssertEqual(looks, 0)
+    }
+
+    func testAPartLeavesItsSceneAndItsDisposeRunsWhileTheRunGoesOn() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            \(Self.goes(version))
+            live.keep('mine', () => ({ version: \(version) }), { dispose() { window.mineGone = (window.mineGone || 0) + 1; } });
+            await new Promise(next => setTimeout(next, 0));
+            window.childrenInRun = scene.children.length; window.goneInRun = window.mineGone || 0;
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        try await change("game.js")
+        let children = try await number("window.childrenInRun"), gone = try await number("window.goneInRun")
+        XCTAssertEqual(children, 1, "the old part is out of the scene the run's code looks at")
+        XCTAssertEqual(gone, 1, "a part's own dispose doesn't wait for the run's end")
+    }
+
+    func testWhatTwoPartsShareIsDisposedOfOnceWhenBothGo() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            const both = window.both = window.both || (() => { const geo = new THREE.BoxGeometry(1, 1, 1); geo.addEventListener('dispose', () => { window.bothDisposed = (window.bothDisposed || 0) + 1; }); return geo; })();
+            const version = \(version);
+            for (const name of ['a', 'b']) live.keep(name, () => {
+                const g = new THREE.Group(); g.add(new THREE.Mesh(version === 1 ? both : new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial())); scene.add(g);
+                (window.made = window.made || []).push({ g });
+                return g;
+            }, { inputs: [scene], from: ['v\(version)'] });
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        files.text["v2"] = "2"
+        try await change("game.js")
+        try await emptied("made[0]")
+        try await emptied("made[1]")
+        let disposed = try await number("window.bothDisposed")
+        XCTAssertEqual(disposed, 1)
+    }
+
+    func testAnObjectTheNewPartAlsoHoldsStaysWhole() async throws {
+        func part(_ version: Int) -> String {
+            """
+            live.keep('goes', () => { /* \(version) */
+                const g = window.same = window.same || (() => { const made = new THREE.Group(); made.add(own()); scene.add(made); return made; })();
+                return { g, version: \(version) };
+            }, { inputs: [scene] });
+            """
+        }
+        try await open(Self.game(part(1)))
+        try await js("window.keptMesh = same.children[0]; window.keptGeometry = keptMesh.geometry")
+        files.text["game.js"] = Self.game(part(2))
+        try await change("game.js")
+        try await pastEmptying()
+        let whole = try await yes("same.parent === scene && same.children[0] === keptMesh && keptMesh.geometry === keptGeometry && window.cached.has(keptGeometry)")
+        XCTAssertTrue(whole)
+    }
+
+    func testWhatADisposeListenerHandsToAKeptPoolIsSpared() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            live.keep('pool', () => ({ items: window.pool = [] }));
+            const version = \(version);
+            for (const name of ['a', 'b']) live.keep(name, () => {
+                const g = new THREE.Group(), mesh = own(); g.add(mesh); scene.add(g);
+                if (version === 1) {
+                    window[name] = mesh;
+                    mesh.geometry.addEventListener('dispose', () => { window.disposedGeometries = (window.disposedGeometries || []).concat(name); });
+                    if (name === 'a') mesh.geometry.addEventListener('dispose', () => { window.pool.push(window.b); });
+                }
+                return g;
+            }, { inputs: [scene], from: ['v\(version)'] });
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        files.text["v2"] = "2"
+        try await change("game.js")
+        try await pastEmptying()
+        let disposed = try await value("(window.disposedGeometries || []).join()") as? String
+        XCTAssertEqual(disposed, "a", "b's mesh went into a kept pool as a was disposed of, before b went")
+    }
+
+    func testAnObjectPutInAKeptPoolDuringARunStaysInItsScene() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            live.keep('pool', () => ({ items: window.pool = [] }));
+            const version = \(version);
+            const part = name => live.keep(name, () => {
+                const g = new THREE.Group(), mesh = own(); g.add(mesh); scene.add(g);
+                if (version === 1) { window[name] = g; window[name + 'Geometry'] = mesh.geometry; }
+                return g;
+            }, { inputs: [scene], from: ['v\(version)'] });
+            part('a');
+            await new Promise(next => setTimeout(next, 0));
+            if (version === 2) window.pool.push(window.b);
+            part('b');
+            await new Promise(next => setTimeout(next, 0));
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        files.text["v2"] = "2"
+        try await change("game.js")
+        try await pastEmptying()
+        let stays = try await yes("b.parent === scene && b.children.length === 1 && window.cached.has(bGeometry)")
+        XCTAssertTrue(stays, "what's kept by name stays in its scene, whenever it came to be kept")
+    }
+
+    func testANamedPropertyOfAKeptArrayStaysHeld() async throws {
+        func parts(_ version: Int) -> String {
+            """
+            live.keep('pool', () => ({ items: window.pool = [] }));
+            const version = \(version);
+            live.keep('goes', () => {
+                const mesh = own(); scene.add(mesh);
+                if (version === 1) { window.pool.saved = mesh; window.savedGeometry = mesh.geometry; }
+                return mesh;
+            }, { inputs: [scene], from: ['v\(version)'] });
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        files.text["v2"] = "2"
+        try await change("game.js")
+        try await pastEmptying()
+        let stays = try await yes("pool.saved.parent === scene && pool.saved.geometry === savedGeometry && window.cached.has(savedGeometry)")
+        XCTAssertTrue(stays, "an array's named properties are looked through as its items are")
+    }
+
+    func testAThrowingRemovalListenerLeavesTheRestToGo() async throws {
+        func parts(_ version: Int) -> String {
+            guard version == 1 else { return "" }
+            return """
+            const group = () => { const g = new THREE.Group(); g.add(own()); scene.add(g); return g; };
+            live.keep('two', () => {
+                const first = group(), second = group();
+                first.addEventListener('removed', () => { throw new Error('from a listener'); });
+                window.parts = { first, second, firstGeometry: first.children[0].geometry, secondGeometry: second.children[0].geometry };
+                return { first, second };
+            });
+            live.keep('other', () => { const g = group(); window.parts.other = g; window.parts.otherGeometry = g.children[0].geometry; return g; });
+            """
+        }
+        try await open(Self.game(parts(1)))
+        files.text["game.js"] = Self.game(parts(2))
+        try await change("game.js")
+        try await pastEmptying()
+        let gone = try await yes("""
+            !parts.first.parent && !parts.second.parent && !parts.other.parent
+                && !window.cached.has(parts.firstGeometry) && !window.cached.has(parts.secondGeometry) && !window.cached.has(parts.otherGeometry)
+            """)
+        XCTAssertTrue(gone, "one listener's throw costs only itself")
+    }
+
     func testARunThatFailsOpensThePageAgainWithItsPartsWhole() async throws {
         try await open(Self.game(Self.goes(1)))
         files.text["game.js"] = Self.game(Self.goes(2), top: "if (window.opens === 1) throw new Error('no');")
