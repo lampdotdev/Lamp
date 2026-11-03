@@ -189,7 +189,14 @@ A capability given to one engine must be given to all of them that can take it, 
   parts; a turn's own request carries it as `before_agent_start`'s message, again on a run that starts the conversation
   afresh (`SideAnswer.ownReply(_:given:afresh:)`). `sideAnswerOwnReply` set to false puts pi back on the receipt. The
   helper promises only what the agent can do itself, changing the app and what's in its folder; anything outside the
-  folder it says will be asked about, never that it'll be done (`SideAnswer.prompt`). A queue holding an answer outlives a quit (`Store.keptAcrossRelaunch`) and then waits for the person, unless it's
+  folder it says will be asked about, never that it'll be done (`SideAnswer.prompt`). When its answer is all the message
+  asks for (a question fully answered, or a reminder to keep going with the work under way) it ends with
+  `SideAnswer.finishedTag`; anything else, a malformed tag, or an answer saved before the tag existed means the agent is
+  needed (`SideAnswer.finished`). A line of nothing but such questions starts no turn: `startQueued` puts them in the chat
+  with their answers (`Store.postFinished`, the chat saved before the line, so a restore after a quit posts nothing
+  twice), and the next request carries each with its answer as past context (`CatchUp`), until that engine has run. A
+  line with anything else in it, a turn under way, Send Now and Reload are as ever. Every receipt and record also says
+  that if nothing is left to do, the agent says nothing more. A queue holding an answer outlives a quit (`Store.keptAcrossRelaunch`) and then waits for the person, unless it's
   paused for Reload, whose Reload carries it on (`Store.heldAfterQuit`); a helper at work when Lamp quits isn't started again. A handover whose messages have all been answered tells the agent not to acknowledge them again
   (`Agent.midTurnNote(for:)`), so the person hears back once.
 - **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognized in every

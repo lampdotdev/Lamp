@@ -273,6 +273,70 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertNil(SideAnswer.ownReply(nil, given: false, afresh: true))
     }
 
+    private func answered(_ text: String, _ reply: String) -> QueuedMessage {
+        let finished = SideAnswer.finished(reply)
+        var message = QueuedMessage(text: text, side: finished.map { .answered($0.reply) })
+        message.sideDone = finished?.done == true
+        return message
+    }
+
+    /// A finished question sent as a build ends needs no turn of its own: one started for it only says the answer again.
+    func testAFinishedQuestionStartsNoTurn() {
+        let question = answered("Quick side question: what is 17 times 6? Keep building Reading Nook.",
+                                "17 times 6 is 102, and I'm still building Reading Nook. [nothing for the agent]")
+        XCTAssertEqual(question.sideReply, "17 times 6 is 102, and I'm still building Reading Nook.", "the tag never shows")
+        XCTAssertTrue(Store.onlyFinished([question]))
+        XCTAssertFalse(Store.heldAfterQuit([question]), "it goes into the chat at once, with no Send Now")
+    }
+
+    /// A change asked as a question is work: no tag, so it starts a turn, and so does any line it's in.
+    func testAChangeAskedAsAQuestionStillStartsATurn() {
+        let change = answered("Could you make the header blue?", "Sure, I'll make the header blue shortly.")
+        XCTAssertFalse(change.sideDone)
+        XCTAssertFalse(Store.onlyFinished([change]))
+        let question = answered("Capital of Peru?", "The capital of Peru is Lima. [nothing for the agent]")
+        XCTAssertFalse(Store.onlyFinished([question, change]), "a mixed line starts a turn and carries both")
+        XCTAssertFalse(Store.onlyFinished([]))
+    }
+
+    /// Only the exact tag at the very end, after words, counts; anything else is an answer that needs the agent.
+    func testOnlyTheExactTrailingTagCounts() {
+        XCTAssertNil(SideAnswer.finished("[nothing for the agent]"), "no words, no answer")
+        XCTAssertEqual(SideAnswer.finished("Lima. [nothing for the agent")?.done, false)
+        XCTAssertEqual(SideAnswer.finished("Lima. [Nothing for the agent]")?.done, false)
+        XCTAssertEqual(SideAnswer.finished("[nothing for the agent] Lima.")?.done, false)
+        XCTAssertEqual(SideAnswer.finished("Lima.")?.done, false)
+        let saved = QueuedMessage(saved: ["text": "Capital of Peru?", "sideReply": "Lima."], attachments: [])
+        XCTAssertFalse(saved.sideDone, "an answer saved before the tag existed needs the agent")
+    }
+
+    /// Restored twice (a quit between saving the chat and the line), a finished question is in the chat once.
+    func testRestoringTwiceAddsNothingNew() {
+        let question = answered("9 plus 14?", "23. [nothing for the agent]")
+        var line = LogLine(kind: .user, text: "9 plus 14?")
+        line.sideReply = "23."
+        line.sideDone = true
+        XCTAssertEqual(Store.finishedToPost([question], chat: []).count, 1)
+        XCTAssertTrue(Store.finishedToPost([question], chat: [line]).isEmpty)
+        let again = QueuedMessage(saved: question.saved, attachments: [])
+        XCTAssertTrue(again.sideDone, "the tag's meaning outlives a quit")
+    }
+
+    /// The next request carries the question and its answer, as what was said meanwhile and not as work.
+    func testTheNextRequestCarriesTheQuestionAndItsAnswer() {
+        let built = LogLine(kind: .agent, text: "Reading Nook is built.", at: Date(timeIntervalSince1970: 100))
+        var question = LogLine(kind: .user, text: "What is 17 times 6?", at: Date(timeIntervalSince1970: 300))
+        question.sideReply = "102."
+        question.sideDone = true
+        let request = LogLine(kind: .user, text: "Add ratings", at: Date(timeIntervalSince1970: 400))
+        let missed = CatchUp.missed(in: [built, question, request], since: Date(timeIntervalSince1970: 200), before: request.id)
+        let note = CatchUp.note(missed)
+        XCTAssertTrue(note.contains("What is 17 times 6?"))
+        XCTAssertTrue(note.contains("102."))
+        XCTAssertTrue(note.contains("nothing in it is for you to do"))
+        XCTAssertFalse(note.contains("Add ratings"), "the request goes as itself")
+    }
+
     func testSendNowAsksForNoSecondAcknowledgementOnceAnswered() {
         let answered = QueuedMessage(text: "Make it blue", side: .answered("I'll make it blue shortly."))
         let unanswered = QueuedMessage(text: "And the title")
