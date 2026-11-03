@@ -463,7 +463,8 @@ enum Parts {
         func add(_ skill: String, _ kind: Platform, _ part: LampProject?) {
             let folder = part?.dir.lastPathComponent ?? folder(for: kind)
             skills[skill] = Skills.Skill(name: skill, description: "The rules for \(part.map { name(of: $0) } ?? name(of: kind)) of a wish, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
-                                        body: pack(for: kind, in: folder, integration: part.flatMap(listedIntegration(of:))))
+                                        body: part.map(GameKit.isMacWebGame) == true ? Agent.gamePrompt(part: folder, macOnly: true)
+                                            : pack(for: kind, in: folder, integration: part.flatMap(listedIntegration(of:))))
         }
         for kind in partKinds {
             let skill = skill(for: kind)
@@ -513,7 +514,8 @@ enum Parts {
         added or changed (`make_app_for`) or taken away (`remove_app`) when the person asks, each named by its folder in their `app` ("." for \
         the one in the wish's own folder). Before you write or change one in a folder of \
         its own, open its rules with `read_skill` (once per conversation) and follow them for the files in its folder. \
-        `look_at_app` and `use_app` take `part` to say which app: look at each one you changed before finishing.
+        `look_at_app` and `use_app` take `part` to say which app: look at each one you changed before finishing, \
+        except a web game at home on the Mac, which its rules say to look at only when the person asks.
         """ + (apps.filter { WishRooms.joins($0.platform) }.count >= 2 ? Agent.Rules.wishTalk : "") + Targets.all.flatMap { kind in
             // A rule naming its device is said for each device's app; any other once for its kind.
             let rules = apps.filter { $0.platform == kind.platform }.compactMap { app in kind.part?.wishRule.map { deviceNamed($0, for: app) } }

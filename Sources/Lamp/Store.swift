@@ -748,6 +748,13 @@ final class Store: ObservableObject {
         /// the turn's end (`paceTally`) so the rule asking for it (`Agent.liveNote`) can be judged by what happens.
         var began = Date()
         var shown: [Date] = []
+        /// A window that drew after the launch's wait (`frameArrived`): counted as shown while the turn is still going,
+        /// before its end tallies it (`draftsDone`). False once that's past: the turn's lines are put right instead.
+        func drewLate(at date: Date) -> Bool {
+            guard !look.draftsDone else { return false }
+            shown.append(date)
+            return true
+        }
         /// Why the latest change couldn't go into the open app (LiveReload's reason, in words), for the agent's look.
         var reloadWhy: String?
         /// The latest change went into an open game by its page opening again (its code couldn't be swapped in, why in
@@ -797,6 +804,11 @@ final class Store: ObservableObject {
         /// The games whose last look was in the preview of where Try On points (`on_device`: the simulator, the emulator),
         /// by app: `use_app` goes where the last look went, so it never presses in a copy the agent hasn't seen.
         var gameOnDevice: Set<String> = []
+        /// The tool calls on a part of the wish under way now, and who held it before the first of them (`underTurn`).
+        var callsOnPart: [String: Int] = [:]
+        var heldBeforeCalls: [String: Turn?] = [:]
+        /// What else a Stop ends (a wait for a game's first frame, `FirstFrames`).
+        var whenStopped: [@MainActor () -> Void] = []
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
@@ -895,10 +907,14 @@ final class Store: ObservableObject {
             autoApply?.cancel()
             applying?.cancel()
             stopUse?()
+            for stop in whenStopped { stop() }
+            whenStopped = []
             return pids
         }
     }
     private var turns: [String: Turn] = [:]
+    /// What each game's page has said of its first frame (`showDraft`).
+    let firstFrames = FirstFrames()
 
     /// Whether the app's running turn took this message: one of those it was sent, together or alone, from the
     /// moment it took them (before its request is put together) until it ends.
@@ -1077,6 +1093,14 @@ final class Store: ObservableObject {
         var presentedParts: Set<String> = []
         /// A look this turn has said what Try On is set to and what the device list returned (`Devices.tryOnNote`).
         var toldPhone = false
+        /// New web games whose draft this turn's look opened (`showDraft`): later looks are of that window once it has drawn,
+        /// and it's the one the turn's end shows and says is ready (`settle`).
+        var draftOpen: Set<String> = []
+        /// What's watching each one's window, and what came of it once that's known (`watchDraft`).
+        var draftWatch: [String: Task<DraftWindow, Never>] = [:]
+        var draftKnown: [String: DraftWindow] = [:]
+        /// The turn is over: what its watches hear from now on counts for nothing.
+        var draftsDone = false
     }
     private var artInProgress: Set<String> = []
     /// Designs whose artwork couldn't be drawn, by `Icons.artKey`: their icons show the symbol, not the blueprint.
@@ -1102,6 +1126,10 @@ final class Store: ObservableObject {
     nonisolated static let installDir = Edition.appsFolder
 
     let root: URL
+
+    /// A turn in progress on an app, for tests of what a tool call does under one.
+    func beginTurnForTest(_ turn: Turn, on project: LampProject) { turns[project.id] = turn }
+    func turnForTest(on project: LampProject) -> Turn? { turns[project.id] }
 
     /// A Store over the wishes in `root` alone, for tests: none of Lamp's launch work (migration, keys, starters) runs.
     init(testingAt root: URL) {
@@ -4788,6 +4816,8 @@ final class Store: ObservableObject {
         // Once, when the turn is over: its own build and install, and any run that fixes a crash, come after the agent's.
         owner.began = Date()
         defer {
+            owner.look.draftsDone = true
+            for app in owner.look.draftWatch.keys { firstFrames.end(app: app) }
             if let tally = Self.outcomeTally(owner.outcomes, name: project.name) { log(project, .detail, tally) }
             if let pace = Self.paceTally(began: owner.began, shown: owner.shown, outcomes: owner.outcomes) { log(project, .detail, pace) }
         }
@@ -4989,6 +5019,10 @@ final class Store: ObservableObject {
         let name = project.isPart ? placeName(project) : project.name
         if changed {
             let crash = await install(project)
+            // The update said it's in; a draft that hasn't drawn says so after it.
+            if let window = settleDraft(project, in: owner), window != .content, let line = Self.draftLine(name, window, updated: true) {
+                log(project, .status, line)
+            }
             // A device app that couldn't go on its device (not set up, not on the network) didn't crash: the chat
             // already says why, with the step that fixes it, and there's nothing in the code to fix.
             return project.onDevice || owner.stopped ? nil : crash
@@ -5007,10 +5041,8 @@ final class Store: ObservableObject {
         if !project.onIOS, let app = macCopies(of: project).first {
             // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
             // opened again. An app that lives in the menu bar opens its panel (see LampWindows).
-            DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
-            app.activate()
-            log(project, .status, "\(name) is \(owner.updatedInPlace ? "updated" : "ready")")
+            bringForward(project, app)
+            if let line = Self.draftLine(name, settleDraft(project, in: owner), updated: owner.updatedInPlace) { log(project, .status, line) }
         } else if project.onDevice, let run = deviceRuns[project.id], deviceRunBuilt[project.id] == Runtime.builtFingerprint(project) {
             // The look put it on the device already, as it is now. One that went to the preview on this Mac
             // didn't, so the change goes on the device below.
@@ -5081,7 +5113,13 @@ final class Store: ObservableObject {
     private func buildFixingErrors(_ started: LampProject) async -> Bool {
         await turns[started.id]?.early?.value
         var project = current(started) ?? started
-        var errors = await build(project)
+        // A web game at home on the Mac isn't looked at unless the person asks, so its page's code is checked here
+        // instead: a module that doesn't parse, or a page that runs none, would only leave its window empty.
+        func checked(_ project: LampProject) async -> String? {
+            if let errors = await build(project) { return errors }
+            return GameKit.isMacWebGame(project) ? await GameKit.codeProblem(project) : nil
+        }
+        var errors = await checked(project)
         // The person's Apple account or tools that aren't on this Mac yet, not the code: build has said so, with the
         // window that fixes it, and the agent has nothing to fix.
         func isTheAccount() -> Bool {
@@ -5099,7 +5137,7 @@ final class Store: ObservableObject {
             // Asking ends the turn while fixing as well: no build, and no further try, under a card that
             // hasn't been answered. Whoever called says the turn is waiting, not that it failed.
             if turns[project.id]?.asked == true { return false }
-            errors = await build(project)
+            errors = await checked(project)
         }
         guard turns[project.id]?.stopped != true, exists(project) else { return false }
         if errors != nil, !isTheAccount() {
@@ -6937,6 +6975,11 @@ final class Store: ObservableObject {
             return (400, ["error": "make_app_for takes `kind`, \"game\" or \"app\"; `made`, \"web\" or \"native\"; and `devices`, every device "
                           + "the app is to be on from now on. Once the wish has an app, `app` names the one to change, or `another` adds one more."])
         }
+        let needs: [String]
+        switch Skills.gameNeeds(arguments["needs"]) {
+        case .success(let named): needs = named
+        case .failure(let refusal): return (400, ["error": refusal.reason])
+        }
         let members = members(of: wish)
         let plan: AppPlan
         switch AppPlanner.make(made, kind: intent, devices: devices, app: arguments["app"], another: arguments["another"], in: members) {
@@ -6957,7 +7000,7 @@ final class Store: ObservableObject {
                 }
                 into = only
             }
-            said += await add(target, to: into, intent: intent)
+            said += await add(target, to: into, intent: intent, needs: needs)
             if !FileManager.default.fileExists(atPath: into.dir.appendingPathComponent(".git").path) {
                 _ = await initRepo(into, message: "Scaffold")
             }
@@ -6965,7 +7008,7 @@ final class Store: ObservableObject {
             target = asked
             // Of a code the wish has none of (`AppPlanner.make`): the same call again finds that app there and is refused,
             // so it never makes a folder more.
-            said += await add(target, to: wish, intent: intent)
+            said += await add(target, to: wish, intent: intent, needs: needs)
             said.append("The wish's other apps stay as they are (" + members.map(describe).joined(separator: ", ") + ").")
         case .update(let member, let asked):
             target = asked
@@ -7013,7 +7056,9 @@ final class Store: ObservableObject {
         if target.kind.target.otherSystems, let family = target.family, family.isOtherOS {
             said.append("Its \(family.name) build is this same Swift code: Try On's \(family.name) opens it in the simulator. " + Agent.Rules.otherOS(family))
         }
-        return (200, ["text": said.joined(separator: "\n\n")])
+        // pi's first turn held tools back for a game like this (`Agent.deferredTools`): anything else may want them.
+        let macGame = apps(of: current(wish) ?? wish).contains(where: GameKit.isMacWebGame)
+        return (200, ["text": said.joined(separator: "\n\n"), "allTools": !macGame])
     }
 
     /// A wish with nothing made yet, given its first app: its own folder marked as only the wish's (`Parts.wishOnly`),
@@ -7042,7 +7087,7 @@ final class Store: ObservableObject {
     /// (`folder`, else `Parts.newFolder`), so an app this Mac can't build yet is the same app, with the same name among
     /// the wish's apps, whenever it's made, and another asked for meanwhile gets a folder of its own.
     /// An app on a list from before folders were kept has its folder by now (`givingWaitingAppsFolders`).
-    private func add(_ target: AppTarget, to wish: LampProject, folder kept: String? = nil, intent: AppIntent) async -> [String] {
+    private func add(_ target: AppTarget, to wish: LampProject, folder kept: String? = nil, intent: AppIntent, needs: [String] = []) async -> [String] {
         let kind = target.kind
         let folder = kept ?? Parts.newFolder(Parts.folder(for: kind, integration: kind == .device ? target.integration : nil), in: current(wish) ?? wish)
         var waiting = target.waiting
@@ -7066,8 +7111,22 @@ final class Store: ObservableObject {
                     + "with data of its own, starting empty: nothing another app of the wish saved is in it unless its code reads it from that app. Build it in this "
                     + "request, made to work with the rest. `make_app_for` and `remove_app` name it with `app` \"\(part.dir.lastPathComponent)\"; `look_at_app` and `use_app` reach it with `part` \"\(Parts.address(of: part, among: apps(of: current(wish) ?? wish)))\". "
                     + "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n"
-                    + Parts.pack(for: kind, in: part.dir.lastPathComponent, integration: Parts.listedIntegration(of: part)))
+                    + rulesOfNew(part, kind: kind, needs: needs))
         return said.filter { !$0.isEmpty }
+    }
+
+    /// The rules said of an app as it's added: a new web game on the Mac has the short guide (the web-game skill), and
+    /// with it game-feel and the skills `needs` named, in this one reply rather than a `read_skill` each. They're the
+    /// skills as they are now, which a later request's line of skills that apply (`Skills.brief`) leaves to this
+    /// conversation unless Lamp changed them. Any other app has its kind's rules, and `needs` says nothing to it.
+    private func rulesOfNew(_ part: LampProject, kind: Platform, needs: [String] = []) -> String {
+        let folder = part.dir.lastPathComponent
+        if let now = current(part), GameKit.isMacWebGame(now), let guide = Skills.all["web-game"]?.body {
+            let handed = (["game-feel"] + needs).compactMap { name in Skills.all[name].map { "The \(name) skill, handed with this guide:\n\n" + $0.body } }
+            return Agent.Rules.newMacGame(in: folder, guide: ([guide] + handed).joined(separator: "\n\n---\n\n"))
+        }
+        let rules = Parts.pack(for: kind, in: folder, integration: Parts.listedIntegration(of: part))
+        return needs.isEmpty ? rules : rules + "\n\n`needs` is for a new web game at home on the Mac; for this app, open any skill that applies with `read_skill`."
     }
 
     /// One app of a wish made as the plan says, in place: its kind inside its code (`convert`), and its devices, the
@@ -7501,7 +7560,8 @@ final class Store: ObservableObject {
                 try? Credits.add(AssetCatalog.credits(for: [(item, paths.map { wishPrefix + $0 })]), to: project)
                 brought += 1
                 let shown = paths.map { String($0.dropFirst(page ? "Web/".count : base.count)) }
-                var line = "- \(item.id) → " + shown.joined(separator: ", ")
+                // A page's two names for it: where it is from the folder the agent's tools work in, and what the page loads.
+                var line = "- \(item.id) → " + (page ? zip(paths, shown).map { "\(wishPrefix + $0) (page path \($1))" } : shown).joined(separator: ", ")
                 if let box = item.box, box.count == 6 {
                     line += String(format: " (box x %.2f…%.2f, y %.2f…%.2f, z %.2f…%.2f in its units)", box[0], box[3], box[1], box[4], box[2], box[5])
                 }
@@ -7519,7 +7579,8 @@ final class Store: ObservableObject {
         if !said.isEmpty {
             let loading = page ? "from Web/, as the page loads them: `model('assets/…')`, `texture('assets/…')`, Phaser's `this.load.atlasXML(key, png, xml)`, `await sound.load('assets/…')`"
                 : android ? "inside the app's packaged assets, as `LampAssets` reads them" : "inside Assets/, as `LampAssets.url(\"…\")` takes them"
-            text = "Brought in, under \(base) (paths below are \(loading)), and credited in credits.json:\n"
+            text = "Brought in and checked, under \(wishPrefix + base) (" + (page ? "each file below is named from your working folder, then by its page path, " : "paths below are ")
+                + "\(loading)), and credited in credits.json. These files are there now: use these paths, with no need to list or find them:\n"
                 + said.joined(separator: "\n")
         }
         if !problems.isEmpty { text += (text.isEmpty ? "" : "\n") + problems.joined(separator: "\n") }
@@ -9500,11 +9561,14 @@ final class Store: ObservableObject {
             // Only the game runtime says `shown`: a screen, a web app or a game running its own loop opens again with its
             // own page, and the smoke goes as before (`install`).
             let saysShown = GameKit.isGame(project) && GameKit.engine(project) == .web && !GameKit.ownsLoop(project)
+            // On screen when the page says so: a wait that ran out lets the turn go on, but nothing was seen to show.
+            var drew = true
             if outcome == .went("swapped") || outcome == .went("phone") { AppTransition.land(project) }
             else if saysShown, outcome == .went("rerun") || outcome == .went("reloading") {
                 awaitShown(project)
                 // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
-                await untilShown(project)
+                drew = await untilShown(project)
+                if drew, let owner { pageShowedChange(project.id, in: owner) }
                 try? await Task.sleep(for: .milliseconds(400))
             }
             // In: the activity line says what the agent is doing again (its look, or thinking), not the update now over.
@@ -9518,7 +9582,7 @@ final class Store: ObservableObject {
             owner?.pageReopened = outcome == .went("reloading")
             owner?.pageRanAgain = outcome == .went("rerun")
             owner?.reloadWhy = owner?.pageReopened == true || owner?.pageRanAgain == true ? PageLive.shared.reason(project) : nil
-            if outcome != .unchanged { owner?.shown.append(Date()) }
+            if outcome != .unchanged, drew, let owner, windowDrew(project.id, in: owner) { owner.shown.append(Date()) }
             if !partial { pageWentIn(project, saying: false) }
             if inFront, !partial { log(project, .status, "\(project.name) is updated") }
         }
@@ -9797,37 +9861,73 @@ final class Store: ObservableObject {
     /// their window until the page says the change is on screen; a page that never says lets it go after a while.
     private var waitingToShow: [String: Task<Void, Never>] = [:]
     /// Whoever waits for the change to be on screen (`untilShown`), let go by `shown` or by the wait running out.
-    private var shownWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var shownWaiters: [String: [CheckedContinuation<Bool, Never>]] = [:]
     /// A `shown` that came before Lamp began waiting for it (a run in place quicker than the page's first answer).
     private var shownEarly: [String: Date] = [:]
-    private func awaitShown(_ project: LampProject) {
+    func awaitShown(_ project: LampProject, limit: Duration = .seconds(20)) {
         waitingToShow[project.id]?.cancel()
         let id = project.id
         if let early = shownEarly.removeValue(forKey: id), Date().timeIntervalSince(early) < 5 { return AppTransition.land(project) }
         waitingToShow[id] = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(20))
+            try? await Task.sleep(for: limit)
             guard !Task.isCancelled, waitingToShow.removeValue(forKey: id) != nil else { return }
-            letShownWaitersGo(id)
+            letShownWaitersGo(id, shown: false)
             if let current = projects.first(where: { $0.id == id }) { AppTransition.end(current) }
         }
     }
 
-    private func untilShown(_ project: LampProject) async {
-        guard waitingToShow[project.id] != nil else { return }
-        await withCheckedContinuation { shownWaiters[project.id, default: []].append($0) }
+    /// Whether the page said the change is on screen, rather than the wait running out.
+    @discardableResult func untilShown(_ project: LampProject) async -> Bool {
+        guard waitingToShow[project.id] != nil else { return true }
+        return await withCheckedContinuation { shownWaiters[project.id, default: []].append($0) }
     }
 
-    private func letShownWaitersGo(_ id: String) {
-        for waiter in shownWaiters.removeValue(forKey: id) ?? [] { waiter.resume() }
+    private func letShownWaitersGo(_ id: String, shown: Bool) {
+        for waiter in shownWaiters.removeValue(forKey: id) ?? [] { waiter.resume(returning: shown) }
     }
 
     /// The page shows the change it was putting in: the light crosses the window, and the smoke goes.
     func pageShown(_ project: LampProject) {
         guard let waiting = waitingToShow.removeValue(forKey: project.id) else { shownEarly[project.id] = Date(); return }
         waiting.cancel()
-        letShownWaitersGo(project.id)
+        letShownWaitersGo(project.id, shown: true)
         AppTransition.land(project)
     }
+
+    /// A new web game's launch said to be open but not yet drawn: the page's word that this launch drew, when it comes,
+    /// puts "ready" in that line's place (`frameArrived`, through `FirstFrames.whenDrawn`).
+    struct LateFrame { let opened: Date; let line: String; let began: Date?; weak var turn: Turn? }
+
+    nonisolated static func drewWords(_ seconds: TimeInterval) -> String {
+        "The game's window drew \(String(format: "%.1f", seconds)) s after it was opened."
+    }
+
+    /// The page of a launch said not to have drawn yet has drawn: the chat says it's ready now, in place of that line
+    /// while nothing has been said since.
+    private func frameArrived(app id: String, _ late: LateFrame) {
+        guard let project = projects.first(where: { $0.id == id }) else { return }
+        // Within its turn the draw counts for the turn's own tally; after it, the tally is put right below.
+        let counted = late.turn?.drewLate(at: Date()) ?? false
+        // A part's lines are its wish's (`log`).
+        let chat = wish(of: project).id
+        var pace: String?
+        if var lines = logs[chat], let last = lines.lastIndex(where: { $0.kind != .detail }), lines[last].kind == .status, lines[last].text == late.line {
+            // The turn's tally after it said nothing reached the screen: this launch did, now.
+            if !counted, let began = late.began, let none = lines.lastIndex(where: { $0.kind == .detail && $0.text == Self.nothingShown }), none > last {
+                lines.remove(at: none)
+                pace = Self.paceTally(began: began, shown: [Date()], outcomes: [.opened])
+            }
+            lines.remove(at: last)
+            logs[chat] = lines
+        }
+        if let pace { log(project, .detail, pace) }
+        log(project, .detail, Self.drewWords(Date().timeIntervalSince(late.opened)))
+        sayReady(project, "\(project.name) is ready")
+    }
+
+    /// How long after a launch a new web game's window has to say it drew to be called ready: the launch's own watch
+    /// (`Runtime.launchWindow`) runs as long, so a game in front costs nothing more.
+    static let drawLimit: TimeInterval = 3
 
     private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {
         guard exists(project), project.holdsApp else { return nil }
@@ -10010,16 +10110,39 @@ final class Store: ObservableObject {
             let watch = watchLaunch(project, owner: owner, opened: opened, crashOnly: true, alive: { !app.isTerminated }) {
                 await Runtime.launchReport(project)
             }
+            // A web game at home on the Mac that a request opens is called ready only once its window drew, which its page
+            // says while the first seconds are watched anyway, so it costs no time of its own. A window that hasn't drawn
+            // by then (one behind another draws nothing) is said to be open, never a fault: nothing waits on, or fixes,
+            // it. A first draft watched already (`showDraft`) says how its window came out itself.
+            let frames = firstFrames, id = project.id
+            let drew: Task<Bool, Never>? = owner != nil && inFront && saysReady && !early && GameKit.isMacWebGame(project)
+                && owner?.look.draftWatch[id] == nil ? Task {
+                    let left = max(0, Self.drawLimit - Date().timeIntervalSince(opened))
+                    let drew = await frames.wait(app: id, launch: app.processIdentifier, limit: .milliseconds(Int(left * 1000))) == .drawn
+                    if drew { self.log(project, .detail, Self.drewWords(Date().timeIntervalSince(opened))) }
+                    return drew
+                } : nil
+            if drew != nil { owner?.whenStopped.append { frames.end(app: id) } }
             // A look goes on once the app has pictured its window; anything else waits its first seconds out, since what
             // it does next (a fix at the turn's end, the chat's "ready") depends on how they went.
             if early ? await watch.untilShown(project) : await watch.verdict() != nil {
                 watch.told = true
                 crash = watch.crash
+                frames.end(app: id)
             } else {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
-                owner?.shown.append(Date())
-                if inFront, saysReady { sayReady(project, await readyWords(project)) }
+                if let drew, await !drew.value {
+                    // A window that draws after the wait still draws: when its page says so, the line says it's ready.
+                    if owner?.stopped != true, let line = Self.draftLine(project.name, .pending, updated: false) {
+                        log(project, .status, line)
+                        let late = LateFrame(opened: opened, line: line, began: owner?.began, turn: owner)
+                        frames.whenDrawn(app: id, launch: app.processIdentifier) { [weak self] in self?.frameArrived(app: id, late) }
+                    }
+                } else {
+                    owner?.shown.append(Date())
+                    if inFront, saysReady { sayReady(project, await readyWords(project)) }
+                }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
@@ -10424,6 +10547,10 @@ final class Store: ObservableObject {
         guard turns[project.id] === turn, !turn.stopped else { return (200, ["text": "Stopped."]) }
         // Closed meanwhile: the look opens it.
         guard stepsPage(mac) else { return nil }
+        // A first draft's window that hasn't drawn shows nothing of the game yet (`showDraft`): said, with no picture.
+        guard windowDrew(mac.id, in: turn) else {
+            return (200, ["text": Self.draftWords(turn.look.draftKnown[mac.id]) ?? "The game's window hasn't drawn yet."])
+        }
         // What the window shows without the change, said rather than played anywhere else.
         var without = ""
         if Runtime.waitsForReload(mac) || PageLive.shared.holds(mac) {
@@ -13712,9 +13839,11 @@ final class Store: ObservableObject {
     /// How long the person watching waited to see the turn's work, as one line in the details ("First change on
     /// screen after 1 min 12 s; longest wait between changes 2 min 40 s"): what the rule to show work early and
     /// often is tuned by. Nothing for a turn that changed nothing.
+    static let nothingShown = "Nothing reached the screen this request."
+
     static func paceTally(began: Date, shown: [Date], outcomes: [ChangeOutcome]) -> String? {
         guard !outcomes.isEmpty else { return nil }
-        guard let first = shown.first else { return "Nothing reached the screen this request." }
+        guard let first = shown.first else { return nothingShown }
         func spoken(_ interval: TimeInterval) -> String {
             let total = max(0, Int(interval.rounded()))
             return total < 60 ? "\(total) s" : total % 60 == 0 ? "\(total / 60) min" : "\(total / 60) min \(total % 60) s"
@@ -13827,13 +13956,21 @@ final class Store: ObservableObject {
 
     /// A part's look or use runs under its wish's turn, as the wish's own does: the turn is the part's too while it
     /// lasts, so everything that asks whether Lamp is working on the app (and which turn) finds it.
-    private func underTurn(of wish: LampProject, _ app: LampProject, _ work: () async -> (Int, [String: Any])) async -> (Int, [String: Any]) {
+    func underTurn(of wish: LampProject, _ app: LampProject, _ work: () async -> (Int, [String: Any])) async -> (Int, [String: Any]) {
         guard app.id != wish.id, let turn = turns[wish.id] else { return await work() }
         guard turns[app.id] == nil || turns[app.id] === turn else { return (409, ["error": "Lamp is busy with that part right now."]) }
-        // A look inside the turn's end, which holds the part already (`asPartOf`), leaves it held.
-        let before = turns[app.id]
+        // A look inside the turn's end, which holds the part already (`asPartOf`), leaves it held. Calls sent in one message
+        // run side by side: the last of them to finish lets go, or the others would find their turn gone and stop.
+        if turn.callsOnPart[app.id, default: 0] == 0 { turn.heldBeforeCalls[app.id] = turns[app.id] }
+        turn.callsOnPart[app.id, default: 0] += 1
         turns[app.id] = turn
-        defer { if turns[app.id] === turn { turns[app.id] = before } }
+        defer {
+            turn.callsOnPart[app.id, default: 1] -= 1
+            if turn.callsOnPart[app.id] == 0 {
+                if turns[app.id] === turn { turns[app.id] = turn.heldBeforeCalls[app.id] ?? nil }
+                turn.heldBeforeCalls[app.id] = nil
+            }
+        }
         return await work()
     }
 
@@ -13907,6 +14044,12 @@ final class Store: ObservableObject {
         }
         // A game open in its window is looked at there as it is; closed, or asked to start again, it's opened as a Mac app is.
         if inWindow, !wantsFresh, let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
+        // A new game's first draft, not open yet: opened in its window and watched until it draws, within a limit
+        // (`showDraft`), then looked at there. A window that hasn't drawn by then is said to, with no picture.
+        if inWindow, !wantsFresh, await showDraft(project, in: turn) {
+            await turn.look.draftWatch[project.id]?.value
+            if let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
+        }
         // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
         // the preview, at any shape the agent asks for.
@@ -14120,6 +14263,145 @@ final class Store: ObservableObject {
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
         if !screenshots.isEmpty { await present(project, in: turn) }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
+    }
+
+    /// How long a first draft's window is watched for its first frame (`watchDraft`): a big world takes a while to build.
+    static let draftLimit: TimeInterval = 20
+
+    /// How a draft's window came out (`showDraft`). Only `content` counts as the game being on screen.
+    enum DraftWindow: Equatable { case content, blank, noPicture, timedOut(seconds: Int), pending, closed, stopped }
+
+    /// What the agent is told of a draft's window that hasn't drawn a frame of the game; nil for a stopped turn.
+    nonisolated static func draftWords(_ window: DraftWindow?) -> String? {
+        switch window {
+        case nil, .pending?:
+            return "This first draft has opened in the game's window on this Mac but hasn't drawn yet, so don't count on the person seeing it: a window behind another draws nothing until it comes forward."
+        case .content?:
+            return "This first draft is open in the game's window on this Mac now, where the person sees it."
+        case .blank?:
+            return "This first draft is open in the game's window on this Mac and has drawn a frame, but that frame is one color. A dark opening can be meant; if it isn't, find out why."
+        case .noPicture?:
+            return "This first draft is open in the game's window on this Mac and has drawn a frame, but its picture didn't come, so what it shows is unknown."
+        case .timedOut(let seconds)?:
+            return "The game's window opened on this Mac but drew no frame within \(seconds) s, so the person may see nothing yet. Find out why: read what the game logged."
+        case .closed?:
+            return "The game's window was closed before it drew."
+        case .stopped?:
+            return nil
+        }
+    }
+
+    /// A new web game on the Mac whose first look finds it closed: what the agent wrote is opened in the real game's
+    /// window, the first draft that parses and still is what was built by the time it opens. This is the install,
+    /// ownership and showing every other new app has at its first look (`install`, `present`), and it says nothing is
+    /// ready: the turn's end says so, building again only what changed since. What the agent saves after this goes in as
+    /// it would into any open game (`autoApply`), since these sources count as shown. False when this look opens nothing
+    /// that way, for whatever reason: the look opens the game as any Mac app's does. Else the window is presented at once
+    /// and watched (`watchDraft`), counting as on screen only once its page has drawn.
+    private func showDraft(_ project: LampProject, in turn: Turn) async -> Bool {
+        var mac = current(project) ?? project
+        mac.chosen = .mac
+        let shown = mac.isPart ? turn.look.presentedParts.contains(mac.id) : turn.look.presented
+        guard progress[wish(of: mac).id]?.newApp == true, !shown, GameKit.isMacWebGame(mac), !GameKit.isScaffold(mac), !isRunning(mac),
+              !Runtime.waitsForReload(mac), turns[mac.id] === turn, !turn.stopped, await GameKit.codeProblem(mac) == nil else { return false }
+        let sources = Runtime.fingerprint(mac)
+        // A failed build says nothing here: the look goes on, and the turn's end builds with its errors going to the agent.
+        guard await build(mac) == nil, turns[mac.id] === turn, !turn.stopped, Runtime.fingerprint(mac) == sources else { return false }
+        firstFrames.forget(app: mac.id)
+        let crash = await install(mac, inFront: false, early: true)
+        turn.look.installed[mac.id] = true
+        turn.look.crashes[mac.id] = crash
+        guard crash == nil, !turn.didNotOpen, !turn.keptOpen, turns[mac.id] === turn, !turn.stopped, let app = macCopies(of: mac).first else { return false }
+        turn.look.draftOpen.insert(mac.id)
+        turn.shownSources = sources
+        turn.shownPage = pageSignature(mac)
+        // An install counts the window as on screen when it opens, which can still be black: counted here, once it's drawn.
+        turn.shown.removeLast(min(1, turn.shown.count))
+        await present(mac, in: turn)
+        guard turns[mac.id] === turn, !turn.stopped else { return false }
+        let frames = firstFrames, id = mac.id
+        turn.whenStopped.append { frames.end(app: id) }
+        let closed = app.observe(\.isTerminated) { _, _ in Task { @MainActor in frames.end(app: id) } }
+        turn.look.draftWatch[id] = Task { [weak self] in
+            defer { closed.invalidate() }
+            // A launch gone before anything watched for it is told of here.
+            let window = app.isTerminated ? .closed : await self?.watchDraft(mac, launch: app.processIdentifier, in: turn) ?? .stopped
+            self?.recordDraft(window, for: id, in: turn)
+            return window
+        }
+        return true
+    }
+
+    /// Waits for the page of this launch to say it has drawn, within one limit from when the window was presented, and
+    /// makes one picture of what it drew. This runs on past the look that opened it, and past the part's hold on the turn
+    /// (`underTurn`), so it goes by the turn itself: the turn's end takes what's known (`settleDraft`) and ends the wait.
+    private func watchDraft(_ mac: LampProject, launch: Int32, in turn: Turn) async -> DraftWindow {
+        let id = mac.id, limit = Self.draftLimit, began = Date()
+        let drew = await firstFrames.wait(app: id, launch: launch, limit: .seconds(limit))
+        guard !turn.stopped else { return .stopped }
+        switch drew {
+        case .timedOut:
+            log(mac, .detail, "The game's window drew nothing for \(Int(limit)) s.")
+            return .timedOut(seconds: Int(limit))
+        // Ended by the turn's end, which doesn't wait for a window that hasn't drawn: not that the person closed it.
+        case .ended: return turn.look.draftsDone ? .pending : .closed
+        case .drawn: break
+        }
+        // One picture, within what's left of the same time, to tell a frame of one color from the game.
+        let asked = Date()
+        Runtime.requestScreenshots(of: mac)
+        let left = max(0, limit - asked.timeIntervalSince(began))
+        guard let picture = await Runtime.screenshots(of: mac, since: asked, waiting: min(left, 6)).first else { return .noPicture }
+        // A picture after the turn ended counts for none of it.
+        guard !turn.stopped, !turn.look.draftsDone else { return turn.stopped ? .stopped : .pending }
+        if GameKit.isBlank(picture) { return .blank }
+        turn.shown.append(Date())
+        log(mac, .detail, "The first draft is in the game's window.")
+        return .content
+    }
+
+    /// What's known of a draft's window at the turn's end. It's asked forward, but macOS doesn't let another app be taken
+    /// from the person, so a covered window may go on drawing nothing until they go to it: the turn doesn't wait for that.
+    private func settleDraft(_ project: LampProject, in turn: Turn) -> DraftWindow? {
+        guard turn.look.draftWatch[project.id] != nil else { return nil }
+        if turn.look.draftKnown[project.id] == nil, let app = macCopies(of: project).first { bringForward(project, app) }
+        return turn.look.draftKnown[project.id] ?? .pending
+    }
+
+    /// What the turn's end says of an app it opened, by what's known of a draft's window (nil: there was none). Its code
+    /// went in either way; only a window that drew is said to be ready. Not drawn isn't
+    /// said to be blank: it may only be behind another window.
+    nonisolated static func draftLine(_ name: String, _ window: DraftWindow?, updated: Bool) -> String? {
+        switch window {
+        case nil, .content?: return "\(name) is \(updated ? "updated" : "ready")"
+        case .pending?, .timedOut?: return "\(name) is open, but hasn't drawn yet"
+        case .blank?: return "\(name) is open, but its window looks blank"
+        case .noPicture?: return "\(name) is open, but its window couldn't be checked"
+        case .closed?, .stopped?: return nil
+        }
+    }
+
+    /// The page said a change is on screen in the game's window: whatever its first draft showed, that window draws now.
+    func pageShowedChange(_ id: String, in turn: Turn) {
+        guard turn.look.draftOpen.contains(id) else { return }
+        turn.look.draftKnown[id] = .content
+    }
+
+    /// What the first draft's watch heard, unless the window has shown a change since, which is the newer word.
+    func recordDraft(_ window: DraftWindow, for id: String, in turn: Turn) {
+        guard turn.look.draftKnown[id] != .content else { return }
+        turn.look.draftKnown[id] = window
+    }
+
+    /// Whether what's in the game's window on this Mac can be said to be where the person is: not a draft that hasn't drawn.
+    func windowDrew(_ id: String, in turn: Turn) -> Bool {
+        !turn.look.draftOpen.contains(id) || turn.look.draftKnown[id] == .content
+    }
+
+    private func bringForward(_ project: LampProject, _ app: NSRunningApplication) {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+        app.activate()
     }
 
     /// A new Mac app is shown to the person as soon as there's something to show: its scaffold (a window with its

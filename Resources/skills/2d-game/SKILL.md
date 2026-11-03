@@ -1,6 +1,6 @@
 ---
 name: 2d-game
-description: 2D games - choosing 2D or 3D, and Phaser (a game of Lamp's game kind, played on the Mac, iPhone and iPad, Android, TVs and the Xbox) or SpriteKit (a Mac or iPhone app); scenes, the frame step, cameras, tilemaps, sprite sheets, physics, controls on every input, pixel art, TV safe areas, sound, saves, drawing the art, and keeping it smooth on the slowest place. Read before writing or changing a 2D game.
+description: 2D games - choosing 2D or 3D, and Phaser (a game of Lamp's game kind, played on the Mac, iPhone and iPad, Android, TVs and the Xbox) or SpriteKit (a Mac or iPhone app); scenes, the frame step, cameras, tilemaps, sprite sheets, physics, controls on every input, pixel art, TV safe areas, sound, saves, drawing the art, and keeping it smooth on the slowest place. Read before writing or changing a 2D game; a new web game on the Mac starts from the web-game guide instead, which says when to open this.
 ---
 
 # 2D games
@@ -34,7 +34,8 @@ app that should be playable on the person's Xbox), say why in a sentence and cha
 ## Phaser on Lamp's runtime
 
 Lamp's game kind runs Phaser 3 (3.90) through `Web/lamp-phaser.js`, over the runtime in `Web/lamp-game.js`. Read both,
-all of them, before writing the game: their comments are the interface. Lamp puts Phaser in `Web/phaser` once the page
+all of them, before writing the game: their comments are the interface (a new game at home on the Mac has the
+web-game guide instead). Lamp puts Phaser in `Web/phaser` once the page
 imports it.
 
 index.html keeps the scaffold's head (lamp.js, then the import map, whose `phaser` entry is

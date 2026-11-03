@@ -63,6 +63,39 @@ enum Agent {
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
+    /// What a first turn that doesn't yet know what it's making leaves out of pi's requests, by pi's own `deferred`
+    /// exposure, until `tool_search` loads one (`deferredRule`) or `make_app_for` makes something other than a new web
+    /// game on the Mac: what such a game never needs (a wish's versions, its name, the person's services and devices).
+    /// Claude Code and Codex are served every tool, as ever: they have no such exposure from Lamp's endpoint.
+    static let deferredTools = ["list_versions", "name_version", "restore_version", "rename_app", "remove_app", "use_icon_picture", "write_wish",
+                                "connectors", "lampify", "offer_setup", "network_devices", "device_integration", "device_permission"]
+
+    /// pi's default selection when a run names no tools, which a deferring run can't: `--tools` is an allowlist, and
+    /// `tool_search` can't find what it leaves out. Every other run names its tools, which overrides this.
+    static let deferringTools = ["read", "edit", "write", "grep", "find", "ls", "bash", "tool_search"]
+
+    /// Whether this run of pi defers them: the first run of a new wish's conversation, with no kind yet. Whether the
+    /// conversation has begun is pi's transcript's to say: Lamp keeps a conversation's id before there's one. Every run
+    /// that resumes one, a first turn's after a question included, names all its tools and sends all their schemas, since
+    /// pi 1.0.0 doesn't restore what `tool_search` loaded when a process starts with a selection of tools. So does any
+    /// run when pi's settings can't be made to say what a deferring run needs.
+    @MainActor static func defersTools(_ project: LampProject?, session: String?) -> Bool {
+        guard lampTools != nil, let project, project.undecided != nil, let session, startsConversation(session, in: project) else { return false }
+        return PiCompaction.setDefaultTools(deferringTools, in: URL(fileURLWithPath: configDir))
+    }
+
+    /// Whether a run under this id begins its conversation, which only pi's own record of it can say.
+    static func startsConversation(_ session: String, in project: LampProject) -> Bool {
+        Conversation.transcript(of: .pi, session: session, in: project) == nil
+    }
+
+    /// The rule that says what's deferred.
+    static let deferredRule = """
+
+    - These tools aren't loaded yet: \(deferredTools.joined(separator: ", ")). Call `tool_search` with a name or what you \
+    need before using one; from your next call it's there.
+    """
+
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` gives a new app's chapters in the chat; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
@@ -94,6 +127,8 @@ enum Agent {
 
     private static let lookRules = """
 
+    - A web game at home on the Mac has a rule of its own on looking at it and trying it, in its rules: for that game \
+    it stands in for the rules on looking below.
     - `look_at_app` puts what you've written into the app and shows you its windows, what it printed and any \
     build errors or crash, so you can check your work instead of guessing. What you save goes into the open app \
     by itself when it can; a look shows you what the person sees. While the app is open a look is quick, since \
@@ -1058,17 +1093,19 @@ enum Agent {
 
     /// The shell command for one agent turn. Values come from LAMP_* environment variables;
     /// attached files are passed as pi `@file` arguments (images and text go straight to the model).
-    static func command(fileCount: Int) -> String {
+    /// A run that defers tools names none (`deferringTools`), and Lamp's notes stay out by name when they're off.
+    static func command(fileCount: Int, defers: Bool = false) -> String {
         let files = (0..<fileCount).map { "\"@$LAMP_FILE_\($0)\"" }.joined(separator: " ")
+        let chosen = !defers ? "--tools \(tools)" : "-e builtin:tool-search" + (Memory.isOn ? "" : " --exclude-tools read_notes,save_notes")
         return """
-        "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" --tools \(tools) \\
+        "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" \(chosen) \\
           --no-extensions\(lampTools == nil ? "" : " -e \"$LAMP_TOOLS\"") --no-skills --no-prompt-templates --no-context-files --no-approve \\
           --session-dir "$LAMP_SESSION_DIR" --session-id "$LAMP_SESSION" \\
           --append-system-prompt "$LAMP_SYSTEM" -- \(files) "$LAMP_PROMPT"
         """
     }
 
-    static func environment(prompt: String, files: [String] = [], project: LampProject? = nil, session: String, sessionDir: String) -> [String: String] {
+    static func environment(prompt: String, files: [String] = [], project: LampProject? = nil, session: String, sessionDir: String, defers: Bool = false) -> [String: String] {
         var env = [
             "LAMP_PI": executable?.path ?? "pi",
             "LAMP_PROVIDER": Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
@@ -1076,7 +1113,7 @@ enum Agent {
             "LAMP_MODEL": Builder.piModel,
             "LAMP_SESSION": session,
             "LAMP_SESSION_DIR": sessionDir,
-            "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote,
+            "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote + (defers ? deferredRule : ""),
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
             "LAMP_TOOLS_JSON": (Store.toolsFile ?? Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"))?.path ?? "",
@@ -1087,6 +1124,7 @@ enum Agent {
             "LAMP_KEEP_PICTURES": String(Conversation.keepPictures),
             "LAMP_TRIM_PICTURES": String(Conversation.trimAbove),
         ]
+        if defers { env["LAMP_DEFER_TOOLS"] = deferredTools.joined(separator: ",") }
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
         // the environment every shell command would inherit. The ticket is good for one answer, and pi spends
