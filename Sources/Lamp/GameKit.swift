@@ -441,8 +441,11 @@ enum GameKit {
     /// nothing is asked of them that only a module must keep to, and whose pages' inline scripts are read too.
     static func codeProblem(_ project: LampProject, in folder: String = webFolder) async -> String? {
         let modules = folder == webFolder
-        guard !(modules && compilesSource(project)), let bun = Agent.executable else { return nil }
+        guard !(modules && compilesSource(project)) else { return nil }
         let web = project.dir.appendingPathComponent(folder)
+        // Whatever modules there are, or none: a page that runs none of them draws nothing.
+        if modules, isMacWebGame(project), let entry = entryProblem(of: web, project: project) { return entry }
+        guard let bun = Agent.executable else { return nil }
         let base = web.standardizedFileURL.path + "/"
         let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .map { String($0.standardizedFileURL.path.dropFirst(base.count)) }
@@ -468,6 +471,31 @@ enum GameKit {
         // A check that couldn't run says nothing of the code.
         guard status == 1 else { return nil }
         return said.first { !$0.isEmpty } ?? "a module doesn't parse"
+    }
+
+    /// A page that runs none of the game's own code draws nothing, in its window or the preview, and nothing says why.
+    /// The page's contract (the scaffold's index.html) runs the game as a module: one with a `src` that's a file of the
+    /// game's beside it, not Lamp's, or one written inline. Which file is the game's first doesn't matter.
+    static func entryProblem(of web: URL, project: LampProject) -> String? {
+        guard let data = AppFile.read(web.appendingPathComponent("index.html"), in: project) else { return nil }
+        let html = String(decoding: data, as: UTF8.self) as NSString
+        let tag = try! NSRegularExpression(pattern: #"<script\b([^>]*)>([\s\S]*?)</script\s*>"#, options: [.caseInsensitive])
+        let src = try! NSRegularExpression(pattern: #"\bsrc\s*=\s*["']?([^"'\s>]+)"#, options: [.caseInsensitive])
+        for match in tag.matches(in: html as String, range: NSRange(location: 0, length: html.length)) {
+            let attributes = html.substring(with: match.range(at: 1))
+            guard attributes.range(of: #"\btype\s*=\s*["']?module\b"#, options: [.regularExpression, .caseInsensitive]) != nil else { continue }
+            guard let found = src.firstMatch(in: attributes, range: NSRange(location: 0, length: (attributes as NSString).length)) else {
+                if !html.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
+                continue
+            }
+            var path = (attributes as NSString).substring(with: found.range(at: 1))
+            path = String(path.prefix { $0 != "?" && $0 != "#" })
+            if path.hasPrefix("./") { path.removeFirst(2) }
+            let lamps = ["three/", "phaser/", "rapier/"].contains { path.hasPrefix($0) } || (path.hasPrefix("lamp") && !path.contains("/"))
+            if !lamps, !path.contains(":"), !path.hasPrefix("/"), FileManager.default.fileExists(atPath: web.appendingPathComponent(path).path) { return nil }
+        }
+        return "Web/index.html runs none of the game's code, so its window stays empty: after lamp.js and the import map, "
+            + "it needs a `<script type=\"module\" src=\"…\">` naming the game's first module in Web/."
     }
 
     /// What a module may not do because a module is strict, which Bun's parser lets through (`010`, `delete x`, `with`, a
@@ -791,6 +819,11 @@ enum GameKit {
     }
 
     /// Whether the game is still the scaffold: its code is as Lamp wrote it, every file of it.
+    /// A web game played only on the Mac, which is what the short guide and the first show of a draft are for.
+    static func isMacWebGame(_ project: LampProject) -> Bool {
+        isGame(project) && engine(project) == .web && !ownsLoop(project) && project.openPlaces == [.mac]
+    }
+
     static func isScaffold(_ project: LampProject) -> Bool {
         let web = engine(project) == .web
         return scaffoldCode(web: web).allSatisfy { path in
@@ -1177,14 +1210,17 @@ enum GameKit {
     }
 
     /// Plays the script on a web game's page, as `play` does on a C++ game's preview, from the copy `stageWeb` made.
-    @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
+    @MainActor static func playWeb(_ project: LampProject, script given: [String], window: CGSize? = nil) async throws -> Played {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
         let limit = previewLimit(project)
-        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project),
-                                                              phone: phonePreviewFolder(project), limit: .seconds(limit)) else {
-            throw Failure(message: "Stopped.")
+        let play = if let window {
+            await WebGamePreview.playOnce(page, script: script, for: project.id, size: window, policy: previewPolicy(project), limit: .seconds(limit))
+        } else {
+            await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project),
+                                      phone: phonePreviewFolder(project), limit: .seconds(limit))
         }
+        guard let (drawn, result) = play else { throw Failure(message: "Stopped.") }
         let logs = result["logs"] as? [String] ?? []
         // Only a build from the top counts: a play in the preview kept open builds just what changed.
         if result["cold"] as? Bool == true, let took = result["took"] as? TimeInterval {
@@ -1322,11 +1358,11 @@ extension Agent {
     /// device line (`DeviceNote`, `Rules.gamePlaces`), since Claude Code and Codex keep the prompt a conversation began
     /// with, and a place may be given at any time.
     static func gamePrompt(for project: LampProject) -> String {
-        let web = GameKit.engine(project) == .web, ownLoop = GameKit.ownsLoop(project)
+        let web = GameKit.engine(project) == .web, ownLoop = GameKit.ownsLoop(project), macWeb = GameKit.isMacWebGame(project)
         // A page made for the Xbox before Lamp's game runtime keeps its own loop, and its own way of being tried.
         let kit = ownLoop ? [Rules.gameOwnLoop] : [web ? Rules.gameWebKit : Rules.gameKit, web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.gameWebLive] : [])
-        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, Rules.gameFlow] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
-                     web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : Rules.gameTry, Rules.appMd, Rules.audience,
+        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, macWeb ? Rules.gameFlowPlan + "\n\n" : Rules.gameFlow] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
+                     web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : macWeb ? Rules.macWebGameTry : Rules.gameTry, Rules.appMd, Rules.audience,
                      Skills.index(Skills.offered(.game)), Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
@@ -1336,9 +1372,10 @@ extension Agent {
 
     /// The rules for a game that's one of a wish's apps, in a folder of its own: the game's own, for the files there,
     /// without those about the wish as a whole. A game made beside other apps is a page, as every new game is.
-    static func gamePrompt(part folder: String, alone: Bool = false) -> String {
-        let rules = [Rules.gameWebEdit, Rules.gameFlow, Rules.gameWebKit, Rules.gameWebSound, Rules.gameWebLive, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
-                     Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
+    /// `macOnly`: a game at home on the Mac alone, looked at and played only when the person asks (`macWebGameChecks`).
+    static func gamePrompt(part folder: String, alone: Bool = false, macOnly: Bool = false) -> String {
+        let rules = [Rules.gameWebEdit, macOnly ? Rules.gameFlowPlan + "\n\n" : Rules.gameFlow, Rules.gameWebKit, Rules.gameWebSound, Rules.gameWebLive, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
+                     macOnly ? Rules.macWebGameTry : Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
         return (Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
@@ -1348,6 +1385,25 @@ extension Agent {
 }
 
 extension Agent.Rules {
+    /// What a new web game played only on the Mac is told with `make_app_for`, in place of `gamePrompt(part:)` and the
+    /// skills that one has it read: the web-game skill whole, which saves the turn it would take to open it, and only
+    /// the rules a first game needs. A game at home elsewhere, and every later request, has the full rules.
+    static func newMacGame(in folder: String, guide: String) -> String {
+        let rules = ["- Your tools and shell start in the wish's folder: every file of this game is under \(folder)/. Only the wish's description is there itself, in \(AppDescription.file), with `write`.\n" + newMacGameEdit, guide + "\n", Agent.Rules.pageNative + "\n", Agent.Rules.gameBudget, Agent.Rules.gameWebAssets, Agent.Rules.macWebGameTry]
+        return (Agent.Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac", folder: folder) + "\n\nRules:\n" + rules.joined())
+            .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again where Try On points")
+    }
+
+    static let newMacGameEdit = """
+    - Lamp builds by itself when you look and at the end of your turn, so don't run a build, a server or a browser \
+    yourself, and leave .lamp/ alone. Where else the game is played is the person's to ask for (make_app_for). The guide \
+    that follows says how to write it.
+
+
+    """
+
     static let gameOwnLoop = """
     - This game's page was made for the Xbox before Lamp had a game runtime: it runs its own loop and reads the controller \
     and keyboard itself. Keep it that way and change what's asked within it. Moving it onto `game()` from Web/lamp-game.js \
@@ -1410,21 +1466,26 @@ extension Agent.Rules {
     """
 
     /// Said to every game, however it's made: a skill read once and left behind didn't hold agents to this.
-    static let gameFlow = """
+    static let gameFlowPlan = """
     - For a new game or a requested change to how its screens go: before drawing any screen, pick the screen flow that \
     fits this game with the game-ui skill (how it opens, where it teaches, how a restart and a return go; with phones, \
     what the shared display and each player's phone show in each phase, with what this player does on a phone \
     controller you make or change) and keep it in a `Flow:` line in APP.md, with phones a small table of phases under it. The \
     opening never shows controls or key bindings, whatever the flow and however many players share the keyboard: they \
-    come after the start press, on a short screen of their own or as the match begins. After your last edit to any \
-    screen, before you say it's done, run that skill's check of the real opening again: any key name or control label \
-    on the opening fails and is removed, and you name what else there doesn't serve the flow.
+    come after the start press, on a short screen of their own or as the match begins.
+    """
+
+    /// The check of the opening after the last edit to a screen, which a web game at home on the Mac runs only when asked.
+    static let gameFlow = gameFlowPlan + " " + """
+    After your last edit to any screen, before you say it's done, run that skill's check of the real opening again: any \
+    key name or control label on the opening fails and is removed, and you name what else there doesn't serve the flow.
 
     """
 
     /// What `make_app_for` answers with when an app becomes a game.
     static func gameChange(_ project: LampProject) -> String {
-        GameKit.engine(project) == .web ? gameWebEdit + gameFlow + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry
+        GameKit.isMacWebGame(project) ? gameWebEdit + gameFlowPlan + "\n\n" + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + macWebGameTry
+            : GameKit.engine(project) == .web ? gameWebEdit + gameFlow + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry
             : gameEdit + gameFlow + gameKit + gameSound + gameBudget + gameTry
     }
 
@@ -1673,7 +1734,8 @@ extension Agent.Rules {
     lit and well colored, looks better than one of mismatched models.
     """
 
-    static let gameTry = """
+    /// How the preview and its controller work, for every game on Lamp's runtime; `gameTry` says when to use them.
+    static let gamePreview = """
     - `look_at_app` builds the preview on this Mac and plays the game from its start for two seconds, with no one \
     touching the controller, and shows you the last frame, what the game logged (`lamp_log`, a line per event, never \
     per frame) and the preview's stats (draws a frame, and vertices for C++ or triangles for a page); with `motion` it shows a frame every half \
@@ -1685,7 +1747,11 @@ extension Agent.Rules {
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
     Each use plays the whole game again from the start with the moves so far, so after a change to the code the same \
     moves show what changed (one to timing or navigation can land them elsewhere: check). Each look but one with \
-    `on_device` starts the moves over, a plain look at the person's open window too. Play it as the person would before you finish: a game that only looks right \
+    `on_device` starts the moves over, a plain look at the person's open window too.
+    """
+
+    static let gameTry = gamePreview + " " + """
+    Play it as the person would before you finish: a game that only looks right \
     isn't done. Read how the game takes the controller first (APP.md, its controls code): a vehicle's gas is often a \
     trigger, held as `key` rt alongside the stick that steers, and a game that barely moves under your moves is one \
     you're driving with the wrong control, not one that can't be tried. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \
@@ -1695,4 +1761,30 @@ extension Agent.Rules {
     plays it. Lamp can't press a real controller, the keys in the person's window or a device's screen: only the \
     person can play it there.
     """
+
+    /// When a web game at home on the Mac is looked at, played and judged: only when the person asks. Lamp checks what
+    /// costs no judgment itself (the code parses, it builds and opens, it doesn't crash, its window draws), so each turn
+    /// ends once the change is written. This stands in for `gameTry` and the checks in `gameFlow` and in `lookRules`,
+    /// and it's guidance: the tools stay, for what the person asks.
+    static let macWebGameChecks = """
+    - Looking and trying, for this game: Lamp builds it and opens it on the person's screen at the end of your turn, \
+    and says whether it opened and drew. So write the change, then finish: no `look_at_app` or `use_app`, and no \
+    playing it, pictures of it, other window sizes or a critique, unless the person asks for that in this request. \
+    The shell is no way around this: no test runners, browser scripts, screen captures or programs written to play \
+    or exercise the game. Reading the code stays part of the work, and so does fixing what Lamp sends back (a syntax \
+    error, a failed build, a crash on launch), each of which comes back to you as another step. The general rules \
+    on looking at the app (early looks, passes that end with a look, fixing what you see, checking the opening) \
+    don't apply to this game.
+    - When the person asks, do only what they asked, with the game-playtest skill: to play it or check it works, one \
+    `use_app` round; to judge how it looks, a `look_at_app`, without playing; to check the code, read it, without \
+    opening the game. A request to check once doesn't reach the changes after it. Read how the game takes the \
+    controller first (APP.md, its controls code). Lamp can't press the keys in the person's window: only the person \
+    can play it there.
+    - Your last reply says what you made, in a sentence. Never say it's built, open, working or tested: Lamp says \
+    whether it opened, after your reply.
+
+    """
+
+    /// The Mac web game's rules on trying it, with how the tools play it for when the person asks.
+    static var macWebGameTry: String { macWebGameChecks + "- How the tools play it, when asked: " + gamePreview.dropFirst(2) + "\n" }
 }

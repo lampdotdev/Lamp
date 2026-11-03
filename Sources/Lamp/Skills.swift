@@ -35,7 +35,53 @@ enum Skills {
                   let skill = parse(text) else { continue }
             skills[skill.name] = skill
         }
-        return skills
+        return assembled(skills)
+    }
+
+    /// Skills made of sections of others: a `sections` line in the frontmatter ("game#Fun; game-ui#Proof", an empty heading
+    /// for the text before a skill's first section) has them put where the body says `{{sections}}`, as they are in the
+    /// skill they come from, so each section has one place and a change there reaches every skill that shows it.
+    static func assembled(_ skills: [String: Skill]) -> [String: Skill] {
+        var made = skills
+        for (name, skill) in skills {
+            guard let list = skill.meta["sections"] else { continue }
+            let text = sectionNames(list).compactMap { section($0, in: skills) }.joined(separator: "\n\n")
+            let body = skill.body.contains("{{sections}}") ? skill.body.replacingOccurrences(of: "{{sections}}", with: text) : skill.body + "\n\n" + text
+            made[name] = Skill(name: skill.name, description: skill.description, body: body, meta: skill.meta)
+        }
+        return made
+    }
+
+    static func sectionNames(_ list: String) -> [String] {
+        list.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// One section of a skill, as "skill#Heading": its heading, made a second-level one, and what's under it until the next
+    /// heading as high. Nil when the skill or the heading isn't there.
+    static func section(_ name: String, in skills: [String: Skill]) -> String? {
+        let parts = name.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 2, let source = skills[parts[0]]?.body else { return nil }
+        let lines = source.components(separatedBy: "\n")
+        // A line of a code block is never a heading, whatever it starts with.
+        var fenced = false
+        let headings: [(index: Int, level: Int, title: String)] = lines.enumerated().compactMap { index, line in
+            if line.hasPrefix("```") { fenced.toggle(); return nil }
+            guard !fenced, line.hasPrefix("#") else { return nil }
+            let level = line.prefix { $0 == "#" }.count
+            guard line.dropFirst(level).first == " " else { return nil }
+            return (index, level, line.dropFirst(level).trimmingCharacters(in: .whitespaces))
+        }
+        if parts[1].isEmpty {
+            let start = headings.first { $0.level == 1 }.map { $0.index + 1 } ?? 0
+            let end = headings.first { $0.level == 2 }?.index ?? lines.count
+            let text = lines[start..<max(start, end)].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : text
+        }
+        guard let at = headings.firstIndex(where: { $0.title == parts[1] && $0.level > 1 }) else { return nil }
+        let heading = headings[at]
+        let end = headings[(at + 1)...].first { $0.level <= heading.level }?.index ?? lines.count
+        let text = lines[(heading.index + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return "## \(heading.title)\n\n" + text
     }
 
     /// A SKILL.md: frontmatter between `---` lines with at least `name` and `description` on one line each,
@@ -99,7 +145,8 @@ enum Skills {
     /// devices, games of every kind and their screens, 2D games and 3D in a page, ready-made models, art and sounds, web apps,
     /// and phones as controllers are the agent's to choose for any request, so their guidance can't wait for the app to
     /// be of a kind that has them.
-    static let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
+    static let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "game-feel", "game-3d", "game-physics", "game-levels", "game-art",
+                             "game-live", "game-playtest", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
     /// and not a rule and a line: the building blocks, AI in the app, the person's accounts, App Intents, share
@@ -156,10 +203,14 @@ enum Skills {
         if offered.contains("app-intents"), appSwift(of: project, matches: #"\bimport AppIntents\b"#) { found.append(("app-intents", "it has App Intents")) }
         if offered.contains("share-extension"), Template.hasShare(project) { found.append(("share-extension", "it has a share extension in Share/")) }
         if offered.contains("scripting"), appSwift(of: project, matches: #"\bLampScript\b"#) { found.append(("scripting", "its code uses LampScript")) }
-        if offered.contains("game"), let why = gameUse(project) { found.append(("game", why)) }
-        if offered.contains("game-ui"), let why = gameUse(project) { found.append(("game-ui", why)) }
-        if offered.contains("3d-game"), pageCode(of: project, matches: threeImport) { found.append(("3d-game", "its page draws with three.js")) }
-        if offered.contains("2d-game"), let why = twoDimensionalUse(project) { found.append(("2d-game", why)) }
+        if GameKit.isMacWebGame(project) {
+            found += macWebGameSkills(project)
+        } else {
+            if offered.contains("game"), let why = gameUse(project) { found.append(("game", why)) }
+            if offered.contains("game-ui"), let why = gameUse(project) { found.append(("game-ui", why)) }
+            if offered.contains("3d-game"), pageCode(of: project, matches: threeImport) { found.append(("3d-game", "its page draws with three.js")) }
+            if offered.contains("2d-game"), let why = twoDimensionalUse(project) { found.append(("2d-game", why)) }
+        }
         if offered.contains("icloud-sync"), appSwift(of: project, matches: #"\bLampSync\b"#) { found.append(("icloud-sync", "its code uses LampSync")) }
         if offered.contains("assets"), Credits.load(project).upstream.contains(where: { $0.files?.isEmpty == false }) {
             found.append(("assets", "it uses ready-made assets brought in with the assets tool"))
@@ -219,6 +270,38 @@ enum Skills {
         return nil
     }
 
+    /// A web game at home on the Mac starts from the web-game guide with game-feel, and opens the rest by what it does
+    /// (`gameNeeds`). Its own code hints at which of those it uses, never Lamp's runtime or what the scaffold brings:
+    /// every such game draws with Phaser or three.js, so neither says the 2D or 3D skill applies; what three.js draws,
+    /// a physics engine and a tilemap only the game's own code brings in. Levels, art and structural changes are
+    /// opened when a request asks for them.
+    static func macWebGameSkills(_ project: LampProject) -> [(name: String, because: String)] {
+        guard let why = gameUse(project) else { return [] }
+        var found = [("game-feel", why)]
+        if pageCode(of: project, matches: threeImport) { found.append(("game-3d", "its page draws with three.js")) }
+        if pageCode(of: project, matches: GameKit.rapierImport) { found.append(("game-physics", "its page uses Rapier")) }
+        if pageCode(of: project, matches: #"\.tilemap\(|addTilesetImage\("#) { found.append(("2d-game", "its page builds a tilemap")) }
+        return found
+    }
+
+    /// What a new web game at home on the Mac may ask for with `make_app_for`'s `needs`, beyond the guide and game-feel
+    /// that come with it anyway.
+    static let gameNeeds = ["game-3d", "game-physics", "game-levels", "game-art", "2d-game"]
+
+    /// `needs` as the agent gave it, or why it can't be taken.
+    static func gameNeeds(_ given: Any?) -> Result<[String], NeedsRefusal> {
+        guard let given else { return .success([]) }
+        guard let names = given as? [String] else { return .failure(NeedsRefusal(reason: "`needs` is a list of skill names: " + gameNeeds.joined(separator: ", ") + ".")) }
+        let unknown = names.filter { !gameNeeds.contains($0) }
+        guard unknown.isEmpty else {
+            return .failure(NeedsRefusal(reason: "`needs` takes only " + gameNeeds.joined(separator: ", ") + "; not " + unknown.joined(separator: ", ")
+                                         + ". Open any other skill with `read_skill`."))
+        }
+        return .success(gameNeeds.filter(names.contains))
+    }
+
+    struct NeedsRefusal: Error { let reason: String }
+
     /// What shows a game is 2D: a page drawn with Phaser, or Swift on SpriteKit.
     static func twoDimensionalUse(_ project: LampProject) -> String? {
         if pageCode(of: project, matches: DeviceSupport.phaserUse) { return "its page draws with Phaser" }
@@ -227,11 +310,11 @@ enum Skills {
     }
 
     /// Whether the app's own page code, in Web/, matches a pattern: Lamp's own files there (lamp.js, the game runtime,
-    /// three.js, Phaser) name anything, so they don't count.
+    /// three.js, Phaser, Rapier) name anything, so they don't count.
     static func pageCode(of project: LampProject, matches pattern: String) -> Bool {
         guard let files = FileManager.default.enumerator(at: project.dir.appendingPathComponent(TVTemplate.webFolder), includingPropertiesForKeys: nil) else { return false }
         for case let file as URL in files {
-            if file.lastPathComponent == "three" || file.lastPathComponent == "phaser" { files.skipDescendants(); continue }
+            if ["three", "phaser", "rapier"].contains(file.lastPathComponent) { files.skipDescendants(); continue }
             guard ["js", "mjs", "html"].contains(file.pathExtension), !DeviceSupport.lampsPageFiles.contains(file.lastPathComponent) else { continue }
             if (try? String(contentsOf: file, encoding: .utf8))?.range(of: pattern, options: .regularExpression) != nil { return true }
         }

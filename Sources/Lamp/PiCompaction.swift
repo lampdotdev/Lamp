@@ -11,6 +11,7 @@ enum PiCompaction {
     /// Which models' reserves in the settings are Lamp's, so it can take them away when they go stale and leave
     /// any other alone.
     static let ownedKey = "lampCompactionModels"
+    static let defaultToolsKey = "defaultTools"
     /// What the settings were written for (`stamp`).
     static let stampKey = "lampCompactionStamp"
 
@@ -116,6 +117,19 @@ enum PiCompaction {
               let data = try? JSONSerialization.data(withJSONObject: updated, options: [.prettyPrinted, .sortedKeys]) else { return }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
+    }
+
+    /// Makes pi's settings say this default selection of tools, whatever else they say, apart from the reserves and their
+    /// stamp, which depend on pi's models. True only once the file has been read back saying it.
+    @MainActor static func setDefaultTools(_ tools: [String], in folder: URL) -> Bool {
+        let file = folder.appendingPathComponent("settings.json")
+        guard var settings = read(file) else { return false }
+        if settings[defaultToolsKey] as? [String] == tools { return true }
+        settings[defaultToolsKey] = tools
+        guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) else { return false }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        guard (try? data.write(to: file, options: .atomic)) != nil else { return false }
+        return read(file)?[defaultToolsKey] as? [String] == tools
     }
 
     /// The settings in this file, empty if there is none yet, nil if there's something in it that can't be read.

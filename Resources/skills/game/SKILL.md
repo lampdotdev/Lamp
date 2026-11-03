@@ -1,6 +1,6 @@
 ---
 name: game
-description: Games, 2D or 3D, made either way - what makes one fun and playtesting it, the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page, in 2D or with three.js, for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game.
+description: Games, 2D or 3D, made either way - what makes one fun and playtesting it, the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page, in 2D or with three.js, for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game; a new web game at home on the Mac starts from the web-game guide and game-feel instead, and the parts of this it needs come as the skills that guide names.
 ---
 
 # Games
@@ -16,7 +16,7 @@ The tools Lamp has for games:
 - **Web**: Lamp's game runtime, `Web/lamp-game.js`, with Phaser for 2D (through `Web/lamp-phaser.js`) or three.js for
   3D, in a game `make_app_for` made with `kind` "game". It's a game's default make, 2D or 3D, wherever Lamp has a host
   for a page, and the same on every one of them. Read lamp-game.js first, all of it (and lamp-phaser.js for 2D): their
-  comments are the whole interface. Below, "Web" means this runtime.
+  comments are the whole interface. (A new game at home on the Mac starts from the web-game guide, which needs neither read whole.) Below, "Web" means this runtime.
 - **TypeScript**: a game whose source is TypeScript (one brought in from a Vite project, or when the person asks for
   it) keeps it in `src/` with `src/main.ts` as its entry, and Lamp bundles it into `Web/app/` before every build and
   look (types stripped, not checked): `Web/index.html` loads `app/main.js` (and `app/main.css` when the source imports
