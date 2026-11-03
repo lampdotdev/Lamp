@@ -9056,6 +9056,14 @@ enum Template {
                 finish("Stopped after \(done) of \(count) action\(count == 1 ? "" : "s"): the person took the app over. Nothing after that was done.")
             }
 
+            /// Ends the batch where it is for a reason of Lamp's own, not the person's: nothing more is done and what it
+            /// holds is let go, and the caller says why in the report.
+            func giveUp() {
+                guard carriesOn else { return }
+                stopped = true
+                letGo()
+            }
+
             private func letGo() {
                 defer { giveBackAll() }
                 for key in held {
@@ -9223,11 +9231,21 @@ enum Template {
                         report[line] = "\(action.action): the game didn't answer"
                         if let window = LampRuntime.windowsOnScreen.first, let hold = LampPageItems.hold,
                            hold(action, window, batch, { said, held in
+                               guard !answered else { return }
                                report[line] = said
                                goOn(after: held ? pause : Self.settle)
                            }) {
-                            // A page that never answers (hung, or gone) doesn't hold the batch up for good.
-                            after(Self.unanswered) { goOn(after: 0) }
+                            // A page that never answers (hung, or gone) doesn't hold the batch up for good, nor is the
+                            // hold it may still take left to the batch's next moves: the batch ends there, and what the
+                            // page takes after is turned down (lamp-game.js) or let go (LampPage.swift).
+                            after(Self.unanswered) {
+                                guard !answered, batch.carriesOn else { return }
+                                answered = true
+                                batch.giveUp()
+                                report[line] = "\(action.action): the game didn't answer within \(LampScreen.number(Self.unanswered)) s"
+                                report.append("Stopped after \(index + 1) of \(actions.count) action\(actions.count == 1 ? "" : "s"): the game didn't take Lamp's controller in time. Nothing after that was done.")
+                                answer(stopped: false)
+                            }
                         } else {
                             report[line] = "\(action.action): this app has no game whose controller Lamp can hold"
                             goOn(after: Self.settle)

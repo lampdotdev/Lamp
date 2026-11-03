@@ -9546,6 +9546,8 @@ final class Store: ObservableObject {
     /// needs the game opened again does, and the agent hears why.
     private func holdForDevices(_ project: LampProject, owner: Turn?) {
         owner?.reloadWhy = DevicePermissions.heldForDevices
+        // Its own kind of wait: only the person's Reload puts it in, never Lamp's while they're away (`reloadIfAway`).
+        away.heldForDevices(Self.requestOwner(of: project, among: projects).id)
         awaitReload(project, owner: owner)
         owner?.outcomes.append(.held)
     }
@@ -9855,6 +9857,14 @@ final class Store: ObservableObject {
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
+        // A request's install runs a game that reaches the person's devices, wherever it goes and whether it opens the
+        // game or opens it again (a look, a step, the turn's end): only with a device of theirs allowed, else it waits
+        // for their own Reload. Their Open App, Undo and Reload are theirs to do, and a quiet install that opens nothing
+        // runs nothing.
+        if !reload, owner?.request != nil, !(quiet && !isRunning(project)), !mayRunChange(in: project) {
+            holdForDevices(project, owner: owner)
+            return nil
+        }
         if project.onDevice {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
@@ -9937,12 +9947,6 @@ final class Store: ObservableObject {
         // ask for the reopen, and an app that's closed just gets the build. Not in a new app's first turn: nobody is
         // using it yet, and it's built in passes for the person to watch each one go in (`present`), so it reopens.
         // A place kept current in the background never closes the copy open there: it waits for Reload, as a request's does.
-        // Opening a game that reaches devices again runs its new code as it starts: only the person's Reload does that
-        // while none of their devices is allowed.
-        if !reload, isRunning(project), !mayRunChange(in: project) {
-            holdForDevices(project, owner: owner)
-            return nil
-        }
         if !reload, asksBeforeReopening(project, owner: owner) || quiet && isRunning(project) {
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)

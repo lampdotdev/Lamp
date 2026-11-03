@@ -2877,7 +2877,8 @@ function hidePill() { if (pill) pill.style.display = 'none'; }
 let driven = null, drivenUntil = 0, lampHas = false, lampHasUntil = 0, lampBatch = null;
 // Each batch and each hold has a name of its own (the batch's id, and a number after it for each hold), and what gives
 // one back names it: a release that reaches the page late, after a newer batch or hold took the controller, is for one
-// that's gone already and lets go of nothing that's held now.
+// that's gone already and lets go of nothing that's held now. A hold reaching the page after its batch ended, or after a
+// newer one took its place, is turned down ('ended'): nothing of a batch that's over is pressed.
 window.__lampOwn = (seconds, batch) => {
     if (!seconds) {
         if (batch != null && batch !== lampBatch) return true;
@@ -2890,7 +2891,8 @@ window.__lampOwn = (seconds, batch) => {
     lampHasUntil = clockNow() + Math.min(Math.max(Number(seconds) || 0, 0), 600) * 1000 + 2000;
     return true;
 };
-window.__lampDrive = (hold, name) => {
+window.__lampDrive = (hold, name, batch) => {
+    if (hold && batch != null && String(batch) !== lampBatch) return 'ended';
     if (!hold) {
         if (name != null && (!driven || driven.name !== String(name))) return true;
         driven = null;

@@ -1111,18 +1111,23 @@ final class LampPageBlockedHost: NSObject {
         holds += 1
         let name = quoted("\(batch.id)#\(holds)")
         let release = { page.evaluateJavaScript("window.__lampDrive && window.__lampDrive(null, \(name))") }
-        page.evaluateJavaScript("window.__lampDrive ? window.__lampDrive(\(String(decoding: json, as: UTF8.self)), \(name)) : 'missing'") { answer, error in
+        let call = "window.__lampDrive(\(String(decoding: json, as: UTF8.self)), \(name), \(quoted(batch.id)))"
+        page.evaluateJavaScript("window.__lampDrive ? \(call) : 'missing'") { answer, error in
             MainActor.assumeIsolated {
+                // Stopped or replaced while the page answered (the batch gave up waiting for it, too): nothing more is
+                // Lamp's, and the batch has said how it ended, so this answer adds nothing to its report.
+                guard batch.carriesOn else {
+                    if answer as? Bool == true { release() }
+                    return
+                }
+                if answer as? String == "ended" {
+                    return said("\(action.action): stopped before the game took it", false)
+                }
                 if let error {
                     return said("\(action.action): the game's page couldn't take it (\(error.localizedDescription))", false)
                 }
                 guard answer as? Bool == true else {
                     return said("\(action.action): the game didn't take Lamp's controller: its page has no Lamp game runtime running (still loading, or built by an older Lamp)", false)
-                }
-                // Stopped or replaced while the page answered: nothing more is Lamp's.
-                guard batch.carriesOn else {
-                    release()
-                    return said("\(action.action): stopped before the game took it", false)
                 }
                 batch.hold(for: seconds, release: release)
                 said(action.text ?? "held the game's controller for \(LampScreen.number(seconds)) s", true)

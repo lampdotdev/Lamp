@@ -159,6 +159,20 @@ final class GameInWindowTests: XCTestCase {
         XCTAssertEqual(taken(context), [], "and its batch's own end gives the controller back")
     }
 
+    /// A hold reaching the page after its batch ended (it gave up waiting for the page, or was stopped) or after a newer
+    /// batch took the controller is turned down: nothing of a batch that's over is pressed.
+    func testAHoldOfABatchThatsOverIsTurnedDown() throws {
+        let (context, step) = try playing()
+        context.evaluateScript("__lampOwn(20, 'a'); __lampOwn(null, 'a');")
+        XCTAssertEqual(context.evaluateScript("__lampDrive({ lx: 1, seconds: 5 }, 'a#1', 'a')")?.toString(), "ended")
+        XCTAssertEqual(step()["lx"] as? Double, 0)
+        context.evaluateScript("__lampOwn(20, 'b');")
+        XCTAssertEqual(context.evaluateScript("__lampDrive({ lx: 1, seconds: 5 }, 'a#2', 'a')")?.toString(), "ended")
+        XCTAssertEqual(step()["lx"] as? Double, 0)
+        XCTAssertEqual(context.evaluateScript("__lampDrive({ ly: 1, seconds: 5 }, 'b#3', 'b')")?.toBool(), true)
+        XCTAssertEqual(step()["ly"] as? Double, 1)
+    }
+
     /// The batch's own hold on the controller ends by itself, a while after the time it was given, should the app never
     /// say: the person's later play is then theirs and stops nothing.
     func testABatchsHoldOnTheControllerEndsByItself() throws {
