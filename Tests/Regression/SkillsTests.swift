@@ -44,7 +44,7 @@ final class SkillsTests: XCTestCase {
                                            "scripting", "game", "game-ui", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
                                            "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode",
                                            "roku-developer-mode", "more-apps", "github-projects", "assets", "web-game", "game-feel", "game-3d",
-                                           "game-physics", "game-levels", "game-art", "game-live"])
+                                           "game-physics", "game-levels", "game-art", "game-live", "game-playtest"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -64,7 +64,7 @@ final class SkillsTests: XCTestCase {
         // every kind, first, whatever the app is now; so are the narrow skills a web game at home on the Mac names with
         // `make_app_for`, before it's made.
         let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "game-feel", "game-3d", "game-physics", "game-levels", "game-art",
-                          "game-live", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
+                          "game-live", "game-playtest", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
         XCTAssertEqual(Skills.offered(.android), everywhere + ["android-design", "wish-links"])
         XCTAssertEqual(Skills.offered(.tv), everywhere + ["wish-links"])
         XCTAssertEqual(Skills.offered(.device), everywhere)
@@ -305,6 +305,47 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Skills.applying(to: mac).filter { $0.name.contains("game") }.map(\.name), ["game-feel", "2d-game"])
     }
 
+    /// A web game at home on the Mac is looked at and played only when the person asks, in every set of rules it's
+    /// given: made, changed later in the wish's own folder or in a folder of its own. A game played elsewhere too keeps
+    /// playing it before it's done.
+    func testAMacWebGamesRulesLeaveTryingItToThePerson() throws {
+        let mac = game(on: [.mac]), both = game(on: [.mac, .ios])
+        XCTAssertTrue(GameKit.isMacWebGame(mac))
+        XCTAssertFalse(GameKit.isMacWebGame(both))
+        let mandates = ["Play it as the person would before you finish", "before you say it's done, run that skill's check"]
+        let asked = Agent.Rules.macWebGameChecks
+        for (place, rules) in [("new", Agent.Rules.newMacGame(in: "Game", guide: "")), ("own folder", Agent.gamePrompt(for: mac)),
+                               ("part", Parts.packs(for: [mac])[Parts.skill(of: mac)]?.body ?? ""), ("became a game", Agent.Rules.gameChange(mac))] {
+            XCTAssertTrue(rules.contains(asked), place)
+            for mandate in mandates { XCTAssertFalse(rules.contains(mandate), "\(place): \(mandate)") }
+        }
+        for (place, rules) in [("own folder", Agent.gamePrompt(for: both)), ("part", Parts.packs(for: [both])[Parts.skill(of: both)]?.body ?? "")] {
+            XCTAssertFalse(rules.contains(asked), place)
+            for mandate in mandates { XCTAssertTrue(rules.contains(mandate), "\(place): \(mandate)") }
+        }
+    }
+
+    /// A page that runs none of the game's own code leaves its window empty with nothing to say why, so it's sent back
+    /// as the code's problem. The page names its first module by any name, or writes it inline; Lamp's files don't count.
+    func testAMacWebGamesPageMustRunItsOwnCode() throws {
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
+        let mac = game(on: [.mac])
+        func page(_ body: String) throws -> String? {
+            try "<!doctype html><head><script src=\"lamp.js\"></script><script type=\"importmap\">{}</script></head><body>\(body)</body>"
+                .write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+            return GameKit.entryProblem(of: web, project: mac)
+        }
+        try "export {};".write(to: web.appendingPathComponent("main.js"), atomically: true, encoding: .utf8)
+        try "export {};".write(to: web.appendingPathComponent("lamp-game.js"), atomically: true, encoding: .utf8)
+        XCTAssertNotNil(try page(""), "a page that runs nothing of the game's")
+        XCTAssertNotNil(try page("<script type=\"module\" src=\"game.js\"></script>"), "a module that isn't there")
+        XCTAssertNotNil(try page("<script type=\"module\" src=\"lamp-game.js\"></script>"), "Lamp's runtime isn't the game")
+        XCTAssertNotNil(try page("<script src=\"main.js\"></script>"), "a classic script can't import the runtime")
+        XCTAssertNil(try page("<script type=\"module\" src=\"./main.js?v=2\"></script>"))
+        XCTAssertNil(try page("<script type='module'>import { phaser } from './lamp-phaser.js'; phaser({});</script>"))
+    }
+
     /// `needs` names only the skills a new Mac web game can be handed, in one order whatever the agent's.
     func testNeedsTakesOnlyTheNarrowGameSkills() {
         XCTAssertEqual(try Skills.gameNeeds(nil).get(), [])
@@ -329,11 +370,20 @@ final class SkillsTests: XCTestCase {
             }
             XCTAssertFalse(skill.body.contains("{{sections}}"), name)
         }
-        XCTAssertEqual(viewed, 24)
+        XCTAssertEqual(viewed, 23)
         let feel = try XCTUnwrap(raw["game-feel"]).body
         XCTAssertTrue(feel.contains("## Fun\n\nA game is for fun"))
-        XCTAssertTrue(feel.contains("## Check the real opening"))
-        XCTAssertFalse(feel.contains("## One critique pass"), "game-feel's own, bounded critique stands in for it")
+        // A web game at home on the Mac is played and judged only when the person asks: what the skills it's written
+        // from carry is how to make it, and the checks are game-playtest's alone.
+        for name in ["game-feel", "game-3d", "game-art", "game-physics", "game-levels"] {
+            let body = try XCTUnwrap(raw[name]).body
+            for check in ["## Playtesting", "## Check the real opening", "## Proof", "## Checking it", "critique", "before you finish"] {
+                XCTAssertFalse(body.contains(check), "\(name): \(check)")
+            }
+        }
+        let playtest = try XCTUnwrap(raw["game-playtest"]).body
+        for check in ["## Playtesting", "## Check the real opening", "## Proof", "## Checking it", "**A critique:**"] { XCTAssertTrue(playtest.contains(check), check) }
+        XCTAssertFalse(Skills.gameNeeds.contains("game-playtest"), "opened when asked, never handed")
         let physics = try XCTUnwrap(raw["game-physics"]).body
         XCTAssertTrue(physics.contains("**Whether a game needs it.**"))
         XCTAssertFalse(physics.contains("## What costs the most"), "a section ends at the next heading as high")
@@ -364,7 +414,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, game-3d, game-art, game-feel, game-levels, game-live, game-physics, game-ui, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-game, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, game-3d, game-art, game-feel, game-levels, game-live, game-physics, game-playtest, game-ui, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-game, web-or-native, wish-links.")
     }
 
     func testParsing() {

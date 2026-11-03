@@ -88,7 +88,7 @@ A capability given to one engine must be given to all of them that can take it, 
   in the `skills` or `named` of each kind whose prompt offers or names it, and, when an app's code can show it applies, a check in `Skills.applying`.
   A skill can also be made of sections of others (`sections` in its frontmatter, put in where its body says
   `{{sections}}`, `Skills.assembled`), so each section keeps one place: the narrow game skills a web game at home on the
-  Mac uses (`game-feel`, `game-3d`, `game-physics`, `game-levels`, `game-art`, `game-live`) are views of the `game`,
+  Mac uses (`game-feel`, `game-3d`, `game-physics`, `game-levels`, `game-art`, `game-live`, and `game-playtest`, opened only when the person asks to play or check it) are views of the `game`,
   `game-ui`, `2d-game` and `3d-game` skills that games elsewhere read whole. Such a game names the ones it needs with
   `make_app_for`'s `needs`, which every engine has from `lamp-tools.json`, and gets them with the guide; its code only
   hints at `game-3d`, `game-physics` and `2d-game` later, never by Lamp's runtime or the Phaser every one draws with.

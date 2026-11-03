@@ -1,11 +1,11 @@
 ---
 name: web-game
-description: The short guide to a new web game at home on the Mac, on Lamp's game runtime - the runtime's contract, the stage in the window, screens over the canvas, keeping the player's place, how it looks, and the checks. Lamp hands it over with make_app_for, with game-feel and the skills the call's `needs` named; for this game they stand in for the game, game-ui, 2d-game and 3d-game skills, which serve games elsewhere.
+description: The short guide to a new web game at home on the Mac, on Lamp's game runtime - the runtime's contract, the stage in the window, screens over the canvas, keeping the player's place, how it looks, and what's checked when. Lamp hands it over with make_app_for, with game-feel and the skills the call's `needs` named; for this game they stand in for the game, game-ui, 2d-game and 3d-game skills, which serve games elsewhere.
 ---
 
 # A new web game on the Mac
 
-This guide holds how the game runs on Lamp's runtime; game-feel, handed with it, holds what makes it good to play. Both are for every game, and with the skills `needs` named they're what you write it from: don't open the game, game-ui, 2d-game or 3d-game skills, or read Web/lamp-game.js or Web/lamp-phaser.js in full: grep them for one export when you need it. In 2D the game is Phaser 3.90 scenes through `phaser()`. In 3D, game-3d says how it draws; the rest here holds. Write the first files together in one message, and look in that message's last call or the next one.
+This guide holds how the game runs on Lamp's runtime; game-feel, handed with it, holds what makes it good to play. Both are for every game, and with the skills `needs` named they're what you write it from: don't open the game, game-ui, 2d-game or 3d-game skills, or read Web/lamp-game.js or Web/lamp-phaser.js in full: grep them for one export when you need it. In 2D the game is Phaser 3.90 scenes through `phaser()`. In 3D, game-3d says how it draws; the rest here holds. Write the first files together in one message, then finish: Lamp builds the game and opens it when your turn ends.
 
 ## The runtime's contract
 
@@ -76,14 +76,11 @@ Changes go into the running game, and these rules keep the player's place throug
 
 Decide before drawing: its world, one material its screens are made of, four to eight colors, one signature motion. Compose each screen for this game, not a centered stack of pills, emoji art or soft cards on a gradient. Every action answers at once in sight and sound, each with a short effect from the `assets` tool.
 
-## Checks
+## What's checked, and when
 
-The first `look_at_app` shows the draft in the game's window and plays it from the start in the hidden preview: the person is watching, so go on working. Every check below runs before you say it's done; none is optional, however good the draft looks.
+Lamp checks the game itself: its code parses, it builds, and it opens without crashing. A failure there comes back to you to fix, as another step. Lamp also tells the person whether its window drew. So write the change and finish, with no `look_at_app` or `use_app`, and nothing in the shell that plays, screenshots or runs the game in its place. Your last reply says in a sentence what you made; whether it's open and drew is Lamp's to say, after your reply, so never say it's built, open, working or tested.
 
-1. One `use_app` plays a whole round as the person would: **start**, **steer** both ways, take a **hit** (steer into one, watching the score), **finish** (wait out the round to the results), press A to **restart** into a new round.
-2. One `look_at_app` with `shape` "960x540" plays the **opening** and the first seconds of play in a **smaller window**: the player, HUD and Play show, nothing is cut off or under the canvas.
-
-No key name on the opening. Fix what fails and run that check again, with `reopen` for the opening at full size. Then game-feel's one critique, from what these checks showed. Say what you didn't run.
+When the person asks you to play it, test it, check it or judge how it looks, open the game-playtest skill and do only what they asked. One such request doesn't reach the changes after it.
 
 ## More, when the game calls for it
 

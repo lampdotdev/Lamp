@@ -5051,7 +5051,13 @@ final class Store: ObservableObject {
     private func buildFixingErrors(_ started: LampProject) async -> Bool {
         await turns[started.id]?.early?.value
         var project = current(started) ?? started
-        var errors = await build(project)
+        // A web game at home on the Mac isn't looked at unless the person asks, so its page's code is checked here
+        // instead: a module that doesn't parse, or a page that runs none, would only leave its window empty.
+        func checked(_ project: LampProject) async -> String? {
+            if let errors = await build(project) { return errors }
+            return GameKit.isMacWebGame(project) ? await GameKit.codeProblem(project) : nil
+        }
+        var errors = await checked(project)
         // The person's Apple account or tools that aren't on this Mac yet, not the code: build has said so, with the
         // window that fixes it, and the agent has nothing to fix.
         func isTheAccount() -> Bool {
@@ -5069,7 +5075,7 @@ final class Store: ObservableObject {
             // Asking ends the turn while fixing as well: no build, and no further try, under a card that
             // hasn't been answered. Whoever called says the turn is waiting, not that it failed.
             if turns[project.id]?.asked == true { return false }
-            errors = await build(project)
+            errors = await checked(project)
         }
         guard turns[project.id]?.stopped != true, exists(project) else { return false }
         if errors != nil, !isTheAccount() {
@@ -9786,6 +9792,10 @@ final class Store: ObservableObject {
         AppTransition.land(project)
     }
 
+    /// How long after a launch a new web game's window has to say it drew to be called ready: the launch's own watch
+    /// (`Runtime.launchWindow`) runs as long, so a game in front costs nothing more.
+    static let drawLimit: TimeInterval = 3
+
     private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {
         guard exists(project), project.holdsApp else { return nil }
         // An update being prepared is built, never installed or opened, until the person has reviewed it.
@@ -9965,16 +9975,32 @@ final class Store: ObservableObject {
             let watch = watchLaunch(project, owner: owner, opened: opened, crashOnly: true, alive: { !app.isTerminated }) {
                 await Runtime.launchReport(project)
             }
+            // A web game at home on the Mac that a request opens is called ready only once its window drew, which its page
+            // says while the first seconds are watched anyway, so it costs no time of its own. A window that hasn't drawn
+            // by then (one behind another draws nothing) is said to be open, never a fault: nothing waits on, or fixes,
+            // it. A first draft watched already (`showDraft`) says how its window came out itself.
+            let frames = firstFrames, id = project.id
+            let drew: Task<Bool, Never>? = owner != nil && inFront && saysReady && !early && GameKit.isMacWebGame(project)
+                && owner?.look.draftWatch[id] == nil ? Task {
+                    let left = max(0, Self.drawLimit - Date().timeIntervalSince(opened))
+                    return await frames.wait(app: id, launch: app.processIdentifier, limit: .milliseconds(Int(left * 1000))) == .drawn
+                } : nil
+            if drew != nil { owner?.whenStopped.append { frames.end(app: id) } }
             // A look goes on once the app has pictured its window; anything else waits its first seconds out, since what
             // it does next (a fix at the turn's end, the chat's "ready") depends on how they went.
             if early ? await watch.untilShown(project) : await watch.verdict() != nil {
                 watch.told = true
                 crash = watch.crash
+                frames.end(app: id)
             } else {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
-                owner?.shown.append(Date())
-                if inFront, saysReady { sayReady(project, await readyWords(project)) }
+                if let drew, await !drew.value {
+                    if owner?.stopped != true, let line = Self.draftLine(project.name, .pending, updated: false) { log(project, .status, line) }
+                } else {
+                    owner?.shown.append(Date())
+                    if inFront, saysReady { sayReady(project, await readyWords(project)) }
+                }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
@@ -14357,16 +14383,15 @@ final class Store: ObservableObject {
 
     /// What the agent is told of a draft's window, above the look in the hidden copy; nil for a window not heard from yet.
     nonisolated static func draftWords(_ window: DraftWindow?) -> String? {
-        let checks = "It isn't done: run every check in the guide, a whole round with `use_app` and the smaller window with `look_at_app`, and don't say it's done before they pass."
         switch window {
         case nil, .pending?:
-            return "This first draft has opened in the game's window on this Mac but hasn't drawn yet, so don't count on the person seeing it: a window behind another draws nothing until it comes forward. " + checks
+            return "This first draft has opened in the game's window on this Mac but hasn't drawn yet, so don't count on the person seeing it: a window behind another draws nothing until it comes forward."
         case .content?:
-            return "This first draft is open in the game's window on this Mac now, where the person sees it. " + checks
+            return "This first draft is open in the game's window on this Mac now, where the person sees it."
         case .blank?:
-            return "This first draft is open in the game's window on this Mac and has drawn a frame, but that frame is one color. A dark opening can be meant; if it isn't, find out why. " + checks
+            return "This first draft is open in the game's window on this Mac and has drawn a frame, but that frame is one color. A dark opening can be meant; if it isn't, find out why."
         case .noPicture?:
-            return "This first draft is open in the game's window on this Mac and has drawn a frame, but its picture didn't come, so what it shows is unknown. " + checks
+            return "This first draft is open in the game's window on this Mac and has drawn a frame, but its picture didn't come, so what it shows is unknown."
         case .timedOut(let seconds)?:
             return "The game's window opened on this Mac but drew no frame within \(seconds) s, so the person may see nothing yet. Find out why: the look below is of the hidden copy, not of that window."
         case .closed?:

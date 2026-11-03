@@ -127,6 +127,8 @@ enum Agent {
 
     private static let lookRules = """
 
+    - A web game at home on the Mac has a rule of its own on looking at it and trying it, in its rules: for that game \
+    it stands in for the rules on looking below.
     - `look_at_app` puts what you've written into the app and shows you its windows, what it printed and any \
     build errors or crash, so you can check your work instead of guessing. What you save goes into the open app \
     by itself when it can; a look shows you what the person sees. While the app is open a look is quick, since \

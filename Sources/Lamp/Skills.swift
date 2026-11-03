@@ -146,7 +146,7 @@ enum Skills {
     /// and phones as controllers are the agent's to choose for any request, so their guidance can't wait for the app to
     /// be of a kind that has them.
     static let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "game-feel", "game-3d", "game-physics", "game-levels", "game-art",
-                             "game-live", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
+                             "game-live", "game-playtest", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
     /// and not a rule and a line: the building blocks, AI in the app, the person's accounts, App Intents, share
