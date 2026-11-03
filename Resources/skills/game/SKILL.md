@@ -28,8 +28,8 @@ The tools Lamp has for games:
 - **Phones as players**: a game on the runtime takes phones on the Wi‑Fi with `Lamp.controllers` (Web/lamp.js) and
   its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview, on a
   Samsung or LG TV and on the Xbox; elsewhere `Lamp.controllers` says it can't start, so the game stays whole with a controller,
-  the keys or touch. Lamp's preview of the game plays with its scripted pad, and can join the game's phone page as one
-  player (the phone-pages skill). Read a phone's buttons in `frame(f)` from `f.phones`, as the pads are read (`frame().phones`
+  the keys or touch. Lamp plays the game with a controller of its own, never as a phone: only the person's phones
+  join. Read a phone's buttons in `frame(f)` from `f.phones`, as the pads are read (`frame().phones`
   in a Phaser scene): one `{ player, down, pressed, released }` for each phone joined, each button by the name the phone
   page gave it, so `for (const p of f.phones) if (p.pressed.go) start()`. `pressed` and `released` last the one frame after
   it happened, and a press let go again between two frames is still a press. `onButton` runs between frames, so a flag
@@ -82,8 +82,8 @@ different rates, and a slow frame must not slow the game.
 
 - Web (the runtime): `game({ renderer, init, frame })` from lamp-game.js, moving by `f.dt`; in 2D, Phaser's scenes
   through `phaser({ scenes })` from lamp-phaser.js, moving by `update`'s `delta`, on the same one loop. Never requestAnimationFrame, timers, the
-  clock, Math.random or localStorage: `random()`, `save()` and `load()` from the runtime let Lamp's preview replay a
-  play exactly.
+  clock, Math.random or localStorage: `random()`, `save()` and `load()` from the runtime, which keep through a change
+  of the code.
   Physics is the one exception to moving by `f.dt`: it steps at a fixed 1/60 s inside the frame, through `fixedStep`
   from lamp-game.js, so it behaves the same at any frame rate (Rapier for 3D, in the 3d-game skill).
 - SpriteKit: in a SpriteView, one SKScene subclass for each screen with `scaleMode = .resizeFill`; movement in
@@ -288,8 +288,8 @@ game is written to keep the player's place through one:
 
     After a run, the look says which parts were built again, how long each took, which are still being built in the
     background, how long the game stood still, and what of the change nothing read again, which shows only after
-    Reload. A look in the hidden copy builds every part afresh, so it shows a change the
-    open game may not: what you see there is in the person's game only when the part it's built into was built again.
+    Reload. A look shows the person's open game as it is: a change built into a part that was kept isn't in it until
+    that part is built again.
 
     A big 3D world on three.js's `WebGPURenderer` keeps its scene and lights the same way, as its camera is. For a new one of
     them it works out how to draw every object again, which holds a big world still for a second at each change. Empty
@@ -374,22 +374,21 @@ single picture hides.
 
 ## Playtesting
 
-Play it the way the person would before you finish: a game that only looks right isn't done. On Lamp's game runtime and
-the C++ kit, the preview plays the game from a script of the controller's moves (`use_app` with `stick`, `button` and
-`wait`), with the same random numbers each time, so the same moves after a change show exactly what it changed. Play a
-whole round: start, learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there
-always something to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and
-play it again.
+Play it the way the person would before you finish: a game that only looks right isn't done. On Lamp's game runtime,
+`use_app` plays the game in its window on this Mac, the one the person has open, with Lamp's own controller (`stick`,
+`button` and `wait`), in plain sight and from wherever the game is: a menu, a pause screen, the middle of a level. Read
+the last picture first and get to what you mean to check; to begin again, look with `reopen` (which asks the person
+first while they play). Play a whole round: start, learn the controls, score, get hit, lose, win, pause. Ask of each
+stretch whether it's fun: is there always something to do, does each action answer, is it too easy or too hard, does
+anything surprise. Fix what isn't, and play it again.
 
-Every `use_app` plays all the moves so far again from the start, on the code as you saved it, with no look needed to
-build it. Every look but one with `on_device` starts the moves over, a plain look at the person's open window too: after
-a fix, go on with `use_app`, and if such a look came first, send all the moves again in one `use_app`. A look with
-`on_device` leaves them as they are, so never send them again after one. A fix that changes timing or navigation can put
-the same moves somewhere else, so check they still reach the same places.
+A fix goes into the open game as you save it (or with a look), so play on after one with `use_app`; nothing replays the
+moves before it, and the game's random numbers differ each time, so play to the same place again rather than expecting
+the same frames. The person playing takes the game back at once: then use_app is off until their next message.
 
-SpriteKit in a Swift app and a page with a loop of its own have no scripted preview: `use_app` there acts where the
-person sees it, so it waits for them to ask. Without that, keep to what `look_at_app` shows, and say what you didn't
-play rather than calling it checked.
+A C++ game (played on the Xbox), SpriteKit in a Swift app and a page with a loop of its own take no controller from Lamp:
+`use_app` there acts as that place takes it, where the person sees it, so it waits for them to ask. Without that, keep to
+what `look_at_app` shows, and say what you didn't play rather than calling it checked.
 
 ## A game and the wish's other apps
 

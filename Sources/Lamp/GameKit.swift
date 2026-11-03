@@ -9,12 +9,12 @@ import LampRelayKit
 /// the person's Apps like any other, the page in a web view of the app's own inside a little Swift of Lamp's
 /// (`LampWebGame.swift` and `LampPage.swift`, with LampSupport.swift, so it has the wand, the chat beside it and LampAI).
 /// The same page goes on an iPhone or iPad through that app, on Android in Lamp's Android app (`GameAndroid`), and on the
-/// Xbox as the integration's web app, installed as a game. The agent plays it in a preview on the Mac (`WebGamePreview`,
-/// the page out of sight, from a script of the controller's moves), so its looks are the same frames every time.
+/// Xbox as the integration's web app, installed as a game. The agent looks at it and plays it in its window on the Mac,
+/// the one the person plays in (`Store.lookAtOpenGame`; `use_app` holds Lamp's own controller there, `controls`).
 ///
 /// A game made before three.js games is C++ against Lamp's game kit (`lamp_game.h`, sokol_gfx, the kit's own sound mix),
 /// built on this Mac with LLVM and Microsoft's SDK (`WindowsTools`) for the Xbox alone, which is the only place it has,
-/// and played in the kit's own Metal preview (`play`). New games aren't made in C++.
+/// and looked at there. New games aren't made in C++.
 enum GameKit {
     static let kind = "native-game"
     /// The size every game is drawn at, everywhere, scaled to the screen.
@@ -130,8 +130,8 @@ enum GameKit {
     }
 
     /// Whether a game made as the Xbox's web app (`isXboxWebGame`) still runs its own loop and input rather than Lamp's
-    /// game runtime: none of its page's own files load lamp-game.js. The preview's scripted plays need `game()`, so such a
-    /// page is looked at and used in the page preview it had as the Xbox's web app, until it's moved onto the runtime.
+    /// game runtime: none of its page's own files load lamp-game.js. Lamp's controller (`controls`) needs `game()`, so such a
+    /// page is looked at and used as a screen is, until it's moved onto the runtime.
     static func ownsLoop(_ project: LampProject) -> Bool {
         guard isGame(project), engine(project) == .web, isXboxWebGame(project.dir) else { return false }
         let page = project.dir.appendingPathComponent(webFolder)
@@ -209,7 +209,7 @@ enum GameKit {
     /// Lamp's common host for a page on Apple's devices (a web game's and a screen's: serving and showing it, LampAI
     /// through the app, and `LampNative` calls of the device); and where those calls are answered, the app's own Swift, written only
     /// when the app has none yet.
-    /// The page's host, with the script that reads the page's screen as the preview reads it (`PageScreen`) written in.
+    /// The page's host, with the script that reads the page's screen as the TV preview reads it (`PageScreen`) written in.
     static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first.map {
         ($0.path, $0.text.replacingOccurrences(of: "\"{{PAGE_SCREEN_SCRIPT}}\"", with: String(reflecting: PageScreen.script)))
     }
@@ -571,7 +571,7 @@ enum GameKit {
             + "&& cd \"$LAMP_APP\" && /bin/rm -rf \(Sandbox.quoted(compiledFolder)) && /bin/cp -Rp \"$LAMP_SCRATCH/app\" \(Sandbox.quoted(compiledFolder))"
         var output: [String] = []
         // Off the network: a Bun macro (`with { type: 'macro' }`) is the game's code run here at build time, with no command
-        // check and before any preview holds it, and Bun's --no-macros doesn't stop one. A build fetches nothing.
+        // check, and Bun's --no-macros doesn't stop one. A build fetches nothing.
         let status = await Sandbox.run(command, for: project, cwd: project.dir,
                                        env: ["LAMP_SCRATCH": scratch.path, "LAMP_APP": project.dir.path],
                                        opening: [scratch.path], reading: [bun.deletingLastPathComponent().path], offline: true) { output.append($0) }
@@ -613,7 +613,7 @@ enum GameKit {
     /// Every path Lamp owns in a game, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
         let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
-        // A C++ game made before three.js games is the kit's alone, played on the Xbox and in the preview.
+        // A C++ game made before three.js games is the kit's alone, played on the Xbox.
         guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp", marker] }
         return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", controllerKit?.path ?? "Sources/LampControllerKit.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
             + DeviceSupport.rapierFiles.map { "\(rapierFolder)/\($0.name)" }
@@ -667,7 +667,7 @@ enum GameKit {
             try Template.write("A game made with Lamp: a page drawn with three.js or Phaser in Web/.\nengine: web\n", to: marker, for: project)
             return
         }
-        // A C++ game: the kit, as Lamp had it before three.js games, for the Xbox and the preview.
+        // A C++ game: the kit, as Lamp had it before three.js games, for the Xbox.
         guard !files.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
         for file in files {
             try Template.put(file.data, at: project.dir.appendingPathComponent("\(folder)/\(file.name)"), for: project)
@@ -754,15 +754,15 @@ enum GameKit {
         """
     }
 
-    /// Goes with a look in the preview, a hidden copy that shows a change whether or not the person's open game took it.
+    /// Goes with a look at the game open on this Mac: what its last change did there, and what of it the person can't see yet.
     @MainActor static func openGameNote(_ project: LampProject) -> String {
         let left = unregistered(project)
         let report = PageLive.shared.lastReport(project, at: .mac)
         var came = report?.words.map { " What came through the open game's last change: \($0). Anything reset or not registered is the person's place lost: register it now, so the next change keeps it." } ?? ""
-        // The hidden copy builds every part afresh; the open game builds again only the parts a change is known to touch.
+        // The open game builds again only the parts a change is known to touch.
         if let report, report.words != nil, report.tellsParts {
             came += " The open game built again " + (report.built.isEmpty ? "no part of the world" : report.built.map(\.part).joined(separator: ", "))
-                + " and kept every other part as it was. If what you changed is built in a part it kept, the person doesn't see it yet, whatever this look shows:"
+                + " and kept every other part as it was. If what you changed is built in a part it kept, it isn't in the game yet:"
                 + " name the file it's built from in that part's keep (`from`, the game skill, \"Changes while it's played\"), so the change builds it again, and don't say it's in until a look at the open game shows it."
         }
         // A part built in the background: the person plays on with the old one until it's built and goes in by itself.
@@ -806,7 +806,7 @@ enum GameKit {
 
     A game built and changed with Lamp: a page in Web/ drawn with three.js (or Phaser, for 2D) and played through Lamp's
     game runtime (Web/lamp-game.js), its models, pictures and sounds beside it. It's a Mac app played in its own window, and goes on
-    an iPhone, an iPad or an Xbox too once it's put there. Lamp plays it in a preview on the Mac to try it.
+    an iPhone, an iPad or an Xbox too once it's put there. Lamp tries it in its window on the Mac.
 
     ## What it does
     Nothing yet: fresh scaffold, a card saying "Lamp is making this game.", for the game to replace.
@@ -824,7 +824,7 @@ enum GameKit {
 
     A game built and changed with Lamp: C++ in Game/ against Lamp's game kit (Lamp/lamp_game.h), with its models,
     pictures and sounds in Assets/. It's a Mac app played in its own window, and goes on an iPhone, an iPad or an Xbox
-    too once it's put there. Lamp plays it in a preview on the Mac to try it.
+    too once it's put there. Lamp tries it on the Xbox.
 
     ## What it does
     Nothing yet: fresh scaffold, a ball the left stick rolls on a lit floor.
@@ -977,12 +977,12 @@ enum GameKit {
 
     // MARK: Building
 
-    enum Target: String { case xbox, preview }
+    enum Target: String { case xbox }
 
     /// Runs the kit's build in the app's sandbox, with the tools where Lamp keeps them. The console's build leaves
-    /// build/xbox.zip (App.exe and Assets/) for `DeviceApps` to package; the preview's, build/preview/lamp_preview.
+    /// build/xbox.zip (App.exe and Assets/) for `DeviceApps` to package.
     static func build(_ project: LampProject, for target: Target, started: (@MainActor (Process) -> Void)? = nil) async throws {
-        if target == .xbox, let problem = WindowsTools.problem { throw Failure(message: problem) }
+        if let problem = WindowsTools.problem { throw Failure(message: problem) }
         try await toolsForApple()
         try write(for: project)
         var printed: [String] = []
@@ -994,7 +994,7 @@ enum GameKit {
             // The compiler's own words, without the source lines it quotes under each.
             let errors = printed.filter { $0.contains("error") || $0.contains("Error") || $0.contains("undefined") }
             let said = (errors.isEmpty ? printed.suffix(30) : errors.prefix(30)).joined(separator: "\n")
-            throw Failure(message: "The \(target == .xbox ? "Xbox" : "preview") build failed:\n" + said)
+            throw Failure(message: "The Xbox build failed:\n" + said)
         }
     }
 
@@ -1006,144 +1006,57 @@ enum GameKit {
         }
     }
 
-    // MARK: The preview
+    // MARK: Played in its window
 
-    /// What a play on the preview holds the controller at, for how long: one line of the preview's script.
-    struct Hold: Equatable {
-        var frames: Int
-        var lx: Float = 0, ly: Float = 0, rx: Float = 0, ry: Float = 0, lt: Float = 0, rt: Float = 0
-        var buttons: UInt32 = 0
-
-        var line: String {
-            func number(_ value: Float) -> String { String(format: "%.3f", max(-1, min(1, value))) }
-            return "hold \(frames) \(number(lx)) \(number(ly)) \(number(rx)) \(number(ry)) \(number(lt)) \(number(rt)) \(buttons)"
-        }
-    }
-
-    /// The controller's buttons by the names the agent uses, as the kit's bits.
+    /// The controller's buttons by the names the agent uses, as the runtime's bits (lamp-game.js's BUTTON).
     static let buttons: [String: UInt32] = ["a": 1 << 0, "b": 1 << 1, "x": 1 << 2, "y": 1 << 3, "lb": 1 << 4, "rb": 1 << 5,
                                             "menu": 1 << 6, "view": 1 << 7, "up": 1 << 8, "down": 1 << 9, "left": 1 << 10,
                                             "right": 1 << 11, "ls": 1 << 12, "rs": 1 << 13]
 
-    /// The play the agent has made so far in the preview, by app: every look but one with `on_device` starts one, every `use_app` adds to it,
-    /// and each is played again whole from the start (the preview's frames are always 1/60 s and its random numbers
-    /// always the same), so a change to the code is seen in the same moves.
-    @MainActor static var plays: [String: [String]] = [:]
-
-    /// Where a play's script, saves and pictures are: Lamp's folder in the app, not its runtime folder, which the sandbox
-    /// closes when the person keeps what an app shows from the agent (then a play takes no pictures).
-    static func previewFolder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/preview") }
-
-    struct Played {
-        var pictures: [URL]
-        var printed: [String]
-        var stats: String?
-        var sound: String?   // what the game played and how loud the mix came out
-        var phone: PhonePreview.Report?
-        /// A web game's: whether the play built the game in a new preview, rather than one kept warm.
-        var fresh = false
-    }
-
-    /// Plays the script in the preview: the game from its start, saves cleared, pictures where the script says.
-    static func play(_ project: LampProject, script given: [String], started: (@MainActor (Process) -> Void)? = nil) async throws -> Played {
-        let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
-        let folder = previewFolder(project)
-        AppFolder.remove(folder, in: project.dir)
-        try AppFolder.write(script.joined(separator: "\n") + "\n", to: folder.appendingPathComponent("script.txt"), in: project.dir)
-        try AppFolder.write("", to: folder.appendingPathComponent("saves/.keep"), in: project.dir)
-        try AppFolder.write("", to: folder.appendingPathComponent("pictures/.keep"), in: project.dir)
-        let here = ".lamp/preview"
-        var printed: [String] = []
-        let status = await Sandbox.run("build/preview/lamp_preview \(here)/script.txt \(here)/pictures Assets \(here)/saves",
-                                       for: project, started: started) { line in
-            printed.append(line)
-            if printed.count > 600 { printed.removeFirst(300) }
+    /// `use_app`'s controller moves for a game in its window on this Mac, as the actions Lamp's driver in the app carries
+    /// out (`LampDriver`, with the game's page holding the controller: LampPage.swift, lamp-game.js's "Lamp's hands on
+    /// the controller"): each `stick` or `button` held for its seconds, at most ten as a Mac app's key is, and let go
+    /// before the next; `wait`. Or why they can't be. Each move's words say what it did.
+    static func controls(for actions: [[String: Any]]) -> (actions: [[String: Any]], problem: String?) {
+        var moves: [[String: Any]] = []
+        for action in actions {
+            let kind = action["action"] as? String ?? ""
+            let seconds = min(max(action["amount"] as? Double ?? (kind == "button" ? 0.1 : 1), 1.0 / 60), 10)
+            var pad: [String: Double] = [:]
+            func press(_ key: String) -> Bool {
+                if key == "lt" { pad["lt"] = 1 } else if key == "rt" { pad["rt"] = 1 }
+                else if let bit = buttons[key] { pad["down"] = Double(bit) } else { return false }
+                return true
+            }
+            var words: String
+            switch kind {
+            case "wait":
+                moves.append(["action": "wait", "amount": seconds])
+                continue
+            case "stick":
+                let side = (action["target"] as? String ?? "left").lowercased()
+                let x = action["x"] as? Double ?? 0, y = action["y"] as? Double ?? 0
+                guard side == "left" || side == "right", abs(x) <= 1, abs(y) <= 1 else {
+                    return (moves, "A stick is `target` left or right, with x and y from -1 to 1 (up and right positive).")
+                }
+                pad[side == "left" ? "lx" : "rx"] = x
+                pad[side == "left" ? "ly" : "ry"] = y
+                words = "held the \(side) stick at \(x.formatted()), \(y.formatted()) for \(seconds.formatted()) s"
+                // A stick moved while a button is held: both at once.
+                if let key = (action["key"] as? String)?.lowercased() {
+                    guard press(key) else { return (moves, "\(key) isn't a button: \((buttons.keys.sorted() + ["lt", "rt"]).joined(separator: ", ")).") }
+                    words += " with \(key.uppercased()) held"
+                }
+            case "button":
+                guard let key = (action["key"] as? String)?.lowercased() else { return (moves, "A button action names its button in `key`.") }
+                guard press(key) else { return (moves, "\(key) isn't a button: \((buttons.keys.sorted() + ["lt", "rt"]).joined(separator: ", ")).") }
+                words = "held \(key.uppercased()) for \(seconds.formatted()) s"
+            default:
+                return (moves, "A game takes `stick`, `button` and `wait`.")
+            }
+            moves.append(["action": kind, "amount": seconds, "controller": pad, "text": words])
         }
-        let stats = printed.last { $0.hasPrefix("Lamp stats:") }
-        let sound = printed.last { $0.hasPrefix("Lamp sound:") }
-        printed.removeAll { $0.hasPrefix("Lamp stats:") || $0.hasPrefix("Lamp sound:") }
-        guard status == 0 else {
-            // What it printed is the agent's to read only when the person shares what apps print.
-            let said = Privacy.sharesLog && !printed.isEmpty ? " What it printed last:\n" + printed.suffix(20).joined(separator: "\n") : ""
-            throw Failure(message: "The game stopped in the preview (exit \(status))." + said)
-        }
-        let names = script.compactMap { line -> String? in line.hasPrefix("shot ") ? String(line.dropFirst(5)) : nil }
-        let pictures = names.map { folder.appendingPathComponent("pictures/\($0).png") }.filter { AppFile.read($0, in: project, last: 1) != nil }
-        return Played(pictures: pictures, printed: printed, stats: stats.map { String($0.dropFirst("Lamp stats: ".count)) },
-                      sound: sound.map { String($0.dropFirst("Lamp sound: ".count)) })
-    }
-
-    // MARK: The web game preview
-
-    /// Where a web game's page is copied for the preview: Lamp's own folder, never the app's, which the agent's
-    /// commands can change while the preview reads it.
-    static func stagingFolder(_ project: LampProject) -> URL {
-        Edition.supportFolder.appendingPathComponent("Game Builds").appendingPathComponent(project.id)
-    }
-
-    /// Copies the page out of the app's folder under the app's sandbox, as a TV app's is (`TVs.stage`), refusing one
-    /// that holds a link, which would bring what it leads to into the copy.
-    static func stageWeb(_ project: LampProject) async throws -> URL {
-        let fm = FileManager.default
-        let dir = stagingFolder(project), page = dir.appendingPathComponent("web")
-        try? fm.removeItem(at: page)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        try write(for: project)
-        try await compileSource(project)
-        // The phone page comes too, for the preview's phone (`PhonePreview`).
-        let phoneFolder = Sandbox.quoted(TVTemplate.phoneFolder), phone = phonePreviewFolder(project)
-        try? fm.removeItem(at: phone)
-        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(webFolder)) \"$LAMP_TO\" && if [ -e \(phoneFolder) ] || [ -L \(phoneFolder) ]; then /bin/cp -Rp \(phoneFolder) \"$LAMP_PHONE\"; fi"
-        guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the game's files.") }
-        var output: [String] = []
-        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": page.path, "LAMP_PHONE": phone.path], login: false) { output.append($0) }
-        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the game's files.\n\n" + output.suffix(4).joined(separator: "\n")) }
-        func holdsLink(_ folder: URL) -> Bool {
-            ([folder] + (fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
-                .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
-        }
-        if holdsLink(page) {
-            try? fm.removeItem(at: page)
-            throw Failure(message: "Web/ holds a shortcut to another file. Put the file itself in its place.")
-        }
-        if holdsLink(phone) {
-            try? fm.removeItem(at: phone)
-            throw Failure(message: "Some of the phone page's files are shortcuts to other files. Put the files themselves in their place.")
-        }
-        // Lamp's files beside it, as a phone is served them; the port is never dialed, the preview's socket being a stand-in.
-        if fm.fileExists(atPath: phone.appendingPathComponent("index.html").path) {
-            try Data(TVTemplate.phoneControllerJS.utf8).write(to: phone.appendingPathComponent("lamp-controller.js"))
-            try Data(#"{"port":1,"app":"preview"}"#.utf8).write(to: phone.appendingPathComponent("lamp-relay.json"))
-        }
-        guard fm.fileExists(atPath: page.appendingPathComponent("index.html").path) else { throw Failure(message: "The game has no Web/index.html.") }
-        // The preview is played on this Mac, so its page is told it's the Mac's.
-        try GamePage.stage(page, in: dir, for: GamePage.place(for: project, at: .mac))
-        return page
-    }
-
-    /// How long the game took to be built last time, in seconds: a play in a new preview (kept beside its copy of the
-    /// page), or else its window on this Mac (the line lamp-game.js logs as it draws its first frame). Nil when neither is known.
-    static func lastBuilt(_ project: LampProject) -> TimeInterval? {
-        if let text = try? String(contentsOf: builtFile(project), encoding: .utf8), let seconds = TimeInterval(text.trimmed) { return seconds }
-        guard let log = try? String(contentsOf: Runtime.logURL(project), encoding: .utf8),
-              let line = log.components(separatedBy: "\n").last(where: { $0.contains(builtLine) }),
-              let words = line.components(separatedBy: builtLine).last?.split(separator: " ").first else { return nil }
-        return TimeInterval(words)
-    }
-
-    /// The words lamp-game.js logs before the seconds the open game took to be built.
-    private static let builtLine = "Lamp: the game was built and drawn "
-
-    private static func builtFile(_ project: LampProject) -> URL {
-        stagingFolder(project).appendingPathComponent("built.txt")
-    }
-
-    /// How long a play in the preview may take: for a game whose build was timed, twice that and a minute for the play,
-    /// two minutes at least and ten at most; three minutes for one never timed, whose first build may have the system
-    /// compiling every shader of a big world.
-    static func previewLimit(_ project: LampProject) -> TimeInterval {
-        guard let built = lastBuilt(project) else { return 180 }
-        return min(600, max(120, 2 * built + 60))
+        return (moves, nil)
     }
 
     /// Whether a picture of the game's window shows nothing of the game: one even color where the game is drawn, as a
@@ -1169,149 +1082,6 @@ enum GameKit {
             }
         }
         return (0..<3).allSatisfy { highest[$0] - lowest[$0] < 6 }
-    }
-
-    /// Whether the preview's next play will likely wait a while for the game to be built: the chat's step says so.
-    @MainActor static func buildsLong(_ project: LampProject) -> Bool {
-        !WebGamePreview.isWarm(for: project.id) && (lastBuilt(project) ?? 0) > 20
-    }
-
-    /// Plays the script on a web game's page, as `play` does on a C++ game's preview, from the copy `stageWeb` made.
-    @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
-        let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
-        let page = stagingFolder(project).appendingPathComponent("web")
-        let limit = previewLimit(project)
-        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project),
-                                                              phone: phonePreviewFolder(project), limit: .seconds(limit)) else {
-            throw Failure(message: "Stopped.")
-        }
-        let logs = result["logs"] as? [String] ?? []
-        // Only a build from the top counts: a play in the preview kept open builds just what changed.
-        if result["cold"] as? Bool == true, let took = result["took"] as? TimeInterval {
-            try? String(Int(took.rounded(.up))).write(to: builtFile(project), atomically: true, encoding: .utf8)
-        }
-        if let ran = result["timedOut"] as? TimeInterval {
-            let said = Privacy.sharesLog && !logs.isEmpty ? " What it logged last:\n" + logs.suffix(20).joined(separator: "\n") : ""
-            let seconds = Int(ran.rounded())
-            if let built = result["built"] as? TimeInterval {
-                throw Failure(message: "The game's init was done in the preview after \(Int(built.rounded())) s, but its play didn't finish "
-                    + "within \(seconds) s: its first frames compile the scene's shaders, which can take a minute for a big world the "
-                    + "first time, or something in its frames takes far too long or waits for something that never comes." + said)
-            }
-            if result["started"] as? Bool == true {
-                throw Failure(message: "The game called game() but was still starting after \(seconds) s in the preview, so the play never began: "
-                    + "its init is still running, or waits for something that never comes (a file, a promise)." + said)
-            }
-            if result["answered"] as? Bool == true, result["started"] == nil {
-                throw Failure(message: "The game never started in the preview: in \(seconds) s its page didn't load Lamp's runtime. Check that "
-                    + "Web/index.html loads the game's module and that it imports Web/lamp-game.js and calls game() once.")
-            }
-            if result["answered"] as? Bool == true {
-                throw Failure(message: "After \(seconds) s in the preview the page still hadn't called game(): it's still loading or building "
-                    + "what comes before (a whole city's data can take minutes), or a module failed to load. "
-                    + (lastBuilt(project).map { "Last time it was built in \(Int($0.rounded())) s. " } ?? "")
-                    + "Look again to give it the time, or look at the game in its window with `on_device`." + said)
-            }
-            throw Failure(message: "The preview's page didn't answer for \(seconds) s: it's busy in one long piece of code that never "
-                + "lets it go, such as a loop that doesn't end. Look for one in what the game runs as it starts.")
-        }
-        if let failed = result["failed"] as? String {
-            let said = Privacy.sharesLog && !logs.isEmpty ? " What it logged last:\n" + logs.suffix(20).joined(separator: "\n") : ""
-            throw Failure(message: "The game stopped in the preview: \(failed)." + said)
-        }
-        let folder = previewFolder(project)
-        AppFolder.remove(folder, in: project.dir)
-        var pictures: [URL] = []
-        for line in script where line.hasPrefix("shot ") {
-            let name = String(line.dropFirst(5))
-            guard let png = drawn[name] else { continue }
-            let url = folder.appendingPathComponent("pictures/\(name).png")
-            try AppFolder.write(png, to: url, in: project.dir)
-            pictures.append(url)
-            guard let phone = drawn[phonePicture + name] else { continue }
-            let beside = folder.appendingPathComponent("pictures/\(phonePicture + name).png")
-            try AppFolder.write(phone, to: beside, in: project.dir)
-            pictures.append(beside)
-        }
-        return Played(pictures: pictures, printed: logs, stats: result["stats"] as? String, sound: result["sound"] as? String,
-                      phone: result["phone"] as? PhonePreview.Report, fresh: result["cold"] as? Bool == true)
-    }
-
-    /// What a web game's preview is held to: for a game that declares the local network no network at all, shared or not
-    /// (the sites of a shared game's rules may be on the home network), so that using it in the preview can't press a
-    /// device of the person's (`DevicePermissions`); otherwise a shared game's rules.
-    static func previewPolicy(_ project: LampProject) -> NetworkPolicy? {
-        previewHeldBack(project) ? NetworkPolicy() : SharedNetwork.policy(for: project)
-    }
-
-    /// Whether the preview reaches no network because of what the game declares.
-    static func previewHeldBack(_ project: LampProject) -> Bool {
-        engine(project) == .web && DevicePermissions.reachesDevices(project)
-    }
-
-    /// The name a picture of the phone page has beside the game's picture of that moment.
-    static let phonePicture = "phone-"
-
-    /// Why the game's phone page can't be played in the preview, nil when it can.
-    static func phonePreviewProblem(_ project: LampProject) -> String? {
-        guard engine(project) == .web, !ownsLoop(project) else { return "Only a game on Lamp's web runtime has its phone page in the preview." }
-        let stagedOrOwn = [phonePreviewFolder(project), project.dir.appendingPathComponent(TVTemplate.phoneFolder)]
-        guard stagedOrOwn.contains(where: { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) }) else {
-            return "This game has no phone page: put one in Phone/index.html."
-        }
-        return nil
-    }
-
-    /// The script for `use_app`'s actions on the controller, or why one can't be played. Each action ends with a picture.
-    static func script(for actions: [[String: Any]], startingAt shot: Int) -> (lines: [String], said: [String], problem: String?) {
-        var lines: [String] = [], said: [String] = []
-        var number = shot
-        for action in actions {
-            if action["phone"] as? Bool == true {
-                let moves = phoneMoves(action)
-                if let problem = moves.problem { return (lines, said, problem) }
-                number += 1
-                lines += moves.lines + ["shot \(number)"]
-                said += moves.said.map { [$0] } ?? []
-                continue
-            }
-            let kind = action["action"] as? String ?? ""
-            let seconds = min(max(action["amount"] as? Double ?? (kind == "button" ? 0.1 : 1), 1.0 / 60), 60)
-            var hold = Hold(frames: max(1, Int((seconds * 60).rounded())))
-            var words: String
-            switch kind {
-            case "wait":
-                words = "waited \(seconds.formatted()) s"
-            case "stick":
-                let side = (action["target"] as? String ?? "left").lowercased()
-                let x = Float(action["x"] as? Double ?? 0), y = Float(action["y"] as? Double ?? 0)
-                guard side == "left" || side == "right", abs(x) <= 1, abs(y) <= 1 else {
-                    return (lines, said, "A stick is `target` left or right, with x and y from -1 to 1 (up and right positive).")
-                }
-                if side == "left" { hold.lx = x; hold.ly = y } else { hold.rx = x; hold.ry = y }
-                words = "held the \(side) stick at \(x.formatted()), \(y.formatted()) for \(seconds.formatted()) s"
-            case "button":
-                guard let key = (action["key"] as? String)?.lowercased() else { return (lines, said, "A button action names its button in `key`.") }
-                if key == "lt" { hold.lt = 1 } else if key == "rt" { hold.rt = 1 }
-                else if let bit = buttons[key] { hold.buttons = bit }
-                else { return (lines, said, "\(key) isn't a button: \((buttons.keys.sorted() + ["lt", "rt"]).joined(separator: ", ")).") }
-                words = "held \(key.uppercased()) for \(seconds.formatted()) s"
-            default:
-                return (lines, said, "A game takes `stick`, `button` and `wait`.")
-            }
-            // A stick moved while a button is held: both at once.
-            if kind == "stick", let key = (action["key"] as? String)?.lowercased() {
-                if key == "lt" { hold.lt = 1 } else if key == "rt" { hold.rt = 1 } else if let bit = buttons[key] { hold.buttons = bit }
-                words += " with \(key.uppercased()) held"
-            }
-            lines.append(hold.line)
-            // Let go before the next action, so a press after a press is a new one.
-            if hold != Hold(frames: hold.frames) { lines.append(Hold(frames: 1).line) }
-            number += 1
-            lines.append("shot \(number)")
-            said.append(words.prefix(1).uppercased() + words.dropFirst() + ".")
-        }
-        return (lines, said, nil)
     }
 }
 
@@ -1352,7 +1122,7 @@ extension Agent.Rules {
     - This game's page was made for the Xbox before Lamp had a game runtime: it runs its own loop and reads the controller \
     and keyboard itself. Keep it that way and change what's asked within it. Moving it onto `game()` from Web/lamp-game.js \
     (read all of it first) rewrites its loop, its input and its sound: do that only when the person asks for something \
-    that needs it, and once it's done its looks are the preview's scripted plays.
+    that needs it, and once it's done it's looked at and played as any game on the runtime is.
 
     """
 
@@ -1383,8 +1153,7 @@ extension Agent.Rules {
 
     - The game reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
     messages, shared values and files, so another app of the wish can send it moves or things to play with, or show \
-    its score. That works wherever it's played: the Mac, an iPhone or an iPad, Android and the Xbox. In Lamp's preview \
-    of it `Lamp.wish` is 'away' with a reason saying it can't reach them there, so the game stays whole without them. Its players play with a controller, the keyboard or the touch controls Lamp draws, and \
+    its score. That works wherever it's played: the Mac, an iPhone or an iPad, Android and the Xbox. Its players play with a controller, the keyboard or the touch controls Lamp draws, and \
     phones join as players from its Phone/ page (`Lamp.controllers`); the wish's other apps send it messages rather than \
     joining as players.
     """
@@ -1405,7 +1174,7 @@ extension Agent.Rules {
     You are Lamp's builder agent. The current directory is a game, which Lamp builds on this Mac. Its home is the Mac, where it's an app the person plays in its own window with the keyboard \
     or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller), an Android phone, \
     tablet or TV, a Samsung or LG TV (a TV's remote: its arrows and OK) and on the person's Xbox too once it's put there. It's the same code everywhere: the kit gives each place its screen, controls and \
-    sound. You try it in a preview on this Mac, the same code drawn out of sight. The request's device line says where \
+    sound. You try it in its window on this Mac, the one the person plays in, with them watching. The request's device line says where \
     it's played and what that allows: never say it's on a device it isn't on. Read APP.md first for context.
     """
 
@@ -1471,7 +1240,7 @@ extension Agent.Rules {
     then the scaffold's import map, then game.js as a module: keep that. The runtime fits the 1920x1080 stage to the \
     window or screen and runs the game's frames about 60 times a second. Never call requestAnimationFrame, setTimeout or \
     setInterval for the game, nor read the clock, Math.random or localStorage: move things by the frame's time and use \
-    `random()`, `save(name, value)` and `load(name)` from lamp-game.js, so Lamp's preview replays a play exactly. The \
+    `random()`, `save(name, value)` and `load(name)` from lamp-game.js, which keep through a change of the code. The \
     controller is the runtime's pad (lx, ly, rx, ry -1 to 1 with up positive and the dead zone out; lt and rt 0 to 1; \
     buttons as BUTTON.A… bits in down, pressed and released; the skill says where a game reads it), the same wherever \
     it's played: a controller connected to the device, the Mac's keyboard (WASD or the arrows the left stick, IJKL the \
@@ -1479,7 +1248,7 @@ extension Agent.Rules {
     controls Lamp draws on a phone or tablet (a left stick, and the buttons `touch` names: BUTTON.A | BUTTON.B | \
     BUTTON.MENU unless you say otherwise, BUTTON.RSTICK for a right stick; keep a game playable with those few on a \
     phone). B is the game's, for back or cancel, and Menu for pause. Draw text and menus as HTML over the canvas (a \
-    fixed div, large type) or in the game's own drawing; the preview pictures both. \
+    fixed div, large type) or in the game's own drawing; a look pictures both. \
     The player may hold an Xbox, PlayStation or Switch controller, the keyboard or the touch screen, and switches as \
     they play, so never write a key's or a button's name: write the controls once, as actions mapped to the pad \
     (`const CONTROLS = { jump: BUTTON.A, pause: BUTTON.MENU, move: STICK.LEFT, gas: TRIGGER.RT }`), read the pad \
@@ -1544,7 +1313,7 @@ extension Agent.Rules {
     pitch a little (0.9 to 1.1, from random()) for one heard often; `{ loop: true }` for a sound that lasts, changed \
     with `sound.set` and ended with `sound.stop`. Music is optional and quiet (`sound.music(s, 0.35)`) under effects \
     at 0.5 to 0.8. The pause menu (Menu) turns sound and music on and off with `sound.volume(effects, music)`, kept \
-    with save(). The preview plays nothing aloud, and each look says what was played.
+    with save().
     """
 
     static let gameWebAssets = """
@@ -1584,7 +1353,7 @@ extension Agent.Rules {
     left stick, and the buttons `lamp_touch_buttons` names in game_init: A, B and Menu unless you say otherwise; keep \
     a game playable with those few on a phone). B is the game's, for back or cancel, and Menu for pause. Nothing \
     outside the kit: no Windows or Apple headers, no threads, no files but `lamp_asset`, `lamp_save` and `lamp_load`, \
-    no network, no rand() or time (use `lamp_random`, so the preview replays the same). Plain C++20 and its standard \
+    no network, no rand() or time (use `lamp_random`). Plain C++20 and its standard \
     library are fine.
     """
 
@@ -1600,14 +1369,13 @@ extension Agent.Rules {
     lasts (an engine), changed with `lamp_voice_set` and ended with `lamp_stop`. Music is optional and quiet \
     (0.3 to 0.4) under effects at 0.5 to 0.8: `lamp_music` for a file the person gave or the `assets` tool brought in, or where nothing there fits a short tune of your own \
     made into samples (`lamp_sound_samples`, notes of a gentle wave with soft ends) played with `lamp_music_sound`. The pause menu \
-    (Menu) turns sound and music on and off with `lamp_volume`, kept with `lamp_save`. The preview plays nothing \
-    aloud; each look says what was played and how loud the mix came out: keep its loudest under -3 dB, and play \
-    quieter what pushed it over full volume.
+    (Menu) turns sound and music on and off with `lamp_volume`, kept with `lamp_save`. Keep the mix's loudest under \
+    -3 dB: play quieter what would push it over full volume.
     """
 
     static let gameBudget = """
     - Keep within the means of the slowest place the game is played, which the request's device line names with its \
-    budget (draws and vertices a frame, the largest texture): the preview's stats count both. One pass with one or \
+    budget (draws and vertices a frame, the largest texture). One pass with one or \
     two lights computed in the shader is the safe start; shadow maps and full-screen effects only where the budget \
     allows them. Draw many copies of one mesh as one instanced draw. Make meshes once in game_init, never per frame; \
     allocate nothing per frame. Wherever it's played, the log says every ten seconds how it kept to its frames \
@@ -1615,7 +1383,7 @@ extension Agent.Rules {
     """
 
     /// Where a game is played and what that allows, for the request's device line: the weakest place's budget, in
-    /// what the preview counts (vertices for C++ on the kit, triangles for a page). The Xbox's is the console the
+    /// vertices for C++ on the kit, triangles for a page. The Xbox's is the console the
     /// game goes to, as Device Portal names it: a Series X or S gives a game far more than an Xbox One, whose budget
     /// stands for any console Lamp doesn't know yet.
     static func gamePlaces(_ project: LampProject) -> String {
@@ -1674,25 +1442,25 @@ extension Agent.Rules {
     """
 
     static let gameTry = """
-    - `look_at_app` builds the preview on this Mac and plays the game from its start for two seconds, with no one \
-    touching the controller, and shows you the last frame, what the game logged (`lamp_log`, a line per event, never \
-    per frame) and the preview's stats (draws a frame, and vertices for C++ or triangles for a page); with `motion` it shows a frame every half \
-    second, and what it played on its speakers. While the game is open on this Mac, a look instead puts what you've \
-    saved into it and shows its window as the person has it (where they are, not the start), in a few seconds, since \
-    the preview builds the whole world again out of sight; a look with `reopen`, and every `use_app`, play in the \
-    preview from the start. `use_app` plays on in the preview with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
-    1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, b, x, y, lb, rb, lt, rt, menu, \
-    view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
-    Each use plays the whole game again from the start with the moves so far, so after a change to the code the same \
-    moves show what changed (one to timing or navigation can land them elsewhere: check). Each look but one with \
-    `on_device` starts the moves over, a plain look at the person's open window too. Play it as the person would before you finish: a game that only looks right \
-    isn't done. Read how the game takes the controller first (APP.md, its controls code): a vehicle's gas is often a \
-    trigger, held as `key` rt alongside the stick that steers, and a game that barely moves under your moves is one \
-    you're driving with the wrong control, not one that can't be tried. The preview is this Mac drawing out of sight: it can't show speed, so keep to the budget. \
-    `look_at_app` with `on_device` builds the game for where Try On points, opens it there and shows its own picture \
-    of the screen and its log: the game's window on this Mac, the iPhone or iPad simulator, or the person's Xbox (its \
-    frame times are in its log). Do that once the game plays right in the preview, to see it start where the person \
-    plays it. Lamp can't press a real controller, the keys in the person's window or a device's screen: only the \
-    person can play it there.
+    - `look_at_app` shows you the game where the person plays it, never a copy of its own. A game in Web/ is looked at \
+    in its window on this Mac: a look puts what you've saved into it and shows the window as the person has it (where \
+    they are, not its start) in a few seconds, and opens the game when it's closed. What the window can't show (a change \
+    waiting for Reload, one that didn't go in, a picture that looks blank) is said, never shown some other way. `reopen` \
+    starts it from its beginning, its saves kept, asking the person first while they play. A C++ game is looked at on \
+    the person's Xbox. Each look shows a picture and what the game logged (`lamp_log`, a line per event, never per \
+    frame; every ten seconds of play the log says how it kept to its frames); with `motion`, a frame every half second. \
+    `use_app` plays the game in its window on this Mac with Lamp's own controller, in plain sight: `stick` (`target` \
+    left or right, `x` and `y` -1 to 1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, \
+    b, x, y, lb, rb, lt, rt, menu, view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and \
+    `wait`, each at most 10 seconds, with a picture at the end. It plays from wherever the game is (a menu, a pause \
+    screen, the middle of a level), not its start: read the picture first and get to what you mean to check. The \
+    person's own press takes the game back at once, and use_app is off until their next message. Play it as the person \
+    would before you finish: a game that only looks right isn't done. Read how the game takes the controller first \
+    (APP.md, its controls code): a vehicle's gas is often a trigger, held as `key` rt alongside the stick that steers, \
+    and a game that barely moves under your moves is one you're driving with the wrong control, not one that can't be \
+    tried. `look_at_app` with `on_device` builds the game for where Try On points, opens it there and shows its own \
+    picture of the screen and its log: the game's window on this Mac, the iPhone or iPad simulator, or the person's \
+    Xbox (its frame times are in its log); `use_app` then takes only what that place takes. Lamp can't press a phone \
+    page or a controller anywhere but the game's window on this Mac: only the person can play it there.
     """
 }

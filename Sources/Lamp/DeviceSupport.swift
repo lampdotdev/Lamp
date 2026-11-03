@@ -529,8 +529,6 @@ enum DeviceSupport {
           var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
           list = list.filter(function (r) { return ipv4.test(r); }).concat(list.filter(function (r) { return !ipv4.test(r); }));
         }
-        // Lamp's preview of a game replays a play exactly, so nothing in it answers from outside.
-        if (window.lampPreview) return Promise.reject(new Failure('Lamp\'s preview has no AI: show example content here, and look at the game on the device for the real answers.'));
         if (!list.length) return Promise.reject(new Failure(unplaced()));
         // With a deadline (LampAI.act's turn), each try gets only the time left, and none starts after it.
         function left() { return deadline ? deadline - Date.now() : timeout; }

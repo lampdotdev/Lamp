@@ -107,9 +107,10 @@ Lamp.controllers.onJoin(function (player) { moves.push({ player: player, joined:
 
 ### Seeing the page
 
-In a game on Lamp's web runtime, you can see and press this page yourself: `use_app` with `phone` true on an action opens the real `Phone/index.html` at 844x390, sideways (`rotate` with `up` for a page held upright), joined to the game as a player in the same play, with a picture of it beside the game's, what it sent the game, its words and controls, and what it logged. Tap with `click` by `target` (a selector or the words on it) or x and y; `press`, `release` and `drag` work a held button or a stick, and a `press`, several `drag`s with no place, then a `release` trace a path; `type` fills a field; `rotate` turns it (`up`, then `left` or `right` for each way round), and works with a finger left down; `link` with `item` `lost`, `away` or `back` drops and restores it. Before you finish, play the whole journey with it: joining, the menu, play, a move the game rejects, results, the link lost and back, and rotation with a control or a gesture held.
-
-It's the real page and the real `Lamp.controllers`, but not a real phone: one phone at most and one finger, so it shows nothing about a second player's view or a two-finger gesture; in Mac WebKit, with synthetic touches that move in straight steps and no `pointercancel` of their own, so it shows a gesture works, not how it feels; on a link that stands in for the relay (no QR scan, no files, no network, so what it loads must be in `Phone/`). The page's timers and clocks go by the play, so a long press lasts what the script says; a CSS animation runs by real time. A notch, the browser's bars, the keyboard, tilt, the wake lock, vibration and `orientation.lock` aren't there to see, and speed isn't either. Say so when you report it, and ask the person to try it on their phone.
+Lamp can't open or press this page itself: only the person's own phones join the game. Check it by reading it against
+the game's messages (what each view needs, what each press sends, the link lost and back, rotation with a control held),
+say plainly that you haven't seen it on a phone, and ask the person to try the whole journey on theirs: joining, the
+menu, play, a move the game rejects, results, the link lost and back, and rotation with a control or a gesture held.
 
 On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game. It starts with a host:
 

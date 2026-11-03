@@ -65,6 +65,15 @@ import UIKit
         configuration.userContentController.add(LampPageLog(), name: "lampLog")
         #if os(macOS)
         configuration.userContentController.add(LampPagePlaying(), contentWorld: .page, name: "lampPlaying")
+        configuration.userContentController.add(LampPageDriveTaken(scheme: scheme), contentWorld: .page, name: "lampDriveTakenOver")
+        // A fresh start Lamp asked for when it opened the app (`-LampFreshStart YES`): a game starts from its beginning
+        // (lamp-game.js's claim()), once, at this launch's first page; a page opened again later in the same launch
+        // (Reload, a change) starts where the player was, as ever.
+        if UserDefaults.standard.bool(forKey: "LampFreshStart") {
+            configuration.userContentController.addUserScript(WKUserScript(source: """
+                try { if (!sessionStorage.getItem('lamp.freshStart')) { sessionStorage.setItem('lamp.freshStart', '1'); window.lampFreshStart = true; } } catch (e) {}
+                """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         #endif
         // The page's console, into the app's log.
         configuration.userContentController.addUserScript(WKUserScript(source: """
@@ -627,6 +636,18 @@ final class LampPageLog: NSObject, WKScriptMessageHandler {
 }
 
 #if os(macOS)
+/// A game's page saying the person played while Lamp held its controller (lamp-game.js, "Lamp's hands on the
+/// controller"): it has let go already, and Lamp's batch ends there, as it does for their click or key in the app.
+final class LampPageDriveTaken: NSObject, WKScriptMessageHandler {
+    private let scheme: String
+    init(scheme: String) { self.scheme = scheme }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard LampPage.isOwnPage(message, scheme: scheme) else { return }
+        MainActor.assumeIsolated { LampDriver.Handover.current?.stop() }
+    }
+}
+
 /// A game's page saying it's loading, and then that it's playing (lamp-game.js): the picture of the app Lamp's desk shows
 /// waits for play, and is taken a moment after it starts, once the loading screen has faded (`LampRuntime.snapshot`).
 final class LampPagePlaying: NSObject, WKScriptMessageHandler {
@@ -1142,6 +1163,18 @@ final class LampPageBlockedHost: NSObject {
                 else { run(fire + "fire('keyup');") }
             }
             return hold > 0 ? "held \(name) for \(LampScreen.number(hold)) s in the page" : "pressed \(name) in the page"
+        case "stick", "button":
+            // A game's controller, held in the game's own script (lamp-game.js, "Lamp's hands on the controller") for
+            // `amount` seconds and let go after, or at once if the batch stops or a newer one takes its place.
+            guard let held = action.controller else { return nil }
+            let seconds = min(max(action.amount ?? 0, 1.0 / 60), 10)
+            let hold = held.merging(["seconds": seconds]) { $1 }
+            guard let json = try? JSONSerialization.data(withJSONObject: hold) else { return nil }
+            page.evaluateJavaScript("window.__lampDrive ? window.__lampDrive(\(String(decoding: json, as: UTF8.self))) : false")
+            let release = { page.evaluateJavaScript("window.__lampDrive && window.__lampDrive(null)") }
+            if let batch = LampDriver.Handover.current { batch.hold(for: seconds, release: release) }
+            else { DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { MainActor.assumeIsolated { release() } } }
+            return action.text ?? "held the game's controller for \(LampScreen.number(seconds)) s"
         default:
             return nil
         }

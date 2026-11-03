@@ -1,0 +1,255 @@
+import JavaScriptCore
+import Network
+import XCTest
+@testable import Lamp
+
+/// A game is checked in the window the person plays it in, never a copy of Lamp's own: `use_app` holds Lamp's own
+/// controller there (lamp-game.js, "Lamp's hands on the controller"), a look with `reopen` starts it from its beginning
+/// with its saves kept, and a game that reaches the person's devices is pressed or opened only on a device they allowed.
+@MainActor
+final class GameInWindowTests: XCTestCase {
+    private var folders: [URL] = []
+
+    override func tearDown() {
+        for folder in folders { try? FileManager.default.removeItem(at: folder) }
+        folders = []
+    }
+
+    private func folder() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("game-window-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        folders.append(url)
+        return url
+    }
+
+    // MARK: Lamp's controller in the game's page
+
+    /// The runtime with a clock, a controller of the person's (`testPad`), a phone's buttons (`testPhone`) and the
+    /// message the page sends the app when the person takes the game back (`testTaken`); a game that keeps its first pad.
+    private func playing() throws -> (JSContext, () -> [String: Any]) {
+        var failed: String?
+        let context = try GameRuntimePage.load(page: """
+            var testNow = 1000, testTaken = [], testPad = null, testPhone = null;
+            var performance = { now: function () { return testNow; } };
+            navigator.getGamepads = function () { return testPad ? [testPad] : []; };
+            window.webkit = { messageHandlers: { lampDriveTakenOver: { postMessage: function (why) { testTaken.push(why); } } } };
+            window.Lamp = { controllers: { onButton: function (fn) { testPhone = fn; }, onLeave: function () {}, players: function () { return []; } } };
+            var seen = { pad: null };
+            """) { failed = failed ?? $0 }
+        context.evaluateScript("game({ renderer: testRenderer, frame: function (f) { seen.pad = Object.assign({}, f.pads[0]); } });")
+        let step = { () -> [String: Any] in
+            context.evaluateScript("testNow += 16; testFrames.splice(0).forEach(function (fn) { fn(testNow); });")
+            XCTAssertNil(failed)
+            return context.evaluateScript("seen.pad")?.toDictionary() as? [String: Any] ?? [:]
+        }
+        _ = step()
+        return (context, step)
+    }
+
+    private func taken(_ context: JSContext) -> [String] {
+        context.evaluateScript("testTaken")?.toArray() as? [String] ?? []
+    }
+
+    /// Lamp's hold is the first player while it lasts, the press a press the frame it begins, and gone when the app
+    /// lets go (a batch moving on, stopped or replaced): the frame after has nothing held.
+    func testLampsHoldIsTheFirstPlayerUntilLetGo() throws {
+        let (context, step) = try playing()
+        context.evaluateScript("__lampDrive({ lx: 1, ly: 0.5, down: 1, seconds: 1 })")
+        let held = step()
+        XCTAssertEqual(held["lx"] as? Double, 1)
+        XCTAssertEqual(held["ly"] as? Double, 0.5)
+        XCTAssertEqual(held["down"] as? Int, 1)
+        XCTAssertEqual(held["pressed"] as? Int, 1)
+        XCTAssertEqual(step()["pressed"] as? Int, 0, "a press is a press for one frame")
+        context.evaluateScript("__lampDrive(null)")
+        let free = step()
+        XCTAssertEqual(free["down"] as? Int, 0)
+        XCTAssertEqual(free["lx"] as? Double, 0)
+        XCTAssertEqual(free["released"] as? Int, 1)
+        XCTAssertEqual(taken(context), [], "the app let go itself: nothing to tell it")
+    }
+
+    /// The person's controller moved while Lamp holds the first player: Lamp lets go at once, never mixing the two,
+    /// the frame is the person's, and the app is told, which ends Lamp's batch.
+    func testThePersonsControllerTakesTheGameBack() throws {
+        let (context, step) = try playing()
+        context.evaluateScript("__lampDrive({ rx: -1, seconds: 5 })")
+        XCTAssertEqual(step()["rx"] as? Double, -1)
+        context.evaluateScript("""
+            testPad = { id: 'Xbox Wireless Controller', connected: true, axes: [0.9, 0, 0, 0],
+                        buttons: Array.from({ length: 16 }, function () { return { pressed: false, value: 0 }; }) };
+            """)
+        let theirs = step()
+        XCTAssertEqual(theirs["rx"] as? Double, 0, "Lamp's right stick is let go")
+        XCTAssertGreaterThan(theirs["lx"] as? Double ?? 0, 0.8, "the person's left stick is what the game reads")
+        XCTAssertEqual(taken(context), ["the person played"])
+        // Their controller back at rest: nothing of Lamp's comes back.
+        context.evaluateScript("testPad.axes = [0, 0, 0, 0];")
+        XCTAssertEqual(step()["rx"] as? Double, 0)
+    }
+
+    /// A phone's button pressed while Lamp holds the controller takes the game back too.
+    func testAPhonesPressTakesTheGameBack() throws {
+        let (context, step) = try playing()
+        context.evaluateScript("__lampDrive({ down: 2, seconds: 5 })")
+        XCTAssertEqual(step()["down"] as? Int, 2)
+        context.evaluateScript("testPhone(1, 'a', true)")
+        XCTAssertEqual(step()["down"] as? Int, 0)
+        XCTAssertEqual(taken(context), ["a phone played"])
+    }
+
+    /// Should the app never say (it quit, or hung), a hold ends by itself a second after it was due.
+    func testAHoldEndsByItselfWhenTheAppNeverLetsGo() throws {
+        let (context, step) = try playing()
+        context.evaluateScript("__lampDrive({ ly: 1, seconds: 0.5 })")
+        XCTAssertEqual(step()["ly"] as? Double, 1)
+        context.evaluateScript("testNow += 1200")
+        XCTAssertEqual(step()["ly"] as? Double, 1, "still within its second of grace")
+        context.evaluateScript("testNow += 400")
+        XCTAssertEqual(step()["ly"] as? Double, 0)
+        XCTAssertEqual(taken(context), [])
+    }
+
+    /// The buttons Lamp holds are the runtime's own bits, by the names the agent uses.
+    func testTheButtonsLampHoldsAreTheRuntimes() throws {
+        let context = try GameRuntimePage.load { XCTFail($0) }
+        let runtime = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Resources/GameKit/web/lamp-game.js"), encoding: .utf8)
+        let line = try XCTUnwrap(runtime.range(of: #"export const BUTTON = \{[^}]*\}"#, options: .regularExpression))
+        let bits = try XCTUnwrap(context.evaluateScript("(" + runtime[line].dropFirst("export const BUTTON = ".count) + ")")?.toDictionary() as? [String: Int])
+        let names = ["a": "A", "b": "B", "x": "X", "y": "Y", "lb": "LB", "rb": "RB", "menu": "MENU", "view": "VIEW", "up": "UP",
+                     "down": "DOWN", "left": "LEFT", "right": "RIGHT", "ls": "LSTICK", "rs": "RSTICK"]
+        XCTAssertEqual(Set(GameKit.buttons.keys), Set(names.keys))
+        for (name, bit) in GameKit.buttons { XCTAssertEqual(bits[names[name]!], Int(bit), name) }
+
+        let moves = GameKit.controls(for: [["action": "stick", "target": "right", "x": -1.0, "y": 0.5, "key": "rt", "amount": 2.0],
+                                           ["action": "button", "key": "menu"], ["action": "wait", "amount": 30.0]])
+        XCTAssertNil(moves.problem)
+        XCTAssertEqual(moves.actions[0]["controller"] as? [String: Double], ["rx": -1, "ry": 0.5, "rt": 1])
+        XCTAssertEqual(moves.actions[1]["controller"] as? [String: Double], ["down": 64])
+        XCTAssertEqual(moves.actions[2]["amount"] as? Double, 10, "a hold is at most ten seconds, as a Mac app's key is")
+        XCTAssertNotNil(GameKit.controls(for: [["action": "click", "x": 3.0, "y": 4.0]]).problem)
+        XCTAssertNotNil(GameKit.controls(for: [["action": "button", "key": "start"]]).problem)
+    }
+
+    // MARK: A fresh start
+
+    /// Opened for a fresh start (`lampFreshStart`, a launch Lamp asked for one), the game starts from its beginning:
+    /// neither the place kept for its reopening nor the snapshot an older build left is restored, and both are gone, but
+    /// the game's saves are the person's and stay. Without the flag the same page starts where the player was.
+    func testAFreshStartKeepsTheSavesAndNothingElse() throws {
+        func open(fresh: Bool) throws -> [String: Any] {
+            var failed: String?
+            let context = try GameRuntimePage.load(page: """
+                var testSession = { 'lamp.live': JSON.stringify({ state: { level: 3 }, gen: 2 }) };
+                var testLocal = { 'lamp.save.best': '42', 'lamp.live.last': JSON.stringify({ build: 'old', at: Date.now(), state: { level: 5 } }) };
+                function testStore(kept) { return { getItem: function (k) { return k in kept ? kept[k] : null; },
+                    setItem: function (k, v) { kept[k] = v; }, removeItem: function (k) { delete kept[k]; } }; }
+                var sessionStorage = testStore(testSession), localStorage = testStore(testLocal);
+                var location = { reload: function () {} };
+                window.lampFreshStart = \(fresh);
+                var seen = {};
+                """) { failed = failed ?? $0 }
+            context.evaluateScript("game({ renderer: testRenderer, init: function () { seen.place = pendingRestore(); }, frame: function () {} });")
+            context.evaluateScript("if (testFrames.length) testFrames.shift()(1000);")
+            context.evaluateScript("seen.session = testSession; seen.local = testLocal;")
+            XCTAssertNil(failed)
+            return context.evaluateScript("seen")?.toDictionary() as? [String: Any] ?? [:]
+        }
+        let fresh = try open(fresh: true)
+        XCTAssertTrue(fresh["place"] is NSNull, "\(fresh)")
+        XCTAssertNil((fresh["session"] as? [String: Any])?["lamp.live"])
+        XCTAssertNil((fresh["local"] as? [String: Any])?["lamp.live.last"])
+        XCTAssertEqual((fresh["local"] as? [String: Any])?["lamp.save.best"] as? String, "42")
+
+        let kept = try open(fresh: false)
+        XCTAssertEqual((kept["place"] as? [String: Any])?["level"] as? Int, 3, "an ordinary opening keeps the player's place")
+    }
+
+    // MARK: The person's devices
+
+    /// An app that declares the local network, as one that controls the person's devices does.
+    private func app(platform: Platform, marker: String?, declares: Bool = true) throws -> LampProject {
+        let dir = try folder()
+        if declares {
+            try #"{"localNetwork":"Finds your lights to switch them."}"#.write(to: dir.appendingPathComponent(Template.Capabilities.file), atomically: true, encoding: .utf8)
+        }
+        if let marker { try marker.write(to: dir.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8) }
+        return LampProject(id: "lights", name: "Lights", exe: "Lights", dir: dir, platform: platform)
+    }
+
+    /// A web game that reaches devices is played in the window the person plays it in, on the real network: a use is
+    /// refused unless it names a device they allowed, as any app's is.
+    func testAWebGameThatReachesDevicesNeedsAnAllowedDevice() throws {
+        let game = try app(platform: .game, marker: "A game made with Lamp.\nengine: web\n")
+        XCTAssertTrue(DevicePermissions.reachesDevices(game))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(game))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try app(platform: .game, marker: "A game made with Lamp.\n")))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try app(platform: .mac, marker: nil)))
+    }
+
+    /// Opening such a game, or starting it again, runs its device code with no one pressing anything: a look that does
+    /// is held to the same device. Other apps' looks aren't, as before.
+    func testOpeningAGameThatReachesDevicesNeedsAnAllowedDevice() throws {
+        XCTAssertTrue(DevicePermissions.openNeedsDevice(try app(platform: .game, marker: "A game made with Lamp.\nengine: web\n")))
+        XCTAssertFalse(DevicePermissions.openNeedsDevice(try app(platform: .mac, marker: nil)))
+    }
+
+    /// A game's phones join a relay of Lamp's own in the game, which declares nothing: a game with a phone page and no
+    /// declaration of its own reaches no devices.
+    func testAGamesPhonesArentDevices() throws {
+        let game = try app(platform: .game, marker: "A game made with Lamp.\nengine: web\n", declares: false)
+        let phone = game.dir.appendingPathComponent(TVTemplate.phoneFolder)
+        try FileManager.default.createDirectory(at: phone, withIntermediateDirectories: true)
+        try "<!doctype html><button>Go</button>".write(to: phone.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        XCTAssertFalse(DevicePermissions.reachesDevices(game))
+        XCTAssertFalse(DevicePermissions.useNeedsDevice(game))
+        XCTAssertFalse(DevicePermissions.openNeedsDevice(game))
+    }
+
+    // MARK: A TypeScript game's build
+
+    /// What a TypeScript game's build runs under: a Bun macro is the game's code run at build time, so this is what keeps
+    /// a game that declares the local network from pressing a device as it's built.
+    func testAnOfflineCommandReachesNoNetwork() async throws {
+        let (listener, port, heard) = try await listen()
+        defer { listener.cancel() }
+        let project = LampProject(id: "pad", name: "Pad", exe: "Pad", dir: try folder(), platform: .game)
+        let request = "/usr/bin/curl -s -m 3 -o /dev/null http://127.0.0.1:\(port)/keypress/Home"
+        _ = await Sandbox.run(request, for: project, offline: true) { _ in }
+        XCTAssertEqual(heard.count, 0, "an offline command reached the network")
+        _ = await Sandbox.run(request, for: project) { _ in }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertGreaterThan(heard.count, 0, "the same command should be heard online, or this proves nothing")
+    }
+
+    private final class Heard: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        var count: Int { lock.withLock { value } }
+        func add() { lock.withLock { value += 1 } }
+    }
+
+    private func listen() async throws -> (NWListener, UInt16, Heard) {
+        let listener = try NWListener(using: .tcp, on: .any)
+        let heard = Heard()
+        listener.newConnectionHandler = { connection in
+            heard.add()
+            connection.start(queue: .main)
+            connection.send(content: Data("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".utf8), completion: .contentProcessed { _ in connection.cancel() })
+        }
+        let port: UInt16 = try await withCheckedThrowingContinuation { done in
+            nonisolated(unsafe) var answered = false
+            listener.stateUpdateHandler = { state in
+                guard !answered else { return }
+                switch state {
+                case .ready: answered = true; done.resume(returning: listener.port?.rawValue ?? 0)
+                case .failed(let error): answered = true; done.resume(throwing: error)
+                default: break
+                }
+            }
+            listener.start(queue: .main)
+        }
+        return (listener, port, heard)
+    }
+}

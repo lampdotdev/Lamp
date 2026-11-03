@@ -4,7 +4,7 @@
 // boxes, spheres and the like, sokol_debugtext.h and sokol_gl.h for text and lines, HandmadeMath.h for vectors and
 // matrices, cgltf.h for glTF models and stb_image.h for pictures, and sound through the functions below. On the Xbox
 // the host is a full-screen app drawing with Direct3D 11 at 1920x1080, 60 frames a second, and playing the sound
-// through XAudio2; on the Mac the same code is drawn with Metal, out of sight, for Lamp's preview. Nothing here or in the game may call Windows or Apple APIs: everything the game needs from the
+// through XAudio2. Nothing here or in the game may call Windows or Apple APIs: everything the game needs from the
 // machine goes through the functions below.
 #pragma once
 #include <stdbool.h>
@@ -42,7 +42,7 @@ typedef struct LampSetup {
 } LampSetup;
 
 typedef struct LampFrame {
-    double dt;          // seconds since the last frame: 1/60 at the console's pace, and always 1/60 in the preview
+    double dt;          // seconds since the last frame: 1/60 at the console's pace
     double time;        // seconds since the game started
     uint64_t number;    // frames since the game started
     int width, height;
@@ -64,8 +64,7 @@ void lamp_free(LampFile file);
 // A line in the game's log, which Lamp reads (printf's format). Keep it to what helps: a few lines, not one a frame.
 void lamp_log(const char* format, ...);
 
-// Random numbers. The preview starts every play with the same seed, so a play replays exactly; use these, never
-// rand() or the time, for anything random.
+// Random numbers: use these, never rand() or the time, for anything random.
 uint32_t lamp_random(void);
 float lamp_random_float(void);   // 0 up to 1
 
@@ -74,8 +73,7 @@ void lamp_rumble(int pad, float low, float high);
 
 // Sound: effects and music, mixed by the kit in stereo at 48 kHz on the console's speakers. Up to 32 effects play at
 // once (a 33rd takes the place of the oldest) and one piece of music beside them. Nothing here waits or takes time
-// from the frame: call these from game_init and game_frame as things happen. The preview on the Mac plays silently,
-// at the same pace as ever, and says what was played and how loud it came out.
+// from the frame: call these from game_init and game_frame as things happen.
 typedef struct LampSound { uint32_t id; } LampSound;   // id 0 is no sound (a file that didn't load): playing it does nothing
 
 // An effect from Assets/ (.wav, .ogg or .mp3), decoded whole once: load each in game_init, never per frame.

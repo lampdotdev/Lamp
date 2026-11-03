@@ -788,17 +788,12 @@ final class Store: ObservableObject {
         var shownPage = ""
         /// The game's page as the last step held for Reload had it: said once in the chat, not at every save after.
         var heldStepPage = ""
-        /// The sources the agent's last look played in the hidden copy (`lookedAtGame`), by app: what it looks at is a
-        /// state it means to show, so the game open on this Mac takes it too, without waiting for a progress line.
-        var lookedSources: [String: String] = [:]
-        /// When the agent last looked at the game open on this Mac rather than the hidden copy (`lookAtOpenGame`): what
-        /// went in since is what its next such look says.
+        /// When the agent last looked at the game open on this Mac (`lookAtOpenGame`): what went in since is what its next
+        /// look says.
         var lookedAtOpenGame: Date?
-        /// Stops the agent's look playing the game in the hidden copy (`playGame`), set while it plays: a message from the
-        /// person stops it (`stoppedForMessage`), so they never wait behind Lamp's own checking. It stops that play alone,
-        /// for the game being played (a wish's part, under the wish's turn), never a build the turn runs beside it.
-        var stopHidden: (@MainActor () -> Void)?
-        var stoppedForMessage = false
+        /// The games whose last look was where Try On points (`on_device`, away from this Mac), by app: `use_app` goes
+        /// where the last look went, so it never presses in a copy the agent hasn't seen.
+        var gameOnDevice: Set<String> = []
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
@@ -4092,11 +4087,6 @@ final class Store: ObservableObject {
             saveChat(project)
         }
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
-        // A message never waits behind Lamp's own checking: a play in the hidden copy stops, so the turn goes on to it.
-        if let turn = turns[project.id], let stop = turn.stopHidden {
-            turn.stoppedForMessage = true
-            stop()
-        }
         // Keeping the wish's other places current gives way to a request: they're tried again once it's done.
         for app in apps(of: wish(of: project)) where turns[app.id]?.updatingPlaces == true { turns[app.id]?.cancel() }
         startQueued(project)
@@ -5680,7 +5670,7 @@ final class Store: ObservableObject {
     private func stepCanRun(_ app: LampProject, in turn: Turn) -> Bool {
         let crash = setAsideChanges[wish(of: app).id]
         return !turn.stopped && turn.agent != nil && !turn.building && !turn.keptOpen && stepsPage(app) && !Runtime.waitsForReload(app)
-            && (!turn.look.inProgress || turn.stopHidden != nil)
+            && !turn.look.inProgress
             && (crash?.told != false || turn.carriedSetAside == crash?.crash)
     }
 
@@ -6324,19 +6314,38 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         if turn.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
+              var actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
               var json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
-        // A game is played in the preview, wherever else it's played: the same moves give the same frames.
-        if GameKit.isGame(project), !GameKit.ownsLoop(project) { return await useOnGame(project, actions: actions) }
+        // A game is played where it was last looked at, the copy the person has: its window on this Mac, with Lamp's own
+        // controller held in the game's page under the same Stop as any app's use (`GameKit.controls`), or where Try On
+        // points, with what that place takes. Never in a copy of its own, and never on a phone page Lamp hasn't got.
+        let game = GameKit.isGame(project) && !GameKit.ownsLoop(project)
+        let inWindow = game && playsInWindow(project) && !turn.gameOnDevice.contains(project.id)
+        if game {
+            if actions.contains(where: { $0["phone"] as? Bool == true }) { return (200, ["text": Self.noPhoneUse]) }
+            let moves = actions.contains { ["stick", "button"].contains($0["action"] as? String ?? "") }
+            if !inWindow, moves {
+                return (200, ["text": "Controller moves (`stick` and `button`) go only into the game's window on this Mac, and your last look "
+                    + "was \(playsInWindow(project) ? "where Try On points" : "on \(placeName(project))"), which takes what its own `use_app` takes. "
+                    + (playsInWindow(project) ? "Look without `on_device` to play it in its window here." : "This game has no window on this Mac to play it in.")])
+            }
+            if inWindow {
+                let controls = GameKit.controls(for: actions)
+                if let problem = controls.problem { return (200, ["text": problem]) }
+                actions = controls.actions
+                guard let data = try? JSONSerialization.data(withJSONObject: actions) else { return (400, ["error": "use_app needs a list of actions."]) }
+                json = String(decoding: data, as: UTF8.self)
+            }
+        }
         // A page with the remote's focus and keys (a screen, a game made for the Xbox with a loop of its own) is used where
         // it was last looked at: its Mac copy when that's what the person sees (`pageOnMac`), else the page preview.
-        let onMac = pageOnMac(project, shape: nil) && !(asidePreviews.contains(project.id) && TVPreview.isOpen(project))
+        let onMac = inWindow || pageOnMac(project, shape: nil) && !(asidePreviews.contains(project.id) && TVPreview.isOpen(project))
         if !onMac, project.platform.target.looksInTVPreview || GameKit.ownsLoop(project) { return await useOnTV(project, actions: actions, json: json) }
         let project = onMac ? project.at(.mac) : project
         // The remote's keys the page's rules name, as a Mac keyboard sends them (lamp.js reads Escape as Back).
-        if onMac {
+        if onMac, !inWindow {
             let keys = ["back": "escape", "ok": "return", "enter": "return"]
             let mapped = actions.map { action -> [String: Any] in
                 guard action["action"] as? String == "key", let key = (action["key"] as? String)?.lowercased(), let mac = keys[key] else { return action }
@@ -6353,11 +6362,14 @@ final class Store: ObservableObject {
             return held(turn, in: project, note: Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote, using: true)
         }
         guard let app = macCopies(of: project).first else {
-            return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
+            return (200, ["text": inWindow ? "The game isn't open. Call look_at_app first: it opens it in its window on this Mac."
+                : "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         // An app that can't be stopped part way (built before `LampDriver.Handover`) is rebuilt first: the person
-        // is shown Stop, and it has to work. "lampUseAppStop" also finds the longer key newer apps carry.
-        guard Self.binary(of: project, contains: "lampUseAppSignature"), Self.binary(of: project, contains: "lampUseAppStop") else {
+        // is shown Stop, and it has to work. "lampUseAppStop" also finds the longer key newer apps carry. A game's
+        // controller is held by its page, which tells Lamp when the person takes it back ("lampDriveTakenOver").
+        guard Self.binary(of: project, contains: "lampUseAppSignature"), Self.binary(of: project, contains: "lampUseAppStop"),
+              !inWindow || Self.binary(of: project, contains: "lampDriveTakenOver") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
         let readsScreen = Self.binary(of: project, contains: Self.screenTextMarker)
@@ -6421,7 +6433,7 @@ final class Store: ObservableObject {
         let waits = actions.reduce(0.0) { total, action in
             switch action["action"] as? String {
             case "wait": total + min(action["amount"] as? Double ?? 1, 10)
-            case "key": total + min(max(action["amount"] as? Double ?? 0, 0), 10)
+            case "key", "stick", "button": total + min(max(action["amount"] as? Double ?? 0, 0), 10)
             default: total
             }
         }
@@ -6464,7 +6476,16 @@ final class Store: ObservableObject {
             : "\n\n" + Privacy.picturesOff
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
-        return (200, ["text": text, "screenshots": Self.agentPictures(Runtime.pictures(of: project), in: project)])
+        var pictures = Runtime.pictures(of: project)
+        // A game's window that drew nothing to picture (`lookAtOpenGame` says the same).
+        if inWindow, let first = pictures.first, GameKit.isBlank(first) {
+            pictures = []
+            text += "\n\nThe game's picture looks blank, one even color where the game is drawn, so none follows: the window may be "
+                + "covered, on another Space or on a sleeping display, or the game drew nothing."
+        } else if inWindow {
+            text += "\n\nThis was the game the person has open, from where they were in it, not a play from the start."
+        }
+        return (200, ["text": text, "screenshots": Self.agentPictures(pictures, in: project)])
     }
 
     /// What the agent hears once the person has taken the app back, and from then on when it calls use_app.
@@ -9102,19 +9123,15 @@ final class Store: ObservableObject {
             var seen = "", tried = "", seenAt = Date()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
-                // While the agent works on a game its preview stays warm, however long it goes between looks there.
-                if let self, turns[project.id] === turn, !turn.stopped, let app = stepped(project) { WebGamePreview.keepWarm(for: app.id) }
                 // Reload pressed while the agent works goes in here, between its steps, inside this turn.
                 if let self, !Task.isCancelled, reloadWhenFree.contains(project.id), turns[project.id] === turn {
                     await reloadInTurn(project, turn)
                     continue
                 }
-                // A game's page also takes a step while the agent's look plays the game in the hidden copy, which can
-                // run for minutes. Not while the look stages that copy, which reads the same folders.
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.building, !turn.keptOpen, turn.applying == nil,
                       let current = stepped(project), LiveReload.eligible(current) || stepsPage(current) || stepsPhones(current),
-                      !turn.look.inProgress || (stepsPage(current) && turn.stopHidden != nil) || stepsPhones(current),
+                      !turn.look.inProgress || stepsPhones(current),
                       isRunning(current) || stepsPhones(current),
                       // A change waiting for Reload holds back the rest of the app, not a phone's page (`stepPhones`).
                       !Runtime.waitsForReload(current) || stepsPage(current) || stepsPhones(current),
@@ -9125,12 +9142,10 @@ final class Store: ObservableObject {
                 // Still being written: wait for a reading with nothing new in it.
                 if now != seen { seen = now; seenAt = Date(); continue }
                 // A game's page takes a change once the saving has paused a moment and the agent has said the state is
-                // whole: in a progress line of what's in it (`progressSinceStep`), or by looking at these very sources in
-                // the hidden copy (`lookedSources`), which can take minutes the person would otherwise wait out. A save in
-                // between, half a piece of work, waits for one or the other.
+                // whole in a progress line of what's in it (`progressSinceStep`); a look puts it in itself
+                // (`lookAtOpenGame`). A save in between, half a piece of work, waits for one or the other.
                 let held = Runtime.waitsForReload(current)
-                if stepsPage(current), !held, Date().timeIntervalSince(seenAt) < 3
-                    || (progressSinceStep(current, turn) == nil && turn.lookedSources[current.id] != now) { continue }
+                if stepsPage(current), !held, Date().timeIntervalSince(seenAt) < 3 || progressSinceStep(current, turn) == nil { continue }
                 // Phones take theirs after the same pause: no change of the game is going on screen to narrate.
                 if stepsPhones(current) || held, Date().timeIntervalSince(seenAt) < 3 { continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
@@ -9966,6 +9981,7 @@ final class Store: ObservableObject {
         config.activates = inFront
         // An app that lives in the menu bar opens its panel, so there's something to see (LampMenuBar).
         if inFront { config.arguments = ["-LampInFront", "YES"] }
+        if freshStarts.remove(project.id) != nil, GameKit.isGame(project) { config.arguments += ["-LampFreshStart", "YES"] }
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {
@@ -10223,6 +10239,10 @@ final class Store: ObservableObject {
     /// Pages whose preview was opened beside their Mac copy (for another shape, or while it wasn't open): `use_app` goes
     /// where the last look was, and the preview closes at the next look in the Mac copy or when the turn ends.
     private var asidePreviews: Set<String> = []
+    /// Games whose next launch is a fresh start (`-LampFreshStart`): a look asked for one (`reopen`), at once or held
+    /// for the person's Reload while they play. Taken by that launch, and that launch alone, so the game starts from its
+    /// beginning rather than where the player was, with its saves kept (lamp-game.js's claim()).
+    private var freshStarts: Set<String> = []
 
     /// Whether a page Lamp otherwise looks at in the preview (a screen, a web app, a game with a loop of its own) is looked
     /// at and used in its Mac copy: the window the person sees, when the page has one and it's open or at home on the Mac
@@ -10463,18 +10483,22 @@ final class Store: ObservableObject {
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
     }
 
-    // MARK: Games in the preview
+    // MARK: Games in their window
 
-    /// A plain look at a web game that's open on this Mac looks at that window, as `on_device` does, once the agent's
-    /// latest change is in it: the person's own game has the world built already, so it answers in a few seconds where
-    /// the hidden copy may take a minute or more to build it again out of sight. Pictures are asked of the game itself
-    /// (`Runtime.requestScreenshots`), so the window isn't brought forward or touched, and nothing is pressed: it shows
-    /// where the person is, as they left it. Nil, and the look plays in the hidden copy as before, when that can't show
-    /// the change: the game isn't open, the change waits for Reload or didn't go in, or no picture came. A look that
-    /// asks for a fresh start (`reopen`) and every `use_app` play in the hidden copy, from the start, since pressing in
-    /// the person's game would take it from them.
+    /// Whether a game is looked at and used in its window on this Mac, the one the person plays in: a game on Lamp's web
+    /// runtime with the Mac among its places. Any other (a C++ game, whose one place is the Xbox; a game with no Mac
+    /// place) is looked at and used where Try On points. A page with a loop of its own goes its own way (`pageOnMac`).
+    private func playsInWindow(_ project: LampProject) -> Bool {
+        GameKit.isGame(project) && !GameKit.ownsLoop(project) && GameKit.engine(project) == .web && project.hasMac
+    }
+
+    /// A look at a web game open on this Mac looks at that window, the one the person sees, as `on_device` does, once the
+    /// agent's latest change has gone in. Pictures are asked of the game itself (`Runtime.requestScreenshots`), so the
+    /// window isn't brought forward or touched, and nothing is pressed: it shows where the person is, as they left it.
+    /// What the window can't show is said, never shown some other way: a change that waits for Reload or didn't go in,
+    /// a picture that looks blank. Nil only when the game isn't open on this Mac, for the look to open it.
     private func lookAtOpenGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any])? {
-        guard GameKit.engine(project) == .web, !GameKit.ownsLoop(project), project.hasMac, stepsPage(project) else { return nil }
+        guard playsInWindow(project), stepsPage(project.at(.mac)) else { return nil }
         let began = Date()
         await turn.applying?.value
         var mac = current(project) ?? project
@@ -10489,34 +10513,49 @@ final class Store: ObservableObject {
             }
             await turn.applying?.value
         }
-        guard turns[project.id] === turn, !turn.stopped, stepsPage(mac), !Runtime.waitsForReload(mac), !PageLive.shared.holds(mac) else { return nil }
-        let shown = !turn.shownSources.isEmpty && turn.shownSources == Runtime.fingerprint(mac)
-        guard shown || !Runtime.sourcesChanged(mac) || pageSignature(mac) == turn.shownPage else { return nil }
-        // A look after this one in the hidden copy, or a use, plays from the start as a plain look there would.
-        GameKit.plays[project.id] = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
+        guard turns[project.id] === turn, !turn.stopped else { return (200, ["text": "Stopped."]) }
+        // Closed meanwhile: the look opens it.
+        guard stepsPage(mac) else { return nil }
+        // What the window shows without the change, said rather than played anywhere else.
+        var without = ""
+        if Runtime.waitsForReload(mac) || PageLive.shared.holds(mac) {
+            without = " This is the game without your latest change: it waits for the person's Reload, so don't say it's in."
+        } else {
+            let shown = !turn.shownSources.isEmpty && turn.shownSources == Runtime.fingerprint(mac)
+            if !shown, Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage {
+                without = " Your latest change didn't go into it (its log says why: code that doesn't parse waits for the next save), "
+                    + "so this is the game without it."
+            }
+        }
         // A part still built in the background as the person plays: the look is of the change, once it has gone in.
-        for _ in 0..<60 where PageLive.shared.lastReport(mac, at: .mac)?.building.isEmpty == false {
+        for _ in 0..<60 where without.isEmpty && PageLive.shared.lastReport(mac, at: .mac)?.building.isEmpty == false {
             try? await Task.sleep(for: .milliseconds(500))
-            guard turns[project.id] === turn, !turn.stopped else { return nil }
+            guard turns[project.id] === turn, !turn.stopped else { return (200, ["text": "Stopped."]) }
         }
         note("Looking at \(project.name)", for: project)
         let asked = Date()
         Runtime.requestScreenshots(of: mac)
         var screenshots = await Runtime.screenshots(of: mac, since: asked, waiting: 3)
-        // A window that's covered or on another Space stops drawing its page: nothing of the game to show.
-        guard let first = screenshots.first, !GameKit.isBlank(first) else {
-            log(project, .detail, "The game's window showed nothing (covered, or on another Space), so the look played it in a hidden copy.")
-            return nil
+        var text = "Lamp looked at the game open on the person's Mac, in its window: this is where they are in it, as they left it, "
+            + "not a play from the start." + without
+        // One even color where the game is drawn: a window covered, on another Space or on a sleeping display draws
+        // nothing once its page stops drawing, and so does a game that draws nothing. Which it is can't be told here.
+        if let first = screenshots.first, GameKit.isBlank(first) {
+            log(project, .detail, "The picture of the game's window looked blank.")
+            screenshots = []
+            text += " Its picture looks blank, one even color where the game is drawn, so none follows: the window may be covered, "
+                + "on another Space or on a sleeping display, or the game drew nothing. Look again in a moment; if it stays blank, "
+                + "ask the person to bring the game's window into view, or read what the game logged."
+        } else if screenshots.isEmpty {
+            text += " The game didn't send a picture of its window."
+        } else if motion, Privacy.sharesPictures {
+            if let watched = await Runtime.motion(of: mac) {
+                text = watched.text + " " + text
+                if !watched.pictures.isEmpty { screenshots = watched.pictures }
+            } else {
+                text += " The game didn't answer the request to watch it move; this is one picture."
+            }
         }
-        var lead = ""
-        if motion, Privacy.sharesPictures {
-            // A window that doesn't answer the watch is looked at in the hidden copy, which pictures its frames itself.
-            guard let watched = await Runtime.motion(of: mac) else { return nil }
-            lead = watched.text + " "
-            if !watched.pictures.isEmpty { screenshots = watched.pictures }
-        }
-        var text = lead + "Lamp looked at the game open on the person's Mac, which has your latest change in it: this is where they are in it, "
-            + "as they left it, not a play from the start."
         // How the changes since the last look went in; said once.
         let wentIn = turn.shown.contains { $0 > (turn.lookedAtOpenGame ?? turn.began) }
         turn.lookedAtOpenGame = Date()
@@ -10525,8 +10564,9 @@ final class Store: ObservableObject {
         } else if wentIn, turn.pageRanAgain {
             text += " The change went in by running its code again in place" + (turn.reloadWhy.map { " (\($0))" } ?? "") + "."
         }
-        text += " To see it from the start, or to play it, `use_app` plays it in the hidden preview from the start (a `reopen` look does too)."
-        text += " " + (Privacy.sharesPictures ? "A picture of its window follows." : Privacy.picturesOff)
+        text += " To see it from its start, a `reopen` look starts it again (asking the person first while they have it open); "
+            + "`use_app` plays it here, with the person watching."
+        if !screenshots.isEmpty { text += " " + (Privacy.sharesPictures ? "A picture of its window follows." : Privacy.picturesOff) }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += " This look took \(Int(Date().timeIntervalSince(began).rounded())) seconds."
         text += GameKit.openGameNote(mac)
@@ -10534,186 +10574,11 @@ final class Store: ObservableObject {
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
-    /// `look_at_app` for a game: built for the preview on this Mac and played from its start for two
-    /// seconds, untouched; with `motion`, a frame every half second.
-    private func lookAtGame(_ project: LampProject, turn: Turn, motion: Bool, reopen: Bool = false) async -> (Int, [String: Any]) {
-        if !reopen, let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
-        // The preview needs none of the console's tools, wherever Try On points.
-        if let problem = await buildGamePreview(project, owner: turn) { return (200, ["text": problem]) }
-        let script = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
-        GameKit.plays[project.id] = script
-        let phone = GameKit.phonePreviewProblem(project) == nil ? " Its phone page is yours to see and press too: `phone` on `use_app`'s actions." : ""
-        let said = (motion ? "Lamp played the game in the preview from its start for two seconds, no one touching the controller; a frame every half second follows, oldest first."
-            : "Lamp played the game in the preview from its start for two seconds, no one touching the controller; the last frame follows.") + phone
-        var answer = await playGame(project, script: script, owner: turn, said: said, pictures: Set(script.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }))
-        // The open game takes what was played as the play goes on (`autoApply`): what it did with it is known a moment
-        // after, and the agent is about to say what the person sees.
-        let open = PageLive.shared.isOpen(project, at: .mac)
-        var waited = 0
-        while open, waited < 12, !PageLive.shared.holds(project), turn.applying != nil || Runtime.sourcesChanged(current(project) ?? project) {
-            try? await Task.sleep(for: .milliseconds(500))
-            waited += 1
-        }
-        if let text = answer.1["text"] as? String { answer.1["text"] = text + GameKit.openGameNote(project) }
-        return answer
-    }
-
-    /// `use_app` for a game: the controller's moves added to the play so far, and the whole of it played
-    /// again from the start with the code as it is now.
-    private func useOnGame(_ project: LampProject, actions: [[String: Any]]) async -> (Int, [String: Any]) {
-        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
-        guard let play = GameKit.plays[project.id] else { return (200, ["text": "Call look_at_app first: it builds the preview and starts a play there."]) }
-        let shots = play.filter { $0.hasPrefix("shot ") }.count
-        let moves = GameKit.script(for: actions, startingAt: shots)
-        if let problem = moves.problem { return (200, ["text": problem]) }
-        if let problem = await buildGamePreview(project, owner: owner) { return (200, ["text": problem]) }
-        let script = play + moves.lines
-        if script.contains(where: { $0.hasPrefix("phone ") }), let problem = GameKit.phonePreviewProblem(project) { return (200, ["text": problem]) }
-        GameKit.plays[project.id] = script
-        let shot = moves.lines.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }
-        let mine = Set(shot + shot.map { GameKit.phonePicture + $0 })
-        let said = "What happened, played again from the start in the preview with the moves before these:\n" + moves.said.joined(separator: "\n")
-            + "\n\nA picture at the end of each follows, oldest first (the last four at most)."
-        return await playGame(project, script: script, owner: owner, said: said, pictures: mine)
-    }
-
-    /// The preview's build, or what stops it, in the words the agent is given.
-    private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
-        // The preview is drawn out of sight, often while the person plays the game itself: these say it's a copy.
-        // Its copy of the page is made from the same folders a step of the agent's saves builds from (a TypeScript game's
-        // Web/app/ among them): one going in is waited for, and none starts until the copy is made (`autoApply` waits
-        // while the turn builds); the preview then plays from its own copy, alongside any step.
-        await owner.applying?.value
-        owner.building = true
-        defer { owner.building = false }
-        do {
-            // A three.js game has nothing to compile: its page is copied where the preview reads it.
-            if GameKit.engine(project) == .web { _ = try await GameKit.stageWeb(project) }
-            else { try await GameKit.build(project, for: .preview, started: { [weak self] in self?.turns[project.id]?.build = $0 }) }
-            turns[project.id]?.build = nil
-        } catch {
-            turns[project.id]?.build = nil
-            return GameKit.engine(project) == .web ? error.localizedDescription
-                : "The game doesn't build yet. Fix these compiler errors:\n\n" + error.localizedDescription
-        }
-        guard turns[project.id] === owner, !owner.stopped else { return "Stopped." }
-        return nil
-    }
-
-    /// Marks the agent's look or use being played as one in the hidden copy: the step's words are the agent's own ("Seeing
-    /// the new car in the city"), and the person's game shows something else until the change goes in. Lamp says where,
-    /// whatever the agent wrote, and that it's building the game's world first when that took long last time (`building`).
-    private func markHiddenCopy(_ project: LampProject, in turn: Turn, building: Bool = false) {
-        let wish = self.wish(of: project).id
-        guard var lines = logs[wish], let index = lines.lastIndex(where: {
-            $0.kind == .tool && ($0.at ?? .distantPast) >= turn.began && ($0.text.hasPrefix("look_at_app") || $0.text.hasPrefix("use_app"))
-        }) else { return }
-        let said = lines[index].said?.trimmed.nilIfEmpty ?? TurnProgress.activity(for: ToolCall(lines[index].text))
-        guard !said.hasSuffix(Self.inHiddenCopy), !said.hasSuffix(Self.buildingInHiddenCopy) else { return }
-        lines[index].said = said + (building ? Self.buildingInHiddenCopy : Self.inHiddenCopy)
-        logs[wish] = lines
-        saveChat(self.wish(of: project))
-    }
-
-    /// The look's own step, when its play ended before `autoApply` took it: a preview plays its frames without waiting for
-    /// the clock, so a look can be over within the loop's first readings, and the agent's next save would leave the state
-    /// it looked at behind. Taken here, before the look returns, while the sources are still the ones it played.
-    private func stepLooked(_ project: LampProject, owner: Turn, since lookedAt: Date) async {
-        guard turns[wish(of: project).id] === owner || turns[project.id] === owner, !owner.stopped, owner.agent != nil,
-              owner.applying == nil, !owner.building, let current = current(project), stepsPage(current),
-              let looked = owner.lookedSources[current.id], Runtime.fingerprint(current) == looked, Runtime.sourcesChanged(current),
-              setAsideChanges[current.id]?.told != false || owner.carriedSetAside == setAsideChanges[current.id]?.crash else { return }
-        owner.applyingSources = looked
-        owner.applying = Task { [weak self] in
-            defer { owner.applying = nil }
-            await self?.stepPage(current, in: owner, saved: lookedAt)
-        }
-        await owner.applying?.value
-    }
-
-    /// The end of a step played in the hidden copy.
-    nonisolated static let inHiddenCopy = " · in a hidden copy"
-    /// Its end when the hidden copy is building the game's world first, which took long last time (a city).
-    nonisolated static let buildingInHiddenCopy = " · building the world in a hidden copy"
-
-    private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
-        // Lamp's own checking, out of sight: the activity line says what the agent said it's checking, never the building
-        // before it, with where it's played (`markHiddenCopy`). The change goes into the open game as it plays (`autoApply`).
-        let wish = self.wish(of: project).id
-        markHiddenCopy(project, in: owner, building: GameKit.engine(project) == .web && GameKit.buildsLong(project))
-        // What the agent looks at is what it means to show: the game open on this Mac takes it as it plays (`autoApply`).
-        owner.lookedSources[project.id] = Runtime.fingerprint(current(project) ?? project)
-        let lookedAt = Date()
-        if let doing = logs[wish]?.last(where: { $0.kind == .tool })?.said, !doing.isEmpty { note(doing, for: project) }
-        let played: GameKit.Played
-        var hiddenProcess: Process?
-        let id = project.id
-        owner.stopHidden = {
-            WebGamePreview.stop(for: id)
-            if let process = hiddenProcess { Subprocess.terminateTree(process) }
-        }
-        defer { owner.stopHidden = nil }
-        do {
-            played = GameKit.engine(project) == .web ? try await GameKit.playWeb(project, script: script)
-                : try await GameKit.play(project, script: script, started: { [weak self] in
-                    self?.turns[project.id]?.build = $0
-                    hiddenProcess = $0
-                })
-            turns[project.id]?.build = nil
-        } catch {
-            turns[project.id]?.build = nil
-            if owner.stoppedForMessage {
-                owner.stoppedForMessage = false
-                // Nothing in it for the person: the change is in their game, and they've moved on. The agent says nothing of it.
-                // Said to be on screen only when a step put these very sources into the open game.
-                var mac = project
-                mac.chosen = .mac
-                let shown = !owner.shownSources.isEmpty && owner.shownSources == Runtime.fingerprint(mac)
-                return (200, ["text": (shown ? "Your change is in the game open on the person's Mac, and they've written again" : "The person has written again")
-                    + ": go on with their new message. This is Lamp's own detail, not something to tell them."])
-            }
-            return (200, ["text": error.localizedDescription])
-        }
-        guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
-        if GameKit.engine(project) == .web {
-            log(project, .detail, "The hidden copy played it in \(Int(Date().timeIntervalSince(lookedAt).rounded())) s"
-                + (played.fresh ? ", building the game from the start." : ", in the copy kept from the last look."))
-        }
-        // What the game logged is its log, for the person's Agent Details as much as the agent. While the game is open on
-        // this Mac its own copy is writing that log: the hidden copy's play is added after it, never written over it.
-        let printed = played.printed.joined(separator: "\n") + "\n"
-        if isRunning(project), let log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir) {
-            log.write(Data(("[the hidden copy's play]\n" + printed).utf8))
-            try? log.close()
-        } else {
-            try? AppFolder.write(printed, to: Runtime.logURL(project), in: project.dir)
-        }
-        var text = said
-        // The same sources went into the game open on this Mac as it played (`autoApply`): told, so the agent never asks
-        // for a Reload the person doesn't need. A change held for Reload is said by the chat's Reload line, not here.
-        await owner.applying?.value
-        await stepLooked(project, owner: owner, since: lookedAt)
-        var mac = current(project) ?? project
-        mac.chosen = .mac
-        if !owner.shownSources.isEmpty, owner.shownSources == Runtime.fingerprint(mac) {
-            text += "\n\nThis change is also in the game open on the person's Mac now, where they are in it: no Reload needed."
-        }
-        if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
-        if GameKit.previewHeldBack(project) { text += "\n\nThis game declares the local network, so its preview reaches no network at all: nothing there touches the person's devices." }
-        if let phone = played.phone { text += "\n\n" + phone.text(screen: Privacy.sharesPictures, log: Privacy.sharesLog) }
-        // It names the game's sound files and comes from what the preview printed: the agent's only when the log is.
-        if Privacy.sharesLog, let sound = played.sound { text += "\n\nThe preview's sound, mixed but not played: \(sound)" }
-        if !Privacy.sharesLog { text += " " + Privacy.logOff }
-        else { text += played.printed.isEmpty ? "\n\nThe game logged nothing." : "\n\nWhat the game logged:\n" + played.printed.suffix(40).joined(separator: "\n") }
-        let pictures = Privacy.sharesPictures ? Array(played.pictures.filter { wanted.contains($0.deletingPathExtension().lastPathComponent) }.suffix(4)) : []
-        if !Privacy.sharesPictures { text += " " + Privacy.picturesOff }
-        else if pictures.isEmpty { text += "\n\nNo picture came out of the preview." }
-        else {
-            text += "\n\n\(pictures.count == 1 ? "The picture is" : "The pictures are") 1920x1080, as the game is drawn everywhere, drawn on this Mac out of sight: where it's played draws the same frames slower or faster."
-            if played.phone != nil { text += " With each is the phone page at that moment, at the phone's size: its x and y are what `use_app` takes." }
-        }
-        return (200, ["text": text, "screenshots": Self.agentPictures(pictures, in: project)])
-    }
+    /// Why `use_app` doesn't press a game's phone page: the person's phones are the ones that join it, and Lamp has none
+    /// of its own to join with.
+    nonisolated static let noPhoneUse = "use_app can't press a game's phone page: only the person's own phones join the game, "
+        + "and Lamp has no phone of its own to join with. Check the phone page by reading its code, and ask the person to try it "
+        + "on their phone."
 
     /// One Android app as opened: which device it's on (`device`: the id Try On chooses it by, the emulator's serial
     /// for an emulator), the selector adb reached it by (`serial`), its process on the device, and the log Lamp reads
@@ -13951,6 +13816,15 @@ final class Store: ObservableObject {
         guard AppUpdates.mayOpen(wish(of: project)) else { return (400, ["error": AppUpdates.notOpenedYet]) }
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
+        // A game that controls the person's devices runs that code as it opens: a look that opens it, or starts it again,
+        // is one on a device they allowed, as a use is. Looking at it open in its window starts nothing.
+        let reopen = arguments["reopen"] as? Bool ?? false, onDevice = arguments["on_device"] as? Bool ?? false
+        if DevicePermissions.openNeedsDevice(app), reopen || onDevice || !playsInWindow(app) || !isRunning(app.at(.mac)) {
+            let device = (arguments["device"] as? String)?.trimmed ?? ""
+            guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
+                return (400, ["error": DevicePermissions.openRefusal])
+            }
+        }
         return await underTurn(of: project, app) {
             await look(at: app, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
                        reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false,
@@ -14017,7 +13891,7 @@ final class Store: ObservableObject {
     /// way, asking about unsaved work, and opens a fresh copy: for what only a launch shows (how long it takes to
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
-    /// `onDevice`: for a game, where Try On points (its window, the simulator or the Xbox) rather than in the preview (`GameKit`).
+    /// `onDevice`: for a game, where Try On points (its window, the simulator or the Xbox) rather than its window on this Mac.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
                       shape: String? = nil) async -> (Int, [String: Any]) {
         withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape), of: project)
@@ -14056,20 +13930,26 @@ final class Store: ObservableObject {
         }
 
         try? await writeOwnFiles(project, all: false)
+        // A game is looked at where the person plays it, never in a copy of its own: its window on this Mac
+        // (`playsInWindow`), opened by the look when it's closed, or else where Try On points (a C++ game's Xbox).
+        let inWindow = !onDevice && playsInWindow(project)
+        let onDevice = onDevice || (GameKit.isGame(project) && !GameKit.ownsLoop(project) && !inWindow)
+        // `use_app` goes where this look went.
+        if GameKit.isGame(project), !GameKit.ownsLoop(project) {
+            if onDevice, project.destination != .mac { turn.gameOnDevice.insert(project.id) } else { turn.gameOnDevice.remove(project.id) }
+        }
         // A page otherwise looked at in the preview (a screen, a web app, a game with a loop of its own) is looked at in its
         // Mac copy when that's what the person sees (`pageOnMac`): built, opened and pictured as a Mac app is, a change of
         // its page going into the open window. A preview beside it, for another shape, closes.
         let onMac = !onDevice && pageOnMac(project, shape: shape)
         if onMac, asidePreviews.remove(project.id) != nil { TVPreview.close(project) }
-        let project = onMac ? project.at(.mac) : project
-        // The agent is still at work on the game: its preview stays warm for the next look there.
-        if GameKit.isGame(project) { WebGamePreview.keepWarm(for: project.id) }
-        // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
-        if GameKit.isGame(project), !onDevice, !onMac {
-            // One made for the Xbox with a loop of its own can't play the preview's script: it's looked at as a page is.
-            if GameKit.ownsLoop(project) { return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen) }
-            return await lookAtGame(project, turn: turn, motion: motion, reopen: wantsFresh)
+        let project = onMac || inWindow ? project.at(.mac) : project
+        // A game made for the Xbox with a loop of its own is looked at as a page is.
+        if GameKit.isGame(project), GameKit.ownsLoop(project), !onDevice, !onMac {
+            return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen)
         }
+        // A game open in its window is looked at there as it is; closed, or asked to start again, it's opened as a Mac app is.
+        if inWindow, !wantsFresh, let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
         // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
         // the preview, at any shape the agent asks for.
@@ -14169,6 +14049,8 @@ final class Store: ObservableObject {
                 guard isRunning(project) else { return (200, ["text": "The app closed before Lamp could ask to reopen it. Look again to open it."]) }
                 if !Runtime.waitsForReload(project) { awaitReload(project, owner: turn) }
             }
+            // The Reload it asks for starts the game from its beginning, as asked.
+            if GameKit.isGame(project) { freshStarts.insert(project.id) }
             return held(turn, in: project, note: Self.askedToReopenNote)
         }
         if Runtime.waitsForReload(project), isRunning(project), !reopen { return held(turn, in: project, note: reloadNote(for: project)) }
@@ -14189,6 +14071,7 @@ final class Store: ObservableObject {
         if screenshots.isEmpty {
             let launched = Date()
             // A look with `reopen` asks for the fresh launch itself, so it doesn't wait for Reload.
+            if reopen, GameKit.isGame(project) { freshStarts.insert(project.id) }
             let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
             if turn.keptOpen { return held(turn, in: project, note: Self.keptOpenNote) }
             if Runtime.waitsForReload(project), isRunning(project) { return held(turn, in: project, note: reloadNote(for: project)) }

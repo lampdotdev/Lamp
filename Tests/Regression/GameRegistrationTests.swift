@@ -372,7 +372,7 @@ final class GameRegistrationTests: XCTestCase {
         try write("import { phaser } from './lamp-phaser.js'; const p = hot(import.meta).state('play', {});")
         XCTAssertEqual(GameKit.unregistered(project), [], "a 2D game's renderer and cameras are Phaser's")
 
-        // What the page said came through reaches a look in the hidden copy, where the agent mostly looks.
+        // What the page said came through reaches the agent's next look at the open game.
         _ = PageLive.shared.state(["place": "mac", "state": "report", "why": "kept renderer; reset state play"], for: project)
         XCTAssertTrue(GameKit.openGameNote(project).contains("reset state play"))
         // Another copy's run is that copy's: the note is about the game open on the Mac.

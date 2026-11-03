@@ -8953,6 +8953,9 @@ enum Template {
             var amount: Double?         // scroll: points, positive is down; wait: seconds; key: seconds to hold it
             var to_x: Double?           // drag: where it ends, in the picture's pixels
             var to_y: Double?
+            /// A game's controller as `stick` and `button` hold it (lx, ly, rx, ry -1 to 1, lt and rt 0 to 1, `down` the
+            /// buttons' bits), for `amount` seconds; `text` says it in words. Held in the game's page (LampPage.swift).
+            var controller: [String: Double]?
         }
 
         // begin LampDriver.Handover
@@ -9140,7 +9143,7 @@ enum Template {
                     return
                 }
                 let action = actions[index]
-                let held = action.action == "key" ? min(action.amount ?? 0, 10) : 0
+                let held = ["key", "stick", "button"].contains(action.action) ? min(action.amount ?? 0, 10) : 0
                 let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : held > 0 ? held + 0.2 : 0.35
                 // The cursor is on the spot already, sent there during the last pause. Where it isn't (the first
                 // action; a target that wasn't on screen yet; one that has moved since, or a window that has opened
@@ -9293,6 +9296,13 @@ enum Template {
         private static func run(_ action: Action) -> String {
             if action.action == "menu" { return menuBar(action.item) }
             if action.action == "bar_icon" { return barIcon(action.item) }
+            // A game's controller is held in the game's page, aimed at nothing on screen.
+            if ["stick", "button"].contains(action.action) {
+                guard let window = LampRuntime.windowsOnScreen.first, let did = LampPageItems.act?(action, nil, window) else {
+                    return "\(action.action): this app has no game whose controller Lamp can hold"
+                }
+                return did
+            }
             guard let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
                 return "\(action.action): the app has no window open"
             }

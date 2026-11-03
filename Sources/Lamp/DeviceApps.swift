@@ -213,7 +213,7 @@ enum DeviceApps {
     /// The app's folder as its package step takes it: a copy in Lamp's own folder (`buildFolder`), never the app's, so
     /// what Lamp adds for this device goes into the package alone, and nothing in the app's folder changes while the
     /// package is made. What builds leave there (.build, build) and its history (.git) stay behind; the copy is made
-    /// under the app's sandbox, as the preview's page is (`GameKit.stageWeb`).
+    /// under the app's sandbox, as a TV app's page is (`TVs.stage`).
     static func packageSource(_ project: LampProject, in folder: URL? = nil) async throws -> URL {
         let fm = FileManager.default
         let source = (folder ?? buildFolder(for: project)).appendingPathComponent("source")
@@ -227,7 +227,7 @@ enum DeviceApps {
         let status = await Shell.run(confined, cwd: source, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": source.path], login: false) { output.append($0) }
         guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to package it.\n\n" + output.suffix(4).joined(separator: "\n")) }
         // Links stay links in the copy, and Lamp writes in it: one anywhere in it refuses the package, as it refuses the
-        // page for the preview or a phone (`GameKit.stageWeb`, `Devices.checkUnlinked`).
+        // page for a TV or a phone (`TVs.stage`, `Devices.checkUnlinked`).
         let linked = (fm.enumerator(at: source, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? [])
             .first { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
         if let linked {
