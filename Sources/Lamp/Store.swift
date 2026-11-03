@@ -3079,6 +3079,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return
         }
+        if let head = await Versions.head(project) { MixHistory.keepStart(at: head, of: project) }
         // Listed before the original is given back, so a second Remix can't choose the same name.
         reload()
         finish(project)
@@ -3493,6 +3494,9 @@ final class Store: ObservableObject {
         var copy: String? = nil
         /// The copy's version when its review was made: a copy changed since isn't what was reviewed.
         var copyHead: String? = nil
+        /// With mixing on, the file itself when it can be mixed into a wish here (`Mix.copy`): it carries its versions.
+        /// That wish is then `existing`, and the choice is Mix… or Keep Both.
+        var mixFile: URL? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3576,6 +3580,12 @@ final class Store: ObservableObject {
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
+            // Only where the two met: a wish that can't be lined up keeps Update.
+            if Mix.isOn, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+               let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
+                pending.existing = into
+                pending.mixFile = file
+            }
             if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             pendingImport = pending
@@ -3874,6 +3884,59 @@ final class Store: ObservableObject {
     /// An update that didn't happen, in the chat: the app is untouched or was put back, whatever the cause.
     private static let updateFailed = "Lamp couldn't update this app. It's just as it was."
     private static let updateChangedIcon = " Only its icon may have changed."
+
+    /// Mixes what was picked of two copies into this one (`Mix.apply`), owning the wish as an update does, then builds
+    /// it as a merged update is built. The wish's files must be as its latest version has them: the mix window saves
+    /// what's unsaved before lining the copies up.
+    func mix(_ picked: Set<String>, in lineup: Mix.Lineup) async throws {
+        guard let project = current(lineup.project), begin(project) != nil else {
+            throw Mix.Failure(message: "“\(lineup.project.name)” is busy right now. Try again when it's done.")
+        }
+        defer { finish(project) }
+        guard await !Versions.hasUnsavedChanges(project) else {
+            throw Mix.Failure(message: "Your copy changed while this was open. Drop their copy here again.")
+        }
+        let iconFile = project.dir.appendingPathComponent("icon.json")
+        let iconBefore = try? Data(contentsOf: iconFile)
+        guard try await Mix.apply(picked, in: lineup) > 0 else { return }
+        // The icon's pictures live outside the versions: theirs go in when the mix brought their icon's design.
+        let iconAfter = try? Data(contentsOf: iconFile)
+        if iconAfter != iconBefore, iconAfter == (try? Data(contentsOf: lineup.package.folder.appendingPathComponent("icon.json"))) {
+            _ = try? Sharing.installArtwork(lineup.package, into: project)
+        }
+        let taken = lineup.changes.filter { !$0.here && picked.contains($0.id) }.map(\.title)
+        let leftOut = lineup.changes.filter { $0.here && !picked.contains($0.id) }.map(\.title)
+        // Work taken in keeps its credit and license: their credits join this copy's, saved with the last version the
+        // mix made. Only the work's (`Mix.creditsTaken`): where this copy stands in the wish's history stays its own.
+        if let last = taken.last, let credits = lineup.package.credits.map(Mix.creditsTaken) {
+            try? Credits.add(credits, to: project)
+            if await Versions.hasUnsavedChanges(project),
+               await Versions.git("git add -A -- \(Credits.file) && \(Versions.commit) -q --amend --no-edit", cwd: project.dir) == 0,
+               let head = await Versions.head(project) {
+                VersionTitles.save(last, for: head, in: project)
+            }
+        }
+        Versions.rememberMixed(project, taken: taken, leftOut: leftOut)
+        // What its starter offered to change first was about the app as it was: a mix has moved it on, so the offer
+        // goes, and isn't made again (`offerStarterChanges`).
+        try? Data().write(to: project.dir.appendingPathComponent(Mix.mixedMark))
+        if let open = Talk.open(in: logs[project.id] ?? []), open.ask?.offer == true {
+            withAnimation { logs[project.id]?.removeAll { $0.id == open.id } }
+            saveChat(project)
+        }
+        versionsRevision += 1
+        showChat(project.id)
+        log(project, .status, "Mixed. Building it now…")
+        // A wish whose apps are all in folders of their own has nothing of its own to build: its parts are.
+        if project.holdsApp {
+            if await build(project) == nil {
+                await installReportingCrash(project)
+            } else {
+                log(project, .error, ErrorMessages.appDoesNotBuild)
+            }
+        }
+        await rebuildParts(of: current(project) ?? project, onlyChanged: true)
+    }
 
     private func finishImport(_ package: Sharing.Package, request: String? = nil) {
         let project: LampProject
@@ -7647,13 +7710,14 @@ final class Store: ObservableObject {
     /// ready") aren't a conversation, so the card still comes, under them. A remix of a starter made with nothing asked
     /// of it offers the same (`Starters.suggestions`).
     func offerStarterChanges(_ id: String, after delay: Double) {
-        guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }),
+        guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }), !Mix.hasMixed(project),
               let starter = Starters.suggestions(of: project), let card = Starters.card(for: starter),
               offeringStarter.insert(id).inserted else { return }
         Task {
             try? await Task.sleep(for: .seconds(delay))
             offeringStarter.remove(id)
-            guard let current = current(project), Self.nothingSaid(in: logs[id] ?? []) else { return }
+            // A mix saved meanwhile took the offer away for good.
+            guard let current = current(project), Self.nothingSaid(in: logs[id] ?? []), !Mix.hasMixed(current) else { return }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { logs[id, default: []].append(card) }
             saveChat(current)
         }
@@ -8675,7 +8739,7 @@ final class Store: ObservableObject {
         guard !FileManager.default.fileExists(atPath: Versions.pictureURL(in: project, for: current.id).path),
               let screenshot = Runtime.currentScreenshot(of: project), !busy.contains(project.id),
               await !Versions.hasUnsavedChanges(project) else { return }
-        Versions.savePicture(screenshot, in: project, for: current.id)
+        guard Versions.savePicture(screenshot, in: project, for: current.id) else { return }
         versionsRevision += 1
     }
 
@@ -8699,8 +8763,8 @@ final class Store: ObservableObject {
     private func keepPicture(of project: LampProject, version: String) {
         Task {
             for _ in 0..<40 {
-                if let screenshot = Runtime.currentScreenshot(of: project) {
-                    Versions.savePicture(screenshot, in: project, for: version)
+                // One that shows nothing yet is tried again, as the app may take another.
+                if let screenshot = Runtime.currentScreenshot(of: project), Versions.savePicture(screenshot, in: project, for: version) {
                     versionsRevision += 1
                     return
                 }

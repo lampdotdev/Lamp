@@ -434,12 +434,38 @@ struct SettingsView: View {
             AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
             ProvidersSettings().tabItem { Label("AI Providers", systemImage: "cpu") }.tag("providers")
             MemorySettings().tabItem { Label("Memory", systemImage: "note.text") }.tag("memory")
+            if ExperimentalSettings.hasAny {
+                ExperimentalSettings().tabItem { Label("Experimental", systemImage: "flask") }.tag("experimental")
+            }
         }
         .frame(width: 560)
         .onAppear {
             if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
-            if !["building", "apps", "providers", "memory"].contains(tab) { tab = "building" }
+            if !(["building", "apps", "providers", "memory"] + (ExperimentalSettings.hasAny ? ["experimental"] : [])).contains(tab) { tab = "building" }
         }
+    }
+}
+
+/// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface. The tab is there
+/// only while there is something to show: now mixing copies of a wish, which only a build from source has.
+struct ExperimentalSettings: View {
+    static var hasAny: Bool { Edition.isDev }
+    @AppStorage(Mix.switchKey) private var mix = false
+
+    var body: some View {
+        Form {
+            Section {
+                SettingsCheckboxes {
+                    Toggle("Mix copies of a wish", isOn: $mix)
+                        .checkboxNote("A button at the foot of the desk opens a window to pick what to keep from someone else's copy.")
+                }
+            } header: {
+                // Above the box, in a checkbox note's size and color rather than as a heading.
+                Text("Features the Lamp team is still working on. They may not be ready for prime time.")
+                    .font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
+            }
+        }
+        .settingsPane()
     }
 }
 

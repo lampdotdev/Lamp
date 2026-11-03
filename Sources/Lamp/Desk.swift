@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import LampSidebarKit
 import AVFoundation
+import UniformTypeIdentifiers
 
 /// Lamp's home: the person's wishes in one list (remixes under their originals), the starters Lamp comes with under them,
 /// the place to make a new one, by typing it, saying it, or finding it with the agent's help, and the person's devices
@@ -9,6 +10,8 @@ import AVFoundation
 /// a new copy of it to become something else.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.openWindow) private var openWindow
+    @AppStorage(Mix.switchKey) private var mixOn = false
     @StateObject private var dictation = Dictation()
     @State private var hasMicrophone = true
     @FocusState private var barFocused: Bool
@@ -117,6 +120,16 @@ struct WishDesk: View {
             } }
         }
         .modifier(ClearToolbar())
+        // A wish file dropped anywhere on the desk opens as one opened from the Finder: its review, then a new wish, or
+        // with mixing on, Mix… into the copy already here.
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            guard let provider = providers.first else { return false }
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, url.pathExtension == "lampapp" else { return }
+                Task { @MainActor in Store.shared.importApp(from: url) }
+            }
+            return true
+        }
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
@@ -159,16 +172,31 @@ struct WishDesk: View {
                 }
                 .padding(.horizontal, 12).padding(.top, Self.top).padding(.bottom, 20)
             }
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Paper.muted)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
+            HStack(spacing: 4) {
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Paper.muted)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings (⌘,)")
+                .accessibilityLabel("Settings")
+                // The mix window, while mixing copies is an experiment (Settings → Experimental).
+                if mixOn && Edition.isDev {
+                    Button { openWindow(id: "mix") } label: {
+                        Image(systemName: "arrow.triangle.merge")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Paper.muted)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mix Copies")
+                    .accessibilityLabel("Mix Copies")
+                }
             }
-            .buttonStyle(.plain)
-            .help("Settings (⌘,)")
-            .accessibilityLabel("Settings")
             .padding(.leading, 14).padding(.bottom, 12)
         }
         .frame(width: 220)
