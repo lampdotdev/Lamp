@@ -3917,6 +3917,13 @@ final class Store: ObservableObject {
             }
         }
         Versions.rememberMixed(project, taken: taken, leftOut: leftOut)
+        // What its starter offered to change first was about the app as it was: a mix has moved it on, so the offer
+        // goes, and isn't made again (`offerStarterChanges`).
+        try? Data().write(to: project.dir.appendingPathComponent(Mix.mixedMark))
+        if let open = Talk.open(in: logs[project.id] ?? []), open.ask?.offer == true {
+            withAnimation { logs[project.id]?.removeAll { $0.id == open.id } }
+            saveChat(project)
+        }
         versionsRevision += 1
         showChat(project.id)
         log(project, .status, "Mixed. Building it now…")
@@ -7704,6 +7711,7 @@ final class Store: ObservableObject {
     /// of it offers the same (`Starters.suggestions`).
     func offerStarterChanges(_ id: String, after delay: Double) {
         guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }),
+              !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(Mix.mixedMark).path),
               let starter = Starters.suggestions(of: project), let card = Starters.card(for: starter),
               offeringStarter.insert(id).inserted else { return }
         Task {

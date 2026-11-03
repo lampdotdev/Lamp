@@ -368,7 +368,8 @@ in place of Update on its review, waiting while another mix is saved
 - **Saving.** On top of this copy's history, never rewriting it: one version leaving out what of yours was taken
   out, then one per change of theirs taken in, under its title, with `Lamp-Mixed: <their commit>` so neither copy
   offers it again. Their credits join this copy's when anything of theirs is taken, as an update's do. The agent is
-  told (`Versions.rememberMixed`) and the app is built (`Store.mix`). Every git it runs works on commits, so a git
+  told (`Versions.rememberMixed`) and the app is built (`Store.mix`). A starter's offer of first changes leaves the chat
+  then, and isn't made again (`Mix.mixedMark`). Every git it runs works on commits, so a git
   without `merge-tree -X` still mixes, a later change then winning whole files.
 
 Not yet: a review of the code in History/ beyond what the file's own review read (an early change of theirs taken

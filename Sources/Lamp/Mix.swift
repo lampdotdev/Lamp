@@ -16,6 +16,9 @@ enum Mix {
     static var isOn: Bool { Edition.isDev && UserDefaults.standard.bool(forKey: switchKey) }
     /// On a version a mix saved, the version of the other copy it brought in, so neither copy offers it again.
     static let trailer = "Lamp-Mixed"
+    /// In Lamp's own folder once anything has been mixed into a wish: its starter's offer of first changes is no longer
+    /// made (`Store.offerStarterChanges`).
+    static let mixedMark = ".lamp/mixed"
 
     enum Side { case you, them }
 
