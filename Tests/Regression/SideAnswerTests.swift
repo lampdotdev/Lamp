@@ -316,10 +316,52 @@ final class SideAnswerTests: XCTestCase {
         var line = LogLine(kind: .user, text: "9 plus 14?")
         line.sideReply = "23."
         line.sideDone = true
+        line.fromQueued = question.id
         XCTAssertEqual(Store.finishedToPost([question], chat: []).count, 1)
         XCTAssertTrue(Store.finishedToPost([question], chat: [line]).isEmpty)
         let again = QueuedMessage(saved: question.saved, attachments: [])
         XCTAssertTrue(again.sideDone, "the tag's meaning outlives a quit")
+        XCTAssertEqual(again.id, question.id, "and so does which message it was")
+        XCTAssertTrue(Store.finishedToPost([again], chat: [line]).isEmpty)
+    }
+
+    /// The same question asked again later, with the same answer, is a new exchange and goes into the chat too.
+    func testAQuestionAskedAgainIsPostedAgain() {
+        let first = answered("9 plus 14?", "23. [nothing for the agent]")
+        var line = LogLine(kind: .user, text: "9 plus 14?")
+        line.sideReply = "23."
+        line.sideDone = true
+        line.fromQueued = first.id
+        let later = answered("9 plus 14?", "23. [nothing for the agent]")
+        XCTAssertEqual(Store.finishedToPost([later], chat: [line]).map(\.id), [later.id])
+    }
+
+    /// Finished questions are on disk before their line is cleared, and a chat that can't be written keeps the line.
+    func testFinishedQuestionsAreWrittenBeforeTheLineIsCleared() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("finished-\(UUID().uuidString)").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            UserDefaults.standard.removeObject(forKey: "waitingRequests")
+        }
+        let wish = try Template.draft(name: "Shelf", in: root)
+        let unwritable = try Template.draft(name: "Locked", in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.projects.first { $0.id == wish.id })
+        let question = answered("9 plus 14?", "23. [nothing for the agent]")
+        store.queued[project.id] = [question]
+        store.postFinished([question], in: project)
+        XCTAssertNil(store.queued[project.id])
+        let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        let saved = try JSONDecoder().decode([LogLine].self, from: Data(contentsOf: file))
+        XCTAssertEqual(saved.last?.fromQueued, question.id, "in the chat's file as the line is cleared")
+
+        let locked = try XCTUnwrap(store.projects.first { $0.id == unwritable.id })
+        try FileManager.default.createDirectory(at: locked.dir.appendingPathComponent(".lamp/chat.json"), withIntermediateDirectories: true)
+        let kept = answered("Capital of Peru?", "Lima. [nothing for the agent]")
+        store.queued[locked.id] = [kept]
+        store.postFinished([kept], in: locked)
+        XCTAssertEqual(store.queued[locked.id]?.map(\.id), [kept.id], "kept until the chat is written")
     }
 
     /// The next request carries the question and its answer, as what was said meanwhile and not as work.

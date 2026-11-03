@@ -305,6 +305,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var plan: [String]? = nil         // for that build's summary: the plan's parts, which its chapters are named by (`Chapters`)
     var sideReply: String? = nil      // for a request: what was said beside the turn while it waited (`SideAnswer`), drawn under it and never a step or message of the turn
     var sideDone: Bool? = nil         // for such a request: the answer was all it asked for (`SideAnswer.finished`), so it never started a turn
+    var fromQueued: UUID? = nil       // for such a request: the waiting message it was (`QueuedMessage.id`), so one brought back after a quit isn't posted twice
 
     /// A command's row stopped before it ran: by its own words, or, for commands gathered as one row, every one of them.
     var wasNotRun: Bool { notRun ?? text.hasPrefix(ChatLook.notRun) }
@@ -422,7 +423,8 @@ struct LogLine: Identifiable, Codable, Equatable {
 
 /// A message typed while the app was busy. It waits in the chat until the current work finishes.
 struct QueuedMessage: Identifiable {
-    let id = UUID()
+    /// Kept across a relaunch, so a message posted before a quit is known again by what it was, not by its words.
+    var id = UUID()
     let text: String
     var attachments: [URL] = []
     /// The agent's card these answers were clicked on. The card shows them, so the chat doesn't say them
@@ -460,7 +462,7 @@ extension QueuedMessage {
     /// without it the answer would come back as a message of its own under a card that already shows it,
     /// and taking it back would no longer open the card again.
     var saved: [String: Any] {
-        var saved: [String: Any] = ["text": text, "attachments": attachments.map(\.path)]
+        var saved: [String: Any] = ["id": id.uuidString, "text": text, "attachments": attachments.map(\.path)]
         if let card { saved["card"] = card.uuidString }
         if byLamp { saved["byLamp"] = true }
         if afterReload { saved["afterReload"] = true }
@@ -489,6 +491,7 @@ extension QueuedMessage {
                   pointed: pointed, byLamp: saved["byLamp"] as? Bool ?? false, afterReload: saved["afterReload"] as? Bool ?? false,
                   side: (saved["sideReply"] as? String).map(SideState.answered),
                   sideDone: saved["sideDone"] as? Bool == true && saved["sideReply"] is String)
+        if let id = (saved["id"] as? String).flatMap(UUID.init(uuidString:)) { self.id = id }
     }
 }
 
@@ -1572,6 +1575,21 @@ final class Store: ObservableObject {
     private func settleChat(_ project: LampProject) {
         if chatsToSave.remove(project.id) != nil { writeChat(project.id) }
         Self.chatWrites.sync {}
+    }
+
+    /// Writes this chat now and waits for it, for what may be cleared only once the chat holds it. False when it isn't written.
+    private func writeChatNow(_ project: LampProject) -> Bool {
+        chatsToSave.remove(project.id)
+        let lines = logs[project.id] ?? []
+        let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        if let unkept = unkeptChats[project.id] {
+            guard LogLine.keepAside(unkept, of: file) else { return false }
+            unkeptChats[project.id] = nil
+        }
+        return Self.chatWrites.sync {
+            guard let data = try? JSONEncoder().encode(lines) else { return false }
+            return (try? data.write(to: file, options: .atomic)) != nil
+        }
     }
 
     /// Writes every chat that's waiting, for when Lamp quits.
@@ -4233,18 +4251,19 @@ final class Store: ObservableObject {
         !messages.isEmpty && messages.allSatisfy { $0.sideDone && $0.sideReply != nil && SideAnswer.canAnswer($0) }
     }
 
-    /// Of a line of finished questions, those not in the chat yet, each with its answer: one already there (a restore
-    /// after a quit that came between saving the chat and the line) isn't posted twice.
+    /// Of a line of finished questions, those not in the chat yet: one already there (a restore after a quit that came
+    /// between saving the chat and the line) isn't posted twice. Known by the message it was, never by its words, so the
+    /// same question asked again is a new one.
     static func finishedToPost(_ messages: [QueuedMessage], chat: [LogLine]) -> [QueuedMessage] {
-        messages.filter { message in
-            !chat.contains { $0.kind == .user && $0.sideDone == true && $0.text == message.text && $0.sideReply == message.sideReply }
-        }
+        let posted = Set(chat.compactMap(\.fromQueued))
+        return messages.filter { !posted.contains($0.id) }
     }
 
-    /// Finished questions into the chat, saved before the line is cleared, so a quit between the two posts nothing twice.
-    private func postFinished(_ messages: [QueuedMessage], in project: LampProject) {
+    /// Finished questions into the chat, on disk before the line is cleared: the line is their only other copy, so a quit
+    /// between the two loses nothing and posts nothing twice. A chat that can't be written keeps the line for next time.
+    func postFinished(_ messages: [QueuedMessage], in project: LampProject) {
         _ = post(Self.finishedToPost(messages, chat: logs[project.id] ?? []), to: project)
-        saveChat(project)
+        guard writeChatNow(project) else { return saveChat(project) }
         queued[project.id] = nil
         heldAfterQuit.remove(project.id)
         saveWaiting()
@@ -4854,7 +4873,10 @@ final class Store: ObservableObject {
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
             if let reply = message.sideReply, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].sideReply = reply
-                if message.sideDone { logs[project.id]?[last].sideDone = true }
+                if message.sideDone {
+                    logs[project.id]?[last].sideDone = true
+                    logs[project.id]?[last].fromQueued = message.id
+                }
                 saveChat(project)
             }
             if let pointed, let last = logs[project.id]?.indices.last {
