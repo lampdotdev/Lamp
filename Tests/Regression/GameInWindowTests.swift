@@ -132,6 +132,33 @@ final class GameInWindowTests: XCTestCase {
         XCTAssertEqual(taken(context), ["a phone sent something"])
     }
 
+    /// A phone's stick pushed over slowly, in steps each too small to count on their own, takes the game back once it's
+    /// well away from where it was when Lamp took the controller.
+    func testAPhonesStickPushedSlowlyTakesTheGameBack() throws {
+        let (context, _) = try playing()
+        context.evaluateScript("testAxis(1, 'stick', 0, 0); __lampOwn(20);")
+        for step in 1...10 { context.evaluateScript("testAxis(1, 'stick', \(Double(step) / 10), 0)") }
+        XCTAssertEqual(taken(context), ["a phone played"])
+    }
+
+    /// A release reaches the page after the app has moved on: a hold given back late, or a batch that has ended, lets go
+    /// of nothing a newer hold or batch has now.
+    func testALateReleaseLetsGoOfNothingNewer() throws {
+        let (context, step) = try playing()
+        context.evaluateScript("__lampOwn(20, 'a'); __lampDrive({ lx: 1, seconds: 5 }, 'a#1');")
+        XCTAssertEqual(step()["lx"] as? Double, 1)
+        context.evaluateScript("__lampOwn(20, 'b'); __lampDrive({ ly: 1, seconds: 5 }, 'b#2'); __lampDrive(null, 'a#1'); __lampOwn(null, 'a');")
+        let newer = step()
+        XCTAssertEqual(newer["ly"] as? Double, 1, "batch b's hold is still held")
+        XCTAssertEqual(newer["lx"] as? Double, 0)
+        context.evaluateScript("testPhone(1, 'a', true)")
+        XCTAssertEqual(taken(context), ["a phone played"], "batch b still has the controller")
+        context.evaluateScript("testTaken = []; __lampOwn(20, 'c'); __lampDrive({ ly: 1, seconds: 5 }, 'c#3'); __lampDrive(null, 'c#3');")
+        XCTAssertEqual(step()["ly"] as? Double, 0, "a hold's own release lets it go")
+        context.evaluateScript("__lampOwn(null, 'c'); testPhone(1, 'b', true);")
+        XCTAssertEqual(taken(context), [], "and its batch's own end gives the controller back")
+    }
+
     /// The batch's own hold on the controller ends by itself, a while after the time it was given, should the app never
     /// say: the person's later play is then theirs and stops nothing.
     func testABatchsHoldOnTheControllerEndsByItself() throws {
@@ -251,16 +278,18 @@ final class GameInWindowTests: XCTestCase {
         XCTAssertFalse(DevicePermissions.openNeedsDevice(game))
     }
 
-    /// A game made while its phones joined through a relay it declared the local network for: the declaration is for its
-    /// phones, and pressing or opening the game needs no allowed device. Anything a device controller has and a phone host
-    /// doesn't (an address on the home network in its page, Bonjour types to look for, Lamp's device blocks in its Swift,
-    /// or no phone page at all) and it reaches devices again. The declaration itself is left as it is.
-    func testAGameThatDeclaredTheNetworkForItsPhonesNeedsNoDevice() throws {
-        func game(page code: String = "game({ renderer });", bonjour: Bool = false, phonePage: Bool = true, swift: String? = nil) throws -> LampProject {
+    /// A game's own declaration of the local network can't be told apart from one for devices, whatever it says and
+    /// however little its page names, so it needs an allowed device; the refusal may say why it's asked all the same. Only
+    /// a reason that's Lamp's own sentence for a game's phones, with nothing else of a device controller (Bonjour types to
+    /// look for, Lamp's device blocks in its Swift, no phone page at all), counts as being for its phones. The declaration
+    /// is left as it is either way.
+    func testOnlyLampsOwnPhoneReasonCountsAsDeclaringTheNetworkForPhones() throws {
+        func game(reason: String = "Phones on your Wi-Fi join the game as controllers.", page code: String = "game({ renderer });",
+                  bonjour: Bool = false, phonePage: Bool = true, swift: String? = nil) throws -> LampProject {
             let dir = try folder()
-            let capabilities = bonjour ? #"{"localNetwork":"Phones on your Wi-Fi join the game as controllers.","bonjourServices":["_sonos._tcp"]}"#
-                : #"{"localNetwork":"Phones on your Wi-Fi join the game as controllers."}"#
-            try capabilities.write(to: dir.appendingPathComponent(Template.Capabilities.file), atomically: true, encoding: .utf8)
+            var capabilities: [String: Any] = ["localNetwork": reason]
+            if bonjour { capabilities["bonjourServices"] = ["_sonos._tcp"] }
+            try JSONSerialization.data(withJSONObject: capabilities).write(to: dir.appendingPathComponent(Template.Capabilities.file))
             try "A game made with Lamp.\nengine: web\n".write(to: dir.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8)
             let web = dir.appendingPathComponent(GameKit.webFolder)
             try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
@@ -278,18 +307,29 @@ final class GameInWindowTests: XCTestCase {
             }
             return LampProject(id: "pad", name: "Pad", exe: "Pad", dir: dir, platform: .game)
         }
-        let phones = try game()
-        XCTAssertTrue(DevicePermissions.declaresNetworkOnlyForPhones(phones))
-        XCTAssertFalse(DevicePermissions.reachesDevices(phones))
-        XCTAssertFalse(DevicePermissions.useNeedsDevice(phones))
-        XCTAssertFalse(DevicePermissions.openNeedsDevice(phones))
-        XCTAssertNotNil(Template.Capabilities.load(phones).checked.localNetwork, "the declaration stays")
+        // The game's own words, its page naming no device: asked about, with why.
+        let own = try game()
+        XCTAssertFalse(DevicePermissions.declaresNetworkOnlyForPhones(own))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(own))
+        XCTAssertTrue(DevicePermissions.openNeedsDevice(own))
+        XCTAssertTrue(DevicePermissions.whyAsked(own).contains("may be only for its phones"))
+        // A page that builds its address, or names a host or an IPv6 one, is no different: the scan decides nothing.
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(page: "fetch('http://' + [192, 168, 1, 20].join('.') + ':1400/');")))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(page: "fetch('http://[fe80::1]:8060/keypress/Home', { method: 'POST' });")))
+        XCTAssertEqual(DevicePermissions.whyAsked(try game(page: "const tv = 'http://living-room.local:8001';")), "")
 
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(page: "fetch('http://192.168.1.20:1400/MediaRenderer/AVTransport/Control');")))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(page: "const tv = 'http://living-room.local:8001';")))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(bonjour: true)))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(phonePage: false)))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(swift: "import Foundation\nlet tv = LampRoku.self")))
+        // Lamp's own sentence for a game's phones (with a plain hyphen, which a reason can hold): for its phones.
+        let lampsReason = "Pad lets phones on your Wi-Fi join as controllers, and talks to Lamp on your Mac."
+        let lamps = try game(reason: lampsReason)
+        XCTAssertTrue(DevicePermissions.declaresNetworkOnlyForPhones(lamps))
+        XCTAssertFalse(DevicePermissions.reachesDevices(lamps))
+        XCTAssertFalse(DevicePermissions.useNeedsDevice(lamps))
+        XCTAssertFalse(DevicePermissions.openNeedsDevice(lamps))
+        XCTAssertNotNil(Template.Capabilities.load(lamps).localNetwork, "the declaration stays")
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: lampsReason, bonjour: true)))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: lampsReason, phonePage: false)))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: lampsReason, swift: "import Foundation\nlet tv = LampRoku.self")))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: "Other Game lets phones on your Wi-Fi join as controllers, and talks to Lamp on your Mac.")))
     }
 
     // MARK: Stopping a batch

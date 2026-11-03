@@ -125,14 +125,19 @@ A capability given to one engine must be given to all of them that can take it, 
   A game is no exception: it's played in the window the person plays it in, on the real network. A game that reaches
   devices runs that code as it starts, so a `look_at_app` that opens it or starts it again (closed, `reopen`,
   `on_device`, or a game looked at only where Try On points) is refused the same way unless its `device` names an allowed
-  one (`DevicePermissions.openNeedsDevice`). A look at it open in its window needs none, but without one it doesn't put
-  the agent's saved change into the open game, which runs the new code, and says so (`Store.lookAtOpenGame`'s `mayRun`).
-  Changes that go in by themselves as the agent works (`autoApply`) aren't held to this. A game's phones aren't devices it
-  controls: the relay they join is Lamp's own, in the game (`GamePhones`), and declares nothing in capabilities.json. A
-  game made when its phones needed the network declared (`DevicePermissions.declaresNetworkOnlyForPhones`) keeps its
-  declaration and needs no device for it, as long as it has a phone page and nothing a device controller has: Bonjour
-  types to look for, LampRoku or LampNetwork in Swift of its own, or an address on the home network or a `.local` name in
-  its own page's code. A TypeScript game's build runs with no network at all, since a Bun macro is the game's code run
+  one (`DevicePermissions.openNeedsDevice`). A look at it open in its window needs none. Its new code runs only while
+  the person has a device allowed: that's asked each time a change is about to go into the open game, wherever it
+  comes from (a step as the agent saves, a look, the turn's end, all through `Store.pageInPlace`), and before the game is
+  opened again for one (`Store.mayRunChange`). Without one the change waits for the person's Reload, and the agent hears
+  why. A game's phones aren't devices it controls: the relay they join is Lamp's own, in the game (`GamePhones`), which
+  gives the system its reason itself, and needs nothing in capabilities.json. So a game's own local network
+  declaration counts as reaching devices, whatever its words, since they can't be told apart from a device
+  controller's; only Lamp's own sentence for a game's phones, in a game with a phone page and nothing else of a device
+  controller (Bonjour types to look for, LampRoku or LampNetwork in Swift of its own), counts as being for its phones
+  (`DevicePermissions.declaresNetworkOnlyForPhones`). What a game's page names (an address on the home network, a
+  `.local` name) decides nothing: it only explains, in the refusal, why a game that may have declared the network for
+  its phones under an older Lamp is asked about (`DevicePermissions.whyAsked`).
+  A TypeScript game's build runs with no network at all, since a Bun macro is the game's code run
   at build time (`Sandbox.run`'s `offline`). All of this reads what the app declares, which the agent can change, as the
   gate itself always has: it stops a mistaken press, not an agent set on one.
   Each engine's command check carries the same rule (`DevicePermissions.commandRule`): pi's `CommandRisk` counts such a

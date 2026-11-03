@@ -8931,11 +8931,12 @@ enum Template {
         static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
         /// Whether the game on a page is playing (`LampPagePlaying`): nil for an app with no game, false while it loads.
         @MainActor static var playing: Bool?
-        /// Gives a game's controller to Lamp for a batch (seconds it may run) or back (nil).
-        static var own: ((Double?) -> Void)?
-        /// Holds a game's controller for a `stick` or `button` action: false when the app has no game; otherwise the
-        /// page's answer comes to `said`, in words for the report (held, or why not).
-        static var hold: ((LampDriver.Action, NSWindow, @escaping @MainActor (String) -> Void) -> Bool)?
+        /// Gives a game's controller to Lamp for batch `id` (seconds it may run) or back (nil): only that batch's own
+        /// controller is given back, not a newer batch's.
+        static var own: ((Double?, String) -> Void)?
+        /// Holds a game's controller for a `stick` or `button` action of a batch: false when the app has no game;
+        /// otherwise the page's answer comes to `said`, in words for the report, and whether the page holds it.
+        static var hold: ((LampDriver.Action, NSWindow, LampDriver.Handover, @escaping @MainActor (String, Bool) -> Void) -> Bool)?
     }
 
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
@@ -9132,8 +9133,8 @@ enum Template {
                 let seconds = actions.reduce(2.0) { total, action in
                     total + 0.6 + (["wait", "key", "stick", "button"].contains(action.action) ? min(max(action.amount ?? 1, 0), 10) : 0)
                 }
-                own(seconds)
-                batch.whenOver { own(nil) }
+                own(seconds, id)
+                batch.whenOver { own(nil, id) }
             }
             // Which window the actions are in, before any of them and whenever an action changes it (a panel
             // opened, a dialog): Lamp's glow goes round it from the start.
@@ -9180,14 +9181,17 @@ enum Template {
                     lead = Self.lead
                 }
                 let due = lead + pause
+                // A game's controller held by its page goes on only once the page has answered: the hold's time runs
+                // from when the game took it, and the next action never starts while the page is still taking this one.
+                let controlled = ["stick", "button"].contains(action.action) && LampPageItems.hold != nil
                 // The next step is set up first: a click that opens a save panel or an alert doesn't return until
                 // that closes, and the steps after it are how it gets answered.
                 var next: Aim?
-                after(due) { step(index + 1, shown: next) }
+                if !controlled { after(due) { step(index + 1, shown: next) } }
                 // The next action's spot is shown while this one's pause runs, so the cursor is there when it's
                 // due and nothing waits for it: once the app has taken this action up (`settle`), and no sooner
                 // than the glide needs, so that after a long wait the screen is read late, not at its start.
-                if index + 1 < actions.count {
+                if index + 1 < actions.count, !controlled {
                     let early = max(lead + Self.settle, due - 0.95)
                     if due - early >= 0.2 {
                         after(early) {
@@ -9208,11 +9212,25 @@ enum Template {
                     }
                     // A game's controller is held by its page, which says whether it took the hold: the line is its answer,
                     // in the report long before the batch's end, since the hold's own pause is longer than the page takes.
-                    if ["stick", "button"].contains(action.action), let window = LampRuntime.windowsOnScreen.first, let hold = LampPageItems.hold {
-                        report[line] = "\(action.action): the game didn't answer"
+                    if controlled {
                         last = nil
-                        if !hold(action, window, { said in report[line] = said }) {
+                        var answered = false
+                        func goOn(after seconds: Double) {
+                            guard !answered else { return }
+                            answered = true
+                            after(seconds) { step(index + 1, shown: nil) }
+                        }
+                        report[line] = "\(action.action): the game didn't answer"
+                        if let window = LampRuntime.windowsOnScreen.first, let hold = LampPageItems.hold,
+                           hold(action, window, batch, { said, held in
+                               report[line] = said
+                               goOn(after: held ? pause : Self.settle)
+                           }) {
+                            // A page that never answers (hung, or gone) doesn't hold the batch up for good.
+                            after(Self.unanswered) { goOn(after: 0) }
+                        } else {
                             report[line] = "\(action.action): this app has no game whose controller Lamp can hold"
+                            goOn(after: Self.settle)
                         }
                     } else {
                         report[line] = run(action)
@@ -9235,6 +9253,8 @@ enum Template {
         /// How long after an action the next one's spot is looked for: a press is taken up on the run loop's
         /// next turn, so what it opened or changed is on screen by then.
         static let settle = 0.1
+        /// How long a game's page has to answer a hold of its controller before the batch goes on without it.
+        static let unanswered = 3.0
 
         /// Where an action happens on screen, what it's doing in a few words, which window that's in, and
         /// whether it presses there, for the cursor Lamp shows going to each spot first.

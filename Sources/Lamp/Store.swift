@@ -9348,7 +9348,7 @@ final class Store: ObservableObject {
             } else {
                 log(current, .status, (PageLive.shared.holdsForPause(current) ? "Shows at the next pause, or after Reload" : "Shows after Reload")
                     + (words.map { ": " + $0 } ?? ""))
-                if let why = PageLive.shared.reason(current) { log(current, .detail, "It waits for Reload: \(why).") }
+                if let why = turn.reloadWhy ?? PageLive.shared.reason(current) { log(current, .detail, "It waits for Reload: \(why).") }
             }
             return
         }
@@ -9482,6 +9482,11 @@ final class Store: ObservableObject {
     /// installed as usual (a change of its Swift, a copy Lamp isn't hearing from, a page that didn't answer).
     private func pageInPlace(_ project: LampProject, at place: PageLive.Place, owner: Turn?, inFront: Bool) async -> Bool {
         guard PageLive.takes(project), PageLive.shared.isOpen(project, at: place) else { return false }
+        // Asked as the change is about to run, whoever put it in (a step as the agent saves, a look, the turn's end).
+        guard mayRunChange(in: project) else {
+            holdForDevices(project, owner: owner)
+            return true
+        }
         // A game on the Mac that can only serve its phone page from its bundle (an older Lamp built it): a change to the
         // page goes in with the game installed again, so the open game, its phones and any that join have the same page.
         if place == .mac, GamePhones.changed(project), !PageLive.shared.takesPhonePage(project, at: place) { return false }
@@ -9529,6 +9534,20 @@ final class Store: ObservableObject {
         }
         prepareIconMeanwhile(project)
         return true
+    }
+
+    /// Whether a change may run in the game now, checked each time one is about to go in: a game that reaches the person's
+    /// devices runs new code only while they have a device allowed on Lamp's card (`device_permission`). Anything else may.
+    private func mayRunChange(in project: LampProject) -> Bool {
+        !DevicePermissions.openNeedsDevice(project) || !DevicePermissions.allowed(wish(of: project)).isEmpty
+    }
+
+    /// A change held off a game that reaches devices (`mayRunChange`): it waits for the person's Reload, as a change that
+    /// needs the game opened again does, and the agent hears why.
+    private func holdForDevices(_ project: LampProject, owner: Turn?) {
+        owner?.reloadWhy = DevicePermissions.heldForDevices
+        awaitReload(project, owner: owner)
+        owner?.outcomes.append(.held)
     }
 
     /// A game's page took its change, at once or at a pause after holding it: nothing waits for Reload any more, and the
@@ -9918,6 +9937,12 @@ final class Store: ObservableObject {
         // ask for the reopen, and an app that's closed just gets the build. Not in a new app's first turn: nobody is
         // using it yet, and it's built in passes for the person to watch each one go in (`present`), so it reopens.
         // A place kept current in the background never closes the copy open there: it waits for Reload, as a request's does.
+        // Opening a game that reaches devices again runs its new code as it starts: only the person's Reload does that
+        // while none of their devices is allowed.
+        if !reload, isRunning(project), !mayRunChange(in: project) {
+            holdForDevices(project, owner: owner)
+            return nil
+        }
         if !reload, asksBeforeReopening(project, owner: owner) || quiet && isRunning(project) {
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)
@@ -10517,17 +10542,16 @@ final class Store: ObservableObject {
     /// agent's latest change has gone in. Pictures are asked of the game itself (`Runtime.requestScreenshots`), so the
     /// window isn't brought forward or touched, and nothing is pressed: it shows where the person is, as they left it.
     /// What the window can't show is said, never shown some other way: a change that waits for Reload or didn't go in,
-    /// a picture that looks blank. Nil only when the game isn't open on this Mac, for the look to open it.
-    /// `mayRun` false (a game that reaches devices, with no allowed device): what the agent saved isn't put in, since
-    /// that runs the game's new code; the look says so.
-    private func lookAtOpenGame(_ project: LampProject, turn: Turn, motion: Bool, mayRun: Bool = true) async -> (Int, [String: Any])? {
+    /// a picture that looks blank, a change held because the game reaches devices none of which the person has allowed
+    /// (`mayRunChange`). Nil only when the game isn't open on this Mac, for the look to open it.
+    private func lookAtOpenGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any])? {
         guard playsInWindow(project), stepsPage(project.at(.mac)) else { return nil }
         let began = Date()
         await turn.applying?.value
         var mac = current(project) ?? project
         mac.chosen = .mac
         // What the agent has saved since the last step goes in now: a look says the state is whole.
-        if mayRun, Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage, !Runtime.waitsForReload(mac), !turn.building,
+        if Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage, !Runtime.waitsForReload(mac), !turn.building,
            turn.agent != nil, turns[project.id] === turn || turns[wish(of: project).id] === turn {
             turn.applyingSources = Runtime.fingerprint(mac)
             turn.applying = Task { [weak self] in
@@ -10541,12 +10565,10 @@ final class Store: ObservableObject {
         guard stepsPage(mac) else { return nil }
         // What the window shows without the change, said rather than played anywhere else.
         var without = ""
-        if Runtime.waitsForReload(mac) || PageLive.shared.holds(mac) {
+        if Runtime.waitsForReload(mac), turn.reloadWhy == DevicePermissions.heldForDevices {
+            without = " This is the game without your latest change: " + DevicePermissions.heldRefusal
+        } else if Runtime.waitsForReload(mac) || PageLive.shared.holds(mac) {
             without = " This is the game without your latest change: it waits for the person's Reload, so don't say it's in."
-        } else if !mayRun, Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage {
-            without = " Your latest change isn't in it: putting it in runs the game's new code, which reaches the person's devices, "
-                + "so it goes in only with a device they allowed, named in `device` (ask with `device_permission` first). "
-                + "This is the game without it."
         } else {
             let shown = !turn.shownSources.isEmpty && turn.shownSources == Runtime.fingerprint(mac)
             if !shown, Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage {
@@ -13851,7 +13873,7 @@ final class Store: ObservableObject {
         let device = (arguments["device"] as? String)?.trimmed ?? ""
         let mayOpen = !DevicePermissions.openNeedsDevice(app) || (!device.isEmpty && DevicePermissions.allowed(wish(of: project)).contains(device))
         if !mayOpen, reopen || onDevice || !playsInWindow(app) || !isRunning(app.at(.mac)) {
-            return (400, ["error": DevicePermissions.openRefusal])
+            return (400, ["error": DevicePermissions.openRefusal + DevicePermissions.whyAsked(app)])
         }
         return await underTurn(of: project, app) {
             await look(at: app, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
@@ -13869,7 +13891,7 @@ final class Store: ObservableObject {
         if DevicePermissions.useNeedsDevice(app) {
             let device = (arguments["device"] as? String)?.trimmed ?? ""
             guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
-                return (400, ["error": DevicePermissions.useRefusal])
+                return (400, ["error": DevicePermissions.useRefusal + DevicePermissions.whyAsked(app)])
             }
         }
         var actions = arguments
@@ -13979,7 +14001,7 @@ final class Store: ObservableObject {
             return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen)
         }
         // A game open in its window is looked at there as it is; closed, or asked to start again, it's opened as a Mac app is.
-        if inWindow, !wantsFresh, let answer = await lookAtOpenGame(project, turn: turn, motion: motion, mayRun: mayOpen) { return answer }
+        if inWindow, !wantsFresh, let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
         // Closed while it was looked at, or not ready to be looked at in place: opening it again runs its device code.
         if GameKit.isGame(project), !mayOpen { return (400, ["error": DevicePermissions.openRefusal]) }
         // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no

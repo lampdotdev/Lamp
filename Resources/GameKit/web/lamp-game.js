@@ -2874,19 +2874,35 @@ function hidePill() { if (pill) pill.style.display = 'none'; }
 // replaced (the app hands null), when the game's code runs again or its page opens again, and by itself a second after
 // the hold was due to end; the batch's own hold on the controller ends with the time it was given and two seconds more,
 // should the app never say.
-let driven = null, drivenUntil = 0, lampHas = false, lampHasUntil = 0;
-window.__lampOwn = seconds => {
-    if (!seconds) { lampHas = false; driven = null; return true; }
+let driven = null, drivenUntil = 0, lampHas = false, lampHasUntil = 0, lampBatch = null;
+// Each batch and each hold has a name of its own (the batch's id, and a number after it for each hold), and what gives
+// one back names it: a release that reaches the page late, after a newer batch or hold took the controller, is for one
+// that's gone already and lets go of nothing that's held now.
+window.__lampOwn = (seconds, batch) => {
+    if (!seconds) {
+        if (batch != null && batch !== lampBatch) return true;
+        lampHas = false; driven = null; lampBatch = null;
+        return true;
+    }
+    if (!lampHas) takeController();
     lampHas = true;
+    lampBatch = batch == null ? null : String(batch);
     lampHasUntil = clockNow() + Math.min(Math.max(Number(seconds) || 0, 0), 600) * 1000 + 2000;
     return true;
 };
-window.__lampDrive = hold => {
-    if (!hold) { driven = null; return true; }
+window.__lampDrive = (hold, name) => {
+    if (!hold) {
+        if (name != null && (!driven || driven.name !== String(name))) return true;
+        driven = null;
+        return true;
+    }
     const axis = v => Math.max(-1, Math.min(1, Number(v) || 0)), trigger = v => Math.max(0, Math.min(1, Number(v) || 0));
     driven = { lx: axis(hold.lx), ly: axis(hold.ly), rx: axis(hold.rx), ry: axis(hold.ry), lt: trigger(hold.lt), rt: trigger(hold.rt), down: hold.down | 0 };
+    // Kept off the pad itself, which the game reads.
+    Object.defineProperty(driven, 'name', { value: name == null ? null : String(name) });
     drivenUntil = clockNow() + Math.min(Math.max(Number(hold.seconds) || 0, 0), 60) * 1000 + 1000;
     // A hold is Lamp's, whether or not the app said its batch began.
+    if (!lampHas) takeController();
     if (!lampHas || lampHasUntil < drivenUntil) { lampHas = true; lampHasUntil = drivenUntil; }
     return true;
 };
@@ -2895,23 +2911,30 @@ function letGoOfLamp(why) {
     if (!lampHas && !driven) return;
     lampHas = false;
     driven = null;
+    lampBatch = null;
     if (!why) return;
     log(`Lamp: let go of the controller (${why}).`);
     try { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampDriveTakenOver; h && h.postMessage(why); } catch (e) {}
 }
-// A phone's stick or tilt is a person's when it moves: one held still at an angle (a phone lying tilted) says the same
-// value over and over, and isn't someone playing.
+// A phone's stick or tilt is a person's when it moves away from where it was as Lamp took the controller: one held still
+// at an angle (a phone lying tilted) says the same value over and over, and isn't someone playing, while a thumb pushing
+// the stick over slowly gets there however small each step is. A stick or tilt first heard while Lamp has the
+// controller is measured from the middle.
 const phoneAxes = new Map();
+let phoneAxesAtTake = new Map();
+function takeController() { phoneAxesAtTake = new Map(phoneAxes); }
 function phoneAxis(player, name, x, y) {
-    const key = `${player} ${name}`, last = phoneAxes.get(key);
-    phoneAxes.set(key, [Number(x) || 0, Number(y) || 0]);
-    if (lampHas && (!last ? Math.abs(x) > 0.3 || Math.abs(y) > 0.3 : Math.abs(x - last[0]) > 0.3 || Math.abs(y - last[1]) > 0.3)) letGoOfLamp('a phone played');
+    const key = `${player} ${name}`, now = [Number(x) || 0, Number(y) || 0];
+    phoneAxes.set(key, now);
+    if (!lampHas) return;
+    const from = phoneAxesAtTake.get(key) || [0, 0];
+    if (Math.abs(now[0] - from[0]) > 0.3 || Math.abs(now[1] - from[1]) > 0.3) letGoOfLamp('a phone played');
 }
 
 // Heard for as long as the page lasts, under what `watchPhones` wraps, so it belongs to no run of the game's code.
 if (window.Lamp && window.Lamp.controllers) {
     window.Lamp.controllers.onButton(phoneButton);
-    window.Lamp.controllers.onLeave(player => { phoneButtons.delete(player); for (const key of phoneAxes.keys()) if (key.startsWith(`${player} `)) phoneAxes.delete(key); });
+    window.Lamp.controllers.onLeave(player => { phoneButtons.delete(player); for (const axes of [phoneAxes, phoneAxesAtTake]) for (const key of axes.keys()) if (key.startsWith(`${player} `)) axes.delete(key); });
     if (window.Lamp.controllers.onAxis) window.Lamp.controllers.onAxis(phoneAxis);
     if (window.Lamp.controllers.onMessage) window.Lamp.controllers.onMessage(() => { if (lampHas) letGoOfLamp('a phone sent something'); });
 }
