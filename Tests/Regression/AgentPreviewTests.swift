@@ -53,4 +53,45 @@ final class AgentPreviewTests: XCTestCase {
         XCTAssertNil(AgentPreview.app(for: roku))
         XCTAssertTrue(AgentPreview.none(roku).contains("has no preview Lamp can open"))
     }
+
+    /// Try On names the person's own Android phone, and their Play last opened the app there: the agent's look and use
+    /// go to Lamp's emulator, and neither asks that phone anything (its process, its selector) on the way, while what
+    /// Try On names and the run Play recorded stay as they were. The same look with the app open in the emulator does
+    /// ask the emulator, so the check below sees a device being asked when one is.
+    @MainActor
+    func testALookOrUseNeverAsksThePersonsDevicePlayOpened() async {
+        let store = Store.shared
+        let phone = app(.android, at: .android, device: "R58M42ABCDE")
+        let saved = Store.androidPID
+        var asked: [String] = []
+        Store.androidPID = { _, serial in asked.append(serial); return 4242 }
+        defer {
+            Store.androidPID = saved
+            store.androidApps[phone.id] = nil
+            store.androidLeases["R58M42ABCDE"] = nil
+            store.androidLeases[Emulator.Kind.phone.serial] = nil
+        }
+        let played = Store.AndroidRun(device: "R58M42ABCDE", serial: "R58M42ABCDE", pid: 4242, log: nil)
+        store.androidApps[phone.id] = played
+        store.androidLeases["R58M42ABCDE"] = phone.id
+
+        guard let preview = AgentPreview.app(for: phone) else { return XCTFail("an Android app has the emulator") }
+        XCTAssertNil(preview.device, "the look and use go to Lamp's emulator")
+        XCTAssertNil(store.previewAndroidRun(of: preview))
+        let open = await store.androidPreviewOpen(preview)
+        XCTAssertFalse(open, "not open where the agent looks, so the look opens it in the emulator")
+        let used = await store.androidUseTarget(preview)
+        XCTAssertNil(used, "nothing for use_app to press on their phone")
+        XCTAssertEqual(asked, [], "their phone was asked nothing")
+        XCTAssertEqual(phone.device, "R58M42ABCDE", "Try On still names their phone")
+        XCTAssertTrue(store.androidApps[phone.id] === played, "Play's run is left as it was")
+        XCTAssertTrue(played.alive)
+
+        let emulator = Store.AndroidRun(device: Emulator.Kind.phone.serial, serial: Emulator.Kind.phone.serial, pid: 4242, log: nil)
+        store.androidApps[phone.id] = emulator
+        store.androidLeases[Emulator.Kind.phone.serial] = phone.id
+        let inEmulator = await store.androidPreviewOpen(preview)
+        XCTAssertTrue(inEmulator)
+        XCTAssertEqual(asked, [Emulator.Kind.phone.serial], "only the emulator is asked")
+    }
 }

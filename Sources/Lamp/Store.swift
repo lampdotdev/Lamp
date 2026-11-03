@@ -10506,8 +10506,8 @@ final class Store: ObservableObject {
             if let log, log.isRunning { log.terminate() }
         }
     }
-    /// The Android apps open now, by project.
-    private var androidApps: [String: AndroidRun] = [:]
+    /// The Android apps open now, by project: in one of Lamp's emulators, or on the person's own device where Play put it.
+    var androidApps: [String: AndroidRun] = [:]
 
     /// Which of Lamp's emulators the app is open in, or nil when it's on the person's own Android device or not open,
     /// for its chat to go beside it.
@@ -10515,7 +10515,7 @@ final class Store: ObservableObject {
     /// Which project each Android device's screen belongs to (by `AndroidRun.device`): the last launched there. A
     /// look or `use_app` by another project whose app is still alive in the background is refused the screen, as the
     /// simulator's leases do it.
-    private var androidLeases: [String: String] = [:]
+    var androidLeases: [String: String] = [:]
     /// The screen density of the device each Android app is open on, for its pictures (`Adb.screenshot`).
     private var androidDensities: [String: Int] = [:]
     /// Projects whose next Android launch starts fresh rather than where the person was (a look with `reopen`).
@@ -10701,8 +10701,7 @@ final class Store: ObservableObject {
     /// read as text, with what it logged.
     private func lookOnAndroid(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
         var summary = "The app built and is running."
-        // Only a copy open in one of Lamp's emulators: one the person's Play opened on their own device isn't looked at.
-        let running = await isAndroidRunning(project) && androidApps[project.id].map { AgentPreview.isEmulator($0.device) } == true
+        let running = await androidPreviewOpen(project)
         if changed || !running || reopen {
             if reopen { androidFresh.insert(project.id) }
             let crash = await install(project, inFront: false, early: true)
@@ -10715,7 +10714,7 @@ final class Store: ObservableObject {
             summary = "The app is running your latest code; nothing needed rebuilding."
         }
         note("Looking at \(project.name)", for: project)
-        guard let open = androidApps[project.id] else { return (200, ["text": summary + " It isn't open now."]) }
+        guard let open = previewAndroidRun(of: project) else { return (200, ["text": summary + " It isn't open now."]) }
         let serial = await liveSerial(open) ?? open.device
         try? await Task.sleep(for: Self.simulatorFirstScreen)
         var screenshots: [URL] = []
@@ -10734,13 +10733,36 @@ final class Store: ObservableObject {
     /// Open, still this project's screen (no other app of Lamp's launched on that device since), and alive on the device.
     private func isAndroidRunning(_ project: LampProject) async -> Bool {
         guard let open = androidApps[project.id], open.alive, androidLeases[open.device] == project.id, let serial = await liveSerial(open) else { return false }
-        return await Adb.pid(of: Template.androidPackage(for: project), on: serial) == open.pid
+        return await Self.androidPID(Template.androidPackage(for: project), serial) == open.pid
     }
 
     /// The same, at the one selector a `use_app` call checked and sends its actions to.
     private func isAndroidRunning(_ project: LampProject, at serial: String) async -> Bool {
         guard let open = androidApps[project.id], open.alive, androidLeases[open.device] == project.id else { return false }
-        return await Adb.pid(of: Template.androidPackage(for: project), on: serial) == open.pid
+        return await Self.androidPID(Template.androidPackage(for: project), serial) == open.pid
+    }
+
+    /// How a running copy's process is asked of its device: adb's, by package and selector.
+    static var androidPID: (String, String) async -> Int32? = { await Adb.pid(of: $0, on: $1) }
+
+    /// The copy of an Android app the agent's look or use may act on: one open in one of Lamp's emulators, from Lamp's own
+    /// record alone, before anything asks a device. A copy the person's Play opened on their own device never is.
+    func previewAndroidRun(of project: LampProject) -> AndroidRun? {
+        guard let run = androidApps[project.id], AgentPreview.isEmulator(run.device) else { return nil }
+        return run
+    }
+
+    /// Whether the agent's look finds the app open in one of Lamp's emulators: a device is asked only about that copy.
+    func androidPreviewOpen(_ project: LampProject) async -> Bool {
+        guard previewAndroidRun(of: project) != nil else { return false }
+        return await isAndroidRunning(project)
+    }
+
+    /// The copy and selector a `use_app` call acts on: open in one of Lamp's emulators, and running there. Nil asks no
+    /// device for a copy on the person's own one.
+    func androidUseTarget(_ project: LampProject) async -> (run: AndroidRun, serial: String)? {
+        guard let open = previewAndroidRun(of: project), let serial = await liveSerial(open), await isAndroidRunning(project, at: serial) else { return nil }
+        return (open, serial)
     }
 
     /// The selector adb reaches an open app's device by now. A TV's changes while the app is open (a new port), and an
@@ -10777,8 +10799,7 @@ final class Store: ObservableObject {
     private func useOnAndroid(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
         // One selector for the whole call: the actions, and every check between them, go to the TV it was checked at.
         // Only a copy open in one of Lamp's emulators (`AgentPreview`): never one on the person's own device.
-        guard let open = androidApps[project.id], AgentPreview.isEmulator(open.device), let serial = await liveSerial(open),
-              await isAndroidRunning(project, at: serial) else {
+        guard let (open, serial) = await androidUseTarget(project) else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
