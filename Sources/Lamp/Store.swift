@@ -9448,6 +9448,7 @@ final class Store: ObservableObject {
                 awaitShown(project)
                 // What a look pictures next is the change, not the frame held while it went in, nor the old HUD over it.
                 drew = await untilShown(project)
+                if drew, let owner { pageShowedChange(project.id, in: owner) }
                 try? await Task.sleep(for: .milliseconds(400))
             }
             // In: the activity line says what the agent is doing again (its look, or thinking), not the update now over.
@@ -14400,7 +14401,7 @@ final class Store: ObservableObject {
             defer { closed.invalidate() }
             // A launch gone before anything watched for it is told of here.
             let window = app.isTerminated ? .closed : await self?.watchDraft(mac, launch: app.processIdentifier, in: turn) ?? .stopped
-            turn.look.draftKnown[id] = window
+            self?.recordDraft(window, for: id, in: turn)
             return window
         }
         return true
@@ -14455,8 +14456,20 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The page said a change is on screen in the game's window: whatever its first draft showed, that window draws now.
+    func pageShowedChange(_ id: String, in turn: Turn) {
+        guard turn.look.draftOpen.contains(id) else { return }
+        turn.look.draftKnown[id] = .content
+    }
+
+    /// What the first draft's watch heard, unless the window has shown a change since, which is the newer word.
+    func recordDraft(_ window: DraftWindow, for id: String, in turn: Turn) {
+        guard turn.look.draftKnown[id] != .content else { return }
+        turn.look.draftKnown[id] = window
+    }
+
     /// Whether what's in the game's window on this Mac can be said to be where the person is: not a draft that hasn't drawn.
-    private func windowDrew(_ id: String, in turn: Turn) -> Bool {
+    func windowDrew(_ id: String, in turn: Turn) -> Bool {
         !turn.look.draftOpen.contains(id) || turn.look.draftKnown[id] == .content
     }
 

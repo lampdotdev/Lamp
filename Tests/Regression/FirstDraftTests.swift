@@ -147,6 +147,26 @@ import XCTest
         XCTAssertNil(Store.draftLine("Game", .closed, updated: false))
     }
 
+    /// A first draft that drew one color, then a change the page said is on screen: the window counts as drawn from then,
+    /// and the draft's watch, ending later, doesn't take that back.
+    func testAChangeTheWindowShowedOutranksTheFirstDraftsVerdict() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = Store(testingAt: root)
+        let turn = Store.Turn()
+        turn.look.draftOpen.insert("game")
+        turn.look.draftKnown["game"] = .blank
+        XCTAssertFalse(store.windowDrew("game", in: turn))
+        store.pageShowedChange("game", in: turn)
+        XCTAssertTrue(store.windowDrew("game", in: turn))
+        store.recordDraft(.timedOut(seconds: 180), for: "game", in: turn)
+        XCTAssertTrue(store.windowDrew("game", in: turn), "a later verdict of the first draft doesn't undo it")
+        let other = Store.Turn()
+        other.look.draftOpen.insert("game")
+        store.recordDraft(.blank, for: "game", in: other)
+        XCTAssertEqual(other.look.draftKnown["game"], .blank)
+    }
+
     /// A page that never said the change is on screen: the wait lets the turn go on, but nothing counts it as shown.
     func testAShowThatRanOutIsNotSaidToBeShown() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-\(UUID().uuidString)")
