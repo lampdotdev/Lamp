@@ -884,8 +884,10 @@ final class Store: ObservableObject {
         var sideRoute: SideAnswer.Route?
         /// The answers started beside this turn, however they ended.
         var sideAttempts = 0
-        /// The receipt record (`SideAnswer.record`) the turn's first pi run carries, in place of receipts in its request.
+        /// The receipt record (`SideAnswer.record`) the turn's pi runs carry in place of receipts in its request
+        /// (`SideAnswer.ownReply(_:given:afresh:)`), and whether one has.
         var ownReply: String?
+        var ownReplyGiven = false
         /// Claude Code's input, from its start until it has answered.
         var input: AgentInput?
         /// The engine is running a tool: a message written to it now reaches the model with the tool's result.
@@ -5228,9 +5230,9 @@ final class Store: ObservableObject {
         var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
-        if engine == .pi, let record = turn.ownReply {
+        if engine == .pi, let record = SideAnswer.ownReply(turn.ownReply, given: turn.ownReplyGiven, afresh: afresh) {
             run.env["LAMP_SIDE_RECEIPT"] = record
-            turn.ownReply = nil
+            turn.ownReplyGiven = true
         }
         turn.sideRoute = SideAnswer.route(env: run.env, engine: engine, local: Builder.piProvider == Builder.localProvider, keyProvider: Builder.piProvider,
                                           configFolder: EngineInstall.configFolder(engine).path, environment: EngineInstall.environment(for: engine))

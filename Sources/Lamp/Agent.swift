@@ -1102,8 +1102,6 @@ enum Agent {
             "LAMP_TRIM_PICTURES": String(Conversation.trimAbove),
         ]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
-        // For the side answer experiment's checks only: where pi saves the requests that carry a receipt. Unset, it saves none.
-        if let folder = UserDefaults.standard.string(forKey: "sideAnswerCaptureFolder") { env["LAMP_CAPTURE_DIR"] = folder }
         return env.merging(keyEnvironment(for: Builder.piProvider)) { $1 }
     }
 

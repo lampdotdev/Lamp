@@ -146,6 +146,12 @@ enum SideAnswer {
         proceed appropriately. Ask for any required approval.
         """
 
+    /// The record a pi run of the turn carries: the first run's, which stores it in the conversation, and one that starts
+    /// the conversation afresh (too big to send), which has none of the first one's history.
+    static func ownReply(_ record: String?, given: Bool, afresh: Bool) -> String? {
+        given && !afresh ? nil : record
+    }
+
     /// One record for one handover: the person's words when they go with it (Send Now; nil when they're the run's own
     /// request), each answer with the message it was to, and Lamp's note. `fallback` is what anything without Lamp's
     /// extension reads in its place: the words and today's receipts. Nil when nothing in it was answered.

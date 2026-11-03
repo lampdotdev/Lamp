@@ -264,6 +264,15 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertTrue(Agent.parse(#"{"type":"message_end","message":{"role":"custom","customType":"other","content":"x"}}"#).isEmpty)
     }
 
+    /// A run that starts the conversation afresh (one too big to send) has none of the first run's history, so it carries
+    /// the record again; a run in the same conversation already has it stored.
+    func testARunStartedAfreshStillCarriesTheRecord() {
+        XCTAssertEqual(SideAnswer.ownReply("r", given: false, afresh: false), "r")
+        XCTAssertNil(SideAnswer.ownReply("r", given: true, afresh: false), "stored once in the conversation")
+        XCTAssertEqual(SideAnswer.ownReply("r", given: true, afresh: true), "r")
+        XCTAssertNil(SideAnswer.ownReply(nil, given: false, afresh: true))
+    }
+
     func testSendNowAsksForNoSecondAcknowledgementOnceAnswered() {
         let answered = QueuedMessage(text: "Make it blue", side: .answered("I'll make it blue shortly."))
         let unanswered = QueuedMessage(text: "And the title")

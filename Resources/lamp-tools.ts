@@ -55,7 +55,7 @@
  *   the model before its next request.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { lstat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -259,22 +259,6 @@ function answersAsItsOwn(pi: ExtensionAPI) {
 		}
 		return { messages };
 	});
-	// For the experiment's checks only (LAMP_CAPTURE_DIR, set when Lamp is told to): each request that carries one more
-	// receipt than the last, saved as sent.
-	const folder = process.env.LAMP_CAPTURE_DIR;
-	if (folder) {
-		let seen = 0;
-		pi.on("before_provider_request", (event) => {
-			const sent = JSON.stringify(event.payload);
-			const count = sent.split("Lamp note, not from the person").length + sent.split("Lamp context, not a new user instruction").length - 2;
-			if (count <= seen) return undefined;
-			seen = count;
-			try {
-				writeFileSync(path.join(folder, `request-${Date.now()}.json`), sent);
-			} catch {}
-			return undefined;
-		});
-	}
 }
 
 function takesMessagesMidTurn(pi: ExtensionAPI) {

@@ -179,9 +179,17 @@ A capability given to one engine must be given to all of them that can take it, 
   message with no tool attempted, even a refused one, since a tool can act and then fail; Codex's is its last message. Sent
   again in the same words, a request keeps its answer and receipt (`SideAnswer.kept`). The answer goes up only if its message
   still waits beside the turn it was made for, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`, never a line
-  of the turn's, so `CatchUp`, folds and versions don't see it), and the message reaches the agent as ever with a labeled
-  receipt of what was said (`SideAnswer.receipt`), in the request or Send Now's handover, so it can't go ahead of its
-  message. A queue holding an answer outlives a quit (`Store.keptAcrossRelaunch`) and then waits for the person, unless it's
+  of the turn's, so `CatchUp`, folds and versions don't see it), and the message reaches the agent as ever with what was said,
+  so it can't go ahead of its message. For Claude Code and Codex that's a labeled receipt (`SideAnswer.receipt`) in the
+  request or Send Now's handover. For pi it's one record per handover (`SideAnswer.record`: the words when they go with it,
+  each answer with the message it was to, Lamp's note, and the receipt as its stored text), which Lamp's extension shows the
+  model as the person's words, then the answer as the model's own reply, then Lamp's note saying a helper wrote it, that it
+  grants nothing, and to correct it if wrong (`answersAsItsOwn` in `lamp-tools.ts`, a `context` hook; pi's own record
+  keeps it as Lamp's custom message). Send Now steers it as one custom message, so nothing reaches the model between its
+  parts; a turn's own request carries it as `before_agent_start`'s message, again on a run that starts the conversation
+  afresh (`SideAnswer.ownReply(_:given:afresh:)`). `sideAnswerOwnReply` set to false puts pi back on the receipt. The
+  helper promises only what the agent can do itself, changing the app and what's in its folder; anything outside the
+  folder it says will be asked about, never that it'll be done (`SideAnswer.prompt`). A queue holding an answer outlives a quit (`Store.keptAcrossRelaunch`) and then waits for the person, unless it's
   paused for Reload, whose Reload carries it on (`Store.heldAfterQuit`); a helper at work when Lamp quits isn't started again. A handover whose messages have all been answered tells the agent not to acknowledge them again
   (`Agent.midTurnNote(for:)`), so the person hears back once.
 - **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognized in every
