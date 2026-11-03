@@ -4,8 +4,8 @@ import UniformTypeIdentifiers
 import LampSidebarKit
 
 /// The mix window (an experiment, `Mix`): someone's copy of a wish dropped in, every change either of you made since
-/// you last met on one timeline, yours on the left and theirs on the right. A click slots a change in, lit, or out,
-/// dimmed and nudged to its side; a drag does the same. A change a later one replaces in part shows it. Mix saves it.
+/// you last met on one timeline, yours on the left and theirs on the right. A click, or its thumb, keeps a change, lit,
+/// or leaves it out, dimmed. A change a later one replaces in part shows it. Mix saves it.
 /// A window of its own while it's an experiment, opened from the desk's foot.
 struct MixScene: Scene {
     var body: some Scene {
@@ -211,6 +211,9 @@ struct MixTimeline: View {
     let lineup: Mix.Lineup
     var another: () -> Void = {}
     let mix: () -> Void
+    /// Option held: each change shows when it was made.
+    @State private var optionHeld = false
+    @State private var watching: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -244,7 +247,8 @@ struct MixTimeline: View {
                         Text("Neither of you has changed anything since you last met.").foregroundStyle(Paper.muted).padding(.top, 40)
                     }
                     ForEach(lineup.changes) { change in
-                        MixRow(change: change, on: model.picked.contains(change.id), replacedBy: model.preview.replaced[change.id]) {
+                        MixRow(change: change, on: model.picked.contains(change.id), replacedBy: model.preview.replaced[change.id],
+                               showsTime: optionHeld) {
                             model.toggle(change)
                         }
                     }
@@ -265,6 +269,17 @@ struct MixTimeline: View {
                     .disabled(model.stage == .mixing || !model.changesSomething || model.review == nil)
             }
             .padding(.horizontal, 20).padding(.vertical, 12)
+        }
+        .onAppear {
+            optionHeld = NSEvent.modifierFlags.contains(.option)
+            watching = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+                optionHeld = event.modifierFlags.contains(.option)
+                return event
+            }
+        }
+        .onDisappear {
+            if let watching { NSEvent.removeMonitor(watching) }
+            watching = nil
         }
     }
 
@@ -315,31 +330,31 @@ private struct MixSide: View {
     }
 }
 
-/// One change: in the middle and lit when it's kept, so keeping everything makes one column; nudged toward its owner's
-/// side and dimmed when it's left out. At the edge of its owner's side, a thumb that does what a click does: up while
-/// it's kept, turned over while it's out.
+/// One change, the window's width but for its thumbs: lit when it's kept, dimmed when it's left out. On its owner's
+/// side, a thumb that does what a click does: up to keep it while it's out, turned over to leave it out while it's
+/// kept. Its time shows while Option is held.
 private struct MixRow: View {
     let change: Mix.Change
     let on: Bool
     let replacedBy: String?
+    var showsTime = false
     let toggle: () -> Void
 
-    private static let travel: CGFloat = 56
-    private static let width: CGFloat = 380
     private static let glow = Paper.stripes[2]
-
     private static let thumb: CGFloat = 24
 
     var body: some View {
-        card
-            .frame(maxWidth: .infinity)
-            .overlay(alignment: theirs ? .trailing : .leading) { thumb }
+        HStack(spacing: 8) {
+            if theirs { Color.clear.frame(width: Self.thumb) } else { thumb }
+            card
+            if theirs { thumb } else { Color.clear.frame(width: Self.thumb) }
+        }
     }
 
     private var thumb: some View {
         Button(action: toggle) {
             Image(systemName: "hand.thumbsup").font(.system(size: 15, weight: .medium)).foregroundStyle(Paper.ink)
-                .rotationEffect(.degrees(on ? 0 : 180))
+                .rotationEffect(.degrees(on ? 180 : 0))
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
                 .frame(width: Self.thumb, height: Self.thumb).contentShape(Rectangle())
         }
@@ -355,8 +370,10 @@ private struct MixRow: View {
             thumbnail
             VStack(alignment: .center, spacing: 2) {
                 Text(change.title).font(.system(size: 13)).lineLimit(2).multilineTextAlignment(.center)
-                Text(change.date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
-                    .font(.system(size: 11)).foregroundStyle(Paper.muted)
+                if showsTime {
+                    Text(change.date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+                        .font(.system(size: 11)).foregroundStyle(Paper.muted)
+                }
                 if on, let replacedBy {
                     Text("Partly replaced by “\(replacedBy)”").font(.system(size: 11)).foregroundStyle(.orange).lineLimit(1)
                 }
@@ -364,20 +381,15 @@ private struct MixRow: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .frame(maxWidth: Self.width)
+        .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 10).fill(Paper.card))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(on ? (replacedBy != nil ? Color.orange.opacity(0.7) : Self.glow) : Paper.rule,
                                                                  lineWidth: on ? 1.5 : 1))
         .shadow(color: on && replacedBy == nil ? Self.glow.opacity(0.45) : .clear, radius: 7)
         .opacity(on ? (replacedBy != nil ? 0.75 : 1) : 0.4)
-        .offset(x: on ? 0 : (theirs ? Self.travel : -Self.travel))
-        .animation(.spring(response: 0.26, dampingFraction: 0.6), value: on)
+        .animation(.easeOut(duration: 0.2), value: on)
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
-        .gesture(DragGesture(minimumDistance: 6).onEnded { drag in
-            let inward = change.side == .you ? drag.translation.width > 0 : drag.translation.width < 0
-            if inward != on { toggle() }
-        })
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(on ? "In" : "Out")

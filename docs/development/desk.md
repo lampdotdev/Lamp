@@ -338,10 +338,9 @@ else's copy of a wish is dropped. Lamp finds your copy by the file's identity, w
 would replace the app at its root, passes over a wish whose apps are in folders of their own); a remix has an identity of its own, so
 its file finds the wish it was remixed from by its chain, and the original's file a remix of it made here
 (`Mix.copy(of:among:)`). Then it saves what's
-unsaved, and lines up every change either of you made since the copies last met on one timeline by date, each a switch:
-kept, it's lit in the middle, so keeping everything makes one column; left out, it's dimmed and nudged toward its owner's
-side, yours left and theirs right. A thumb at the edge of its owner's side does what a click does: up while it's kept,
-turned over while it's out.
+unsaved, and lines up every change either of you made since the copies last met on one timeline by date, each a switch: lit when it's kept, dimmed when it's left out, across the window's width. A thumb on
+its owner's side (yours left, theirs right) does what a click does: up to keep it, turned over to leave it out. A
+change's time shows while Option is held.
 Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would. The window's head
 names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
 
