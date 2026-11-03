@@ -23,6 +23,10 @@ enum Mix {
     /// made (`Store.offerStarterChanges`).
     static let mixedMark = ".lamp/mixed"
 
+    static func hasMixed(_ project: LampProject) -> Bool {
+        FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(mixedMark).path)
+    }
+
     enum Side { case you, them }
 
     struct Change: Identifiable, Equatable {

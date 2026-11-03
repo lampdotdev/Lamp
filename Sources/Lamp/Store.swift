@@ -7710,14 +7710,14 @@ final class Store: ObservableObject {
     /// ready") aren't a conversation, so the card still comes, under them. A remix of a starter made with nothing asked
     /// of it offers the same (`Starters.suggestions`).
     func offerStarterChanges(_ id: String, after delay: Double) {
-        guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }),
-              !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(Mix.mixedMark).path),
+        guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }), !Mix.hasMixed(project),
               let starter = Starters.suggestions(of: project), let card = Starters.card(for: starter),
               offeringStarter.insert(id).inserted else { return }
         Task {
             try? await Task.sleep(for: .seconds(delay))
             offeringStarter.remove(id)
-            guard let current = current(project), Self.nothingSaid(in: logs[id] ?? []) else { return }
+            // A mix saved meanwhile took the offer away for good.
+            guard let current = current(project), Self.nothingSaid(in: logs[id] ?? []), !Mix.hasMixed(current) else { return }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { logs[id, default: []].append(card) }
             saveChat(current)
         }
