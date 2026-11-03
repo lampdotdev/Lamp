@@ -336,7 +336,7 @@ enum Sandbox {
         // Where output is thrown away, which programs open whatever they're doing.
         lines.append(#"(allow file-write* (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))"#)
         if !folders.isEmpty { lines.append("(allow file-read* \(paths("subpath", folders)))") }
-        lines.append("(allow file-read* \(paths("literal", readingFiles)))")
+        if !readingFiles.isEmpty { lines.append("(allow file-read* \(paths("literal", readingFiles)))") }
         if !writingFiles.isEmpty { lines.append("(allow file-write* \(paths("literal", writingFiles)))") }
         lines.append("(allow file-read* file-write* \(paths("subpath", [scratch])))")
         lines.append("(allow file-read-metadata)")

@@ -232,6 +232,15 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertNotEqual(run("ls ~"), 0, "nor what's in it")
     }
 
+    /// Brought back after a quit, an answered line waits for the person, unless it already waits for their Reload, which
+    /// is what carries it on.
+    func testOnlyALineNotWaitingForReloadIsHeldAfterAQuit() {
+        let answered = QueuedMessage(text: "Make it blue", side: .answered("Got it."))
+        XCTAssertTrue(Store.heldAfterQuit([answered]))
+        XCTAssertFalse(Store.heldAfterQuit([QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true), answered]))
+        XCTAssertFalse(Store.heldAfterQuit([QueuedMessage(text: "And the title")]))
+    }
+
     func testSendNowAsksForNoSecondAcknowledgementOnceAnswered() {
         let answered = QueuedMessage(text: "Make it blue", side: .answered("I'll make it blue shortly."))
         let unanswered = QueuedMessage(text: "And the title")
@@ -304,6 +313,7 @@ final class SideAnswerTests: XCTestCase {
             XCTAssertNil(launch.environment["LAMP_TOKEN"])
             XCTAssertTrue(launch.environment.keys.filter { $0.hasSuffix("_URL") && $0 != "LAMP_KEY_URL" }.isEmpty)
             XCTAssertTrue(launch.profile.contains("(deny file-write*)"))
+            XCTAssertFalse(launch.profile.contains("(allow file-read* )"), "no empty rule")
         }
         XCTAssertNil(SideAnswer.launch(route(.claude), prompt: "p", transcript: nil, folder: folder), "nothing to fork")
     }

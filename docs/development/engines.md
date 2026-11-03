@@ -181,8 +181,8 @@ A capability given to one engine must be given to all of them that can take it, 
   still waits beside the turn it was made for, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`, never a line
   of the turn's, so `CatchUp`, folds and versions don't see it), and the message reaches the agent as ever with a labeled
   receipt of what was said (`SideAnswer.receipt`), in the request or Send Now's handover, so it can't go ahead of its
-  message. A queue holding an answer outlives a quit (`Store.keptAcrossRelaunch`), and a helper at work when Lamp quits
-  isn't started again. A handover whose messages have all been answered tells the agent not to acknowledge them again
+  message. A queue holding an answer outlives a quit (`Store.keptAcrossRelaunch`) and then waits for the person, unless it's
+  paused for Reload, whose Reload carries it on (`Store.heldAfterQuit`); a helper at work when Lamp quits isn't started again. A handover whose messages have all been answered tells the agent not to acknowledge them again
   (`Agent.midTurnNote(for:)`), so the person hears back once.
 - **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognized in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.

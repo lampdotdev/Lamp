@@ -4125,6 +4125,12 @@ final class Store: ObservableObject {
         !messages.isEmpty && (!setupReady || messages.contains { $0.afterReload || $0.sideReply != nil })
     }
 
+    /// Whether a line brought back after a quit waits for the person (`heldAfterQuit`): one holding an answer does, unless
+    /// it's paused for Reload (`pause`), whose Reload is the person's go-ahead and carries it on.
+    static func heldAfterQuit(_ messages: [QueuedMessage]) -> Bool {
+        messages.contains { $0.sideReply != nil } && !messages.contains(where: \.afterReload)
+    }
+
     /// Brings back requests that were waiting for setup, or for Reload, when Lamp last quit. Kept files no waiting
     /// request needs any more (its build has started, or it was taken back) are cleared out.
     private func restoreWaiting() {
@@ -4138,7 +4144,7 @@ final class Store: ObservableObject {
                     if let picture = restored.pointed?.url { kept.insert(picture.deletingLastPathComponent().path) }
                     return restored
                 }
-                if queued[id]?.contains(where: { $0.sideReply != nil }) == true { heldAfterQuit.insert(id) }
+                if Self.heldAfterQuit(queued[id] ?? []) { heldAfterQuit.insert(id) }
             }
         }
         kept.formUnion(waitingImport.keptFolders)
