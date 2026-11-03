@@ -9792,20 +9792,18 @@ final class Store: ObservableObject {
         AppTransition.land(project)
     }
 
-    /// A new web game's launch said to be open but not yet drawn, by app: the page's word that this launch drew, when it
-    /// comes, puts "ready" in that line's place (`frameArrived`).
-    struct LateFrame { let launch: Int32; let opened: Date; let line: String; let began: Date? }
-    private var lateFrames: [String: LateFrame] = [:]
+    /// A new web game's launch said to be open but not yet drawn: the page's word that this launch drew, when it comes,
+    /// puts "ready" in that line's place (`frameArrived`, through `FirstFrames.whenDrawn`).
+    struct LateFrame { let opened: Date; let line: String; let began: Date? }
 
     nonisolated static func drewWords(_ seconds: TimeInterval) -> String {
         "The game's window drew \(String(format: "%.1f", seconds)) s after it was opened."
     }
 
-    /// The page of an app's launch has drawn (`PageLive.state`). For a launch said not to have drawn yet, the chat says
-    /// it's ready now, in place of that line while nothing has been said since.
-    func frameArrived(app id: String, launch: Int32) {
-        guard let late = lateFrames[id], late.launch == launch, let project = projects.first(where: { $0.id == id }) else { return }
-        lateFrames[id] = nil
+    /// The page of a launch said not to have drawn yet has drawn: the chat says it's ready now, in place of that line
+    /// while nothing has been said since.
+    private func frameArrived(app id: String, _ late: LateFrame) {
+        guard let project = projects.first(where: { $0.id == id }) else { return }
         // A part's lines are its wish's (`log`).
         let chat = wish(of: project).id
         var pace: String?
@@ -10032,7 +10030,8 @@ final class Store: ObservableObject {
                     // A window that draws after the wait still draws: when its page says so, the line says it's ready.
                     if owner?.stopped != true, let line = Self.draftLine(project.name, .pending, updated: false) {
                         log(project, .status, line)
-                        lateFrames[id] = LateFrame(launch: app.processIdentifier, opened: opened, line: line, began: owner?.began)
+                        let late = LateFrame(opened: opened, line: line, began: owner?.began)
+                        frames.whenDrawn(app: id, launch: app.processIdentifier) { [weak self] in self?.frameArrived(app: id, late) }
                     }
                 } else {
                     owner?.shown.append(Date())

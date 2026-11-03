@@ -346,6 +346,15 @@ final class SkillsTests: XCTestCase {
         XCTAssertNil(try page("<script type='module'>import { phaser } from './lamp-phaser.js'; phaser({});</script>"))
     }
 
+    /// A page with no module of its own at all is the code's problem too, not a page with nothing to check.
+    func testAMacWebGamesPageWithNoModulesIsSentBack() async throws {
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
+        try "<!doctype html><head><script src=\"lamp.js\"></script></head><body></body>".write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        let problem = await GameKit.codeProblem(game(on: [.mac]))
+        XCTAssertTrue(problem?.contains("runs none of the game's code") == true, String(describing: problem))
+    }
+
     /// `needs` names only the skills a new Mac web game can be handed, in one order whatever the agent's.
     func testNeedsTakesOnlyTheNarrowGameSkills() {
         XCTAssertEqual(try Skills.gameNeeds(nil).get(), [])

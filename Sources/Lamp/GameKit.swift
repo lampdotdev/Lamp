@@ -441,8 +441,11 @@ enum GameKit {
     /// nothing is asked of them that only a module must keep to, and whose pages' inline scripts are read too.
     static func codeProblem(_ project: LampProject, in folder: String = webFolder) async -> String? {
         let modules = folder == webFolder
-        guard !(modules && compilesSource(project)), let bun = Agent.executable else { return nil }
+        guard !(modules && compilesSource(project)) else { return nil }
         let web = project.dir.appendingPathComponent(folder)
+        // Whatever modules there are, or none: a page that runs none of them draws nothing.
+        if modules, isMacWebGame(project), let entry = entryProblem(of: web, project: project) { return entry }
+        guard let bun = Agent.executable else { return nil }
         let base = web.standardizedFileURL.path + "/"
         let files = (FileManager.default.enumerator(at: web, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .map { String($0.standardizedFileURL.path.dropFirst(base.count)) }
@@ -451,7 +454,6 @@ enum GameKit {
                     && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
             }.sorted()
         guard !files.isEmpty else { return nil }
-        if modules, isMacWebGame(project), let entry = entryProblem(of: web, project: project) { return entry }
         if modules, GameKit.isGame(project), let strict = strictProblem(in: files, of: web, project: project) { return strict }
         // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
         // it runs in a scratch folder, reading the page's files by their paths.

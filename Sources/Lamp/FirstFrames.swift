@@ -14,10 +14,19 @@ import Foundation
     }
     private var seen: [String: Int32] = [:]
     private var waiters: [String: Waiter] = [:]
+    private var late: [String: (launch: Int32, run: @MainActor () -> Void)] = [:]
 
     func report(app: String, launch: Int32) {
         seen[app] = launch
         if waiters[app]?.launch == launch { settle(app, .drawn) }
+        if late[app]?.launch == launch { late.removeValue(forKey: app)?.run() }
+    }
+
+    /// Runs `run` once this launch has drawn, at once when its word came already: a word that came after a wait ran out
+    /// and before this was asked still counts.
+    func whenDrawn(app: String, launch: Int32, _ run: @escaping @MainActor () -> Void) {
+        if seen[app] == launch { return run() }
+        late[app] = (launch, run)
     }
 
     func wait(app: String, launch: Int32, limit: Duration) async -> Outcome {
@@ -38,6 +47,7 @@ import Foundation
     /// Before an app opens again, so nothing said of its last launch stays.
     func forget(app: String) {
         seen[app] = nil
+        late[app] = nil
         settle(app, .ended)
     }
 

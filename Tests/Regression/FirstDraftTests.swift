@@ -81,6 +81,25 @@ import XCTest
         frames.end(app: "game")
     }
 
+    /// A page's word that comes after the turn's wait ran out, but before Lamp asks to hear of it late, still counts; a word
+    /// from another launch never does, and a late one runs once.
+    func testAWordBetweenTheWaitAndTheLateWatchStillCounts() async {
+        let frames = FirstFrames()
+        let outcome = await frames.wait(app: "game", launch: 1, limit: .milliseconds(30))
+        XCTAssertEqual(outcome, .timedOut)
+        frames.report(app: "game", launch: 1)
+        var ran = 0
+        frames.whenDrawn(app: "game", launch: 1) { ran += 1 }
+        XCTAssertEqual(ran, 1, "the word came already")
+
+        frames.whenDrawn(app: "other", launch: 2) { ran += 1 }
+        frames.report(app: "other", launch: 3)
+        XCTAssertEqual(ran, 1, "another launch's word")
+        frames.report(app: "other", launch: 2)
+        frames.report(app: "other", launch: 2)
+        XCTAssertEqual(ran, 2, "once")
+    }
+
     func testStoppingOrClosingEndsTheWaitAsNeitherFrameNorTimeout() async {
         let frames = FirstFrames()
         let waiting = Task { @MainActor in await frames.wait(app: "game", launch: 1, limit: .seconds(30)) }
