@@ -334,7 +334,8 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
 
 An experiment, only in Lamp Dev (Settings → Experimental, `Mix.switchKey`): a button beside Settings at the desk's foot
 opens a window of its own (`MixWindow.swift`, the one window besides the desk while it's an experiment) where someone
-else's copy of a wish is dropped. Lamp finds your copy by the file's identity; a remix has an identity of its own, so
+else's copy of a wish is dropped. Lamp finds your copy by the file's identity, whatever its layout (an import, which
+would replace the app at its root, passes over a wish whose apps are in folders of their own); a remix has an identity of its own, so
 its file finds the wish it was remixed from by its chain, and the original's file a remix of it made here
 (`Mix.copy(of:among:)`). Then it saves what's
 unsaved, and lines up every change either of you made since the copies last met on one timeline by date: yours on

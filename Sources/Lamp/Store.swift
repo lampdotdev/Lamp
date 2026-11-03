@@ -3911,10 +3911,13 @@ final class Store: ObservableObject {
         versionsRevision += 1
         showChat(project.id)
         log(project, .status, "Mixed. Building it now…")
-        if await build(project) == nil {
-            await installReportingCrash(project)
-        } else {
-            log(project, .error, ErrorMessages.appDoesNotBuild)
+        // A wish whose apps are all in folders of their own has nothing of its own to build: its parts are.
+        if project.holdsApp {
+            if await build(project) == nil {
+                await installReportingCrash(project)
+            } else {
+                log(project, .error, ErrorMessages.appDoesNotBuild)
+            }
         }
         await rebuildParts(of: current(project) ?? project, onlyChanged: true)
     }

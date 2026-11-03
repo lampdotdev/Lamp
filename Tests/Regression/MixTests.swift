@@ -33,7 +33,10 @@ final class MixTests: XCTestCase {
     /// Yours, where the copies met; theirs, a copy of it with its own changes; and the file it shares.
     private func copies() async throws -> (yours: HistoryEscapeTests.App, theirs: HistoryEscapeTests.App, package: Sharing.Package, history: MixHistory) {
         let yours = try escape.app(), theirs = try escape.app()
-        for app in [yours, theirs] { try FileManager.default.removeItem(atPath: app.tool) }
+        for app in [yours, theirs] {
+            try FileManager.default.removeItem(atPath: app.tool)
+            try FileManager.default.createDirectory(at: app.project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        }
         try commit(yours, "Start", at: 100, ["Sources/App.swift": start, ".gitignore": ".lamp/\n"])
         Sharing.setIdentity(identity, of: yours.project)
         let met = try head(yours)
@@ -186,6 +189,15 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(text(yours), "A-you\nb\nC-you\nd\nE-them\n")
         XCTAssertNil(text(yours, "Sources/Title.swift"))
         XCTAssertNotEqual(try head(yours), original)
+    }
+
+    /// A file finds its wish by identity alone: one an import wouldn't update (here, no app at its root, as a wish
+    /// whose apps are in folders of their own) is still the one it's mixed into.
+    func testAFileFindsItsWishWhateverItsLayout() async throws {
+        let (yours, _, _, _) = try await copies()
+        let package = Sharing.Package(name: "Coin Flip", identity: identity, folder: yours.root, sources: [], attachments: [], fileCount: 0)
+        XCTAssertNil(Store.copy(of: package, among: [yours.project]))
+        XCTAssertEqual(Mix.copy(of: package, among: [yours.project])?.dir, yours.project.dir)
     }
 
     /// The other way round: an original first shared after it was remixed still starts where the remix was made.

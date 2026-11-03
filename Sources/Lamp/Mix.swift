@@ -63,10 +63,14 @@ enum Mix {
     // MARK: Lining up
 
     /// The wish on this Mac a file is mixed into: the same wish's copy; for a remix's file, the wish it was remixed from
-    /// (the latest in its chain that's here); else a remix made here of the file's wish.
+    /// (the latest in its chain that's here); else a remix made here of the file's wish. By the wish alone, whatever its
+    /// layout: a file's history is the whole wish's, so a wish whose apps are in folders of its own (which an import
+    /// opens as a new wish, `Store.copy(of:among:)`) is mixed as it is.
     static func copy(of package: Sharing.Package, among projects: [LampProject]) -> LampProject? {
-        if let same = Store.copy(of: package, among: projects) { return same }
-        let candidates = projects.filter { $0.holdsApp && $0.platform == package.platform && $0.hasScaffold }
+        let candidates = projects.filter { !$0.isPart }
+        if let identity = package.identity, let same = candidates.first(where: { Sharing.identity(of: $0, create: false) == identity }) {
+            return same
+        }
         for link in (package.credits?.remixOf ?? []).reversed() {
             if let wish = link.wish, let original = candidates.first(where: { Sharing.identity(of: $0, create: false) == wish }) { return original }
         }
