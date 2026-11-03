@@ -1,51 +1,9 @@
 import XCTest
 @testable import Lamp
 
-/// What a new game's first draft rests on: one play at a time in its hidden preview, the page's word that it has drawn,
+/// What a new game's first draft rests on: the page's word that it has drawn, what the turn's end says of its window,
 /// and knowing whether a run begins its conversation.
 @MainActor final class FirstDraftTests: XCTestCase {
-    private final class Asker {}
-
-    func testHiddenCopyGoesToEachInTheOrderTheyCame() async {
-        let line = HiddenCopyLine(), turn = Asker()
-        var order: [String] = []
-        let first = await line.take(for: turn)
-        XCTAssertNil(first)
-        let second = Task { @MainActor in
-            let refused = await line.take(for: turn)
-            order.append("second \(refused ?? "took it")")
-            line.letGo()
-        }
-        await Task.yield()
-        let third = Task { @MainActor in
-            let refused = await line.take(for: turn)
-            order.append("third \(refused ?? "took it")")
-            line.letGo()
-        }
-        await Task.yield()
-        line.letGo()
-        await second.value
-        await third.value
-        XCTAssertEqual(order, ["second took it", "third took it"])
-        let free = await line.take(for: turn)
-        XCTAssertNil(free, "free again")
-    }
-
-    func testAStoppedTurnsWaitEndsWithoutThePreviewAndOthersKeepTheirPlace() async {
-        let line = HiddenCopyLine(), stopped = Asker(), other = Asker()
-        _ = await line.take(for: stopped)
-        let dropped = Task { @MainActor in await line.take(for: stopped) }
-        await Task.yield()
-        let kept = Task { @MainActor in await line.take(for: other) }
-        await Task.yield()
-        line.drop(stopped, saying: "Stopped.")
-        let said = await dropped.value
-        XCTAssertEqual(said, "Stopped.")
-        line.letGo()
-        let took = await kept.value
-        XCTAssertNil(took, "the other turn's wait goes on to its turn")
-    }
-
     func testAnEarlierLaunchsWordDoesNotAnswerThisOne() async {
         let frames = FirstFrames()
         frames.report(app: "game", launch: 1)
@@ -140,43 +98,6 @@ import XCTest
         XCTAssertNil(Store.draftWords(.stopped))
     }
 
-    func testAPlayAtAWindowsSizeIsBornAtItAndLeavesTheKeptPreviewAlone() async throws {
-        let page = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: page) }
-        try FileManager.default.createDirectory(at: page, withIntermediateDirectories: true)
-        try """
-            <!doctype html><script>
-            window.webkit.messageHandlers.lampPreview.postMessage({ done: true, logs: [innerWidth + 'x' + innerHeight] });
-            </script>
-            """.write(to: page.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
-        let id = UUID().uuidString
-        let full = await WebGamePreview.play(page, script: [], for: id)
-        XCTAssertEqual(full?.result["logs"] as? [String], ["1920x1080"])
-        XCTAssertTrue(WebGamePreview.isWarm(for: id))
-        let small = await WebGamePreview.playOnce(page, script: [], for: id, size: CGSize(width: 960, height: 540))
-        XCTAssertEqual(small?.result["logs"] as? [String], ["960x540"])
-        XCTAssertTrue(WebGamePreview.isWarm(for: id), "the kept preview is still there, at its own size")
-        WebGamePreview.stop(for: id)
-    }
-
-    /// The holder is still building, with no play to stop: what waits behind it gives way to the person all the same.
-    func testAMessageReleasesWaitersBeforeAnyPlayHasBegun() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = Store(testingAt: root)
-        let turn = Store.Turn(), line = HiddenCopyLine()
-        turn.hiddenLines.append(line)
-        _ = await line.take(for: turn)
-        let waiting = Task { @MainActor in await line.take(for: turn) }
-        await Task.yield()
-        XCTAssertNil(turn.stopHidden)
-        store.giveWayToMessage(turn)
-        line.letGo()
-        let said = await waiting.value
-        XCTAssertEqual(said, Store.personWroteNote)
-        XCTAssertFalse(turn.stoppedForMessage, "no play was stopped to be excused")
-    }
-
     /// The turn's end says ready only for a draft whose window drew; anything else says what's known, and no draft at all
     /// is said to be ready as any other app.
     func testATurnsEndSaysReadyOnlyForAWindowThatDrew() {
@@ -226,23 +147,73 @@ import XCTest
         XCTAssertTrue(shown)
     }
 
-    /// The line was handed on, but its next caller hasn't run yet when the person writes: that caller doesn't play.
-    func testAMessageInTheHandoverStopsTheNextPlay() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = Store(testingAt: root)
-        let turn = Store.Turn(), line = HiddenCopyLine()
-        turn.hiddenLines.append(line)
-        _ = await line.take(for: turn)
-        let next = Task { @MainActor in await store.takeHiddenCopy(line, for: turn) }
-        await Task.yield()
-        line.letGo()
-        store.giveWayToMessage(turn)
-        let said = await next.value
-        XCTAssertEqual(said, Store.personWroteNote)
-        if said == nil { line.letGo() }
-        let free = await line.take(for: turn)
-        XCTAssertNil(free, "the next caller gave the line back")
+    /// A first draft's window that drew nothing within its watch, and draws after: the late frame is pictured as a timely
+    /// one is. A picture of one color leaves it not ready; a picture of the game says it's on screen.
+    func testALateFrameIsReadyOnlyWhenItsPictureShowsTheGame() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func picture(_ name: String, game: Bool) throws -> URL {
+            let width = 320, height = 180
+            guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw CocoaError(.fileWriteUnknown) }
+            context.setFillColor(CGColor(red: 0.05, green: 0.05, blue: 0.1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            if game {
+                context.setFillColor(CGColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 1))
+                context.fill(CGRect(x: 140, y: 70, width: 40, height: 40))
+            }
+            let url = dir.appendingPathComponent(name + ".png")
+            guard let image = context.makeImage(), let file = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { throw CocoaError(.fileWriteUnknown) }
+            CGImageDestinationAddImage(file, image, nil)
+            guard CGImageDestinationFinalize(file) else { throw CocoaError(.fileWriteUnknown) }
+            return url
+        }
+        let blank = try picture("blank", game: false), game = try picture("game", game: true)
+        XCTAssertTrue(GameKit.isBlank(blank))
+        XCTAssertFalse(GameKit.isBlank(game))
+
+        let store = Store.shared
+        let saved = Store.draftPicture
+        defer { Store.draftPicture = saved }
+        func lateFrame(pictured: URL) async -> (Store.Turn, String) {
+            let project = LampProject(id: "draft-late-" + UUID().uuidString, name: "Draft", exe: "Draft", dir: dir, platform: .game)
+            Store.draftPicture = { _, _ in pictured }
+            let turn = Store.Turn()
+            turn.look.draftOpen.insert(project.id)
+            let window = await store.watchDraft(project, launch: 7, in: turn, limit: 0.05)
+            XCTAssertEqual(window, .timedOut(seconds: 0))
+            store.recordDraft(window, for: project.id, in: turn)
+            XCTAssertFalse(store.windowDrew(project.id, in: turn))
+            store.firstFrames.report(app: project.id, launch: 7)
+            // The late frame's picture is taken out of line: waited for here.
+            for _ in 0..<100 where turn.look.draftKnown[project.id] == .timedOut(seconds: 0) { try? await Task.sleep(for: .milliseconds(20)) }
+            store.firstFrames.forget(app: project.id)
+            return (turn, project.id)
+        }
+
+        let (blankTurn, blankID) = await lateFrame(pictured: blank)
+        XCTAssertEqual(blankTurn.look.draftKnown[blankID], .blank, "a late frame of one color isn't the game")
+        XCTAssertFalse(store.windowDrew(blankID, in: blankTurn))
+
+        let (gameTurn, gameID) = await lateFrame(pictured: game)
+        XCTAssertEqual(gameTurn.look.draftKnown[gameID], .content, "a late frame that shows the game is on screen")
+        XCTAssertTrue(store.windowDrew(gameID, in: gameTurn))
+    }
+
+    /// A first draft whose watch saw a frame of one color, and a later look whose picture shows the game: that picture is
+    /// the newer word. A blank picture leaves the earlier word as it was.
+    func testADraftThatLookedBlankThenShowsTheGameIsOnScreen() {
+        let store = Store.shared, id = "draft-blank-" + UUID().uuidString
+        let turn = Store.Turn()
+        turn.look.draftOpen.insert(id)
+        store.recordDraft(.blank, for: id, in: turn)
+        XCTAssertFalse(store.windowDrew(id, in: turn))
+
+        store.draftPictured(id, blank: true, in: turn)
+        XCTAssertEqual(turn.look.draftKnown[id], .blank)
+        store.draftPictured(id, blank: false, in: turn)
+        XCTAssertTrue(store.windowDrew(id, in: turn), "a picture of the game clears the blank word")
     }
 
     /// Calls sent in one message on a part of the wish: the first to finish doesn't take the part from the others.

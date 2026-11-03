@@ -306,8 +306,9 @@ final class SkillsTests: XCTestCase {
     }
 
     /// A web game at home on the Mac is looked at and played only when the person asks, in every set of rules it's
-    /// given: made, changed later in the wish's own folder or in a folder of its own. A game played elsewhere too keeps
-    /// playing it before it's done.
+    /// given: made, changed later in the wish's own folder or in a folder of its own. A game played elsewhere too is
+    /// looked at as it's made, and checks its opening before it's done, but is played only when the person asks too:
+    /// it's played in their window, in front of them.
     func testAMacWebGamesRulesLeaveTryingItToThePerson() throws {
         let mac = game(on: [.mac]), both = game(on: [.mac, .ios])
         XCTAssertTrue(GameKit.isMacWebGame(mac))
@@ -321,7 +322,9 @@ final class SkillsTests: XCTestCase {
         }
         for (place, rules) in [("own folder", Agent.gamePrompt(for: both)), ("part", Parts.packs(for: [both])[Parts.skill(of: both)]?.body ?? "")] {
             XCTAssertFalse(rules.contains(asked), place)
-            for mandate in mandates { XCTAssertTrue(rules.contains(mandate), "\(place): \(mandate)") }
+            XCTAssertTrue(rules.contains(mandates[1]), place)
+            XCTAssertFalse(rules.contains(mandates[0]), place)
+            XCTAssertTrue(rules.contains("play it only when they ask you to try, play or test it"), place)
         }
     }
 

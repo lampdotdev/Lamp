@@ -130,7 +130,7 @@ A picture Phaser's loader read goes in again through `assetChanged(path)` in pha
 
 Kinds `sound` (short effects) and `music` (loops). Each line has its length and says when it loops. `show` has nothing
 to show: a sound's name and notes are all you can judge it by, so try it in the game, and say in your report that you
-haven't heard it, since the preview plays nothing aloud.
+haven't heard it, since Lamp hears nothing of what plays.
 
 A game's sounds start here, whatever else it makes in code. List them all before writing any: `kind: sound`, `limit: 30`
 and no `find`, then `kind: music`, since one search stops at its own words. Go through each moment (a click, a flip, a

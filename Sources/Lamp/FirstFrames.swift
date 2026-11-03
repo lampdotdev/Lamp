@@ -1,8 +1,7 @@
 import Foundation
 
 /// When a game's page has drawn, as the page says it (`PageLive.state`, "playing", the frame after its first) for one
-/// launch of its app, named by the process: what a page of an earlier launch said, or the hidden preview, which says
-/// nothing of the kind, never answers for this one. A report may come before anyone waits for it. A wait settles once:
+/// launch of its app, named by the process: what a page of an earlier launch said never answers for this one. A report may come before anyone waits for it. A wait settles once:
 /// on the report, at its limit, or when it's ended (`end`: the turn was stopped, or the app closed).
 @MainActor final class FirstFrames {
     enum Outcome: Equatable { case drawn, timedOut, ended }

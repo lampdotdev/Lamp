@@ -52,6 +52,8 @@ import UIKit
 
 @MainActor enum LampPage {
     private static var registered = false
+    /// Whether this launch's fresh start (`-LampFreshStart`) has gone to a page already.
+    static var freshStartGiven = false
 
     /// Gives the page in `configuration` its ways to Lamp and to this device, for pages served at `scheme`. A page that
     /// logs its own errors (a game's runtime does) leaves `catchErrors` off, or each would be logged twice.
@@ -65,6 +67,17 @@ import UIKit
         configuration.userContentController.add(LampPageLog(), name: "lampLog")
         #if os(macOS)
         configuration.userContentController.add(LampPagePlaying(), contentWorld: .page, name: "lampPlaying")
+        configuration.userContentController.add(LampPageDriveTaken(scheme: scheme), contentWorld: .page, name: "lampDriveTakenOver")
+        // A fresh start Lamp asked for when it opened the app (`-LampFreshStart YES`): a game starts from its beginning
+        // (lamp-game.js's claim()), once, at this launch's first page; a page opened again later in the same launch
+        // (Reload, a change) starts where the player was, as ever.
+        if UserDefaults.standard.bool(forKey: "LampFreshStart"), !LampPage.freshStartGiven {
+            // Once a launch, whatever opens later in it (another window of the game) starting where the player was.
+            LampPage.freshStartGiven = true
+            configuration.userContentController.addUserScript(WKUserScript(source: """
+                try { if (!sessionStorage.getItem('lamp.freshStart')) { sessionStorage.setItem('lamp.freshStart', '1'); window.lampFreshStart = true; } } catch (e) {}
+                """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         #endif
         // The page's console, into the app's log.
         configuration.userContentController.addUserScript(WKUserScript(source: """
@@ -627,6 +640,18 @@ final class LampPageLog: NSObject, WKScriptMessageHandler {
 }
 
 #if os(macOS)
+/// A game's page saying the person played while Lamp held its controller (lamp-game.js, "Lamp's hands on the
+/// controller"): it has let go already, and Lamp's batch ends there, as it does for their click or key in the app.
+final class LampPageDriveTaken: NSObject, WKScriptMessageHandler {
+    private let scheme: String
+    init(scheme: String) { self.scheme = scheme }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard LampPage.isOwnPage(message, scheme: scheme) else { return }
+        MainActor.assumeIsolated { LampDriver.Handover.current?.stop() }
+    }
+}
+
 /// A game's page saying it's loading, and then that it's playing (lamp-game.js): the picture of the app Lamp's desk shows
 /// waits for play, and is taken a moment after it starts, once the loading screen has faded (`LampRuntime.snapshot`).
 final class LampPagePlaying: NSObject, WKScriptMessageHandler {
@@ -1057,6 +1082,64 @@ final class LampPageBlockedHost: NSObject {
         LampPageItems.refresh = refresh
         LampPageItems.items = { read[$0.windowNumber] ?? [] }
         LampPageItems.act = act
+        LampPageItems.own = { own($0, batch: $1) }
+        LampPageItems.hold = { hold($0, in: $1, for: $2, said: $3) }
+    }
+
+    /// A game's controller given to Lamp for batch `id`'s `use_app` moves (`seconds` it may run), or back (nil), in every
+    /// page shown (lamp-game.js, "Lamp's hands on the controller"): for the whole batch the person's input takes it back.
+    /// Given back by name, so a batch's end that reaches the page late gives back nothing a newer batch has.
+    private static func own(_ seconds: Double?, batch id: String) {
+        let name = quoted(id)
+        let call = seconds.map { "window.__lampOwn && window.__lampOwn(\($0), \(name))" } ?? "window.__lampOwn && window.__lampOwn(null, \(name))"
+        for page in pages.allObjects where page.window != nil { page.evaluateJavaScript(call) }
+    }
+
+    /// Each hold's name in the page: its batch's id and a number of its own.
+    private static var holds = 0
+
+    /// A game's controller held for a `stick` or `button` action of `batch`, in the game's own script, for `amount`
+    /// seconds and let go after, or at once if the batch stops or a newer one takes its place. What the report says is the
+    /// page's answer: held, or why not (no Lamp runtime in the page yet, or the page failing). False when the app has no
+    /// game. The hold is let go by its name, so a release that reaches the page late lets go of nothing newer.
+    private static func hold(_ action: LampDriver.Action, in window: NSWindow, for batch: LampDriver.Handover,
+                             said: @escaping @MainActor (String, Bool) -> Void) -> Bool {
+        let shown = pages.allObjects.filter { $0.window === window }
+        guard LampPageItems.playing != nil, let held = action.controller, let page = shown.first ?? pages.allObjects.first(where: { $0.window != nil })
+        else { return false }
+        let seconds = min(max(action.amount ?? 0, 1.0 / 60), 10)
+        guard let json = try? JSONSerialization.data(withJSONObject: held.merging(["seconds": seconds]) { $1 }) else { return false }
+        holds += 1
+        let name = quoted("\(batch.id)#\(holds)")
+        let release = { page.evaluateJavaScript("window.__lampDrive && window.__lampDrive(null, \(name))") }
+        let call = "window.__lampDrive(\(String(decoding: json, as: UTF8.self)), \(name), \(quoted(batch.id)))"
+        page.evaluateJavaScript("window.__lampDrive ? \(call) : 'missing'") { answer, error in
+            MainActor.assumeIsolated {
+                // Stopped or replaced while the page answered (the batch gave up waiting for it, too): nothing more is
+                // Lamp's, and the batch has said how it ended, so this answer adds nothing to its report.
+                guard batch.carriesOn else {
+                    if answer as? Bool == true { release() }
+                    return
+                }
+                if answer as? String == "ended" {
+                    return said("\(action.action): stopped before the game took it", false)
+                }
+                if let error {
+                    return said("\(action.action): the game's page couldn't take it (\(error.localizedDescription))", false)
+                }
+                guard answer as? Bool == true else {
+                    return said("\(action.action): the game didn't take Lamp's controller: its page has no Lamp game runtime running (still loading, or built by an older Lamp)", false)
+                }
+                batch.hold(for: seconds, release: release)
+                said(action.text ?? "held the game's controller for \(LampScreen.number(seconds)) s", true)
+            }
+        }
+        return true
+    }
+
+    /// A string as a script's literal.
+    private static func quoted(_ text: String) -> String {
+        (try? JSONSerialization.data(withJSONObject: [text])).map { String(decoding: $0.dropFirst().dropLast(), as: UTF8.self) } ?? "null"
     }
 
     /// The keys an action names, as the page reads them (`e.key`, and the code lamp.js and older pages read).

@@ -536,8 +536,8 @@ extension Agent.Rules {
     """
 
     static let androidTry = """
-    - `look_at_app` builds the app and opens it in the emulator (or on the person's device when Try On points \
-    there) and shows you the screen; `use_app` then taps, types, scrolls and swipes on it like a finger (click to \
+    - `look_at_app` builds the app and opens it in Lamp's emulator, even when Try On points at the person's own \
+    device, which only their Play and Reload reach, and shows you the screen; `use_app` then taps, types, scrolls and swipes on it like a finger (click to \
     tap, right_click for a long press, type into the field you tapped last, which replaces what it held, key \
     return, back, home, delete, up, down, left or right, scroll, swipe with a direction and `item` to tap what the \
     swipe uncovered), and tells you what each action landed on. Both also give you the screen as text: every \

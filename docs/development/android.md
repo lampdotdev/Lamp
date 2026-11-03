@@ -36,7 +36,8 @@ The build runs build.sh in the app's sandbox like every build, with `AndroidTool
 app opens is Try On's choice (`TryOnMenu.choices`): the emulator Lamp made (`Emulator`, one AVD,
 `AndroidTools.avdName`, started by Lamp as itself and shown as its own window) or one of the person's Android
 devices, which adb lists (`Adb.devices`, each a `Device` with its state: debugging allowed, or the next step) and which
-`LampProject.device` keeps by serial (`Store.setAndroidDevice`). Play and a look install the APK with adb and start
+`LampProject.device` keeps by serial (`Store.setAndroidDevice`). Play installs the APK there with adb, and a look
+always on Lamp's emulator, never the person's own device (`AgentPreview`); either starts
 the main activity (`Store.installOnAndroid`), with its log read into the app's log by `adb logcat` for the app's
 process. A change opens where the person was: before an install replaces a running copy, Lamp has it save
 its state (`Adb.saveState`, a broadcast only adb's shell may send, holding DUMP), and the new copy's activity, a

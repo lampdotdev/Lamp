@@ -71,8 +71,7 @@ in place from the snapshot, with a new Phaser game that loads its pictures again
 What Lamp has changed in Phaser, so its usual code works here:
 
 - **One frame loop, Lamp's.** Phaser's own loop is asleep; each of the runtime's frames steps Phaser once. Use a
-  scene's `update(time, delta)` (ms) and Phaser's timers and tweens freely: they all run on that one clock, which in
-  the preview is exactly 1/60 s a frame. Never requestAnimationFrame, setTimeout, Date or Math.random of your own:
+  scene's `update(time, delta)` (ms) and Phaser's timers and tweens freely: they all run on that one clock. Never requestAnimationFrame, setTimeout, Date or Math.random of your own:
   `random()` from lamp-game.js, or `Phaser.Math.RND`, which Lamp seeds from it.
 - **Input is the runtime's pad.** `pad()` is the first controller with the keyboard and the touch controls merged in
   (lx, ly, rx, ry with up positive; buttons as BUTTON bits in down, pressed and released). Phaser's keyboard and
@@ -85,8 +84,7 @@ What Lamp has changed in Phaser, so its usual code works here:
 - **The stage is 1920x1080**, fitted to the window or screen with black around it. Lay everything out in those units.
   The page is never resized to the window: don't listen for resize.
 - **Loading.** Load each scene's files in its `preload`, best all in a first Boot scene, and start play from `create`.
-  The preview waits for loading to finish, so a play is the same frames every time; on a device it takes what it takes,
-  so a scene that loads mid-game shows a loading line rather than nothing.
+  A scene that loads mid-game takes what it takes while the game goes on, so it shows a loading line rather than nothing.
 
 ### Structure
 
@@ -219,8 +217,7 @@ swap the texture), or the game's code runs again in place from the state.
 ### Keeping it smooth on the slowest place
 
 The slowest places are an Xbox One in Developer Mode, a cheap Android phone or TV stick and a Samsung or LG TV's
-browser; the request's device line names the slowest this game is played on and its budget, and the preview's stats
-count draws a frame (`look_at_app`). In 2D what costs is draws and filling the screen, rarely shapes:
+browser; the request's device line names the slowest this game is played on and its budget. In 2D what costs is draws and filling the screen, rarely shapes:
 
 - few textures: sprites that share one texture (an atlas, or the shapes made into one canvas texture) are drawn in
   one batch, and every change of texture starts another;
@@ -236,10 +233,12 @@ The log on a device says every ten seconds how many frames a second it gets ther
 
 ### Checking it
 
-`look_at_app` plays the game in the preview from its start and shows its last frame (while the game is open on this
-Mac, it looks at that window instead, where the person is); `use_app` plays on in the preview with the controller
-(`stick`, `button`, `wait`), a picture after each, and every use plays the whole thing again with the same moves. Play it as the person would: start it, jump, die, win, pause, change a setting and come back to find it kept.
-Once it plays right, `look_at_app` with `on_device` where Try On points.
+`look_at_app` shows the game in its window on this Mac, where the person is in it, opening it when it's closed;
+`use_app` plays it there with Lamp's own controller (`stick`, `button`, `wait`), from wherever it is, a picture at the
+end (the game skill, "Playtesting"). When the person asks you to try, play or test it, play it as they would: start
+it, jump, die, win, pause, change a setting and come back to find it kept. Once it looks or plays right there,
+`look_at_app` with `on_device` looks at it in the preview of where Try On points (the iPhone or iPad simulator); the
+person's own iPhone, iPad or Xbox is only for their Play.
 
 ## SpriteKit in a Mac or iPhone app
 

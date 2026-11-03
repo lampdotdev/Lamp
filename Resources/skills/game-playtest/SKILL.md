@@ -1,6 +1,6 @@
 ---
 name: game-playtest
-description: For a web game at home on the Mac, only when the person asks to play it, test it, check that it works or judge how it looks - playing a round in the preview, seeing the real opening, proving a flow and its screens, and one short critique. Open it then, and do only what was asked. Never for a request that only changes the game.
+description: For a web game at home on the Mac, only when the person asks to play it, test it, check that it works or judge how it looks - playing a round in its window, seeing the real opening, proving a flow and its screens, and one short critique. Open it then, and do only what was asked. Never for a request that only changes the game.
 sections: game#Playtesting; game-ui#Check the real opening; game-ui#Proof; 3d-game#Checking it
 ---
 
@@ -11,8 +11,9 @@ it and judging it happen only when the person asks, and only as far as they aske
 
 - **Play it, test it, check it works:** one `use_app` round as the person would play it: start, steer both ways,
   take a hit, wait out the round to the results, press A to restart. Fix what fails and play that part again.
-- **How it looks, or how it fits a smaller window:** one `look_at_app` (with `reopen` for the opening, `shape`
-  "960x540" for a smaller window, `motion` for what moves), without playing a round.
+- **How it looks:** one `look_at_app` (with `reopen` for the opening, `motion` for what moves), without playing a
+  round. It's the game's window as the person has it; how it fits a smaller window is checked by reading its layout
+  against the stage's (the web-game guide).
 - **Check the code:** read it, without opening or playing the game.
 - **A critique:** look at the opening, a moment of play and the results in the pictures you already have, against
   what the person asked for. Name at most one thing a player would trip on or that reads as a template, and fix it,

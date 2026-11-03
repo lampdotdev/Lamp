@@ -225,8 +225,7 @@ Play the journey, don't only look at it:
   phone-pages skill).
 
 Look at each screen, and at motion with `look_at_app`'s `motion`: one picture proves appearance, not navigation or
-sound. Lamp's preview can open a phone page and play it (the phone-pages skill), but a real join is proved only where
-phones are really used. When you finish, name any
+sound. Lamp can't play a phone page: a join is proved only where phones are really used. When you finish, name any
 device or path you didn't run.
 
 ## Check the real opening
@@ -234,15 +233,12 @@ device or path you didn't run.
 After your last edit to any screen and before you say a new game is done, or a change to its flow, see what a new
 player sees. A look from before that edit doesn't count, so every later edit to a screen means this check again.
 
-On Lamp's web runtime, `look_at_app` with `reopen` gives a fresh preview from the start: a plain look shows where the
-person is in an open game, and `use_app` adds to the moves already played, so after playtesting it can land anywhere.
-Look before pressing anything. That picture comes about two seconds in, so where the opening changes by itself, follow
-it with `use_app` and `wait` before any other move.
-
-A native game, or a page with a loop of its own, has no such preview. There `reopen` opens the app again, and while the
-person has it open Lamp asks them to press Reload first, with no picture until they do. Its saved data stays too, so the
-picture may be a returning player's. Say which you saw, and when you couldn't see the opening, say so instead of
-calling it checked.
+`look_at_app` with `reopen` starts the game again from its beginning: a plain look shows where the person is in an
+open game, and `use_app` plays on from there, so after playtesting it can be anywhere. While the person has the game
+open, Lamp asks them to press Reload first, with no picture until they do. Its saves stay (a fresh start keeps them),
+so the picture may be a returning player's. Look before pressing anything; where the opening changes by itself, follow
+the look with `use_app` and `wait` before any other move. Say which you saw, and when you couldn't see the opening, say
+so instead of calling it checked.
 
 First, write out every word on the opening, in the scenery and on tags as well as in the text. Any key name, button
 name or control label among them fails, for every flow and however well it teaches: remove it before you say it's done,
@@ -259,8 +255,8 @@ with prompts that match the real bindings, and starting that does something the 
 
 ## One critique pass
 
-Once the journey plays, look at each screen against your brief once, the phone page included (`use_app` with `phone`, the
-phone-pages skill). Name the one thing on it that reads as a template, and fix that, along with anything you saw break.
-For a phone controller you made or changed, answer the question in "With phones" when you report, from what you played.
+Once the journey plays, look at each screen against your brief once, the phone page by its code (the phone-pages skill,
+"Seeing the page"). Name the one thing on it that reads as a template, and fix that, along with anything you saw break.
+For a phone controller you made or changed, answer the question in "With phones" when you report, from what you read.
 Then stop polishing; navigation that doesn't work is fixed however many passes it takes. This pass doesn't paint new
 pictures, and a wish that asked for something small stays small.
