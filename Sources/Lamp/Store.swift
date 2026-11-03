@@ -9792,6 +9792,37 @@ final class Store: ObservableObject {
         AppTransition.land(project)
     }
 
+    /// A new web game's launch said to be open but not yet drawn, by app: the page's word that this launch drew, when it
+    /// comes, puts "ready" in that line's place (`frameArrived`).
+    struct LateFrame { let launch: Int32; let opened: Date; let line: String; let began: Date? }
+    private var lateFrames: [String: LateFrame] = [:]
+
+    nonisolated static func drewWords(_ seconds: TimeInterval) -> String {
+        "The game's window drew \(String(format: "%.1f", seconds)) s after it was opened."
+    }
+
+    /// The page of an app's launch has drawn (`PageLive.state`). For a launch said not to have drawn yet, the chat says
+    /// it's ready now, in place of that line while nothing has been said since.
+    func frameArrived(app id: String, launch: Int32) {
+        guard let late = lateFrames[id], late.launch == launch, let project = projects.first(where: { $0.id == id }) else { return }
+        lateFrames[id] = nil
+        // A part's lines are its wish's (`log`).
+        let chat = wish(of: project).id
+        var pace: String?
+        if var lines = logs[chat], let last = lines.lastIndex(where: { $0.kind != .detail }), lines[last].kind == .status, lines[last].text == late.line {
+            // The turn's tally after it said nothing reached the screen: this launch did, now.
+            if let began = late.began, let none = lines.lastIndex(where: { $0.kind == .detail && $0.text == Self.nothingShown }), none > last {
+                lines.remove(at: none)
+                pace = Self.paceTally(began: began, shown: [Date()], outcomes: [.opened])
+            }
+            lines.remove(at: last)
+            logs[chat] = lines
+        }
+        if let pace { log(project, .detail, pace) }
+        log(project, .detail, Self.drewWords(Date().timeIntervalSince(late.opened)))
+        sayReady(project, "\(project.name) is ready")
+    }
+
     /// How long after a launch a new web game's window has to say it drew to be called ready: the launch's own watch
     /// (`Runtime.launchWindow`) runs as long, so a game in front costs nothing more.
     static let drawLimit: TimeInterval = 3
@@ -9983,7 +10014,9 @@ final class Store: ObservableObject {
             let drew: Task<Bool, Never>? = owner != nil && inFront && saysReady && !early && GameKit.isMacWebGame(project)
                 && owner?.look.draftWatch[id] == nil ? Task {
                     let left = max(0, Self.drawLimit - Date().timeIntervalSince(opened))
-                    return await frames.wait(app: id, launch: app.processIdentifier, limit: .milliseconds(Int(left * 1000))) == .drawn
+                    let drew = await frames.wait(app: id, launch: app.processIdentifier, limit: .milliseconds(Int(left * 1000))) == .drawn
+                    if drew { self.log(project, .detail, Self.drewWords(Date().timeIntervalSince(opened))) }
+                    return drew
                 } : nil
             if drew != nil { owner?.whenStopped.append { frames.end(app: id) } }
             // A look goes on once the app has pictured its window; anything else waits its first seconds out, since what
@@ -9996,7 +10029,11 @@ final class Store: ObservableObject {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
                 if let drew, await !drew.value {
-                    if owner?.stopped != true, let line = Self.draftLine(project.name, .pending, updated: false) { log(project, .status, line) }
+                    // A window that draws after the wait still draws: when its page says so, the line says it's ready.
+                    if owner?.stopped != true, let line = Self.draftLine(project.name, .pending, updated: false) {
+                        log(project, .status, line)
+                        lateFrames[id] = LateFrame(launch: app.processIdentifier, opened: opened, line: line, began: owner?.began)
+                    }
                 } else {
                     owner?.shown.append(Date())
                     if inFront, saysReady { sayReady(project, await readyWords(project)) }
@@ -13995,9 +14032,11 @@ final class Store: ObservableObject {
     /// How long the person watching waited to see the turn's work, as one line in the details ("First change on
     /// screen after 1 min 12 s; longest wait between changes 2 min 40 s"): what the rule to show work early and
     /// often is tuned by. Nothing for a turn that changed nothing.
+    static let nothingShown = "Nothing reached the screen this request."
+
     static func paceTally(began: Date, shown: [Date], outcomes: [ChangeOutcome]) -> String? {
         guard !outcomes.isEmpty else { return nil }
-        guard let first = shown.first else { return "Nothing reached the screen this request." }
+        guard let first = shown.first else { return nothingShown }
         func spoken(_ interval: TimeInterval) -> String {
             let total = max(0, Int(interval.rounded()))
             return total < 60 ? "\(total) s" : total % 60 == 0 ? "\(total / 60) min" : "\(total / 60) min \(total % 60) s"

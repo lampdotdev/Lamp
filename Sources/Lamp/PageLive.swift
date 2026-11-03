@@ -484,7 +484,7 @@ import Foundation
         let gen = body["gen"] as? Int ?? 0
         // The page has drawn, for this launch of its app: nothing to do with any change, so none of what follows applies.
         if state == "playing" {
-            if place == .mac, let pid = body["pid"] as? Int, let launch = Int32(exactly: pid) { Store.shared.firstFrames.report(app: project.id, launch: launch) }
+            if place == .mac, let pid = body["pid"] as? Int, let launch = Int32(exactly: pid) { Store.shared.firstFrames.report(app: project.id, launch: launch); Store.shared.frameArrived(app: project.id, launch: launch) }
             return (200, [:])
         }
         // The change is on screen: the light Lamp holds over the window while it's put in crosses it now.
