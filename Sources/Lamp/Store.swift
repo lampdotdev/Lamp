@@ -14344,23 +14344,35 @@ final class Store: ObservableObject {
         case .timedOut:
             log(mac, .detail, "The game's window drew nothing for \(Int(limit)) s.")
             // A frame that comes after the wait still counts: the page's word that this launch drew puts it right.
-            firstFrames.whenDrawn(app: id, launch: launch) { [weak self] in self?.draftDrewLate(id, in: turn) }
+            firstFrames.whenDrawn(app: id, launch: launch) { [weak self] in
+                guard let self else { return }
+                Task { await self.draftDrewLate(mac, in: turn) }
+            }
             return .timedOut(seconds: Int(limit))
         // Ended by the turn's end, which doesn't wait for a window that hasn't drawn: not that the person closed it.
         case .ended: return turn.look.draftsDone ? .pending : .closed
         case .drawn: break
         }
         // One picture, within what's left of the same time, to tell a frame of one color from the game.
-        let asked = Date()
-        Runtime.requestScreenshots(of: mac)
-        let left = max(0, limit - asked.timeIntervalSince(began))
-        guard let picture = await Runtime.screenshots(of: mac, since: asked, waiting: min(left, 6)).first else { return .noPicture }
-        // A picture after the turn ended counts for none of it.
+        return await pictureDraft(mac, waiting: min(max(0, limit - Date().timeIntervalSince(began)), 6), in: turn)
+    }
+
+    /// How a draft's window pictures once its page has drawn, in time or late: a frame of one color, no picture, or the
+    /// game, which alone counts as on screen. A picture after the turn ended counts for none of it.
+    private func pictureDraft(_ mac: LampProject, waiting: TimeInterval, in turn: Turn) async -> DraftWindow {
+        guard let picture = await Self.draftPicture(mac, waiting) else { return .noPicture }
         guard !turn.stopped, !turn.look.draftsDone else { return turn.stopped ? .stopped : .pending }
         if GameKit.isBlank(picture) { return .blank }
         turn.shown.append(Date())
         log(mac, .detail, "The first draft is in the game's window.")
         return .content
+    }
+
+    /// The window's picture, asked of the game and waited for up to the seconds given.
+    static var draftPicture: (LampProject, TimeInterval) async -> URL? = { mac, waiting in
+        let asked = Date()
+        Runtime.requestScreenshots(of: mac)
+        return await Runtime.screenshots(of: mac, since: asked, waiting: waiting).first
     }
 
     /// What's known of a draft's window at the turn's end. It's asked forward, but macOS doesn't let another app be taken
@@ -14404,11 +14416,15 @@ final class Store: ObservableObject {
         turn.shown.append(Date())
     }
 
-    /// A first draft's window that drew nothing within its watch has drawn since: it's on screen, while its turn goes on.
-    func draftDrewLate(_ id: String, in turn: Turn) {
+    /// A first draft's window that drew nothing within its watch has drawn since: it's pictured as a timely one is
+    /// (`pictureDraft`), and only a picture of the game says it's on screen, while its turn goes on.
+    func draftDrewLate(_ mac: LampProject, in turn: Turn) async {
+        let id = mac.id
         guard turn.look.draftOpen.contains(id), turn.look.draftKnown[id] != .content, !turn.look.draftsDone, !turn.stopped else { return }
-        turn.look.draftKnown[id] = .content
-        turn.shown.append(Date())
+        let window = await pictureDraft(mac, waiting: 6, in: turn)
+        guard window != .stopped, window != .pending else { return }
+        // A look's picture of the game meanwhile is newer than this one, and stands.
+        recordDraft(window, for: id, in: turn)
     }
 
     /// Whether what's in the game's window on this Mac can be said to be where the person is: not a draft that hasn't drawn.

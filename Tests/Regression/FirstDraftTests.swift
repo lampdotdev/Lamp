@@ -147,26 +147,58 @@ import XCTest
         XCTAssertTrue(shown)
     }
 
-    /// A first draft's window that drew nothing within its watch, and draws after: the page's word that this launch drew
-    /// puts it right, so later looks and the turn's end don't go on saying it hasn't drawn.
-    func testADraftThatTimedOutThenDrawsIsOnScreen() async throws {
+    /// A first draft's window that drew nothing within its watch, and draws after: the late frame is pictured as a timely
+    /// one is. A picture of one color leaves it not ready; a picture of the game says it's on screen.
+    func testALateFrameIsReadyOnlyWhenItsPictureShowsTheGame() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
+        func picture(_ name: String, game: Bool) throws -> URL {
+            let width = 320, height = 180
+            guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw CocoaError(.fileWriteUnknown) }
+            context.setFillColor(CGColor(red: 0.05, green: 0.05, blue: 0.1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            if game {
+                context.setFillColor(CGColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 1))
+                context.fill(CGRect(x: 140, y: 70, width: 40, height: 40))
+            }
+            let url = dir.appendingPathComponent(name + ".png")
+            guard let image = context.makeImage(), let file = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { throw CocoaError(.fileWriteUnknown) }
+            CGImageDestinationAddImage(file, image, nil)
+            guard CGImageDestinationFinalize(file) else { throw CocoaError(.fileWriteUnknown) }
+            return url
+        }
+        let blank = try picture("blank", game: false), game = try picture("game", game: true)
+        XCTAssertTrue(GameKit.isBlank(blank))
+        XCTAssertFalse(GameKit.isBlank(game))
+
         let store = Store.shared
-        let game = LampProject(id: "draft-late-" + UUID().uuidString, name: "Draft", exe: "Draft", dir: dir, platform: .game)
-        let turn = Store.Turn()
-        turn.look.draftOpen.insert(game.id)
-        defer { store.firstFrames.forget(app: game.id) }
+        let saved = Store.draftPicture
+        defer { Store.draftPicture = saved }
+        func lateFrame(pictured: URL) async -> (Store.Turn, String) {
+            let project = LampProject(id: "draft-late-" + UUID().uuidString, name: "Draft", exe: "Draft", dir: dir, platform: .game)
+            Store.draftPicture = { _, _ in pictured }
+            let turn = Store.Turn()
+            turn.look.draftOpen.insert(project.id)
+            let window = await store.watchDraft(project, launch: 7, in: turn, limit: 0.05)
+            XCTAssertEqual(window, .timedOut(seconds: 0))
+            store.recordDraft(window, for: project.id, in: turn)
+            XCTAssertFalse(store.windowDrew(project.id, in: turn))
+            store.firstFrames.report(app: project.id, launch: 7)
+            // The late frame's picture is taken out of line: waited for here.
+            for _ in 0..<100 where turn.look.draftKnown[project.id] == .timedOut(seconds: 0) { try? await Task.sleep(for: .milliseconds(20)) }
+            store.firstFrames.forget(app: project.id)
+            return (turn, project.id)
+        }
 
-        let window = await store.watchDraft(game, launch: 7, in: turn, limit: 0.05)
-        XCTAssertEqual(window, .timedOut(seconds: 0))
-        store.recordDraft(window, for: game.id, in: turn)
-        XCTAssertFalse(store.windowDrew(game.id, in: turn))
+        let (blankTurn, blankID) = await lateFrame(pictured: blank)
+        XCTAssertEqual(blankTurn.look.draftKnown[blankID], .blank, "a late frame of one color isn't the game")
+        XCTAssertFalse(store.windowDrew(blankID, in: blankTurn))
 
-        store.firstFrames.report(app: game.id, launch: 7)
-        XCTAssertTrue(store.windowDrew(game.id, in: turn), "the late frame clears the timed-out word")
-        XCTAssertEqual(turn.look.draftKnown[game.id], .content)
+        let (gameTurn, gameID) = await lateFrame(pictured: game)
+        XCTAssertEqual(gameTurn.look.draftKnown[gameID], .content, "a late frame that shows the game is on screen")
+        XCTAssertTrue(store.windowDrew(gameID, in: gameTurn))
     }
 
     /// A first draft whose watch saw a frame of one color, and a later look whose picture shows the game: that picture is
