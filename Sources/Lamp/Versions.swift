@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import os
 import ImageIO
@@ -483,10 +484,36 @@ enum Versions {
         project.dir.appendingPathComponent(".lamp/versions/\(version).jpg")
     }
 
-    /// Saves a reduced copy of a screenshot as a version's picture.
-    static func savePicture(_ screenshot: URL, in project: LampProject, for version: String) {
-        guard let url = Previews.destination(for: version + ".jpg", under: ".lamp/versions", in: project) else { return }
-        Previews.write(screenshot, in: project, to: url, maxPixels: 900, quality: 0.8)
+    /// Saves a reduced copy of a screenshot as a version's picture, unless it shows nothing (`showsNothing`). False
+    /// when nothing was saved.
+    @discardableResult
+    static func savePicture(_ screenshot: URL, in project: LampProject, for version: String) -> Bool {
+        guard !showsNothing(screenshot),
+              let url = Previews.destination(for: version + ".jpg", under: ".lamp/versions", in: project) else { return false }
+        return Previews.write(screenshot, in: project, to: url, maxPixels: 900, quality: 0.8)
+    }
+
+    /// Whether a picture of the app is one even color inside its edges: a window caught before it drew anything, which
+    /// stood for its version as a large blank card. The edges are left out, where a window's rounded corners and shadow
+    /// are; pictures saved before this check are read with it too, so they aren't shown.
+    static func showsNothing(_ picture: URL) -> Bool {
+        guard let image = NSImage(contentsOf: picture)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+        let side = 32, edge = 4
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        var lowest = [255, 255, 255], highest = [0, 0, 0]
+        for y in edge..<(side - edge) {
+            for x in edge..<(side - edge) {
+                let i = (y * side + x) * 4
+                for channel in 0..<3 {
+                    lowest[channel] = min(lowest[channel], Int(pixels[i + channel]))
+                    highest[channel] = max(highest[channel], Int(pixels[i + channel]))
+                }
+            }
+        }
+        return (0..<3).allSatisfy { highest[$0] - lowest[$0] < 6 }
     }
 
     static func copyPicture(in project: LampProject, from version: String, to other: String) {

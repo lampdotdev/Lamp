@@ -8719,7 +8719,7 @@ final class Store: ObservableObject {
         guard !FileManager.default.fileExists(atPath: Versions.pictureURL(in: project, for: current.id).path),
               let screenshot = Runtime.currentScreenshot(of: project), !busy.contains(project.id),
               await !Versions.hasUnsavedChanges(project) else { return }
-        Versions.savePicture(screenshot, in: project, for: current.id)
+        guard Versions.savePicture(screenshot, in: project, for: current.id) else { return }
         versionsRevision += 1
     }
 
@@ -8743,8 +8743,8 @@ final class Store: ObservableObject {
     private func keepPicture(of project: LampProject, version: String) {
         Task {
             for _ in 0..<40 {
-                if let screenshot = Runtime.currentScreenshot(of: project) {
-                    Versions.savePicture(screenshot, in: project, for: version)
+                // One that shows nothing yet is tried again, as the app may take another.
+                if let screenshot = Runtime.currentScreenshot(of: project), Versions.savePicture(screenshot, in: project, for: version) {
                     versionsRevision += 1
                     return
                 }

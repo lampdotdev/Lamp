@@ -664,7 +664,7 @@ final class SidebarServer {
 
     /// A version's picture, small enough to send with the list every time the chat changes.
     private nonisolated static func versionPicture(_ url: URL) -> Data? {
-        NSImage(contentsOf: url).flatMap(smallPicture)
+        Versions.showsNothing(url) ? nil : NSImage(contentsOf: url).flatMap(smallPicture)
     }
 
     private nonisolated static func smallPicture(_ data: Data) -> Data? { NSImage(data: data).flatMap(smallPicture) }
