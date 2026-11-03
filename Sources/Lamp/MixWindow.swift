@@ -12,7 +12,7 @@ struct MixScene: Scene {
         Window("Mix Copies", id: "mix") {
             MixView().environmentObject(Store.shared)
         }
-        .defaultSize(width: 760, height: 680)
+        .defaultSize(width: 620, height: 680)
         .commandsRemoved()
     }
 }
@@ -220,7 +220,7 @@ struct MixTimeline: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Mixing into “\(lineup.project.name)”").font(.system(size: 14, weight: .semibold))
-                    Text("Click a change to bring it in or leave it out. Where two touch the same thing, the later one wins.")
+                    Text("Click a change to keep it or leave it.")
                         .font(.system(size: 12)).foregroundStyle(Paper.muted)
                 }
                 Spacer(minLength: 12)
@@ -315,47 +315,45 @@ private struct MixSide: View {
     }
 }
 
-/// One change, on its owner's side: a switch's travel toward the middle and lit when it's in, back out and dimmed
-/// when it's out.
+/// One change: in the middle and lit when it's kept, so keeping everything makes one column; nudged toward its owner's
+/// side and dimmed when it's left out. Theirs read from the right, mirroring yours.
 private struct MixRow: View {
     let change: Mix.Change
     let on: Bool
     let replacedBy: String?
     let toggle: () -> Void
 
-    private static let travel: CGFloat = 18
+    private static let travel: CGFloat = 56
+    private static let width: CGFloat = 380
     private static let glow = Paper.stripes[2]
 
     var body: some View {
-        HStack(spacing: 16) {
-            if change.side == .you { card; Color.clear.frame(maxWidth: .infinity, maxHeight: 1) } else { Color.clear.frame(maxWidth: .infinity, maxHeight: 1); card }
-        }
+        card.frame(maxWidth: .infinity)
     }
+
+    private var theirs: Bool { change.side == .them }
 
     private var card: some View {
         HStack(spacing: 10) {
-            if let picture = change.picture, let image = NSImage(contentsOf: picture) {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-                    .frame(width: 30, height: 30).clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(change.title).font(.system(size: 13)).lineLimit(2)
+            if theirs { Spacer(minLength: 0) } else { thumbnail }
+            VStack(alignment: theirs ? .trailing : .leading, spacing: 2) {
+                Text(change.title).font(.system(size: 13)).lineLimit(2).multilineTextAlignment(theirs ? .trailing : .leading)
                 Text(change.date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
                     .font(.system(size: 11)).foregroundStyle(Paper.muted)
                 if on, let replacedBy {
                     Text("Partly replaced by “\(replacedBy)”").font(.system(size: 11)).foregroundStyle(.orange).lineLimit(1)
                 }
             }
-            Spacer(minLength: 0)
+            if theirs { thumbnail } else { Spacer(minLength: 0) }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: Self.width)
         .background(RoundedRectangle(cornerRadius: 10).fill(Paper.card))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(on ? (replacedBy != nil ? Color.orange.opacity(0.7) : Self.glow) : Paper.rule,
                                                                  lineWidth: on ? 1.5 : 1))
         .shadow(color: on && replacedBy == nil ? Self.glow.opacity(0.45) : .clear, radius: 7)
         .opacity(on ? (replacedBy != nil ? 0.75 : 1) : 0.4)
-        .offset(x: on ? 0 : (change.side == .you ? -Self.travel : Self.travel))
+        .offset(x: on ? 0 : (theirs ? Self.travel : -Self.travel))
         .animation(.spring(response: 0.26, dampingFraction: 0.6), value: on)
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
@@ -366,5 +364,12 @@ private struct MixRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(on ? "In" : "Out")
+    }
+
+    @ViewBuilder private var thumbnail: some View {
+        if let picture = change.picture, let image = NSImage(contentsOf: picture) {
+            Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                .frame(width: 30, height: 30).clipShape(RoundedRectangle(cornerRadius: 6))
+        }
     }
 }
