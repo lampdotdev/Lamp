@@ -100,6 +100,29 @@ import XCTest
         XCTAssertEqual(ran, 2, "once")
     }
 
+    /// A launch's word that came already, while its turn is still going, counts as on screen in that turn's own tally;
+    /// after the turn's end it no longer changes the turn, whose lines are put right instead.
+    func testALateFrameWithinItsTurnReachesTheTurnsTally() async {
+        let frames = FirstFrames(), turn = Store.Turn()
+        turn.began = Date()
+        turn.outcomes.append(.opened)
+        _ = await frames.wait(app: "game", launch: 7, limit: .milliseconds(20))
+        frames.report(app: "game", launch: 7)
+        var counted: Bool?
+        frames.whenDrawn(app: "game", launch: 7) { counted = turn.drewLate(at: Date()) }
+        XCTAssertEqual(counted, true)
+        // The turn's end, as `runTurn` tallies it.
+        turn.look.draftsDone = true
+        let pace = Store.paceTally(began: turn.began, shown: turn.shown, outcomes: turn.outcomes)
+        XCTAssertNotEqual(pace, Store.nothingShown)
+        XCTAssertTrue(pace?.hasPrefix("First change on screen after") == true, String(describing: pace))
+
+        let ended = Store.Turn()
+        ended.look.draftsDone = true
+        XCTAssertFalse(ended.drewLate(at: Date()), "after the turn's end")
+        XCTAssertTrue(ended.shown.isEmpty)
+    }
+
     func testStoppingOrClosingEndsTheWaitAsNeitherFrameNorTimeout() async {
         let frames = FirstFrames()
         let waiting = Task { @MainActor in await frames.wait(app: "game", launch: 1, limit: .seconds(30)) }

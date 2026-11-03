@@ -748,6 +748,13 @@ final class Store: ObservableObject {
         /// the turn's end (`paceTally`) so the rule asking for it (`Agent.liveNote`) can be judged by what happens.
         var began = Date()
         var shown: [Date] = []
+        /// A window that drew after the launch's wait (`frameArrived`): counted as shown while the turn is still going,
+        /// before its end tallies it (`draftsDone`). False once that's past: the turn's lines are put right instead.
+        func drewLate(at date: Date) -> Bool {
+            guard !look.draftsDone else { return false }
+            shown.append(date)
+            return true
+        }
         /// Why the latest change couldn't go into the open app (LiveReload's reason, in words), for the agent's look.
         var reloadWhy: String?
         /// The latest change went into an open game by its page opening again (its code couldn't be swapped in, why in
@@ -9794,7 +9801,7 @@ final class Store: ObservableObject {
 
     /// A new web game's launch said to be open but not yet drawn: the page's word that this launch drew, when it comes,
     /// puts "ready" in that line's place (`frameArrived`, through `FirstFrames.whenDrawn`).
-    struct LateFrame { let opened: Date; let line: String; let began: Date? }
+    struct LateFrame { let opened: Date; let line: String; let began: Date?; weak var turn: Turn? }
 
     nonisolated static func drewWords(_ seconds: TimeInterval) -> String {
         "The game's window drew \(String(format: "%.1f", seconds)) s after it was opened."
@@ -9804,12 +9811,14 @@ final class Store: ObservableObject {
     /// while nothing has been said since.
     private func frameArrived(app id: String, _ late: LateFrame) {
         guard let project = projects.first(where: { $0.id == id }) else { return }
+        // Within its turn the draw counts for the turn's own tally; after it, the tally is put right below.
+        let counted = late.turn?.drewLate(at: Date()) ?? false
         // A part's lines are its wish's (`log`).
         let chat = wish(of: project).id
         var pace: String?
         if var lines = logs[chat], let last = lines.lastIndex(where: { $0.kind != .detail }), lines[last].kind == .status, lines[last].text == late.line {
             // The turn's tally after it said nothing reached the screen: this launch did, now.
-            if let began = late.began, let none = lines.lastIndex(where: { $0.kind == .detail && $0.text == Self.nothingShown }), none > last {
+            if !counted, let began = late.began, let none = lines.lastIndex(where: { $0.kind == .detail && $0.text == Self.nothingShown }), none > last {
                 lines.remove(at: none)
                 pace = Self.paceTally(began: began, shown: [Date()], outcomes: [.opened])
             }
@@ -10030,7 +10039,7 @@ final class Store: ObservableObject {
                     // A window that draws after the wait still draws: when its page says so, the line says it's ready.
                     if owner?.stopped != true, let line = Self.draftLine(project.name, .pending, updated: false) {
                         log(project, .status, line)
-                        let late = LateFrame(opened: opened, line: line, began: owner?.began)
+                        let late = LateFrame(opened: opened, line: line, began: owner?.began, turn: owner)
                         frames.whenDrawn(app: id, launch: app.processIdentifier) { [weak self] in self?.frameArrived(app: id, late) }
                     }
                 } else {
