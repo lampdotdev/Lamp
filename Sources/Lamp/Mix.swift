@@ -299,8 +299,9 @@ enum Mix {
           [ -z "$la" ] && continue
           e1=$(mk "$ep") && e2=$(mk "$ea") && l1=$(mk "$lp") && l2=$(mk "$la") || exit 3
           x=$(git merge-tree --write-tree --name-only --no-messages -X theirs --merge-base="$e1" "$l1" "$e2"); s=$?
-          # A git too old for -X: a clash carrying it over is a clash with the later one too.
-          if [ $s -gt 1 ]; then echo "C $n"; continue; fi
+          # A clash carrying it over (one git leaves even with -X, an edit against a removal, or any with a git too old
+          # for -X) is in the files the later one touched too: a clash with it.
+          if [ $s -ne 0 ]; then echo "C $n"; continue; fi
           xc=$(mk "$(printf '%s\n' "$x" | head -n 1)") || exit 3
           git merge-tree --write-tree --name-only --no-messages --merge-base="$l1" "$l2" "$xc" > /dev/null; s=$?
           [ $s -eq 1 ] && echo "C $n"

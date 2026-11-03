@@ -200,6 +200,21 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(Mix.copy(of: package, among: [yours.project])?.dir, yours.project.dir)
     }
 
+    /// Their removal of a file you changed later is partly replaced by your change: the later one brings the file back.
+    func testALaterEditReplacesTheirRemoval() async throws {
+        let (yours, theirs, package, _) = try await copies()
+        _ = try escape.loose("git rm -q Sources/App.swift", in: theirs.project.dir)
+        try commit(theirs, "Remove the app file", at: 410, [:])
+        try commit(yours, "Whisper it again", at: 420, ["Sources/App.swift": "A-you-again\nb\nc\nd\ne\n"])
+        try FileManager.default.removeItem(at: package.folder.appendingPathComponent(MixHistory.folder))
+        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: package.folder)
+        let history = try XCTUnwrap(MixHistory.read(in: package.folder))
+        let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
+        let removal = try XCTUnwrap(lineup.changes.first { $0.title == "Remove the app file" })
+        let preview = await Mix.preview(lineup.changes, in: lineup)
+        XCTAssertEqual(preview.replaced[removal.id], "Whisper it again")
+    }
+
     /// Copies that never met at a version both have aren't offered for mixing: an import keeps Update for them.
     func testCopiesThatNeverMetDontLineUp() async throws {
         let (yours, _, package, history) = try await copies()
