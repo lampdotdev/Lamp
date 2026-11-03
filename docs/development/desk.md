@@ -366,8 +366,10 @@ in place of Update on its review, waiting while another mix is saved
   later change wins wherever two touch the same lines (`Mix.replay`), and the window marks an earlier change a later
   one replaces in part. Lamp's own files stay as this copy has them.
 - **Saving.** On top of this copy's history, never rewriting it: one version leaving out what of yours was taken
-  out, then one per change of theirs taken in, under its title, with `Lamp-Mixed: <their commit>` so neither copy
-  offers it again. Their credits join this copy's when anything of theirs is taken, as an update's do. The agent is
+  out, tagged `Lamp-Left-Out: <commits>` and saved even when it changes no file, then one per change of theirs taken
+  in, under its title, with `Lamp-Mixed: <their commit>` so neither copy offers it again. The next lineup reads both:
+  a change left out shows out (and taking it back brings it in once), the version that left it out isn't a row, and a
+  change of theirs taken earlier sits at the time they made it, so it plays back in its place. Their credits join this copy's when anything of theirs is taken, as an update's do. The agent is
   told (`Versions.rememberMixed`) and the app is built (`Store.mix`). A starter's offer of first changes leaves the chat
   then, and isn't made again (`Mix.mixedMark`). Every git it runs works on commits, so a git
   without `merge-tree -X` still mixes, a later change then winning whole files.

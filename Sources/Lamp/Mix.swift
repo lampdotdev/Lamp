@@ -16,6 +16,9 @@ enum Mix {
     static var isOn: Bool { Edition.isDev && UserDefaults.standard.bool(forKey: switchKey) }
     /// On a version a mix saved, the version of the other copy it brought in, so neither copy offers it again.
     static let trailer = "Lamp-Mixed"
+    /// On the version a mix saved first when it left out changes made here: which, so the next lineup shows them out
+    /// rather than as kept, and doesn't list that version as a change of its own.
+    static let leftOutTrailer = "Lamp-Left-Out"
     /// In Lamp's own folder once anything has been mixed into a wish: its starter's offer of first changes is no longer
     /// made (`Store.offerStarterChanges`).
     static let mixedMark = ".lamp/mixed"
@@ -101,12 +104,12 @@ enum Mix {
         }
 
         // Yours: each version since, with what it touched and the change of theirs it brought in, if any.
-        struct Yours { var id: String; var date: Date; var mixed: String?; var title: String; var files: [String] }
+        struct Yours { var id: String; var date: Date; var mixed: String?; var leftOut: [String]; var title: String; var files: [String] }
         let titles = VersionTitles.saved(in: project)
         var yours: [Yours] = []
         let listing = """
         git rev-list --first-parent --reverse \(base)..HEAD | while read -r c; do
-          git log -1 --format="C%x1f%H%x1f%ct%x1f%(trailers:key=\(trailer),valueonly,separator=%x2C)%x1f%s" "$c"
+          git log -1 --format="C%x1f%H%x1f%ct%x1f%(trailers:key=\(trailer),valueonly,separator=%x2C)%x1f%(trailers:key=\(leftOutTrailer),valueonly,separator=%x2C)%x1f%s" "$c"
           git -c core.quotePath=false diff-tree -r --no-renames --no-commit-id --name-only "$c^" "$c" | sed 's/^/F /'
         done
         """
@@ -114,11 +117,12 @@ enum Mix {
         guard listed.status == 0 else { throw Failure(message: "Lamp couldn't read your copy's versions.") }
         for line in listed.output.split(separator: "\n").map(String.init) {
             if line.hasPrefix("C\u{1f}") {
-                let parts = line.split(separator: "\u{1f}", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
-                guard parts.count == 5, let id = Credits.validCommit(parts[1]), let seconds = TimeInterval(parts[2]) else { continue }
+                let parts = line.split(separator: "\u{1f}", maxSplits: 5, omittingEmptySubsequences: false).map(String.init)
+                guard parts.count == 6, let id = Credits.validCommit(parts[1]), let seconds = TimeInterval(parts[2]) else { continue }
                 yours.append(Yours(id: id, date: Date(timeIntervalSince1970: seconds),
                                    mixed: Credits.validCommit(parts[3].split(separator: ",").first.map(String.init)),
-                                   title: titles[id] ?? parts[4], files: []))
+                                   leftOut: parts[4].split(separator: ",").compactMap { Credits.validCommit(String($0).trimmed) },
+                                   title: titles[id] ?? parts[5], files: []))
             } else if line.hasPrefix("F "), !yours.isEmpty {
                 let path = String(line.dropFirst(2))
                 if MixHistory.isSafe(path), !Upstream.isLeftOut(path, in: project) { yours[yours.count - 1].files.append(path) }
@@ -135,15 +139,22 @@ enum Mix {
             version.began != true && !yourIDs.contains(version.id) && !mixedHere.contains(version.id) && !(version.mixed.map(yourIDs.contains) ?? false)
         }
 
-        // Your changes, by the trees around each; a version that touched nothing a mix carries isn't one.
+        // Your changes, by the trees around each; a version that touched nothing a mix carries isn't one. A version a
+        // mix saved to leave changes out isn't one either: those changes are shown out instead, until one is taken back.
+        // A change of theirs taken earlier sits where they made it.
+        let leftOut = Set(yours.flatMap(\.leftOut)).subtracting(mixedHere)
+        let made = Dictionary(history.versions.map { ($0.id, $0.date) }, uniquingKeysWith: { first, _ in first })
         var changes: [Change] = []
         var previous = base
         for version in yours {
             defer { previous = version.id }
             let side: Side = version.mixed.map(sent.contains) == true ? .them : .you
-            guard !version.files.isEmpty || side == .them else { continue }
-            changes.append(Change(id: version.id, side: side, title: version.title, date: version.date, before: previous + "^{tree}",
-                                  after: version.id + "^{tree}", files: version.files, here: true, picture: nil))
+            // Nor is one that took a left-out change back: that change is in again.
+            guard !version.files.isEmpty || side == .them, version.leftOut.isEmpty,
+                  !(version.mixed.map(yourIDs.contains) ?? false) else { continue }
+            let date = side == .them ? version.mixed.flatMap { made[$0] } ?? version.date : version.date
+            changes.append(Change(id: version.id, side: side, title: version.title, date: date, before: previous + "^{tree}",
+                                  after: version.id + "^{tree}", files: version.files, here: !leftOut.contains(version.id), picture: nil))
         }
 
         // Theirs, rebuilt here: each of their versions is the one before it with its files put in place.
@@ -337,7 +348,7 @@ enum Mix {
         var plans: [(changes: [Change], message: String, title: String, mixed: String?)] = []
         if !left.isEmpty {
             let title = "Left out " + left.map { "“\($0.title)”" }.joined(separator: ", ")
-            plans.append((mine, title, title, nil))
+            plans.append((mine, title + "\n\n\(leftOutTrailer): " + left.map(\.id).joined(separator: ","), title, nil))
         }
         for (offset, change) in coming.enumerated() {
             plans.append((mine + coming[...offset], change.title + "\n\n\(trailer): \(change.id)", change.title, change.id))
@@ -367,9 +378,10 @@ enum Mix {
             let dropped = listed.output.split(separator: "\n").map(String.init).filter { !$0.hasPrefix("\"") && Upstream.isLeftOut($0, in: project) }
             let lines = dropped.map { "0 0000000000000000000000000000000000000000\t\($0)" } + own
             let whole = lines.isEmpty ? played.tree : try await edit("FROM \(played.tree)\n" + lines.joined(separator: "\n") + "\n@@\n", index: index, in: project).first ?? played.tree
-            // A change of theirs a later one of yours wholly replaces still gets its version: the history says it was
-            // taken, and the next lineup doesn't offer it again.
-            guard whole != tree || plan.mixed != nil else { continue }
+            // A change of theirs a later one of yours wholly replaces still gets its version, and so does leaving out a
+            // change a later one had already replaced: the history says what was taken and left out, and the next lineup
+            // shows it so.
+            guard whole != tree || plan.mixed != nil || plan.message.contains("\n\(leftOutTrailer): ") else { continue }
             let made = await run("printf '%s' \"$LAMP_MESSAGE\" | git -c user.name=Lamp -c user.email=lamp@localhost commit-tree \(whole) -p \(parent) -F -",
                                  in: project, env: ["LAMP_MESSAGE": plan.message])
             guard made.status == 0, let commit = Credits.validCommit(made.output) else { throw Failure(message: "Lamp couldn't save the mix.") }

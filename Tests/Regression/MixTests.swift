@@ -85,7 +85,7 @@ final class MixTests: XCTestCase {
         // Mixed once, their changes are on their side, already in, and nothing is offered twice.
         let again = try await Mix.lineUp(package, history: history, with: yours.project)
         XCTAssertTrue(again.changes.allSatisfy(\.here))
-        XCTAssertEqual(again.changes.map(\.side), [.you, .them, .them])
+        XCTAssertEqual(again.changes.map(\.side), [.them, .you, .them])
     }
 
     func testLeavingOutYourOwnChangeSavesThatFirst() async throws {
@@ -213,6 +213,51 @@ final class MixTests: XCTestCase {
         let removal = try XCTUnwrap(lineup.changes.first { $0.title == "Remove the app file" })
         let preview = await Mix.preview(lineup.changes, in: lineup)
         XCTAssertEqual(preview.replaced[removal.id], "Whisper it again")
+    }
+
+    /// Mixing again: what the first mix left out shows out, what it took sits where they made it, and the version that
+    /// left things out isn't a change of its own, so it can't undo a later change of theirs taken now.
+    func testASecondMixKeepsWhatTheFirstLeftOut() async throws {
+        let (yours, theirs, package, _) = try await copies()
+        try commit(theirs, "Shout it again", at: 450, ["Sources/App.swift": "A-them-again\nb\nc\nd\nE-them\n"])
+        try FileManager.default.removeItem(at: package.folder.appendingPathComponent(MixHistory.folder))
+        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: identity, into: package.folder)
+        let history = try XCTUnwrap(MixHistory.read(in: package.folder))
+
+        let first = try await Mix.lineUp(package, history: history, with: yours.project)
+        let shout = try XCTUnwrap(first.changes.first { $0.title == "Shout the first line" })
+        _ = try await Mix.apply([shout.id], in: first)   // "Whisper the first line" left out
+        XCTAssertEqual(text(yours), "A-them\nb\nc\nd\ne\n")
+
+        let second = try await Mix.lineUp(package, history: history, with: yours.project)
+        XCTAssertEqual(second.changes.map(\.title), ["Shout the first line", "Whisper the first line", "Shout the last line", "Shout it again"])
+        XCTAssertEqual(second.changes.map(\.here), [true, false, false, false])
+        let again = try XCTUnwrap(second.changes.first { $0.title == "Shout it again" })
+        _ = try await Mix.apply(Set(second.changes.filter(\.here).map(\.id) + [again.id]), in: second)
+        XCTAssertEqual(text(yours), "A-them-again\nb\nc\nd\ne\n")
+        XCTAssertNil(text(yours, "Notes.txt"))
+
+        // Taking the left-out change back brings it in once, under its own row.
+        let third = try await Mix.lineUp(package, history: history, with: yours.project)
+        let whisper = try XCTUnwrap(third.changes.first { $0.title == "Whisper the first line" })
+        _ = try await Mix.apply(Set(third.changes.filter(\.here).map(\.id) + [whisper.id]), in: third)
+        XCTAssertEqual(text(yours, "Notes.txt"), "x\n")
+        let fourth = try await Mix.lineUp(package, history: history, with: yours.project)
+        XCTAssertEqual(fourth.changes.filter { $0.title == "Whisper the first line" }.map(\.here), [true])
+    }
+
+    /// Leaving out a change a later one had already replaced changes no file, but it's still saved, so it stays out.
+    func testLeavingOutAReplacedChangeIsRemembered() async throws {
+        let (yours, _, package, history) = try await copies()
+        let first = try await Mix.lineUp(package, history: history, with: yours.project)
+        _ = try await Mix.apply(Set(first.changes.map(\.id)), in: first)
+        let second = try await Mix.lineUp(package, history: history, with: yours.project)
+        let replaced = try XCTUnwrap(second.changes.first { $0.title == "Shout the first line" })
+        let saved = try await Mix.apply(Set(second.changes.map(\.id)).subtracting([replaced.id]), in: second)
+        XCTAssertEqual(saved, 1)
+        XCTAssertEqual(text(yours), "A-you\nb\nc\nd\nE-them\n")
+        let third = try await Mix.lineUp(package, history: history, with: yours.project)
+        XCTAssertEqual(third.changes.first { $0.title == "Shout the first line" }?.here, false)
     }
 
     /// Copies that never met at a version both have aren't offered for mixing: an import keeps Update for them.
