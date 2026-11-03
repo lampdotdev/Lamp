@@ -153,6 +153,41 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(now.generated.map(\.file), ["Assets/skyline.png"])
     }
 
+    /// A remix made here has an identity of its own, so its file finds the wish it was remixed from, starts where it was
+    /// remixed, and never offers its new name back to the original.
+    func testARemixsFileMixesIntoItsOriginal() async throws {
+        let (yours, theirs, _, _) = try await copies()
+        let original = try head(yours)
+        // Their copy becomes a remix of yours: the same history, a new name, a link back by your identity.
+        _ = try escape.loose("rm -rf .git && /bin/cp -R \(Sandbox.quoted(yours.project.dir.path))/.git .git && git reset -q --hard && git clean -qfd",
+                             in: theirs.project.dir)
+        var credits = Credits()
+        credits.remixOf = [Credits.Remix(name: "Coin Flip", wish: identity)]
+        try credits.encoded().write(to: theirs.project.dir.appendingPathComponent(Credits.file))
+        try commit(theirs, "Remix of Coin Flip", at: 310, ["Sources/Title.swift": "Coin Flip Remix\n"])
+        let remix = UUID().uuidString
+        Sharing.setIdentity(remix, of: theirs.project)
+        try commit(theirs, "Shout the last line", at: 320, ["Sources/App.swift": "A-you\nb\nc\nd\nE-them\n"])
+
+        let stage = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
+        MixHistory.write(for: theirs.project, credits: Credits.load(theirs.project), identity: remix, into: stage)
+        let history = try XCTUnwrap(MixHistory.read(in: stage))
+        XCTAssertEqual(history.versions.map(\.title), ["Remix of Coin Flip", "Shout the last line"])
+        XCTAssertEqual(history.versions.map { $0.began == true }, [true, false])
+
+        let package = Sharing.Package(name: "Coin Flip Remix", identity: remix, credits: Credits.load(theirs.project), folder: stage,
+                                      sources: [], attachments: [], fileCount: 0)
+        try commit(yours, "Whisper the middle", at: 330, ["Sources/App.swift": "A-you\nb\nC-you\nd\ne\n"])
+        let lineup = try await Mix.lineUp(package, history: history, with: yours.project)
+        XCTAssertEqual(lineup.changes.map(\.title), ["Shout the last line", "Whisper the middle"])
+        _ = try await Mix.apply(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertEqual(text(yours), "A-you\nb\nC-you\nd\nE-them\n")
+        XCTAssertNil(text(yours, "Sources/Title.swift"))
+        XCTAssertNotEqual(try head(yours), original)
+    }
+
     func testTheirCopyLinesUpWithTheOriginalsNewerFile() async throws {
         // The other way round: the original's file, opened in the copy, starts where the copy was given it.
         let (yours, theirs, _, _) = try await copies()

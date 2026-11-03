@@ -25,6 +25,8 @@ struct MixHistory: Codable {
         var date: Date
         /// The version of another copy this one brought in by a mix, when it did (`Mix.trailer`).
         var mixed: String?
+        /// The version a remix began as (its new name and icon): what the rest is rebuilt on, never offered.
+        var began: Bool?
         /// Its folder in History/, holding `changed` as they were after it.
         var folder: String
         var changed: [String]
@@ -43,12 +45,14 @@ struct MixHistory: Codable {
         // One sandboxed run for the whole history: each version's line, what it changed, and its changed files
         // unpacked into its folder. A run longer than the limit keeps its latest versions, and everything before them
         // goes as one version ("E"), from where the copies met to the last one left out, so the run still starts there.
+        // A remix's first version ("R") always goes on its own, ahead of them.
         let script = """
         out=\(Sandbox.quoted(out.path)); n=0
-        all=$(git rev-list --first-parent --reverse \(start.commit)..HEAD); count=$(printf '%s\\n' "$all" | grep -c .)
+        all=$(git rev-list --first-parent --reverse \(start.began ?? start.commit)..HEAD); count=$(printf '%s\\n' "$all" | grep -c .)
         {
+          \(start.began.map { "echo \"\($0)^ \($0) R\"" } ?? ":")
           if [ "$count" -gt \(limit) ]; then
-            echo "\(start.commit) $(printf '%s\\n' "$all" | sed -n "$((count - \(limit)))p") E"
+            echo "\(start.began ?? start.commit) $(printf '%s\\n' "$all" | sed -n "$((count - \(limit)))p") E"
             printf '%s\\n' "$all" | tail -n \(limit) | while read -r c; do echo "$c^ $c -"; done
           else
             printf '%s\\n' "$all" | while read -r c; do [ -n "$c" ] && echo "$c^ $c -"; done
@@ -73,7 +77,7 @@ struct MixHistory: Codable {
                 let title = parts[5] == "E" ? "Earlier changes" : titles[id] ?? parts[6]
                 versions.append(Version(id: id, title: title, date: Date(timeIntervalSince1970: seconds),
                                         mixed: parts[5] == "E" ? nil : Credits.validCommit(parts[4].split(separator: ",").first.map(String.init)),
-                                        folder: parts[1], changed: [], removed: []))
+                                        began: parts[5] == "R" ? true : nil, folder: parts[1], changed: [], removed: []))
             } else if !versions.isEmpty, let tab = line.firstIndex(of: "\t") {
                 let status = line[..<tab], path = String(line[line.index(after: tab)...])
                 guard isSafe(path), !Upstream.isLeftOut(path, in: project) else { continue }
@@ -114,22 +118,43 @@ struct MixHistory: Codable {
 
     /// Where the run starts. A copy (its chain names a version of this wish that isn't in its own history: the one it
     /// was given) starts at the version it arrived as, and names the given one. A wish that began here starts at the
-    /// version it was first shared at, kept from then on.
-    private static func start(of project: LampProject, credits: Credits, identity: String?) -> (commit: String, base: String, head: String)? {
+    /// version it was first shared at, kept from then on. A remix made from another wish on this Mac (its chain ends at
+    /// that wish, and its history is that wish's) starts where it was remixed: the original has that version, and its
+    /// first version, the new name and icon, is sent as the one the rest is rebuilt on.
+    private static func start(of project: LampProject, credits: Credits, identity: String?) -> (commit: String, base: String, head: String, began: String?)? {
         let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
         guard head.ok, let now = Credits.validCommit(head.output) else { return nil }
         let link = Credits.Remix(name: project.name, wish: identity)
         if identity != nil, let given = credits.remixOf.last(where: { $0.sameWish(as: link) })?.commit.flatMap(Credits.validCommit),
            !isAncestor(given, in: project), let arrival = arrival(in: project) {
-            return (arrival, given, now)
+            return (arrival, given, now, nil)
+        }
+        if let identity, let original = credits.remixOf.last, original.wish != nil, original.wish != identity,
+           let remixed = remixed(from: original.name, in: project) {
+            return (remixed.parent, remixed.parent, now, remixed.commit)
         }
         let file = project.dir.appendingPathComponent(startFile)
         if let kept = (try? String(contentsOf: file, encoding: .utf8)).flatMap(Credits.validCommit), isAncestor(kept, in: project) {
-            return (kept, kept, now)
+            return (kept, kept, now, nil)
         }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? now.write(to: file, atomically: true, encoding: .utf8)
-        return (now, now, now)
+        return (now, now, now, nil)
+    }
+
+    /// The version a remix began as (Store's "Remix of …"), and the original's version before it.
+    private static func remixed(from name: String, in project: LampProject) -> (commit: String, parent: String)? {
+        let listed = Versions.gitBlocking("git log --first-parent --format='%H %P%x1f%s'", cwd: project.dir)
+        guard listed.ok else { return nil }
+        for line in listed.output.split(separator: "\n") {
+            let parts = line.split(separator: "\u{1f}", maxSplits: 1).map(String.init)
+            let ids = parts.first?.split(separator: " ").map(String.init) ?? []
+            if parts.count == 2, parts[1] == "Remix of \(name)", ids.count >= 2,
+               let commit = Credits.validCommit(ids[0]), let parent = Credits.validCommit(ids[1]) {
+                return (commit, parent)
+            }
+        }
+        return nil
     }
 
     /// The latest version that came in a shared file (Store's arrival messages, but not a starter's).

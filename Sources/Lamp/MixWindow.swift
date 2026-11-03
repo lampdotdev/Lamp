@@ -38,7 +38,7 @@ final class MixModel: ObservableObject {
                 guard let history = MixHistory.read(in: package.folder) else {
                     throw Mix.Failure(message: "This copy came without its versions. Ask for it again, shared from a Lamp with mixing on.")
                 }
-                guard let project = Store.copy(of: package, among: store.projects) else {
+                guard let project = Mix.copy(of: package, among: store.projects) else {
                     throw Mix.Failure(message: "You don't have a copy of “\(package.name)” to mix it into.")
                 }
                 guard !store.busy.contains(project.id) else {

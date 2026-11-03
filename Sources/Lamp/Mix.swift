@@ -62,6 +62,18 @@ enum Mix {
 
     // MARK: Lining up
 
+    /// The wish on this Mac a file is mixed into: the same wish's copy; for a remix's file, the wish it was remixed from
+    /// (the latest in its chain that's here); else a remix made here of the file's wish.
+    static func copy(of package: Sharing.Package, among projects: [LampProject]) -> LampProject? {
+        if let same = Store.copy(of: package, among: projects) { return same }
+        let candidates = projects.filter { $0.holdsApp && $0.platform == package.platform && $0.hasScaffold }
+        for link in (package.credits?.remixOf ?? []).reversed() {
+            if let wish = link.wish, let original = candidates.first(where: { Sharing.identity(of: $0, create: false) == wish }) { return original }
+        }
+        guard let identity = package.identity else { return nil }
+        return candidates.first { Credits.load($0).remixOf.last?.wish == identity }
+    }
+
     static func lineUp(_ package: Sharing.Package, history: MixHistory, with project: LampProject) async throws -> Lineup {
         guard let head = await Versions.head(project) else { throw Failure(message: "Your copy has no versions to mix yet.") }
         // Where they met: the version their run starts after, when it's one of this copy's (the file came back from a
@@ -114,7 +126,7 @@ enum Mix {
         // Only which are offered: every one of theirs is still rebuilt below, since each is the one before it with its
         // files put in place, and one left out of the chain would leave its changes in the next one's.
         func offered(_ version: MixHistory.Version) -> Bool {
-            !yourIDs.contains(version.id) && !mixedHere.contains(version.id) && !(version.mixed.map(yourIDs.contains) ?? false)
+            version.began != true && !yourIDs.contains(version.id) && !mixedHere.contains(version.id) && !(version.mixed.map(yourIDs.contains) ?? false)
         }
 
         // Your changes, by the trees around each; a version that touched nothing a mix carries isn't one.
