@@ -381,8 +381,11 @@ enum Publish {
         throw Failure(message: "GitHub is still putting the page up. It should be at \(url) in a few minutes; Put on GitHub again if it isn't.")
     }
 
+    /// Where GitHub Pages serves `repo` ("owner/name"): an account's own site, a repository named owner.github.io in any
+    /// case, is served at the account's root; any other repository's under its name.
     static func pageURL(_ repo: String) -> String {
         let parts = repo.split(separator: "/")
-        return "https://\(parts[0].lowercased()).github.io/\(parts[1])/"
+        let host = "\(parts[0].lowercased()).github.io"
+        return parts[1].lowercased() == host ? "https://\(host)/" : "https://\(host)/\(parts[1])/"
     }
 }

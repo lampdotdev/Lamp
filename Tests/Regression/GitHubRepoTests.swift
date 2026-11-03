@@ -228,4 +228,13 @@ final class GitHubRepoTests: XCTestCase {
         XCTAssertEqual(cloned.status, 0, cloned.output)
         return pushed
     }
+
+    /// An account's own site (owner.github.io, in any case) is served at the account's root; any other repository's
+    /// page under its name.
+    func testAnAccountSitesPageIsAtTheRoot() {
+        XCTAssertEqual(Publish.pageURL("someone/someone.github.io"), "https://someone.github.io/")
+        XCTAssertEqual(Publish.pageURL("Someone/someone.GitHub.io"), "https://someone.github.io/")
+        XCTAssertEqual(Publish.pageURL("Someone/hopper"), "https://someone.github.io/hopper/")
+        XCTAssertEqual(Publish.pageURL("someone/other.github.io"), "https://someone.github.io/other.github.io/")
+    }
 }
