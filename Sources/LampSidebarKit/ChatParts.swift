@@ -120,27 +120,27 @@ extension ChatLook {
 
         /// Sent now, or held for setup or Reload, it says so whatever was answered.
         private var quiet: Bool { answered && !sending && !waitingForSetup && !waitingForReload }
-        /// Not quite nothing: at an opacity of 0 SwiftUI takes a view out of the accessibility tree and keyboard focus,
-        /// and this keeps them for VoiceOver and the keyboard, with nothing to see.
-        private var controlsOpacity: Double { !quiet || pointerOver || focused ? 1 : 0.001 }
+        /// The controls come up under the pointer or keyboard focus, which the row takes itself so there's something to
+        /// tab to while they're away. VoiceOver has them as the bubble's actions, whatever's on screen.
+        private var showsControls: Bool { !quiet || pointerOver || focused }
 
         public var body: some View {
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 6) { chips }
                 HStack(spacing: 6) {
-                    if quiet, groupAnswered, let sendNow {
-                        Button(place.count > 1 ? "Send All Now" : "Send Now", action: sendNow).buttonStyle(.link).font(.caption)
-                            .help(place.count > 1 ? "Send these to the agent while it works" : "Send this to the agent while it works")
+                    if showsControls {
+                        if quiet, groupAnswered, let sendNow {
+                            Button(sendNowTitle, action: sendNow).buttonStyle(.link).font(.caption)
+                                .help(place.count > 1 ? "Send these to the agent while it works" : "Send this to the agent while it works")
+                                .focused($focused)
+                        }
+                        Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                            .buttonStyle(.plain)
+                            .help("Unsend")
+                            .accessibilityLabel("Unsend")
                             .focused($focused)
-                            .opacity(controlsOpacity)
                     }
-                    Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain)
-                        .help("Unsend")
-                        .accessibilityLabel("Unsend")
-                        .focused($focused)
-                        .opacity(controlsOpacity)
-                    UserBubble(text, waiting: !quiet)
+                    bubble
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
                 .frame(maxWidth: 480 + 22 + ChatLook.tailRoom, alignment: .trailing)
@@ -151,6 +151,29 @@ extension ChatLook {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .contentShape(Rectangle())
             .onHover { pointerOver = $0 }
+            .focusable(quiet)
+            .focused($focused)
+        }
+
+        private var sendNowTitle: String { place.count > 1 ? "Send All Now" : "Send Now" }
+
+        @ViewBuilder private var bubble: some View {
+            if quiet {
+                UserBubble(text, waiting: false)
+                    .accessibilityAction(named: "Unsend", onRemove)
+                    .modifier(SendNowAction(title: sendNowTitle, sendNow: groupAnswered ? sendNow : nil))
+            } else {
+                UserBubble(text, waiting: true)
+            }
+        }
+
+        private struct SendNowAction: ViewModifier {
+            let title: String
+            let sendNow: (() -> Void)?
+
+            func body(content: Content) -> some View {
+                if let sendNow { content.accessibilityAction(named: title, sendNow) } else { content }
+            }
         }
 
         @ViewBuilder private var caption: some View {

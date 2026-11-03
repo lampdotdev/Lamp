@@ -39,7 +39,11 @@ A capability given to one engine must be given to all of them that can take it, 
   Codex makes of wherever the folder it starts in leads; a writable folder that is a link, or leads through one, Codex
   refuses at its start and before each command. Codex itself (its state, its
   hooks, Lamp's MCP endpoint) runs unconfined, and a command its reviewer lets out of the sandbox runs under the
-  controls Codex gives it, not Lamp's. SwiftPM's own sandbox can't start inside Lamp's or Codex's, so a `swift` shim first on the path
+  controls Codex gives it, not Lamp's. An answer beside a turn (`SideAnswer`, "Messages sent while the agent works" in the
+  engines guide) has no tools and runs whole under `Sandbox.sideProfile`, for every engine, Codex included: it writes only
+  its private folder, reads none of the home folder or the shared temporary folders beyond what's listed for its engine,
+  and never runs without it. The network stays open for its provider, so what it can read could still be sent; that's why
+  the list is short. SwiftPM's own sandbox can't start inside Lamp's or Codex's, so a `swift` shim first on the path
   (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`; the compiler's helper for macros is
   the same, so Lamp's Xcode projects pass it `-disable-sandbox` too. Xcode's interface and asset compilers hand their
   work to helpers that stay running and are found through shared memory named `ib…`, whoever started them, so the

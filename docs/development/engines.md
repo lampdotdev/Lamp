@@ -150,22 +150,38 @@ A capability given to one engine must be given to all of them that can take it, 
   before Codex has saved the request). A run that hasn't gone 20 seconds after the interrupt is ended as Stop would
   end it. What the model was thinking or writing at that moment is lost; a message is the turn's once the resumed
   run's model is heard from.
-  With the experiment in Settings → Building on (`SideAnswer`, off by default, pi's only so far), a plain typed message
-  stays in this line as ever and a fork of the conversation answers it at once: pi's `--fork` of the session file into a
-  private folder outside the app, with its own key ticket, a home folder thrown away with it and a short list of environment variables, the model, system
-  prompt, tools and tool definitions the turn's run started with, and 30 seconds in all. What the provider sees stays the
-  builder's so its cache of the conversation still fits: the same tools, the builder's folder in the system prompt and its
-  session id (`guardsSideAnswer` in `lamp-tools.ts`). None of the tools can run: that function's `tool_call` handler refuses
-  every call before it executes, and pi only warns when an extension won't load, so the fork runs in `--mode rpc` and is
-  sent the prompt only once `get_commands` lists the guard's command (`SideAnswer.guardCommand`). It's skipped for a model on
-  this Mac, and for answers to cards, files, what was pointed at, requests sent again, a turn that has asked, paused or
-  waits on an approval, and a second message while one is being answered. The first whole assistant message ends the
-  run; words written beside a tool call are that message, once pi says the call didn't run. Sent again in the same words, a
-  request keeps its answer and receipt (`SideAnswer.kept`). The answer goes up only if its message still waits, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`,
-  never a line of the turn's, so `CatchUp`, folds and versions don't see it), and the message reaches the agent as ever
-  with a labeled receipt of what was said (`SideAnswer.receipt`), in the request or Send Now's handover, so it can't go
-  ahead of its message. A handover whose messages have all been answered tells the agent not to acknowledge them again
-  (`Agent.midTurnNote(for:)`), so the person hears back once. Claude Code and Codex are not given this until their forks are proven the same way.
+  A plain typed message stays in this line as ever, and a helper answers it at once, for every engine (`SideAnswer`, in
+  one place with one launch and one reader per engine). There's no setting for it. Each run starts with no tools, in a
+  private folder under a sandbox of its own (`Sandbox.sideProfile`) that can write only that folder, with an environment
+  that's a short list and none of Lamp's routes or tokens, and 30 seconds in all; with no profile on disk it doesn't run,
+  and whatever goes wrong leaves an ordinary queued message. Nothing goes into the engine's own history. How each does it:
+  - **pi** forks the session (`--fork`) with `--no-tools`, no extension, its own key ticket and a home folder thrown away
+    with it. pi closes a call still running with its own "No result provided".
+  - **Claude Code** forks by the transcript's whole path, which lets it run outside the app's folder (`--resume <path>
+    --fork-session --no-session-persistence --tools ""`, with the isolating flags the builder has). Its `system/init` line
+    must list no tools and no MCP servers before anything it says counts. It reads its sign-in from the Keychain, and
+    answers on releases in `SideAnswer.testedClaude`.
+  - **Codex**'s fork can't be used: it inherits its parent's tools, and no flag removes them. So it's a fresh ephemeral call
+    over the chat Lamp holds (`SideAnswer.chat`), in `testedCodexModel`. **This route is a workaround**: Codex has no way to
+    start with no tools, so the list is emptied with feature switches, two settings nothing documents, and an edited copy of
+    the model's own catalog entry (`codexArguments`, `codexCatalog`). It only runs on a version in `testedCodex`, exactly. To
+    add a version, point that launch at a local stand-in for the provider and read the request it sends: `tools` empty
+    and no `additional_tools` item in `input`; then run it for real, told to use its tools, and see no tool item. Codex can
+    write only `installation_id`, and reads only that and `auth.json`, from its folder.
+
+  Every engine's version is asked before each run, except pi's, which is inside Lamp. It's skipped for a model on this Mac,
+  and for answers to cards, files, what was pointed at, requests sent again, a turn that has asked, paused or waits on an
+  approval, and a second message while one is being answered. Five starts per builder's turn at most, however they end,
+  and nothing is retried. An answer that fails rests that engine for two minutes. A tool that ran, which no launch allows,
+  stops the engine's other runs and stops that version for good on this Mac (`SideAnswer.stop`). The answer is one whole
+  message with no tool attempted, even a refused one, since a tool can act and then fail; Codex's is its last message. Sent
+  again in the same words, a request keeps its answer and receipt (`SideAnswer.kept`). The answer goes up only if its message
+  still waits beside the turn it was made for, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`, never a line
+  of the turn's, so `CatchUp`, folds and versions don't see it), and the message reaches the agent as ever with a labeled
+  receipt of what was said (`SideAnswer.receipt`), in the request or Send Now's handover, so it can't go ahead of its
+  message. A queue holding an answer outlives a quit (`Store.keptAcrossRelaunch`), and a helper at work when Lamp quits
+  isn't started again. A handover whose messages have all been answered tells the agent not to acknowledge them again
+  (`Agent.midTurnNote(for:)`), so the person hears back once.
 - **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognized in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,

@@ -740,30 +740,13 @@ function talkTool(name: string) {
 	});
 }
 
-/** An answer beside the running turn (SideAnswer): the builder's tools are declared so the provider's cache of the
- * conversation fits, and none may run. The refusal is first and alone, ahead of anything that would ask Lamp, and ends
- * the run with no further request. The command comes after it because Lamp sends nothing until it sees the command. The
- * conversation is the builder's, so what the provider is told of where it runs and whose it is stays the builder's too. */
-function guardsSideAnswer(pi: ExtensionAPI, command: string) {
-	pi.on("tool_call", () => ({ block: true, terminate: true, reason: process.env.LAMP_SIDE_REFUSAL }));
-	pi.on("before_agent_start", (event) => {
-		if (process.env.LAMP_SIDE_FOLDER) event.systemPromptOptions.cwd = process.env.LAMP_SIDE_FOLDER;
-	});
-	pi.on("before_provider_headers", (event) => {
-		if (process.env.LAMP_SIDE_SESSION) event.headers["x-session-id"] = process.env.LAMP_SIDE_SESSION;
-	});
-	pi.registerCommand(command, { description: "Refuses every tool call in this run.", handler: async () => {} });
-}
-
 export default function (pi: ExtensionAPI) {
-	const sideGuard = process.env.LAMP_SIDE_GUARD;
-	if (sideGuard) guardsSideAnswer(pi, sideGuard);
 	const computer = computerTools();
 	if (computer.length > 0) {
 		for (const tool of computer) pi.registerTool(tool);
 		return;   // a task in other apps: none of the build tools
 	}
-	if (!sideGuard) pi.on("tool_call", async (event, ctx) => {
+	pi.on("tool_call", async (event, ctx) => {
 		if (fileTools.has(event.toolName)) {
 			const given = (event.input as { path?: unknown }).path;
 			if (typeof given !== "string" || given === "") return undefined;   // no path: the app's own folder
@@ -781,11 +764,8 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(bashWithDescription());
 	pi.registerTool(editWithDoing());
 	pi.registerTool(writeWithDoing());
-	// These change the conversation or ask Lamp: the builder's alone.
-	if (!sideGuard) {
-		keepsPicturesFew(pi);
-		takesMessagesMidTurn(pi);
-	}
+	keepsPicturesFew(pi);
+	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
 	pi.registerTool(useApp);

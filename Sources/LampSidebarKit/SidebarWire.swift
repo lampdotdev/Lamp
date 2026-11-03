@@ -464,6 +464,9 @@ public struct SidebarQueued: Codable, Equatable, Identifiable {
     public var sideAnswering: Bool?
     public var sideReply: String?
     public var stillQueued: Bool?
+    /// Answered, and Lamp has quit since, so no turn is coming to it: it reads as waiting until it's sent.
+    public var noTurn: Bool?
+    public var isAnswered: Bool { sideReply != nil && noTurn != true }
 
     public init(id: UUID, text: String, attachments: [SidebarAttachment]) {
         self.id = id

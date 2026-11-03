@@ -312,6 +312,27 @@ enum Sandbox {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    /// An answer beside a turn (`SideAnswer`) has no tools, and this holds whatever got past that: everything that
+    /// can be written is its one private folder, and nothing of the person's, of Lamp's, or of another program's in the
+    /// shared temporary folders can be read. It shares no rule with `profile`, which opens what a build needs. The network
+    /// stays open, since the engine needs its provider. Looking at a file (not reading it) stays open too: engines stat
+    /// every step of a path. `reading` are folders, and `readingFiles` and `writingFiles` single paths.
+    static func sideProfile(scratch: String, reading folders: [String], readingFiles: [String], writingFiles: [String] = []) -> String {
+        let home = kernelPath(FileManager.default.homeDirectoryForCurrentUser.path)
+        func paths(_ kind: String, _ list: [String]) -> String { list.map { "(\(kind) \(quotedPath(kernelPath($0))))" }.joined(separator: " ") }
+        let closed = ["/Users", "/Volumes", "/Network", "/private/var/root", "/private/tmp", "/private/var/folders", "/Library/Application Support",
+                      "/Library/Keychains", home]
+        var lines = ["(version 1)", "(allow default)", "(deny file-write*)", "(deny file-read* \(paths("subpath", closed)))"]
+        // Where output is thrown away, which programs open whatever they're doing.
+        lines.append(#"(allow file-write* (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))"#)
+        if !folders.isEmpty { lines.append("(allow file-read* \(paths("subpath", folders)))") }
+        lines.append("(allow file-read* \(paths("literal", readingFiles)))")
+        if !writingFiles.isEmpty { lines.append("(allow file-write* \(paths("literal", writingFiles)))") }
+        lines.append("(allow file-read* file-write* \(paths("subpath", [scratch])))")
+        lines.append("(allow file-read-metadata)")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     /// Where the developer tools Lamp runs as itself come from (`DeveloperTools.folder`): the one Lamp was
     /// given and the one chosen with xcode-select, read off its link rather than by running a program for each
     /// command. For an Xcode that's the whole app, not just its developer folder.

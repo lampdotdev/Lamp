@@ -413,7 +413,9 @@ final class SidebarServer {
             queued.canSendNow = canSendNow && message.id == lastWaiting ? true : nil
             switch message.side {
             case .answering: queued.sideAnswering = true
-            case .answered(let reply): queued.sideReply = reply
+            case .answered(let reply):
+                queued.sideReply = reply
+                queued.noTurn = store.hasTurn(project) ? nil : true
             case .stillQueued: queued.stillQueued = true
             case nil: break
             }

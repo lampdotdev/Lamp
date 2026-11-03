@@ -128,6 +128,13 @@ enum Gallery {
             waiting.stillQueued = true
             state.queued = [waiting]
         },
+        screen("An answered message after a quit", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
+            var waiting = SidebarQueued(id: UUID(), text: "Can the title be bigger too?", attachments: [])
+            waiting.sideReply = "Got it, I'll do that next."
+            waiting.noTurn = true
+            waiting.canSendNow = true
+            state.queued = [waiting]
+        },
         screen("An iPhone app, closed", group: "Chat screen", Array(finishedChat.prefix(11))) { state in
             state.toolbar?.play = SidebarPlay(open: false, enabled: true, help: "Use Today")
             state.tryOn = phoneTryOn

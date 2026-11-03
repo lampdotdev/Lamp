@@ -616,6 +616,8 @@ final class Store: ObservableObject {
     @Published var queued: [String: [QueuedMessage]] = [:]
     /// The answers being made beside running turns, by wish (`SideAnswer`).
     private var sideRuns: [String: SideAnswer.Run] = [:]
+    /// Until when an engine whose answer just failed is left alone.
+    private var sideRests: [Engine: ContinuousClock.Instant] = [:]
     /// The turn in progress for each app. A new app's first turn stays here after it finishes, until the next
     /// message, for its chapters (`Chapters.segments`).
     @Published var progress: [String: TurnProgress] = [:]
@@ -875,6 +877,8 @@ final class Store: ObservableObject {
         var steering: Engine?
         /// What built the turn's latest run, for an answer beside it (`SideAnswer`); nil when none can be made.
         var sideRoute: SideAnswer.Route?
+        /// The answers started beside this turn, however they ended.
+        var sideAttempts = 0
         /// Claude Code's input, from its start until it has answered.
         var input: AgentInput?
         /// The engine is running a tool: a message written to it now reaches the model with the tool's result.
@@ -4104,9 +4108,10 @@ final class Store: ObservableObject {
 
     /// Which waiting messages are kept across a relaunch: every queue while setup isn't done, and a queue paused for
     /// Reload (`pause`), whose held build outlives Lamp too, so the request carries on after the Reload whenever it
-    /// comes and nothing typed behind it is lost.
+    /// comes and nothing typed behind it is lost. And a queue holding an answered message (`SideAnswer`): it reads as
+    /// heard, so a quit doesn't drop it.
     static func keptAcrossRelaunch(_ messages: [QueuedMessage], setupReady: Bool) -> Bool {
-        !messages.isEmpty && (!setupReady || messages.contains(where: \.afterReload))
+        !messages.isEmpty && (!setupReady || messages.contains { $0.afterReload || $0.sideReply != nil })
     }
 
     /// Brings back requests that were waiting for setup, or for Reload, when Lamp last quit. Kept files no waiting
@@ -4305,12 +4310,16 @@ final class Store: ObservableObject {
         (queued[project.id] ?? []).filter { !$0.sendNow }
     }
 
+    func hasTurn(_ project: LampProject) -> Bool { turns[project.id] != nil }
+
     /// Whether the waiting messages can be sent to the agent in the turn that's running (Send Now). They go as one
     /// group, so every one of them must be able to: each is a plain request. An answer to a card or a request sent
     /// again changes what the turn is for, and so does anything while a wish is being found or once the agent has
     /// asked its questions; then they all wait for the next turn.
     func canSendNow(in project: LampProject) -> Bool {
         let waiting = waitingToSend(in: project)
+        // Answered before a quit, it has no turn to reach: it starts one.
+        if turns[project.id] == nil { return waiting.contains { $0.sideReply != nil } && readyFor(project) && !queueWaitsForReload(in: project) }
         guard !waiting.isEmpty, let turn = turns[project.id], !turn.asked, !turn.paused, !turn.stopped,
               current(project)?.finding == false else { return false }
         return waiting.allSatisfy { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty && !$0.afterReload }
@@ -4323,6 +4332,7 @@ final class Store: ObservableObject {
     func sendNow(in project: LampProject, latest: UUID) {
         guard canSendNow(in: project), waitingToSend(in: project).last?.id == latest, var waiting = queued[project.id]
         else { return }
+        guard turns[project.id] != nil else { return startQueued(project) }
         for index in waiting.indices { waiting[index].sendNow = true }
         queued[project.id] = waiting
         endSideAnswer(in: project)
@@ -5189,10 +5199,8 @@ final class Store: ObservableObject {
         var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
-        // The definitions as this run read them, kept only when they may be asked for.
-        let definitions = SideAnswer.isOn ? run.env["LAMP_TOOLS_JSON"].flatMap { FileManager.default.contents(atPath: $0) } : nil
-        turn.sideRoute = SideAnswer.route(env: run.env, engine: engine, local: Builder.piProvider == Builder.localProvider,
-                                          keyProvider: Builder.piProvider, definitions: definitions, folder: project.dir.path)
+        turn.sideRoute = SideAnswer.route(env: run.env, engine: engine, local: Builder.piProvider == Builder.localProvider, keyProvider: Builder.piProvider,
+                                          configFolder: EngineInstall.configFolder(engine).path, environment: EngineInstall.environment(for: engine))
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
         // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
         let onLine: @MainActor (String) -> Void = { [self] line in
@@ -5533,26 +5541,31 @@ final class Store: ObservableObject {
     /// queued first and stays queued: nothing here decides whether it reaches the agent, and nothing waits for this.
     private func answerBeside(_ sent: QueuedMessage, for sender: LampProject) {
         let project = Self.requestOwner(of: sender, among: projects)
-        guard SideAnswer.isOn, SideAnswer.canAnswer(sent), sideRuns[project.id] == nil, sideRuns.count < SideAnswer.mostAtOnce,
-              let turn = turns[project.id], let route = turn.sideRoute, !turn.asked, !turn.paused, !turn.stopped,
+        guard SideAnswer.canAnswer(sent), sideRuns[project.id] == nil, sideRuns.count < SideAnswer.mostAtOnce,
+              let turn = turns[project.id], let route = turn.sideRoute, turn.sideAttempts < SideAnswer.attemptsPerTurn,
+              !turn.asked, !turn.paused, !turn.stopped, sideRests[route.engine].map({ $0 <= .now }) ?? true,
               approvals[project.id] == nil, current(project)?.finding == false, !project.isDeviceSetup, readyFor(project),
               !queueWaitsForReload(in: project), let waiting = queued[project.id],
-              let index = waiting.firstIndex(where: { $0.id == sent.id }),
-              let conversation = Conversation.transcript(of: .pi, session: route.session, in: project) else { return }
+              let index = waiting.firstIndex(where: { $0.id == sent.id }) else { return }
+        let session = route.engine == .claude ? turn.claudeSession : route.session
+        let transcript = session.flatMap { Conversation.transcript(of: route.engine, session: $0, in: project) }
+        guard route.engine == .codex || transcript != nil else { return }
+        let chat = route.engine == .codex ? SideAnswer.chat(of: logs[project.id] ?? []) : nil
         let accepted = ContinuousClock.now
+        turn.sideAttempts += 1
         queued[project.id]?[index].side = .answering
-        let run = SideAnswer.Run(message: sent.id)
+        let run = SideAnswer.Run(message: sent.id, engine: route.engine)
         sideRuns[project.id] = run
         Task {
-            let outcome = await run.answer(SideAnswer.prompt(for: sent.text), from: conversation, route: route)
+            let outcome = await run.answer(SideAnswer.prompt(for: sent.text, chat: chat), route: route, transcript: transcript)
             if sideRuns[project.id] === run { sideRuns[project.id] = nil }
-            settleSideAnswer(outcome, of: run, in: project, took: ContinuousClock.now - accepted)
+            settleSideAnswer(outcome, of: run, beside: turn, in: project, took: ContinuousClock.now - accepted)
         }
     }
 
-    /// The answer goes up only if its message still waits untouched: one the agent has taken, or that was taken back or
-    /// sent now, has moved on, and a late "I'll do that next" would be wrong.
-    private func settleSideAnswer(_ outcome: SideAnswer.Outcome, of run: SideAnswer.Run, in project: LampProject, took: Duration) {
+    /// The answer goes up only if its message still waits untouched, beside the turn it was made for: one the agent has
+    /// taken, or that was taken back or sent now, has moved on, and a late "I'll do that next" would be wrong.
+    private func settleSideAnswer(_ outcome: SideAnswer.Outcome, of run: SideAnswer.Run, beside started: Turn, in project: LampProject, took: Duration) {
         let usage = outcome.usage
         if usage.cost > 0 {
             var spent = self.usage[project.id] ?? AppUsage()
@@ -5560,17 +5573,24 @@ final class Store: ObservableObject {
             self.usage[project.id] = spent
             saveUsage(project)
         }
+        if outcome.toolRan {
+            // No launch allows this, so whatever else this engine is doing beside a turn stops with it.
+            SideAnswer.stop(run.engine, version: outcome.version)
+            for other in sideRuns.values where other.engine == run.engine { other.cancel() }
+        } else if outcome.failed {
+            sideRests[run.engine] = .now + SideAnswer.restAfterFailure
+        }
         let index = queued[project.id]?.firstIndex { $0.id == run.message }
         // Sent now, it no longer waits, so no promise goes up and nothing more is said under it.
         if let index, queued[project.id]?[index].sendNow == true { queued[project.id]?[index].side = nil }
-        // The turn may have asked or paused while the fork worked: what it would say about what's next is out of date.
+        // The turn may have asked or paused while the helper worked: what it would say about what's next is out of date.
         let turn = turns[project.id]
-        let stillTrue = index != nil && queued[project.id]?[index!].sendNow == false && turn?.asked == false && turn?.paused == false
-            && !queueWaitsForReload(in: project)
+        let stillTrue = index != nil && queued[project.id]?[index!].sendNow == false && turn === started && turn?.asked == false
+            && turn?.paused == false && !queueWaitsForReload(in: project)
         let shown = outcome.reply != nil && stillTrue
-        Conversation.note(project, engine: .pi, "side answer \(shown ? "shown" : "not shown")"
+        Conversation.note(project, engine: run.engine, "side answer \(shown ? "shown" : "not shown")"
             + " after \(took.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))"
-            + (outcome.failure.map { " (\($0))" } ?? "") + (usage.refused.map { " (refused \($0))" } ?? "") + ", input \(usage.input), cache read \(usage.cacheRead),"
+            + (outcome.failure.map { " (\($0))" } ?? "") + ", input \(usage.input), cache read \(usage.cacheRead),"
             + " cache write \(usage.cacheWrite), output \(usage.output), cost \(usage.cost), waiting \(queued[project.id]?.count ?? 0)")
         guard let index, queued[project.id]?[index].sendNow == false else { return }
         queued[project.id]?[index].side = shown ? outcome.reply.map(QueuedMessage.SideState.answered) : .stillQueued

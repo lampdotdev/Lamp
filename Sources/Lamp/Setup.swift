@@ -623,7 +623,6 @@ struct BuildingSettings: View {
     @AppStorage("piProvider") private var provider = "openrouter"
     @AppStorage("settingsTab") private var tab = "building"
     @AppStorage("notify") private var notify = true
-    @AppStorage(SideAnswer.switchKey) private var sideAnswer = false
     @AppStorage("commandApproval") private var approval = CommandApproval.risky.rawValue
     private var approvalChoice: Binding<String> {   // a saved "auto" or "unusual" from before shows as Only when risky
         Binding(get: { CommandApproval(rawValue: approval)?.rawValue ?? CommandApproval.risky.rawValue }, set: { approval = $0 })
@@ -840,13 +839,6 @@ struct BuildingSettings: View {
                 if (CommandApproval(rawValue: approval) ?? .risky).isAutomatic && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
                     Text("Claude's auto mode isn't available for your account, so Lamp asks before every command.")
                         .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if engine == Engine.pi.rawValue {
-                Section("Experiments") {
-                    SettingsCheckboxes {
-                        Toggle("Answer messages right away while building", isOn: $sideAnswer)
-                    }
                 }
             }
             Section("Permissions and Privacy") {

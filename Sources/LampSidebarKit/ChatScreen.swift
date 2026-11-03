@@ -235,8 +235,8 @@ private struct Chat: View {
                         ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
                                                waitingForReload: state.waitingForReload ?? false,
-                                               sending: message.sendingNow == true, answered: message.sideReply != nil,
-                                               groupAnswered: queued.allSatisfy { $0.sideReply != nil || $0.sendingNow == true }, place: places[index],
+                                               sending: message.sendingNow == true, answered: message.isAnswered,
+                                               groupAnswered: queued.allSatisfy { $0.isAnswered || $0.sendingNow == true }, place: places[index],
                                                onRemove: { link.send(.unqueue(message.id)) },
                                                sendNow: message.canSendNow == true ? { link.send(.sendNow(message.id)) } : nil) {
                                 if let pointed = message.pointed { PointedPill(pointed: pointed) }
