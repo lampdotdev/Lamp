@@ -92,7 +92,7 @@ import XCTest
 
     func testOnlyATimelyCleanFrameIsSaidToBeOnScreen() {
         XCTAssertTrue(Store.draftWords(.content)?.contains("where the person sees it") == true)
-        for window: Store.DraftWindow? in [nil, .blank, .noPicture, .timedOut(seconds: 180), .closed] {
+        for window: Store.DraftWindow? in [nil, .pending, .blank, .noPicture, .timedOut(seconds: 180), .closed] {
             XCTAssertFalse(Store.draftWords(window)?.contains("where the person sees it") == true, "\(String(describing: window))")
         }
         XCTAssertNil(Store.draftWords(.stopped))
@@ -133,6 +133,54 @@ import XCTest
         let said = await waiting.value
         XCTAssertEqual(said, Store.personWroteNote)
         XCTAssertFalse(turn.stoppedForMessage, "no play was stopped to be excused")
+    }
+
+    /// The turn's end says ready only for a draft whose window drew; anything else says what's known, and no draft at all
+    /// is said to be ready as any other app.
+    func testATurnsEndSaysReadyOnlyForAWindowThatDrew() {
+        XCTAssertEqual(Store.draftLine("Game", nil, updated: false), "Game is ready")
+        XCTAssertEqual(Store.draftLine("Game", .content, updated: true), "Game is updated")
+        for window: Store.DraftWindow in [.pending, .timedOut(seconds: 180), .blank, .noPicture] {
+            let line = Store.draftLine("Game", window, updated: false) ?? ""
+            XCTAssertTrue(line.hasPrefix("Game is open, but"), "\(window): \(line)")
+        }
+        XCTAssertNil(Store.draftLine("Game", .closed, updated: false))
+    }
+
+    /// A page that never said the change is on screen: the wait lets the turn go on, but nothing counts it as shown.
+    func testAShowThatRanOutIsNotSaidToBeShown() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = Store(testingAt: root)
+        let game = LampProject(id: "game", name: "Game", exe: "Game", dir: root)
+        store.awaitShown(game, limit: .milliseconds(50))
+        let ranOut = await store.untilShown(game)
+        XCTAssertFalse(ranOut)
+        store.awaitShown(game, limit: .seconds(5))
+        let waiting = Task { @MainActor in await store.untilShown(game) }
+        await Task.yield()
+        store.pageShown(game)
+        let shown = await waiting.value
+        XCTAssertTrue(shown)
+    }
+
+    /// The line was handed on, but its next caller hasn't run yet when the person writes: that caller doesn't play.
+    func testAMessageInTheHandoverStopsTheNextPlay() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = Store(testingAt: root)
+        let turn = Store.Turn(), line = HiddenCopyLine()
+        turn.hiddenLines.append(line)
+        _ = await line.take(for: turn)
+        let next = Task { @MainActor in await store.takeHiddenCopy(line, for: turn) }
+        await Task.yield()
+        line.letGo()
+        store.giveWayToMessage(turn)
+        let said = await next.value
+        XCTAssertEqual(said, Store.personWroteNote)
+        if said == nil { line.letGo() }
+        let free = await line.take(for: turn)
+        XCTAssertNil(free, "the next caller gave the line back")
     }
 
     /// Calls sent in one message on a part of the wish: the first to finish doesn't take the part from the others.
