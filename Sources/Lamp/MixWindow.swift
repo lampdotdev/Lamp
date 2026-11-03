@@ -316,8 +316,8 @@ private struct MixSide: View {
 }
 
 /// One change: in the middle and lit when it's kept, so keeping everything makes one column; nudged toward its owner's
-/// side and dimmed when it's left out. Beside it, the one thumb that does something now: down on its owner's side while
-/// it's kept, up on the inner side once it's out. Each sits where the moving tile covers it when it's the other's turn.
+/// side and dimmed when it's left out. At the row's edges, thumbs that do what a click does: down on its owner's side, up
+/// on the other, the one that would change nothing dimmed.
 private struct MixRow: View {
     let change: Mix.Change
     let on: Bool
@@ -332,34 +332,27 @@ private struct MixRow: View {
 
     var body: some View {
         card
+            .frame(maxWidth: .infinity)
             .overlay(alignment: .leading) { if theirs { keep } else { leave } }
             .overlay(alignment: .trailing) { if theirs { leave } else { keep } }
-            .frame(maxWidth: .infinity)
     }
 
-    /// Thumbs down, just outside the tile on its owner's side: shown while it's kept.
-    private var leave: some View {
-        thumbButton("hand.thumbsdown", label: "Leave it out", shown: on)
-            .offset(x: (Self.thumb + 8) * (theirs ? 1 : -1))
-    }
+    /// Thumbs down, on its owner's side: it can be left out while it's kept.
+    private var leave: some View { thumbButton("hand.thumbsdown", label: "Leave it out", active: on) }
 
-    /// Thumbs up, in the room the tile leaves on its inner side when it moves out: shown while it's left out.
-    private var keep: some View {
-        thumbButton("hand.thumbsup", label: "Keep it", shown: !on)
-            .offset(x: (Self.travel - Self.thumb) / 2 * (theirs ? 1 : -1))
-    }
+    /// Thumbs up, on the other side: it can be kept while it's left out.
+    private var keep: some View { thumbButton("hand.thumbsup", label: "Keep it", active: !on) }
 
-    private func thumbButton(_ symbol: String, label: String, shown: Bool) -> some View {
+    private func thumbButton(_ symbol: String, label: String, active: Bool) -> some View {
         Button(action: toggle) {
             Image(systemName: symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(Paper.ink)
                 .frame(width: Self.thumb, height: Self.thumb).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(shown ? 1 : 0)
-        .allowsHitTesting(shown)
+        .opacity(active ? 1 : 0.2)
+        .disabled(!active)
         .animation(.easeOut(duration: 0.15), value: on)
         .accessibilityLabel(label)
-        .accessibilityHidden(!shown)
     }
 
     private var theirs: Bool { change.side == .them }
