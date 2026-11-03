@@ -316,7 +316,8 @@ private struct MixSide: View {
 }
 
 /// One change: in the middle and lit when it's kept, so keeping everything makes one column; nudged toward its owner's
-/// side and dimmed when it's left out. Theirs read from the right, mirroring yours.
+/// side and dimmed when it's left out. Beside it, the one thumb that does something now: down on its owner's side while
+/// it's kept, up on the inner side once it's out. Each sits where the moving tile covers it when it's the other's turn.
 private struct MixRow: View {
     let change: Mix.Change
     let on: Bool
@@ -327,24 +328,55 @@ private struct MixRow: View {
     private static let width: CGFloat = 380
     private static let glow = Paper.stripes[2]
 
+    private static let thumb: CGFloat = 24
+
     var body: some View {
-        card.frame(maxWidth: .infinity)
+        card
+            .overlay(alignment: .leading) { if theirs { keep } else { leave } }
+            .overlay(alignment: .trailing) { if theirs { leave } else { keep } }
+            .frame(maxWidth: .infinity)
+    }
+
+    /// Thumbs down, just outside the tile on its owner's side: shown while it's kept.
+    private var leave: some View {
+        thumbButton("hand.thumbsdown", label: "Leave it out", shown: on)
+            .offset(x: (Self.thumb + 8) * (theirs ? 1 : -1))
+    }
+
+    /// Thumbs up, in the room the tile leaves on its inner side when it moves out: shown while it's left out.
+    private var keep: some View {
+        thumbButton("hand.thumbsup", label: "Keep it", shown: !on)
+            .offset(x: (Self.travel - Self.thumb) / 2 * (theirs ? 1 : -1))
+    }
+
+    private func thumbButton(_ symbol: String, label: String, shown: Bool) -> some View {
+        Button(action: toggle) {
+            Image(systemName: symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(Paper.ink)
+                .frame(width: Self.thumb, height: Self.thumb).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(shown ? 1 : 0)
+        .allowsHitTesting(shown)
+        .animation(.easeOut(duration: 0.15), value: on)
+        .accessibilityLabel(label)
+        .accessibilityHidden(!shown)
     }
 
     private var theirs: Bool { change.side == .them }
 
     private var card: some View {
         HStack(spacing: 10) {
-            if theirs { Spacer(minLength: 0) } else { thumbnail }
-            VStack(alignment: theirs ? .trailing : .leading, spacing: 2) {
-                Text(change.title).font(.system(size: 13)).lineLimit(2).multilineTextAlignment(theirs ? .trailing : .leading)
+            Spacer(minLength: 0)
+            thumbnail
+            VStack(alignment: .center, spacing: 2) {
+                Text(change.title).font(.system(size: 13)).lineLimit(2).multilineTextAlignment(.center)
                 Text(change.date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
                     .font(.system(size: 11)).foregroundStyle(Paper.muted)
                 if on, let replacedBy {
                     Text("Partly replaced by “\(replacedBy)”").font(.system(size: 11)).foregroundStyle(.orange).lineLimit(1)
                 }
             }
-            if theirs { thumbnail } else { Spacer(minLength: 0) }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
         .frame(maxWidth: Self.width)

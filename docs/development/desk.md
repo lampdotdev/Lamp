@@ -340,7 +340,8 @@ its file finds the wish it was remixed from by its chain, and the original's fil
 (`Mix.copy(of:among:)`). Then it saves what's
 unsaved, and lines up every change either of you made since the copies last met on one timeline by date, each a switch:
 kept, it's lit in the middle, so keeping everything makes one column; left out, it's dimmed and nudged toward its owner's
-side, yours left and theirs right, whose words read from the right to mirror yours.
+side, yours left and theirs right. A thumb beside it does what a click does: down on its owner's side while it's kept,
+up on the inner side once it's out, each where the moving tile covers it when it's the other's turn.
 Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would. The window's head
 names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
 
