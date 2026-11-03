@@ -94,4 +94,35 @@ final class AgentPreviewTests: XCTestCase {
         XCTAssertTrue(inEmulator)
         XCTAssertEqual(asked, [Emulator.Kind.phone.serial], "only the emulator is asked")
     }
+
+    /// A look at a Roku app only builds it, and the turn's end then sees nothing changed since that build. The look
+    /// leaves the turn's end something to deliver, so the change still goes onto the person's Roku there, as on any
+    /// look (`settle`).
+    @MainActor
+    func testABuildOnlyLookLeavesTheTurnsEndToPutItOnTheDevice() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("agent-preview-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var roku = LampProject(id: "pocket-roku", name: "Pocket", exe: "Pocket", dir: dir, platform: .device)
+        roku.chosen = .device
+        roku.device = "roku:X01"
+        roku.integration = "roku"
+        XCTAssertNil(AgentPreview.app(for: roku))
+        // Lamp's own files in place, and the sources built as they are: nothing is left for the look to build.
+        try Template.writeSupport(for: roku)
+        try FileManager.default.createDirectory(at: roku.builtURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("package".utf8).write(to: roku.builtURL)
+        Runtime.markBuilt(roku, from: Runtime.fingerprint(roku))
+        XCTAssertFalse(Runtime.sourcesChanged(roku))
+
+        let turn = Store.Turn()
+        turn.agent = Process()
+        let (status, answer) = await Store.shared.buildWithoutPreview(roku, in: turn)
+        XCTAssertEqual(status, 200)
+        XCTAssertTrue((answer["text"] as? String)?.contains("has no preview Lamp can open") == true)
+        XCTAssertEqual(turn.look.installed[roku.id], true, "the turn's end puts it on the Roku")
+        XCTAssertNil(turn.look.crashes[roku.id])
+        XCTAssertFalse(turn.look.inProgress)
+    }
 }
+

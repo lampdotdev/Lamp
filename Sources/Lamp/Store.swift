@@ -13751,7 +13751,12 @@ final class Store: ObservableObject {
         let reopen = arguments["reopen"] as? Bool ?? false, onDevice = arguments["on_device"] as? Bool ?? false
         // Looked at in its preview on this Mac, never on a device of the person's, wherever Try On points
         // (`AgentPreview`); with none to open, only built.
-        guard let preview = AgentPreview.app(for: app) else { return await underTurn(of: project, app) { await buildWithoutPreview(app) } }
+        guard let preview = AgentPreview.app(for: app) else {
+            return await underTurn(of: project, app) {
+                guard let turn = turns[app.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+                return await buildWithoutPreview(app, in: turn)
+            }
+        }
         return await underTurn(of: project, app) {
             await look(at: preview, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
                        reopen: reopen, onDevice: onDevice, shape: arguments["shape"] as? String, tryOn: app.device)
@@ -13781,9 +13786,8 @@ final class Store: ObservableObject {
     }
 
     /// A look at an app with no preview Lamp can open (`AgentPreview`): built for its place, never put on a device, and
-    /// said so.
-    private func buildWithoutPreview(_ project: LampProject) async -> (Int, [String: Any]) {
-        guard let turn = turns[project.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+    /// said so. The turn's end still puts what was built where Try On points, as after any look (`settle`).
+    func buildWithoutPreview(_ project: LampProject, in turn: Turn) async -> (Int, [String: Any]) {
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
         defer { turn.look.inProgress = false }
@@ -13794,6 +13798,10 @@ final class Store: ObservableObject {
             }
             return (200, ["text": "The app doesn't build yet. Fix these compiler errors:\n\n\(errors)"])
         }
+        // Built, so its sources count as built from here and the turn's end sees no change of its own: it's told the look
+        // leaves something to deliver, and puts the app on the person's device then, as when a look put it there itself.
+        turn.look.installed[project.id] = true
+        turn.look.crashes[project.id] = nil
         return (200, ["text": AgentPreview.none(project)])
     }
 
