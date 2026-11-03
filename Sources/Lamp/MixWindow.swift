@@ -19,6 +19,8 @@ struct MixScene: Scene {
 
 @MainActor
 final class MixModel: ObservableObject {
+    /// One window, one mix: the import's review hands it a file too (Mix… there).
+    static let shared = MixModel()
     enum Stage: Equatable { case waiting, reading, problem(String), ready, mixing }
     @Published var stage = Stage.waiting
     @Published var lineup: Mix.Lineup?
@@ -82,6 +84,7 @@ final class MixModel: ObservableObject {
     var status: String {
         guard let lineup else { return "" }
         let theirs = lineup.changes.filter { $0.side == .them }
+        guard !theirs.isEmpty else { return "Nothing new from them since you last shared" }
         let inCount = theirs.filter { picked.contains($0.id) }.count
         let out = lineup.changes.filter { $0.side == .you && !picked.contains($0.id) }.count
         return "\(inCount) of \(theirs.count) of theirs in" + (out > 0 ? " · \(out) of yours out" : "")
@@ -129,7 +132,7 @@ final class MixModel: ObservableObject {
 
 struct MixView: View {
     @EnvironmentObject private var store: Store
-    @StateObject private var model = MixModel()
+    @ObservedObject private var model = MixModel.shared
     @Environment(\.dismiss) private var dismiss
     @State private var targeted = false
 
@@ -141,7 +144,7 @@ struct MixView: View {
             case .problem(let message): problem(message)
             case .ready, .mixing:
                 if let lineup = model.lineup {
-                    MixTimeline(model: model, lineup: lineup) { model.mix(store: store) { dismiss() } }
+                    MixTimeline(model: model, lineup: lineup, another: choose) { model.mix(store: store) { dismiss() } }
                 } else {
                     dropZone
                 }
@@ -164,8 +167,10 @@ struct MixView: View {
     private var dropZone: some View {
         VStack(spacing: 14) {
             Image(systemName: "arrow.triangle.merge").font(.system(size: 34, weight: .light)).foregroundStyle(Paper.muted)
-            Text("Drop someone's copy of a wish here").font(.system(size: 17, weight: .medium))
-            Button("Choose File…", action: choose).buttonStyle(PaperButtonStyle(.outline))
+            Text("Drop a wish file someone sent you").font(.system(size: 17, weight: .medium))
+            Text("A copy of one of your wishes, with their changes.\nYou'll pick which to bring into yours.")
+                .multilineTextAlignment(.center).foregroundStyle(Paper.muted)
+            Button("Choose File…", action: choose).buttonStyle(PaperButtonStyle(.outline)).padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 16).strokeBorder(targeted ? Paper.ink : Paper.rule, style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])).padding(24))
@@ -201,15 +206,33 @@ struct MixView: View {
 struct MixTimeline: View {
     @ObservedObject var model: MixModel
     let lineup: Mix.Lineup
+    var another: () -> Void = {}
     let mix: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 16) {
-                MixSide(title: "You", picture: lineup.yourPicture)
-                MixSide(title: "Them", picture: lineup.theirPicture)
+            HStack(spacing: 10) {
+                if let icon = NSImage(contentsOf: Icons.previewURL(lineup.project)) {
+                    Image(nsImage: icon).resizable().frame(width: 30, height: 30)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Mixing into “\(lineup.project.name)”").font(.system(size: 14, weight: .semibold))
+                    Text("Click a change to bring it in or leave it out. Where two touch the same thing, the later one wins.")
+                        .font(.system(size: 12)).foregroundStyle(Paper.muted)
+                }
+                Spacer(minLength: 12)
+                Button("Choose Another…", action: another)
+                    .buttonStyle(PaperButtonStyle(.outline))
+                    .disabled(model.stage == .mixing)
             }
-            .padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 10)
+            .padding(.horizontal, 28).padding(.top, 16).padding(.bottom, 12)
+            HStack(alignment: .top, spacing: 16) {
+                MixSide(title: "You", name: lineup.project.name, picture: lineup.yourPicture,
+                        icon: Icons.previewURL(lineup.project))
+                MixSide(title: "Them", name: lineup.package.name, picture: lineup.theirPicture,
+                        icon: lineup.package.folder.appendingPathComponent("icon.png"))
+            }
+            .padding(.horizontal, 28).padding(.bottom, 10)
             if let line = reviewLine { line.padding(.bottom, 6) }
             Rectangle().fill(Paper.rule).frame(height: 1)
             ScrollView {
@@ -257,10 +280,12 @@ struct MixTimeline: View {
     }
 }
 
-/// A column's head: whose it is, over the latest picture of their app.
+/// A column's head: whose it is, over the latest picture of their app, or its icon and name when there's no picture.
 private struct MixSide: View {
     let title: String
+    let name: String
     let picture: URL?
+    let icon: URL
 
     var body: some View {
         VStack(spacing: 6) {
@@ -268,7 +293,14 @@ private struct MixSide: View {
                 if let picture, let image = NSImage(contentsOf: picture) {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
                 } else {
-                    RoundedRectangle(cornerRadius: 8).fill(Paper.card)
+                    VStack(spacing: 6) {
+                        if let image = NSImage(contentsOf: icon) {
+                            Image(nsImage: image).resizable().frame(width: 56, height: 56)
+                        }
+                        Text(name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Paper.card)
                 }
             }
             .frame(height: 110)

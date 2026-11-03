@@ -324,6 +324,7 @@ private struct WindowFinder: NSViewRepresentable {
 /// its icon, the room under the sheet) and passes it in.
 struct ImportReviewView: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.openWindow) private var openWindow
     let pending: Store.PendingImport
 
     /// The app's own icon, once drawn from the file; the plain app icon until then, and for a file without one.
@@ -337,7 +338,8 @@ struct ImportReviewView: View {
         ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
                          review: pending.review, existing: pending.existing?.name, changedHere: pending.changedHere, room: room,
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
-                         android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil)
+                         android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil,
+                         mix: pending.mixFile.map { file in { store.cancelImport(); openWindow(id: "mix"); MixModel.shared.open(file, store: store) } })
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
@@ -378,6 +380,9 @@ struct ImportReviewCard: View {
     var android = false
     /// An update Lamp prepared in a copy of `existing` (`AppUpdates`): nobody shared it, and Update puts that copy in place.
     var prepared = false
+    /// With mixing on (`Mix`), a file that can be mixed into `existing`: Mix… opens the mix window on it, in place of
+    /// Update. The window checks their code itself, so it waits for nothing here.
+    var mix: (() -> Void)? = nil
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -505,7 +510,9 @@ struct ImportReviewCard: View {
             if let existing {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
-                    Text(verbatim: prepared
+                    Text(verbatim: mix != nil
+                         ? "You already have this wish\(existing == name ? "" : ", as “\(existing)”"). Mix lets you pick which of its changes to bring into yours. Keep Both keeps it as a separate app."
+                         : prepared
                          ? "Update puts it in place of “\(existing)” and keeps your data, and you can go back if you change your mind. Keep Both keeps it as a separate app."
                          : "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
                          + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself"
@@ -514,7 +521,7 @@ struct ImportReviewCard: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
-                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
+                    Image(systemName: mix != nil ? "arrow.triangle.merge" : "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
             }
@@ -534,7 +541,14 @@ struct ImportReviewCard: View {
             // (`ImportReview.opening`); anything less takes a deliberate click.
             Button("Cancel", role: .cancel, action: cancel)
                 .keyboardShortcut(.cancelAction)
-            if existing != nil {
+            if existing != nil, let mix {
+                switch review?.opening {
+                case .anyway: Button("Keep Both Anyway", role: .destructive, action: open)
+                case .byReturn, .byClick, nil: Button("Keep Both", action: open).disabled(review == nil)
+                }
+                Button("Mix…", action: mix)
+                    .keyboardShortcut(.defaultAction)
+            } else if existing != nil {
                 // The app is already here: the file either becomes its next version or a second app.
                 // Either way its code runs, so both follow the same rule as opening does. Return is
                 // only ever Update: keeping both is the choice someone makes on purpose.

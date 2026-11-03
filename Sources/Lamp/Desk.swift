@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import LampSidebarKit
 import AVFoundation
+import UniformTypeIdentifiers
 
 /// Lamp's home: the person's wishes in one list (remixes under their originals), the starters Lamp comes with under them,
 /// the place to make a new one, by typing it, saying it, or finding it with the agent's help, and the person's devices
@@ -119,6 +120,16 @@ struct WishDesk: View {
             } }
         }
         .modifier(ClearToolbar())
+        // A wish file dropped anywhere on the desk opens as one opened from the Finder: its review, then a new wish, or
+        // with mixing on, Mix… into the copy already here.
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            guard let provider = providers.first else { return false }
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, url.pathExtension == "lampapp" else { return }
+                Task { @MainActor in Store.shared.importApp(from: url) }
+            }
+            return true
+        }
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }

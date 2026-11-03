@@ -340,7 +340,13 @@ its file finds the wish it was remixed from by its chain, and the original's fil
 (`Mix.copy(of:among:)`). Then it saves what's
 unsaved, and lines up every change either of you made since the copies last met on one timeline by date: yours on
 the left, theirs on the right, each a switch that's in (lit, toward the middle) or out (dimmed, nudged to its side).
-Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would.
+Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would. The window's head
+names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
+
+A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
+that carries its versions and finds a wish here (`Mix.copy`) gets Mix… in place of Update on its review
+(`PendingImport.mixFile`), beside Keep Both: Mix… closes the review and opens the window on that file
+(`MixModel.shared`).
 
 - **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
   the copies met (a copy's since it arrived, naming the version it was given; an original's since it was first

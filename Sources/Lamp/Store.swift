@@ -3494,6 +3494,9 @@ final class Store: ObservableObject {
         var copy: String? = nil
         /// The copy's version when its review was made: a copy changed since isn't what was reviewed.
         var copyHead: String? = nil
+        /// With mixing on, the file itself when it can be mixed into a wish here (`Mix.copy`): it carries its versions.
+        /// That wish is then `existing`, and the choice is Mix… or Keep Both.
+        var mixFile: URL? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3577,6 +3580,10 @@ final class Store: ObservableObject {
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
+            if Mix.isOn, target == nil, fetched == nil, MixHistory.read(in: package.folder) != nil, let into = Mix.copy(of: package, among: projects) {
+                pending.existing = into
+                pending.mixFile = file
+            }
             if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             pendingImport = pending
