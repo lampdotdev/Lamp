@@ -86,6 +86,12 @@ panel's menu, what's in the box goes as the copy's first request. A remix made w
 the card its starter's chat opens on (the original's starter.md kept as `.lamp/starter-suggestions.md`,
 `Starters.suggestions`), never as a starter itself: its icon is painted and the desk counts it as the person's.
 
+Previous Versions… in the wish's menu brings up its chat on the Versions panel (`SidebarServer.showVersions`), the
+same panel the chat's Versions button shows, never a copy of it on the desk: the chat comes up where it is now
+(`Store.showChat`), so a wish with no app running shows it in Lamp's panel and opens nothing, and going back to a version
+there rebuilds the app as it does from the chat. It's listed only for a wish with versions to look back on
+(`DeskEntry.hasVersions`, as the chat's Versions button reads it): that button is the panel's only way back to the chat.
+
 Name This Version… can be chosen once that wish has a version. Knowing takes git, which doesn't run while a menu is
 drawn: `MenuVersions` reads it as the commands' wish or its versions change, and the menu reads the answer.
 
@@ -206,10 +212,10 @@ can't fetch stops it, so nothing older is ever pushed over a repository's latest
 the starter.md files it moved.
 A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame
 given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's three.js with its node materials), so
-the agent looks at it and plays it in the game preview like any game, and it can be played on an iPhone, an iPad,
-Android or the Xbox too. It builds its whole city before the first frame, half a minute to a minute and a half out of
-sight, which is why the preview's limit goes by how long its last build took, it keeps a page in no window running
-(`WebGamePreview`), and a plain look at it while it's open on this Mac looks at its window instead. Its credits.json
+the agent looks at it and plays it in its window like any game, and it can be played on an iPhone, an iPad,
+Android or the Xbox too. It builds its whole city before the first frame, half a minute to a minute and a half, so a
+look that has to open it waits for that, and a change to it goes in where the player is rather than starting it
+again. Its credits.json
 names Slop New York at the commit the starter is on, with its license file, and the map, terrain and city data it uses;
 a starter built on someone else's work ships one, and bringing in a newer upstream updates its commit in the same
 change. Every starter's copy starts its wish's chain with the starter itself (`Starters.copy`, "Credit" in the wishes
@@ -324,3 +330,50 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
 5. Run `scripts/check-starters.sh <folder>` and `swift test --filter StartersTests`, update the count of wishes above,
    and commit starter.md with the change; look at the repository's README on GitHub.
 
+## Mixing copies
+
+An experiment, only in Lamp Dev (Settings → Experimental, `Mix.switchKey`): a button beside Settings at the desk's foot
+opens a window of its own (`MixWindow.swift`, the one window besides the desk while it's an experiment) where someone
+else's copy of a wish is dropped. Lamp finds your copy by the file's identity, whatever its layout (an import, which
+would replace the app at its root, passes over a wish whose apps are in folders of their own); a remix has an identity of its own, so
+its file finds the wish it was remixed from by its chain, and the original's file a remix of it made here
+(`Mix.copy(of:among:)`). Then it saves what's
+unsaved, and lines up every change either of you made since the copies last met on one timeline by date, each a switch: lit when it's kept, dimmed when it's left out, across the window's width. A thumb on
+its owner's side (yours left, theirs right) does what a click does: up to keep it, turned over to leave it out. A
+change's time shows while Option is held.
+Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would. The window's head
+names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
+
+A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
+that carries its versions and finds a wish here it met at a version both have (`Mix.copy`, `Mix.meeting`) gets Mix…
+in place of Update on its review, waiting while another mix is saved
+(`PendingImport.mixFile`), beside Keep Both: Mix… closes the review and opens the window on that file
+(`MixModel.shared`).
+
+- **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
+  the copies met (a copy's since it arrived, naming the version it was given; an original's since it was first
+  shared or first remixed, `.lamp/mix-start`; a remix made on this Mac's since it was remixed, its "Remix of …" version sent to
+  rebuild the rest on but never offered, so the original isn't renamed), each with its title, time and the files it
+  changed as they were after it. A run
+  longer than `MixHistory.limit` keeps its latest versions and carries the rest as one ("Earlier changes"), so it
+  always starts where the copies met. Only what a
+  shared file carries (`Upstream.isLeftOut`), through the same check for keys; a key in an old version or a history
+  too big to send drops History/, never the share.
+- **Where they met.** The run's base when it's in this copy's history (the file came back), else this copy's
+  arrival when the run starts at, or passes, the version it was given (`Mix.lineUp`). Copies with no such version
+  aren't mixed.
+- **Playing back.** What's in is replayed in date order from where they met with `git merge-tree -X theirs`: the
+  later change wins wherever two touch the same lines (`Mix.replay`), and the window marks an earlier change a later
+  one replaces in part. Lamp's own files stay as this copy has them.
+- **Saving.** On top of this copy's history, never rewriting it: one version leaving out what of yours was taken
+  out, tagged `Lamp-Left-Out: <commits>` and saved even when it changes no file, then one per change of theirs taken
+  in, under its title, with `Lamp-Mixed: <their commit>` so neither copy offers it again. The next lineup reads both:
+  a change left out shows out (and taking it back brings it in once), the version that left it out isn't a row, and a
+  change of theirs taken earlier sits at the time they made it, so it plays back in its place. Their credits join this copy's when anything of theirs is taken, as an update's do. The agent is
+  told (`Versions.rememberMixed`) and the app is built (`Store.mix`). A starter's offer of first changes leaves the chat
+  then, and isn't made again (`Mix.mixedMark`). Every git it runs works on commits, so a git
+  without `merge-tree -X` still mixes, a later change then winning whole files.
+
+Not yet: a review of the code in History/ beyond what the file's own review read (an early change of theirs taken
+without a later one brings code no review saw), Android's package rename, a wish of several apps (untried), and
+running their copy beside yours.

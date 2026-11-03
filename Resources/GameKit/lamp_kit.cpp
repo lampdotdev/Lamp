@@ -1,5 +1,5 @@
 // Lamp's game kit: the sokol libraries' code and what both hosts share. Lamp writes this file before every build.
-// Compiled once per host, with SOKOL_D3D11 for the Xbox or SOKOL_METAL (as Objective-C++) for the Mac preview.
+// Compiled for the Xbox's host, with SOKOL_D3D11.
 #if defined(SOKOL_D3D11)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>

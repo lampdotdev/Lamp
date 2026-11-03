@@ -3,10 +3,9 @@
 # edit it.
 #
 #   sh Lamp/build.sh xbox      the console's app: build/xbox/App.exe, and build/xbox.zip with it and Assets/
-#   sh Lamp/build.sh preview   the Mac preview: build/preview/lamp_preview
 #
 # The game is every .cpp and .c in Game/, and every .glsl there is a shader, compiled by sokol-shdc into
-# build/shaders/<name>.glsl.h (HLSL for the console, Metal for the Mac) for the game to include. $LAMP_WINDOWS is
+# build/shaders/<name>.glsl.h for the game to include. $LAMP_WINDOWS is
 # where Lamp keeps the tools for the console: LLVM's clang-cl and lld-link, Microsoft's SDK and sokol-shdc.
 set -e
 cd "$(dirname "$0")/.."
@@ -14,7 +13,7 @@ target="${1:-xbox}"
 tools="${LAMP_WINDOWS:?Lamp gives the build the folder with the tools for the console}"
 mkdir -p build/shaders
 
-# Shaders first: both builds include what they make.
+# Shaders first: the build includes what they make.
 for shader in Game/*.glsl; do
   [ -e "$shader" ] || continue
   name=$(basename "$shader")
@@ -27,28 +26,6 @@ done
 # Lamp's own code, compiled again only when it changed (Lamp touches kit.stamp when any of its files does): it's
 # the slow part. The game's, every time.
 fresh() { [ -f "$1" ] && [ "$1" -nt "$2" ] && [ "$1" -nt Lamp/kit.stamp ]; }
-
-if [ "$target" = preview ]; then
-  out=build/preview
-  mkdir -p "$out"
-  flags="-std=c++20 -O1 -g0 -DLAMP_PREVIEW=1 -DSOKOL_METAL -ILamp -Ibuild/shaders -IGame"
-  fresh "$out/lamp_kit.o" Lamp/lamp_kit.cpp ||
-    clang++ $flags -DSOKOL_TRACE_HOOKS -x objective-c++ -fobjc-arc -w -c Lamp/lamp_kit.cpp -o "$out/lamp_kit.o"
-  fresh "$out/lamp_preview.o" Lamp/lamp_preview.mm ||
-    clang++ $flags -x objective-c++ -fobjc-arc -w -c Lamp/lamp_preview.mm -o "$out/lamp_preview.o"
-  fresh "$out/lamp_sound.o" Lamp/lamp_sound.cpp || clang++ $flags -w -c Lamp/lamp_sound.cpp -o "$out/lamp_sound.o"
-  objects="$out/lamp_kit.o $out/lamp_preview.o $out/lamp_sound.o"
-  for source in Game/*.cpp Game/*.c; do
-    [ -e "$source" ] || continue
-    object="$out/$(basename "$source").o"
-    case "$source" in *.c) clang -std=c17 -O1 -g0 -DLAMP_PREVIEW=1 -ILamp -Ibuild/shaders -IGame -c "$source" -o "$object" ;;
-                      *) clang++ $flags -c "$source" -o "$object" ;; esac
-    objects="$objects $object"
-  done
-  clang++ $objects -o "$out/lamp_preview" -framework Foundation -framework Metal -framework QuartzCore -framework ImageIO \
-    -framework CoreGraphics -framework UniformTypeIdentifiers
-  exit 0
-fi
 
 sdk="$tools/sdk"
 out=build/xbox

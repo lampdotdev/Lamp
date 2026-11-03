@@ -327,19 +327,34 @@ enum Sharing {
                                   detail: "The license of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
             }
         }
+        // With mixing on, the file also carries the versions since the copies last met (`MixHistory`). It's the first
+        // thing given up: a key in an old version, or a history too big to send, sends the file without it.
+        let history = stage.appendingPathComponent(MixHistory.folder)
+        if Mix.isOn { MixHistory.write(for: project, credits: credits, identity: identity(of: project), into: stage) }
         // Every app's: each of a wish's apps keeps its own secrets and token.
         let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
-        let leaks = ShareCheck.secrets(in: stage, known: known)
+        var leaks = ShareCheck.secrets(in: stage, known: known)
+        if leaks.contains(where: { $0.hasPrefix(MixHistory.folder + "/") }) {
+            try? fm.removeItem(at: history)
+            leaks = ShareCheck.secrets(in: stage, known: known)
+        }
         if let first = leaks.first {
             throw ImportError("\(project.name) can't be shared: it holds a key or a password.",
                               detail: "It's in \(first)\(leaks.count > 1 ? " and \(leaks.count - 1) more" : ""). Ask Lamp to take it out and keep it out of the code.")
         }
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
         // bytes before compression), so Lamp never makes a file another Lamp refuses.
-        let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
-        guard staged.count <= maxFiles else { throw ImportError("\(project.name) has too many files to share.") }
-        let unpacked = staged.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
-        guard unpacked <= maxUnpackedBytes else { throw ImportError("\(project.name) is too big to share.") }
+        func measured() -> (count: Int, bytes: Int) {
+            let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
+            return (staged.count, staged.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) })
+        }
+        var measure = measured()
+        if measure.count > maxFiles || measure.bytes > maxUnpackedBytes, fm.fileExists(atPath: history.path) {
+            try? fm.removeItem(at: history)
+            measure = measured()
+        }
+        guard measure.count <= maxFiles else { throw ImportError("\(project.name) has too many files to share.") }
+        guard measure.bytes <= maxUnpackedBytes else { throw ImportError("\(project.name) is too big to share.") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.

@@ -89,7 +89,8 @@ WebGL 2 (next).
 
 The three.js Lamp ships asks the browser only for a WebGL 2 context and stops with an error when it gets none, so
 WebGL 2 comes before anything else here: check on the device that a canvas gives one (log whether
-`canvas.getContext('webgl2')` returns a context, and read the log with `look_at_app` and `on_device`). Most browsers
+`canvas.getContext('webgl2')` returns a context, and ask the person to try it there with Play, since Lamp's looks
+never reach their device). Most browsers
 have it; not every Samsung TV does. Where it's missing, make the game another way (2D with Phaser, which draws with WebGL 1 or a plain canvas, or native on that
 device) or tell the person why 3D in a page can't run there.
 
@@ -158,10 +159,9 @@ function steer() {
 ```
 
 - `await RAPIER.init()` goes inside `init` (never at the top of the module), so a failure is the game's start-up
-  error, which the preview reports.
+  error, which the game's log and the look report.
 - The world steps 1/60 s at a time (`world.timestep`, its default), the step `fixedStep` runs as often as the frame
-  needs, so the game plays the same at 30, 60 or 120 frames a second and the preview replays it exactly: the same
-  moves give the same tumble every play. Never pass `f.dt` to the world or change `timestep` per frame. Anything that
+  needs, so the game plays the same at 30, 60 or 120 frames a second. Never pass `f.dt` to the world or change `timestep` per frame. Anything that
   pushes bodies (the controls, a motor) runs inside the step, as `steer()` does above, reading the pad the frame
   kept. A press (`pressed`, `released`) belongs to a frame, not a step: gather it into `presses` in `frame` and let the
   first step that runs use it and clear it, or a jump is lost at 120 frames a second and done twice at 30. Anything
@@ -231,7 +231,7 @@ car.updateVehicle(world.timestep);
 ```
 
 Wheels are drawn from the controller (`wheelSuspensionLength(i)`, `wheelRotation(i)`, `wheelSteering(i)`), not given
-bodies of their own. Tune `setWheelFrictionSlip` and the suspension by driving it in the preview.
+bodies of their own. Tune `setWheelFrictionSlip` and the suspension by driving it in its window (`use_app`).
 
 **Joints** hold two bodies together: `RAPIER.JointData.revolute` (a hinge: a door, a wheel, a flipper),
 `prismatic` (a slider), `spherical` (a ball joint: a chain link, a pendulum), `fixed` (welded), made with
@@ -263,8 +263,9 @@ Some platforms might not be powerful enough to run three.js.
 
 ## Checking it
 
-`look_at_app` draws the preview on this Mac, which can't show a device's speed; its stats count draws and triangles a
-frame, to compare with the budget in the request's device line. While the game is open on this Mac a look shows that
-window instead, with no stats: `use_app` or a look with `reopen` plays the preview. `look_at_app` with `on_device` opens the game where
-Try On points and shows its log, with the real frame times.
-Play it as the game skill's "Playtesting" says before you finish.
+`look_at_app` shows the game in its window on this Mac, where the person is in it, opening it when it's closed; its
+log says every ten seconds how it kept to its frames there, which says nothing of a slower device's: keep to the budget
+in the request's device line. `use_app` plays it there with Lamp's own controller. `look_at_app` with `on_device` looks
+at the game in the preview of where Try On points (the iPhone or iPad simulator), never the person's own device, so its
+frame times there say nothing of a phone's either.
+When the person asks you to try, play or test it, play it as the game skill's "Playtesting" says.

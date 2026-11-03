@@ -81,25 +81,19 @@ enum DevicePermissions {
     static func forget(_ wish: LampProject) { try? FileManager.default.removeItem(at: file(wish)) }
 
     /// Whether an app reaches the person's devices: its code uses Lamp's blocks for them, or it declares the local
-    /// network for them in capabilities.json.
+    /// network or Bonjour types in capabilities.json. A game's phones aren't devices it controls, and need no declaration:
+    /// the relay they join is Lamp's own, in the game (`GamePhones`), which gives the system its reason itself.
     static func reachesDevices(_ app: LampProject) -> Bool {
         let capabilities = Template.Capabilities.load(app).checked
         return capabilities.localNetwork != nil || !(capabilities.bonjourServices ?? []).isEmpty
             || Skills.appSwift(of: app, matches: #"\b(LampRoku|LampNetwork)\b"#)
     }
 
-    /// Whether `use_app` on the app stays in Lamp's hidden preview whatever the app declares: a game on Lamp's web runtime
-    /// is played there and nowhere else, and that preview is held off the network for such a game (`GameKit.previewPolicy`),
-    /// so it presses nothing of the person's. Phones joining a game declare the local network too, and aren't devices it
-    /// controls. A compiled game's preview is a process of its own that nothing holds, and a page with its own loop goes
-    /// where it was last looked at, so neither is this.
-    static func useStaysInPreview(_ app: LampProject) -> Bool {
-        GameKit.isGame(app) && GameKit.engine(app) == .web && !GameKit.ownsLoop(app)
-    }
-
-    /// Whether a `use_app` call on the app has to name a device the person allowed.
+    /// Whether a `use_app` call on the app has to name a device the person allowed: whenever it reaches devices. The
+    /// agent only ever uses a preview on this Mac (`Store.agentPreview`), but a preview runs on the real network, so a
+    /// press in a remote app's preview changes the real TV. The card allows that press; it never moves the test to the TV.
     static func useNeedsDevice(_ app: LampProject) -> Bool {
-        reachesDevices(app) && !useStaysInPreview(app)
+        reachesDevices(app)
     }
 
     /// The card: one question, three answers, only the person's to give.
@@ -152,3 +146,4 @@ enum DevicePermissions {
     /// What `use_app` says on an app that reaches devices before the person has allowed one.
     static let useRefusal = "This app controls the person's devices: use it only on a device they've allowed, named in `device` as on Lamp's card. Ask with `device_permission` first for a device they haven't allowed, naming it and what you'd press."
 }
+

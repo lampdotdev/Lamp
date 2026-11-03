@@ -20,7 +20,15 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
 - **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `make_art`, `assets`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `use_icon_picture`, `connectors`, `lampify`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
-  names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
+  names, descriptions and schemas live once, in `Resources/lamp-tools.json`. The first run of a new wish's conversation on pi holds back the
+  schemas a new web game on the Mac has no use for, with pi's own `deferred` exposure and `tool_search` behind a short
+  rule (`Agent.deferredTools`, `deferredRule`), until `make_app_for` makes anything else. Such a run names no tools,
+  since `--tools` is an allowlist that hides deferred tools from `tool_search`: what it starts with is the `defaultTools`
+  of Lamp's pi settings (`Agent.deferringTools`, `PiCompaction.setDefaultTools`), and if those can't be read back it
+  defers nothing. Every run that resumes a conversation names all its tools and sends every schema: pi 1.0.0 doesn't
+  restore what `tool_search` loaded when a process starts with a selection of tools. Claude Code and Codex are served
+  the whole list. pi runs a message's calls together unless one is sequential, as `look_at_app` and `use_app` are, so a
+  message holding one runs in the order given, unrelated calls included; each one's description says to put it last. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
   entry there, an `execute` in the extension, its name in pi's `--tools` list (`Agent.tools`) and Claude Code's
@@ -78,6 +86,12 @@ A capability given to one engine must be given to all of them that can take it, 
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
   update changed it is asked to open it again. A new skill is a folder there, its name
   in the `skills` or `named` of each kind whose prompt offers or names it, and, when an app's code can show it applies, a check in `Skills.applying`.
+  A skill can also be made of sections of others (`sections` in its frontmatter, put in where its body says
+  `{{sections}}`, `Skills.assembled`), so each section keeps one place: the narrow game skills a web game at home on the
+  Mac uses (`game-feel`, `game-3d`, `game-physics`, `game-levels`, `game-art`, `game-live`, and `game-playtest`, opened only when the person asks to play or check it) are views of the `game`,
+  `game-ui`, `2d-game` and `3d-game` skills that games elsewhere read whole. Such a game names the ones it needs with
+  `make_app_for`'s `needs`, which every engine has from `lamp-tools.json`, and gets them with the guide; its code only
+  hints at `game-3d`, `game-physics` and `2d-game` later, never by Lamp's runtime or the Phaser every one draws with.
   So guidance that only matters for some apps (a game genre, a device feature, 3D design, phone controllers) goes
   in a skill, the way `phone-pages`, `iphone-hardware` and `apple-watch` did, never into the system prompt:
   every turn of every request reads the prompt, whether its app needs that or not. The prompt keeps at most a
@@ -225,7 +239,8 @@ A capability given to one engine must be given to all of them that can take it, 
   one allowed on Lamp's card is a row like one that needed no card (`Store.approveCommand`); one the person declines leaves none. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
   (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser. It's required: left
-  optional, some models (Sonnet) never fill it in. pi's edit and write are replaced the same way (`withWords`), with the
+  optional, some models (Sonnet) never fill it in. A call without it all the same isn't refused, which would cost a
+  request to the model: `prepareArguments` gives it empty words, and the step is "Running a command". pi's edit and write are replaced the same way (`withWords`), with the
   `doing` Lamp's own tools have, so a file change is a step in the agent's words too. While Lamp itself works in a turn (a look's build, putting a change
   into the open app, reopening it) the activity says what Lamp is doing at each stage, so nothing it said earlier
   stays: the whole build that follows a change put into the open app is "Building…" (`Store.awaitLiveBuild`), and a

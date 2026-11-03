@@ -85,8 +85,9 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
   otherwise it fills in the rest, names it, designs its icon, makes it and opens it.
 - **Change a wish while you use it.** The chat sits beside the app (click the wand at its top right, or **Customize
   with Lamp (⇧⌘E)** in the app's menu). A change goes into the open app without restarting it where it can: games
-  take most changes while you play. **Reload** puts a change in everywhere the wish is open. Lamp checks its work in
-  a hidden copy first, so a half-made change doesn't land on what you're doing.
+  take most changes while you play. **Reload** puts a change in everywhere the wish is open. A change goes in only
+  once Lamp says it's whole, so a half-made one doesn't land on what you're doing, and Lamp checks its work in the
+  window you see.
 - **Remix changes the wish itself.** **Undo** and **Versions** take changes back; **Duplicate…** makes a separate
   copy; for a starter, **Start Over** goes back to the original and starts its chat over. When Lamp ships a newer
   starter, your copy offers to bring it in, keeping your changes.

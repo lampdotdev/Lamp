@@ -840,6 +840,10 @@ enum Gallery {
                                                           capabilities: [], concerns: [], risk: .low,
                                                           reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
                app: "Plant Care", existing: "Plant Care", changedHere: true),
+        review("Already here, to mix", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
+                                                    capabilities: [], concerns: [], risk: .low,
+                                                    reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
+               app: "Plant Care", existing: "Plant Care", mix: true),
         review("Prepared update", ImportReview(
             summary: "A 3D game of Manhattan you can explore on foot, by car, by bike or by helicopter, with synthesized city sounds.",
             capabilities: ["Draws a 3D Manhattan you can explore", "Plays synthesized city sounds"],
@@ -860,11 +864,12 @@ enum Gallery {
     }
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
-                               existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false) -> Entry {
+                               existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
+                               mix: Bool = false) -> Entry {
         Entry(group: "Shared wish", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
                                      icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android,
-                                     prepared: prepared)
+                                     prepared: prepared, mix: mix ? {} : nil)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)

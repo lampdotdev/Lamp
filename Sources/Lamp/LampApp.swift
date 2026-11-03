@@ -38,6 +38,7 @@ struct LampApp: App {
         BugReportScene()
         AboutScene()
         GalleryScene()
+        MixScene()
     }
 }
 

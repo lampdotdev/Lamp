@@ -42,6 +42,9 @@ struct DeskEntry: Equatable, Sendable {
     /// It follows a repository on GitHub it came from, for Check for Updates… (`AppUpdates.route`): never a starter's copy
     /// that follows the starter this Lamp ships, whose updates are Update from the Original.
     var followsRepository = false
+    /// It has versions to look back on, as the chat's Versions button reads it (`WishHistory.saved`): Previous Versions…
+    /// shows only then, since the chat's panel has no way back to the chat without that button.
+    var hasVersions = false
 
     nonisolated static func read(_ project: LampProject, apps: [LampProject]) -> DeskEntry {
         let credits = Credits.load(project)
@@ -72,7 +75,8 @@ struct DeskEntry: Equatable, Sendable {
                          shipsOriginal: starter != nil, starter: starter,
                          newerOriginal: Starters.newer(for: project) != nil,
                          followsRepository: AppUpdates.route(for: AppUpdates.located(credits), own: GitHubRepo.kept(for: project)?.url) != nil
-                            && !(Starters.isStarter(project) && Starters.shipped(of: project)?.commit != nil))
+                            && !(Starters.isStarter(project) && Starters.shipped(of: project)?.commit != nil),
+                         hasVersions: project.scaffolded && !project.makesNoApp && (!Template.isScaffold(project) || versions > 1))
     }
 }
 
@@ -690,6 +694,11 @@ struct DeskWishMenu: View {
         if entry?.changedFromOriginal == true {
             Button("Start Over") { Task { await store.startAgain(project) } }
                 .disabled(busy)
+        }
+        // The chat's own Versions panel, in Lamp's panel unless the app is open with its chat beside it: going back to
+        // one from here is the chat's, and rebuilds the app as it does there.
+        if entry?.hasVersions == true {
+            Button("Previous Versions…") { SidebarServer.shared.showVersions(of: project) }
         }
         // Only once there's something of the person's to send.
         if entry?.sendsBack == true, entry?.changedFromOriginal == true {

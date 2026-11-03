@@ -1,7 +1,7 @@
 // Lamp's game kit: sound. Lamp writes this file before every build.
 //
 // The game's effects and music, mixed here into one stereo stream at 48 kHz that the host plays: XAudio2 pulls it on
-// the console, and the preview mixes it after each frame without playing it. Files are decoded with stb_vorbis
+// the console. Files are decoded with stb_vorbis
 // (.ogg), dr_wav (.wav) and dr_mp3 (.mp3): an effect whole when it's loaded, music a little at a time as it plays.
 // The game's calls and the host's mix share one lock, so the mix never sees half a change.
 #include "lamp_game.h"
@@ -40,8 +40,6 @@ struct Clip {
     int rate = RATE;
     size_t frames = 0;
     std::string name;
-    int plays = 0;
-    double first = -1;         // when it first played, in seconds of the mix
 };
 
 struct Voice {
@@ -168,9 +166,6 @@ Stream* music = nullptr;            // what plays now
 Stream* fading = nullptr;           // what plays out under it
 float effects_volume = 1, music_volume = 1;
 uint64_t mixed = 0;                 // frames mixed so far
-float loudest = 0;                  // the highest the mix went before it was kept within full volume
-uint64_t over = 0;                  // frames that went over full volume
-std::string music_names;            // what music was asked for, for the report
 uint32_t noise_seed = 0x12345678u;  // the kit's own, so a made sound never moves the game's random numbers
 
 std::string base_name(const char* path) {
@@ -212,8 +207,6 @@ int play(LampSound sound, float volume, float pan, float pitch, bool loop) {
     v.loop = loop; v.stopping = false;
     v.started = ++voice_count;
     Clip& clip = clips[sound.id - 1];
-    clip.plays++;
-    if (clip.first < 0) clip.first = (double)mixed / RATE;
     return (int)((v.generation << 8) | (uint32_t)slot);
 }
 
@@ -279,7 +272,7 @@ extern "C" LampSound lamp_sound_tone(LampTone tone) {
     const float level[] = { 1.0f, 0.45f, 0.9f, 0.55f, 0.6f };
     float wave_level = level[tone.wave >= LAMP_SINE && tone.wave <= LAMP_NOISE ? tone.wave : 0];
     Clip clip;
-    // Named for the preview's report by its wave and pitch, so two tones are told apart there.
+    // Named by its wave and pitch, so two tones are told apart in the log.
     const char* waves[] = { "sine", "square", "triangle", "saw", "noise" };
     char name[64];
     if (to == from) snprintf(name, sizeof name, "%s tone %.0f Hz", waves[tone.wave >= LAMP_SINE && tone.wave <= LAMP_NOISE ? tone.wave : 0], from);
@@ -361,7 +354,6 @@ extern "C" void lamp_music(const char* path, float volume) {
         fading = music;
         if (fading) fading->target = 0;
         music = next;
-        if (next) { if (!music_names.empty()) music_names += ", "; music_names += path; }
     }
     if (gone) { gone->close(); delete gone; }
 }
@@ -378,8 +370,6 @@ extern "C" void lamp_music_sound(LampSound sound, float volume) {
             next->clip = sound.id;
             next->name = clips[sound.id - 1].name;
             next->target = clamp(volume, 0, 1);
-            if (!music_names.empty()) music_names += ", ";
-            music_names += next->name;
         }
         gone = fading;
         fading = music;
@@ -457,31 +447,9 @@ extern "C" void lamp_host_mix(float* out, int frames) {
         // than cut, which would crackle.
         for (int i = 0; i < frames * 2; i++) {
             float x = out[i], a = fabsf(x);
-            if (a > loudest) loudest = a;
             if (a > 0.9f) out[i] = copysignf(0.9f + 0.1f * tanhf((a - 0.9f) / 0.1f), x);
-            if (a > 1 && (i & 1) == 0) over++;
         }
         mixed += (uint64_t)frames;
     }
     if (done) { done->close(); delete done; }
-}
-
-extern "C" void lamp_host_sound_report(char* out, size_t size) {
-    std::lock_guard<std::mutex> hold(lock);
-    std::string said;
-    for (const Clip& clip : clips) {
-        if (!clip.plays) continue;
-        char part[160];
-        snprintf(part, sizeof part, "%s%s ×%d (first at %.2f s)", said.empty() ? "" : ", ", clip.name.c_str(), clip.plays, clip.first);
-        said += part;
-    }
-    if (said.empty()) said = "no effects played";
-    else said = "effects played: " + said;
-    if (!music_names.empty()) said += "; music: " + music_names;
-    char tail[160];
-    if (loudest <= 0) snprintf(tail, sizeof tail, "; silent");
-    else snprintf(tail, sizeof tail, "; loudest %.1f dB of full volume%s", 20 * log10f(loudest),
-                  over ? (", over full volume for " + std::to_string(over * 1000 / RATE) + " ms (too loud: play it quieter)").c_str() : "");
-    said += tail;
-    snprintf(out, size, "%s", said.c_str());
 }

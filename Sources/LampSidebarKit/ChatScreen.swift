@@ -1201,6 +1201,9 @@ struct VersionsPanel: View {
                 .frame(width: width, height: height)
                 .clipShape(shape)
                 .overlay(shape.strokeBorder(.separator))
+                // Opened, it keeps its own proportions, no taller than a glance needs: a tall window's picture would
+                // otherwise fill the panel.
+                .frame(maxWidth: width == nil ? .infinity : nil, maxHeight: width == nil ? 220 : nil, alignment: .leading)
         } else if width != nil {
             shape.fill(.quaternary)
                 .frame(width: width, height: height)

@@ -53,7 +53,7 @@ that reads `Store` in its drawing can't be listed: split it first.
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
 Providers**, the four providers in one list, with their sign-ins, key and downloads (other tabs' menus
-end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does, and whether usage counts go to the Lamp team; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (none now: publishing a game's page was the last, and is part of Put on GitHub).
+end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does, and whether usage counts go to the Lamp team; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (now mixing copies of a wish; see "Mixing copies" in the desk guide).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),
