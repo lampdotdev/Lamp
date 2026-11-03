@@ -415,7 +415,7 @@ final class SidebarServer {
             case .answering: queued.sideAnswering = true
             case .answered(let reply):
                 queued.sideReply = reply
-                queued.noTurn = store.hasTurn(project) ? nil : true
+                queued.noTurn = store.isHeldAfterQuit(project) ? true : nil
             case .stillQueued: queued.stillQueued = true
             case nil: break
             }

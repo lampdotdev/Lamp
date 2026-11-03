@@ -100,7 +100,9 @@ extension ChatLook {
         let groupAnswered: Bool
         let chips: Chips
         @State private var pointerOver = false
-        @FocusState private var focused: Bool
+        @FocusState private var focused: Focus?
+
+        private enum Focus: Hashable { case row, sendNow, unsend }
 
         public init(text: String, waitingForSetup: Bool, waitingForReload: Bool = false, sending: Bool = false, answered: Bool = false,
                     groupAnswered: Bool = false,
@@ -122,7 +124,7 @@ extension ChatLook {
         private var quiet: Bool { answered && !sending && !waitingForSetup && !waitingForReload }
         /// The controls come up under the pointer or keyboard focus, which the row takes itself so there's something to
         /// tab to while they're away. VoiceOver has them as the bubble's actions, whatever's on screen.
-        private var showsControls: Bool { !quiet || pointerOver || focused }
+        private var showsControls: Bool { !quiet || pointerOver || focused != nil }
 
         public var body: some View {
             VStack(alignment: .trailing, spacing: 6) {
@@ -132,13 +134,13 @@ extension ChatLook {
                         if quiet, groupAnswered, let sendNow {
                             Button(sendNowTitle, action: sendNow).buttonStyle(.link).font(.caption)
                                 .help(place.count > 1 ? "Send these to the agent while it works" : "Send this to the agent while it works")
-                                .focused($focused)
+                                .focused($focused, equals: .sendNow)
                         }
                         Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                             .buttonStyle(.plain)
                             .help("Unsend")
                             .accessibilityLabel("Unsend")
-                            .focused($focused)
+                            .focused($focused, equals: .unsend)
                     }
                     bubble
                 }
@@ -152,7 +154,18 @@ extension ChatLook {
             .contentShape(Rectangle())
             .onHover { pointerOver = $0 }
             .focusable(quiet)
-            .focused($focused)
+            .focused($focused, equals: .row)
+            // Focused, the row answers the keys its controls would, for a keyboard that doesn't tab to buttons.
+            .onKeyPress(.return) {
+                guard focused == .row, quiet, groupAnswered, let sendNow else { return .ignored }
+                sendNow()
+                return .handled
+            }
+            .onKeyPress(.delete) {
+                guard focused == .row, quiet else { return .ignored }
+                onRemove()
+                return .handled
+            }
         }
 
         private var sendNowTitle: String { place.count > 1 ? "Send All Now" : "Send Now" }

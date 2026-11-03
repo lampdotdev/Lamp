@@ -25,6 +25,8 @@ enum SideAnswer {
     static let tokenLimit = 2048
     /// How much of the chat Codex's fresh call is given.
     static let chatLimit = 12_000
+    /// A longer message waits for the agent unanswered.
+    static let messageLimit = 4000
 
     /// Codex's copies this route has been proven on. Its no-tools launch leans on settings nothing promises to keep (see
     /// `codexArguments`) and the copy updates itself, so any other version gets no answer. A new version goes here only
@@ -77,7 +79,7 @@ enum SideAnswer {
     /// A plain typed message can be answered; one that answers a card, carries files or a pointed-at part, is sent
     /// again, or is Lamp's own can't.
     static func canAnswer(_ message: QueuedMessage) -> Bool {
-        !message.text.trimmed.isEmpty && message.card == nil && message.attachments.isEmpty && message.kept.isEmpty
+        !message.text.trimmed.isEmpty && message.text.utf8.count <= messageLimit && message.card == nil && message.attachments.isEmpty && message.kept.isEmpty
             && message.pointed == nil && message.replaces == nil && message.tookBack.isEmpty && !message.sendNow
             && !message.byLamp && !message.afterReload
     }
@@ -142,8 +144,8 @@ enum SideAnswer {
         switch engine {
         case .pi: true
         case .claude:
-            EngineInstall.isVersion(version) && !EngineInstall.isOlder(version, than: testedClaude.from)
-                && EngineInstall.isOlder(version, than: testedClaude.before)
+            version.split(separator: ".").count == 3 && version.split(separator: ".").allSatisfy { Int($0) != nil }
+                && !EngineInstall.isOlder(version, than: testedClaude.from) && EngineInstall.isOlder(version, than: testedClaude.before)
         case .codex: testedCodex.contains(version)
         }
     }
@@ -153,24 +155,26 @@ enum SideAnswer {
         output.split(whereSeparator: \.isWhitespace).first { $0.first?.isNumber == true }.map(String.init)
     }
 
-    /// Engines stopped for good on this Mac, each until its version changes: one of their tools ran, which no launch here
-    /// allows, so nothing about that version can be trusted again.
+    /// The engines' versions stopped for good on this Mac: one tried a tool, which it was never offered, so nothing about
+    /// that version can be trusted again. Another version of the same engine is looked at afresh.
     private static let stoppedKey = "sideAnswerStopped"
 
     static func isStopped(_ engine: Engine, version: String, in defaults: UserDefaults = .standard) -> Bool {
-        defaults.dictionary(forKey: stoppedKey)?[engine.rawValue] as? String == version
+        (defaults.dictionary(forKey: stoppedKey)?[engine.rawValue] as? [String] ?? []).contains(version)
     }
 
     static func stop(_ engine: Engine, version: String, in defaults: UserDefaults = .standard) {
         var stopped = defaults.dictionary(forKey: stoppedKey) ?? [:]
-        stopped[engine.rawValue] = version
+        let versions = stopped[engine.rawValue] as? [String] ?? []
+        if !versions.contains(version) { stopped[engine.rawValue] = versions + [version] }
         defaults.set(stopped, forKey: stoppedKey)
     }
 
     /// Reads an engine's output for the one thing a run may come to: a whole, finished answer in words. A tool
-    /// attempted, even beside words and even refused, ends it with none, since an error is no proof a tool didn't act.
+    /// attempted, even beside words and even refused, is `tool`: none was offered, so the engine has done what its launch
+    /// says it can't, and an error is no proof a tool didn't act. Anything it doesn't know ends the run with no answer.
     struct Reader {
-        enum Verdict: Equatable { case going, answered(String), failed(String), toolRan(String) }
+        enum Verdict: Equatable { case going, answered(String), failed(String), tool(String) }
 
         let engine: Engine
         var input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0.0
@@ -190,8 +194,8 @@ enum SideAnswer {
         }
 
         mutating func read(_ line: String) -> Verdict {
-            guard let data = line.data(using: .utf8),
-                  let event = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return .going }
+            guard !line.trimmed.isEmpty else { return .going }
+            guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return .failed("unreadable output") }
             switch engine {
             case .pi: return readPi(event)
             case .claude: return readClaude(event)
@@ -204,9 +208,8 @@ enum SideAnswer {
             switch event["type"] as? String {
             case "response":
                 return event["success"] as? Bool == false ? .failed("prompt refused") : .going
-            case "tool_execution_end":
-                let name = event["toolName"] as? String ?? "tool"
-                return event["isError"] as? Bool == true ? .failed("\(name) failed") : .toolRan(name)
+            case "tool_execution_start", "tool_execution_end":
+                return .tool(event["toolName"] as? String ?? "tool")
             case "agent_settled":
                 return .failed("ended without an answer")
             case "auto_retry_end":
@@ -220,7 +223,8 @@ enum SideAnswer {
                 cacheWrite += usage?["cacheWrite"] as? Int ?? 0
                 cost += (usage?["cost"] as? [String: Any])?["total"] as? Double ?? 0
                 let blocks = message["content"] as? [[String: Any]] ?? []
-                if blocks.contains(where: { $0["type"] as? String == "toolCall" }) { return .failed("tried a tool") }
+                if blocks.contains(where: { $0["type"] as? String == "toolCall" }) { return .tool("toolCall") }
+                guard blocks.allSatisfy({ ["text", "thinking"].contains($0["type"] as? String) }) else { return .failed("unexpected output") }
                 switch message["stopReason"] as? String {
                 case "stop":
                     return accepted(blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined().trimmed)
@@ -244,19 +248,23 @@ enum SideAnswer {
                 return .going
             case "assistant":
                 guard checked else { return .failed("no tool list") }
-                let blocks = (event["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-                if blocks.contains(where: { $0["type"] as? String == "tool_use" }) { return .failed("tried a tool") }
+                for block in (event["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? [] {
+                    let type = block["type"] as? String ?? ""
+                    if type.contains("tool") { return .tool(type) }
+                    if !["text", "thinking", "redacted_thinking"].contains(type) { return .failed("unexpected output") }
+                }
                 return .going
             case "user":
                 let blocks = (event["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-                return blocks.contains { $0["type"] as? String == "tool_result" } ? .toolRan("tool") : .going
+                return blocks.contains { ($0["type"] as? String ?? "").contains("tool") } ? .tool("tool_result") : .going
             case "result":
                 let usage = event["usage"] as? [String: Any]
                 input = usage?["input_tokens"] as? Int ?? 0
                 output = usage?["output_tokens"] as? Int ?? 0
                 cacheRead = usage?["cache_read_input_tokens"] as? Int ?? 0
                 cacheWrite = usage?["cache_creation_input_tokens"] as? Int ?? 0
-                guard checked, event["subtype"] as? String == "success", event["is_error"] as? Bool == false else {
+                guard checked, event["subtype"] as? String == "success", event["is_error"] as? Bool == false,
+                      event["stop_reason"] as? String == "end_turn" else {
                     return .failed("ended without an answer")
                 }
                 return accepted((event["result"] as? String ?? "").trimmed)
@@ -275,8 +283,10 @@ enum SideAnswer {
                     if event["type"] as? String == "item.completed" { last = (item["text"] as? String)?.trimmed }
                     return .going
                 case "reasoning", "error": return .going
-                default: return .toolRan(item["type"] as? String ?? "tool")
+                default: return .tool(item["type"] as? String ?? "tool")
                 }
+            case "thread.started", "turn.started":
+                return .going
             case "turn.completed":
                 let usage = event["usage"] as? [String: Any]
                 input = usage?["input_tokens"] as? Int ?? 0
@@ -286,7 +296,7 @@ enum SideAnswer {
             case "turn.failed", "error":
                 return .failed("the request failed")
             default:
-                return .going
+                return .failed("unexpected output")
             }
         }
     }
@@ -294,10 +304,11 @@ enum SideAnswer {
     struct Outcome {
         var reply: String?
         var failure: String?
-        /// A tool ran, which stops this engine (`stop`), with the version it happened on.
-        var toolRan = false
+        /// A tool was tried, which stops this version of the engine (`stop`), with the version it happened on.
+        var triedTool = false
         var version = ""
-        /// Worth resting the engine for: not a cancel, and not a version that was never going to answer.
+        /// Worth resting the engine for: not a cancel, and not a version that was never going to answer. Running out of time
+        /// is a failure.
         var failed = false
         var usage: Reader
     }
@@ -312,7 +323,8 @@ enum SideAnswer {
         var profile: String
     }
 
-    /// `transcript` for the engines that fork, nil for Codex. What each may reach is listed here, engine by engine.
+    /// `transcript` for the engines that fork, nil for Codex: for pi, a copy in `folder` (`Run.answer`). What each may
+    /// reach is listed here, engine by engine.
     static func launch(_ route: Route, prompt: String, transcript: URL?, folder: URL, keys: [String: String] = [:]) -> Launch? {
         let tmp = folder.appendingPathComponent("tmp").path
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -329,18 +341,16 @@ enum SideAnswer {
             let command = try? JSONSerialization.data(withJSONObject: ["id": "ask", "type": "prompt", "message": prompt])
             return Launch(arguments: piArguments(transcript: transcript, sessions: folder.appendingPathComponent("sessions"), route: route),
                           environment: env, input: String(decoding: command ?? Data(), as: UTF8.self) + "\n", keepsInput: true,
-                          profile: Sandbox.sideProfile(scratch: folder.path, reading: [Bundle.main.bundlePath, route.configFolder],
-                                                       readingFiles: [transcript.path]))
+                          profile: Sandbox.sideProfile(scratch: folder.path, reading: [Bundle.main.bundlePath, route.configFolder], readingFiles: []))
         case .claude:
-            guard let transcript else { return nil }
+            guard let transcript, let program = programFolder(route.executable) else { return nil }
             let config = URL(fileURLWithPath: route.configFolder)
             return Launch(arguments: claudeArguments(transcript: transcript, route: route), environment: env.merging(["DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_TMPDIR": tmp]) { $1 },
                           input: prompt,
                           // Its sign-in is in the Keychain, which it reads through the system.
                           profile: Sandbox.sideProfile(scratch: folder.path,
-                                                       reading: [programFolder(route.executable), transcript.deletingLastPathComponent().path,
-                                                                 home.appendingPathComponent("Library/Keychains").path],
-                                                       readingFiles: [home.path, config.path, home.appendingPathComponent(".claude.json").path,
+                                                       reading: [program, home.appendingPathComponent("Library/Keychains").path],
+                                                       readingFiles: [transcript.path, home.appendingPathComponent(".claude.json").path,
                                                                       config.appendingPathComponent(".claude.json").path]))
         case .codex:
             let config = URL(fileURLWithPath: route.configFolder)
@@ -348,16 +358,19 @@ enum SideAnswer {
             env["CODEX_SQLITE_HOME"] = folder.appendingPathComponent("state").path
             return Launch(arguments: codexArguments(folder: folder, model: route.model), environment: env, input: prompt,
                           profile: Sandbox.sideProfile(scratch: folder.path, reading: [],
-                                                       readingFiles: [home.path, config.path, config.appendingPathComponent("auth.json").path, id],
+                                                       readingFiles: [config.appendingPathComponent("auth.json").path, id],
                                                        writingFiles: [id]))
         }
     }
 
     /// The folder of the program as it really is: Claude Code's first name is usually a link to a copy kept elsewhere.
-    private static func programFolder(_ path: String) -> String {
-        guard let resolved = realpath(path, nil) else { return (path as NSString).deletingLastPathComponent }
-        defer { free(resolved) }
-        return (String(cString: resolved) as NSString).deletingLastPathComponent
+    /// Nil when that folder holds the home folder, which would open all of it.
+    private static func programFolder(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        let folder = (String(cString: resolved) as NSString).deletingLastPathComponent
+        free(resolved)
+        let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
+        return (home + "/").hasPrefix(folder + "/") ? nil : folder
     }
 
     /// pi forks the session into the private folder, with no tools and none of Lamp's extension: nothing in it could
@@ -416,6 +429,7 @@ enum SideAnswer {
         let engine: Engine
         private var process: Process?
         private var cancelled = false
+        private var expired = false
 
         init(message: UUID, engine: Engine) {
             self.message = message
@@ -429,26 +443,35 @@ enum SideAnswer {
         }
 
         /// The engine's version is asked each time, since either copy may update itself between runs, and goes through
-        /// the same gate before a single word is sent anywhere.
-        private func checkedVersion(_ route: Route) async -> String? {
+        /// the same gate before a single word is sent anywhere. Asked as the answer will be run: in its sandbox, with its
+        /// environment.
+        private func checkedVersion(_ route: Route, profile: URL, environment: [String: String], in folder: URL) async -> String? {
             guard route.engine != .pi else { return Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "" }
-            let printed = await Subprocess.run(route.executable, ["--version"], env: route.environment.merging(["PATH": route.path]) { $1 },
-                                               mergeErrors: false, timeout: 5)
-            guard printed.status == 0, let version = SideAnswer.version(in: printed.output) else { return nil }
-            return version
+            let printed = await Task.detached { () -> String? in
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: Sandbox.executable)
+                process.arguments = ["-f", profile.path, route.executable, "--version"]
+                process.environment = environment
+                process.currentDirectoryURL = folder
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                process.standardInput = FileHandle.nullDevice
+                guard (try? process.run()) != nil else { return nil }
+                let stop = DispatchWorkItem { Subprocess.terminateTree(process) }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: stop)
+                let output = pipe.fileHandleForReading.readDataToEndOfFile().prefix(4096)
+                process.waitUntilExit()
+                stop.cancel()
+                return process.terminationStatus == 0 ? String(decoding: output, as: UTF8.self) : nil
+            }.value
+            return printed.flatMap(SideAnswer.version(in:))
         }
 
         /// Runs in a private folder outside the app, under its own sandbox and with an environment that's a list of what's
         /// allowed: no token, none of Lamp's agent routes, and a key ticket that's this run's.
-        func answer(_ prompt: String, route: Route, transcript: URL?) async -> Outcome {
+        func answer(_ prompt: String, route: Route, transcript: URL?, in project: LampProject) async -> Outcome {
             var outcome = Outcome(usage: Reader(route.engine))
-            guard let version = await checkedVersion(route), SideAnswer.isTested(route.engine, version: version),
-                  !SideAnswer.isStopped(route.engine, version: version) else {
-                outcome.failure = "not a tested version"
-                return outcome
-            }
-            outcome.version = version
-            outcome.failed = true
             let folder = SideAnswer.folder.appendingPathComponent(UUID().uuidString)
             let fm = FileManager.default
             for name in ["sessions", "home", "tmp", "state", "log"] {
@@ -456,6 +479,17 @@ enum SideAnswer {
                                         attributes: [.posixPermissions: 0o700])
             }
             defer { try? fm.removeItem(at: folder) }
+            // pi's session is in the app's folder, which the builder writes: what's forked is a copy, read as Lamp reads
+            // the app's files, so a link or a second name put there can't lead the fork to another conversation.
+            var transcript = transcript
+            if route.engine == .pi, let original = transcript {
+                let copy = folder.appendingPathComponent("sessions/parent.jsonl")
+                guard await Task.detached(operation: { AppFile.copy(original, in: project, to: copy) }).value else {
+                    outcome.failure = "couldn't read the conversation"
+                    return outcome
+                }
+                transcript = copy
+            }
             if route.engine == .codex {
                 let list = URL(fileURLWithPath: route.configFolder).appendingPathComponent("models_cache.json")
                 guard let catalog = (try? Data(contentsOf: list)).flatMap({ SideAnswer.codexCatalog(from: $0, model: route.model) }),
@@ -473,6 +507,13 @@ enum SideAnswer {
                 outcome.failure = "couldn't start"
                 return outcome
             }
+            guard let version = await checkedVersion(route, profile: profile, environment: launch.environment, in: folder),
+                  SideAnswer.isTested(route.engine, version: version), !SideAnswer.isStopped(route.engine, version: version) else {
+                outcome.failure = "not a tested version"
+                return outcome
+            }
+            outcome.version = version
+            outcome.failed = true
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: Sandbox.executable)
@@ -496,7 +537,12 @@ enum SideAnswer {
             let splitter = LineSplitter(limit: SideAnswer.outputLimit, output)
             pipe.fileHandleForReading.readabilityHandler = { splitter.read(from: $0) }
             let (exit, exited) = AsyncStream<Void>.makeStream()
-            process.terminationHandler = { _ in exited.finish() }
+            // Something the engine started can outlive it holding its output open, which would leave the run waiting for
+            // good: the output is over a moment after the engine is.
+            process.terminationHandler = { _ in
+                exited.finish()
+                DispatchQueue.global().asyncAfter(deadline: .now() + 2) { splitter.close() }
+            }
             do {
                 try process.run()
             } catch {
@@ -505,11 +551,16 @@ enum SideAnswer {
                 return outcome
             }
             self.process = process
-            try? input.fileHandleForWriting.write(contentsOf: Data(launch.input.utf8))
-            if !launch.keepsInput { try? input.fileHandleForWriting.close() }
+            // Off the main thread: an engine that doesn't read would hold a long prompt, and Lamp with it.
+            let writer = input.fileHandleForWriting, words = Data(launch.input.utf8), keeps = launch.keepsInput
+            DispatchQueue.global().async {
+                try? writer.write(contentsOf: words)
+                if !keeps { try? writer.close() }
+            }
             let deadline = Task { [weak self] in
                 try? await Task.sleep(for: SideAnswer.timeLimit)
                 guard !Task.isCancelled else { return }
+                self?.expired = true
                 self?.cancel()
             }
             defer { deadline.cancel() }
@@ -519,9 +570,9 @@ enum SideAnswer {
                 case .going: break
                 case .answered(let reply): outcome.reply = reply; break reading
                 case .failed(let reason): outcome.failure = reason; break reading
-                case .toolRan(let name):
-                    outcome.toolRan = true
-                    outcome.failure = "\(name) ran"
+                case .tool(let name):
+                    outcome.triedTool = true
+                    outcome.failure = "tried \(name)"
                     break reading
                 }
             }
@@ -533,8 +584,8 @@ enum SideAnswer {
             self.process = nil
             if cancelled {
                 outcome.reply = nil
-                outcome.failure = "cancelled or out of time"
-                outcome.failed = false
+                outcome.failure = expired ? "out of time" : "cancelled"
+                outcome.failed = expired
             } else if outcome.reply == nil, outcome.failure == nil {
                 outcome.failure = "ended without an answer"
             }
@@ -558,6 +609,12 @@ enum SideAnswer {
         init(limit: Int, _ lines: AsyncStream<String>.Continuation) {
             self.limit = limit
             self.lines = lines
+        }
+
+        func close() {
+            lock.lock()
+            defer { lock.unlock() }
+            lines.finish()
         }
 
         func read(from handle: FileHandle) {

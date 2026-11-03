@@ -7,6 +7,7 @@ final class SideAnswerTests: XCTestCase {
     func testOnlyAPlainTypedMessageIsAnswered() {
         XCTAssertTrue(SideAnswer.canAnswer(QueuedMessage(text: "Make it blue")))
         let others = [
+            QueuedMessage(text: String(repeating: "x", count: SideAnswer.messageLimit + 1)),
             QueuedMessage(text: "   "),
             QueuedMessage(text: "Blue", card: UUID()),
             QueuedMessage(text: "Like this", attachments: [URL(fileURLWithPath: "/tmp/a.png")]),
@@ -47,18 +48,62 @@ final class SideAnswerTests: XCTestCase {
         return nil
     }
 
+    /// A copy of pi's session is forked, never the file itself, and only one with no other name.
+    func testOnlyTheAppsOwnSessionIsCopied() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("side-\(UUID().uuidString)").resolvingSymlinksInPath()
+        let app = root.appendingPathComponent("app"), sessions = app.appendingPathComponent(".lamp/pi-sessions")
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = LampProject(id: "app", name: "App", exe: "", dir: app)
+        let other = root.appendingPathComponent("other.jsonl")
+        try "theirs".write(to: other, atomically: true, encoding: .utf8)
+        let own = sessions.appendingPathComponent("a-lamp-1.jsonl"), copy = root.appendingPathComponent("copy.jsonl")
+        try "mine".write(to: own, atomically: true, encoding: .utf8)
+        XCTAssertTrue(AppFile.copy(own, in: project, to: copy))
+        XCTAssertEqual(try String(contentsOf: copy, encoding: .utf8), "mine")
+        let linked = sessions.appendingPathComponent("zz-lamp-1.jsonl"), named = sessions.appendingPathComponent("zy-lamp-1.jsonl")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: other)
+        try FileManager.default.linkItem(at: other, to: named)
+        XCTAssertFalse(AppFile.copy(linked, in: project, to: root.appendingPathComponent("1")), "a link")
+        XCTAssertFalse(AppFile.copy(named, in: project, to: root.appendingPathComponent("2")), "a second name")
+    }
+
     /// pi 1.0.0's own output, recorded on 2026-11-02 from a fork through OpenRouter (anthropic/claude-sonnet-5.5) told to
     /// write a line and call bash in one reply, with its thinking taken out.
     func testWordsBesideAToolCallAreNoAnswer() throws {
         var reader = SideAnswer.Reader(.pi)
-        XCTAssertEqual(verdict(of: try fixture("mixed-reply.jsonl"), from: &reader), .failed("tried a tool"))
+        XCTAssertEqual(verdict(of: try fixture("mixed-reply.jsonl"), from: &reader), .tool("toolCall"))
         XCTAssertGreaterThan(reader.cost, 0)
     }
 
-    func testAToolThatRanIsToldFromOneThatFailed() {
-        var reader = SideAnswer.Reader(.pi)
-        XCTAssertEqual(reader.read(#"{"type":"tool_execution_end","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"done"}]}}"#), .toolRan("bash"))
-        XCTAssertEqual(reader.read(#"{"type":"tool_execution_end","toolName":"bash","isError":true,"result":{"content":[{"type":"text","text":"Tool bash not found"}]}}"#), .failed("bash failed"))
+    /// None is offered, so a tool that ran and one that failed both say the launch isn't what it was.
+    func testAnyToolAtAllIsATool() {
+        for line in [#"{"type":"tool_execution_start","toolName":"bash"}"#,
+                     #"{"type":"tool_execution_end","toolName":"bash","isError":true,"result":{"content":[{"type":"text","text":"Tool bash not found"}]}}"#] {
+            var reader = SideAnswer.Reader(.pi)
+            XCTAssertEqual(reader.read(line), .tool("bash"))
+        }
+    }
+
+    /// What isn't known isn't an answer, for any engine.
+    func testWhatItDoesntKnowEndsTheRun() {
+        for engine in Engine.allCases {
+            var reader = SideAnswer.Reader(engine)
+            XCTAssertEqual(reader.read(#"{"type":"item.completed","item":{"type":"agent_mess"#), .failed("unreadable output"), engine.rawValue)
+        }
+        var codex = SideAnswer.Reader(.codex)
+        XCTAssertEqual(codex.read(#"{"type":"exec_command_begin"}"#), .failed("unexpected output"))
+        var pi = SideAnswer.Reader(.pi)
+        XCTAssertEqual(pi.read(#"{"type":"message_end","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"Hi"},{"type":"image"}]}}"#), .failed("unexpected output"))
+        var claude = SideAnswer.Reader(.claude)
+        _ = claude.read(#"{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}"#)
+        XCTAssertEqual(claude.read(#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"},{"type":"server_tool_use","name":"web_search"}]}}"#), .tool("server_tool_use"))
+    }
+
+    func testClaudeCutShortIsNoAnswer() throws {
+        var reader = SideAnswer.Reader(.claude)
+        let lines = try fixture("claude.jsonl").map { $0.replacingOccurrences(of: #""stop_reason":"end_turn""#, with: #""stop_reason":"max_tokens""#) }
+        XCTAssertEqual(verdict(of: lines, from: &reader), .failed("ended without an answer"))
     }
 
     /// Claude Code 2.1.316's own output, recorded on 2026-11-02 from `claudeArguments` under `Sandbox.sideProfile`, told to run a
@@ -81,8 +126,7 @@ final class SideAnswerTests: XCTestCase {
     func testClaudeToolUseBesideWordsIsNoAnswer() {
         var reader = SideAnswer.Reader(.claude)
         _ = reader.read(#"{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}"#)
-        XCTAssertEqual(reader.read(#"{"type":"assistant","message":{"content":[{"type":"text","text":"On it."},{"type":"tool_use","name":"Bash"}]}}"#), .failed("tried a tool"))
-        XCTAssertEqual(reader.read(#"{"type":"user","message":{"content":[{"type":"tool_result","content":"done"}]}}"#), .toolRan("tool"))
+        XCTAssertEqual(reader.read(#"{"type":"assistant","message":{"content":[{"type":"text","text":"On it."},{"type":"tool_use","name":"Bash"}]}}"#), .tool("tool_use"))
     }
 
     /// Codex 0.166.0-alpha.5.1's own output, recorded on 2026-11-02 from the launch `codexArguments` makes, told to use every
@@ -96,8 +140,8 @@ final class SideAnswerTests: XCTestCase {
 
     func testCodexAnyStepThatIsntWordsStopsIt() {
         var reader = SideAnswer.Reader(.codex)
-        XCTAssertEqual(reader.read(#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"ls"}}"#), .toolRan("command_execution"))
-        XCTAssertEqual(reader.read(#"{"type":"item.completed","item":{"type":"web_search","query":"x"}}"#), .toolRan("web_search"))
+        XCTAssertEqual(reader.read(#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"ls"}}"#), .tool("command_execution"))
+        XCTAssertEqual(reader.read(#"{"type":"item.completed","item":{"type":"web_search","query":"x"}}"#), .tool("web_search"))
         XCTAssertEqual(reader.read(#"{"type":"turn.failed","error":{"message":"no"}}"#), .failed("the request failed"))
     }
 
@@ -111,6 +155,7 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertTrue(SideAnswer.isTested(.claude, version: "2.1.400"))
         XCTAssertFalse(SideAnswer.isTested(.claude, version: "2.1.315"))
         XCTAssertFalse(SideAnswer.isTested(.claude, version: "2.2.0"))
+        XCTAssertFalse(SideAnswer.isTested(.claude, version: "2.2"), "sorts before 2.2.0")
         XCTAssertTrue(SideAnswer.isTested(.pi, version: ""))
     }
 
@@ -118,7 +163,9 @@ final class SideAnswerTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "SideAnswerTests"))
         defaults.removePersistentDomain(forName: "SideAnswerTests")
         SideAnswer.stop(.claude, version: "2.1.316", in: defaults)
-        XCTAssertTrue(SideAnswer.isStopped(.claude, version: "2.1.316", in: defaults))
+        SideAnswer.stop(.claude, version: "2.1.320", in: defaults)
+        XCTAssertTrue(SideAnswer.isStopped(.claude, version: "2.1.316", in: defaults), "a later stop keeps the earlier one")
+        XCTAssertTrue(SideAnswer.isStopped(.claude, version: "2.1.320", in: defaults))
         XCTAssertFalse(SideAnswer.isStopped(.claude, version: "2.1.317", in: defaults), "a new version is looked at again")
         XCTAssertFalse(SideAnswer.isStopped(.codex, version: "2.1.316", in: defaults))
     }
@@ -167,6 +214,7 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertNotEqual(run("echo x > '\(allowed.path)/made'"), 0, "what it may only read")
         XCTAssertNotEqual(run("echo x > /tmp/side-answer-sandbox-test"), 0, "anywhere else")
         XCTAssertNotEqual(run("cat ~/.zshrc ~/.ssh/config ~/Library/Keychains/login.keychain-db"), 0, "the home folder")
+        XCTAssertNotEqual(run("ls ~"), 0, "nor what's in it")
     }
 
     func testSendNowAsksForNoSecondAcknowledgementOnceAnswered() {
@@ -225,6 +273,7 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertEqual(pi.arguments[pi.arguments.firstIndex(of: "--fork")! + 1], "/main.jsonl")
         XCTAssertFalse(pi.arguments.contains("lamp-1"), "the fork has a session of its own")
         XCTAssertEqual(pi.environment["HOME"], "/private/side/home")
+        XCTAssertFalse(pi.profile.contains("main.jsonl"), "pi forks its own copy, in its folder")
         let claude = try XCTUnwrap(SideAnswer.launch(route(.claude), prompt: "p", transcript: transcript, folder: folder))
         XCTAssertEqual(claude.arguments[claude.arguments.firstIndex(of: "--tools")! + 1], "")
         XCTAssertTrue(claude.arguments.contains("--no-session-persistence"))
