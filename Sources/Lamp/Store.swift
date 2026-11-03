@@ -975,7 +975,8 @@ final class Store: ObservableObject {
             // game's page holding a change until a pause takes it now, where it is, keeping the player's place.
             var done: Set<String> = []
             if let project = waiting {
-                if PageLive.shared.putInNow(project) {
+                // A fresh start asked for is a launch, never a change put into the open page.
+                if !freshStarts.contains(project.id), PageLive.shared.putInNow(project) {
                     done = [project.id + "/mac", project.id + "/ios"]
                 } else {
                     var mac = project
@@ -9981,7 +9982,8 @@ final class Store: ObservableObject {
         config.activates = inFront
         // An app that lives in the menu bar opens its panel, so there's something to see (LampMenuBar).
         if inFront { config.arguments = ["-LampInFront", "YES"] }
-        if freshStarts.remove(project.id) != nil, GameKit.isGame(project) { config.arguments += ["-LampFreshStart", "YES"] }
+        // Only the launch it was asked for, a reopen or the person's Reload: any other launch drops it.
+        if freshStarts.remove(project.id) != nil, reload, GameKit.isGame(project) { config.arguments += ["-LampFreshStart", "YES"] }
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {
@@ -10240,8 +10242,9 @@ final class Store: ObservableObject {
     /// where the last look was, and the preview closes at the next look in the Mac copy or when the turn ends.
     private var asidePreviews: Set<String> = []
     /// Games whose next launch is a fresh start (`-LampFreshStart`): a look asked for one (`reopen`), at once or held
-    /// for the person's Reload while they play. Taken by that launch, and that launch alone, so the game starts from its
-    /// beginning rather than where the player was, with its saves kept (lamp-game.js's claim()).
+    /// for the person's Reload while they play. Taken by the next launch, and given only to one that is that reopen or
+    /// that Reload (`reload`), so the game starts from its beginning rather than where the player was, with its saves
+    /// kept (lamp-game.js's claim()); any other launch drops it, so it never reaches a later opening.
     private var freshStarts: Set<String> = []
 
     /// Whether a page Lamp otherwise looks at in the preview (a screen, a web app, a game with a loop of its own) is looked
@@ -13818,17 +13821,16 @@ final class Store: ObservableObject {
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
         // A game that controls the person's devices runs that code as it opens: a look that opens it, or starts it again,
         // is one on a device they allowed, as a use is. Looking at it open in its window starts nothing.
+        // The look is told whether it may open the game, for one that closes while it looks (`mayOpen`).
         let reopen = arguments["reopen"] as? Bool ?? false, onDevice = arguments["on_device"] as? Bool ?? false
-        if DevicePermissions.openNeedsDevice(app), reopen || onDevice || !playsInWindow(app) || !isRunning(app.at(.mac)) {
-            let device = (arguments["device"] as? String)?.trimmed ?? ""
-            guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
-                return (400, ["error": DevicePermissions.openRefusal])
-            }
+        let device = (arguments["device"] as? String)?.trimmed ?? ""
+        let mayOpen = !DevicePermissions.openNeedsDevice(app) || (!device.isEmpty && DevicePermissions.allowed(wish(of: project)).contains(device))
+        if !mayOpen, reopen || onDevice || !playsInWindow(app) || !isRunning(app.at(.mac)) {
+            return (400, ["error": DevicePermissions.openRefusal])
         }
         return await underTurn(of: project, app) {
             await look(at: app, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                       reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false,
-                       shape: arguments["shape"] as? String)
+                       reopen: reopen, onDevice: onDevice, shape: arguments["shape"] as? String, mayOpen: mayOpen)
         }
     }
 
@@ -13892,12 +13894,14 @@ final class Store: ObservableObject {
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
     /// `onDevice`: for a game, where Try On points (its window, the simulator or the Xbox) rather than its window on this Mac.
+    /// `mayOpen` false: a game that reaches devices, looked at with no allowed device, is only looked at open, never opened.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
-                      shape: String? = nil) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape), of: project)
+                      shape: String? = nil, mayOpen: Bool = true) async -> (Int, [String: Any]) {
+        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, mayOpen: mayOpen), of: project)
     }
 
-    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool, shape: String? = nil) async -> (Int, [String: Any]) {
+    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool, shape: String? = nil,
+                         mayOpen: Bool = true) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -13950,6 +13954,8 @@ final class Store: ObservableObject {
         }
         // A game open in its window is looked at there as it is; closed, or asked to start again, it's opened as a Mac app is.
         if inWindow, !wantsFresh, let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
+        // Closed while it was looked at, or not ready to be looked at in place: opening it again runs its device code.
+        if GameKit.isGame(project), !mayOpen { return (400, ["error": DevicePermissions.openRefusal]) }
         // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
         // the preview, at any shape the agent asks for.

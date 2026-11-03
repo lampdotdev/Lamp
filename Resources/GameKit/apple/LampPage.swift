@@ -52,6 +52,8 @@ import UIKit
 
 @MainActor enum LampPage {
     private static var registered = false
+    /// Whether this launch's fresh start (`-LampFreshStart`) has gone to a page already.
+    static var freshStartGiven = false
 
     /// Gives the page in `configuration` its ways to Lamp and to this device, for pages served at `scheme`. A page that
     /// logs its own errors (a game's runtime does) leaves `catchErrors` off, or each would be logged twice.
@@ -69,7 +71,9 @@ import UIKit
         // A fresh start Lamp asked for when it opened the app (`-LampFreshStart YES`): a game starts from its beginning
         // (lamp-game.js's claim()), once, at this launch's first page; a page opened again later in the same launch
         // (Reload, a change) starts where the player was, as ever.
-        if UserDefaults.standard.bool(forKey: "LampFreshStart") {
+        if UserDefaults.standard.bool(forKey: "LampFreshStart"), !LampPage.freshStartGiven {
+            // Once a launch, whatever opens later in it (another window of the game) starting where the player was.
+            LampPage.freshStartGiven = true
             configuration.userContentController.addUserScript(WKUserScript(source: """
                 try { if (!sessionStorage.getItem('lamp.freshStart')) { sessionStorage.setItem('lamp.freshStart', '1'); window.lampFreshStart = true; } } catch (e) {}
                 """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -1166,7 +1170,8 @@ final class LampPageBlockedHost: NSObject {
         case "stick", "button":
             // A game's controller, held in the game's own script (lamp-game.js, "Lamp's hands on the controller") for
             // `amount` seconds and let go after, or at once if the batch stops or a newer one takes its place.
-            guard let held = action.controller else { return nil }
+            // Only a game's page holds a controller (`LampPagePlaying` says a game is there).
+            guard let held = action.controller, LampPageItems.playing != nil else { return nil }
             let seconds = min(max(action.amount ?? 0, 1.0 / 60), 10)
             let hold = held.merging(["seconds": seconds]) { $1 }
             guard let json = try? JSONSerialization.data(withJSONObject: hold) else { return nil }
