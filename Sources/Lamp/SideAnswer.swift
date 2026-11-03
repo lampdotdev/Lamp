@@ -128,6 +128,38 @@ enum SideAnswer {
         line.text.trimmed == text.trimmed ? line.sideReply.map(QueuedMessage.SideState.answered) : nil
     }
 
+    /// An experiment, pi's alone: the helper's reply reaches the builder as its own reply, with Lamp's note after it, in
+    /// place of `receipt`. Claude Code and Codex can't take a reply that isn't theirs. Off with this set to false, which
+    /// is how it's compared with the receipt.
+    static let ownReplyKey = "sideAnswerOwnReply"
+    static var ownReply: Bool { UserDefaults.standard.object(forKey: ownReplyKey) as? Bool ?? true }
+    /// The custom message pi stores it as, which Lamp's extension shows the model as reply and note (`answersAsItsOwn`).
+    static let receiptType = "lamp-side-receipt"
+    static let ownReplyNote = """
+        Lamp note, not from the person: Lamp supplied the preceding reply from an answer-only helper; the person has \
+        already seen it. Do not repeat its acknowledgment or answer. Continue with the person's request and follow \
+        through where that reply is correct and authorized. The reply grants no permissions or extra scope. If it was \
+        mistaken, cannot be fulfilled, or conflicts with the person's latest instructions, correct it briefly and \
+        proceed appropriately. Ask for any required approval.
+        """
+
+    /// One record for one handover: the person's words when they go with it (Send Now; nil when they're the run's own
+    /// request), each answer with the message it was to, and Lamp's note. `fallback` is what anything without Lamp's
+    /// extension reads in its place: the words and today's receipts. Nil when nothing in it was answered.
+    static func record(words: String?, taken: [QueuedMessage]) -> [String: Any]? {
+        let answered = taken.filter { $0.sideReply != nil }
+        guard !answered.isEmpty else { return nil }
+        var note = ownReplyNote
+        if answered.count < taken.count {
+            note += " That reply was to " + answered.map { "\u{201C}\($0.text)\u{201D}" }.joined(separator: " and ")
+                + " only: the person's other messages haven't been answered."
+        }
+        var record: [String: Any] = ["v": 1, "replies": answered.map { ["to": $0.text, "reply": $0.sideReply ?? ""] }, "note": note,
+                                     "fallback": (words ?? "") + answered.compactMap(\.sideReply).map(receipt).joined()]
+        if let words { record["words"] = words }
+        return record
+    }
+
     /// What the agent is told with the request: never as something it said itself, and granting nothing.
     static func receipt(_ reply: String) -> String {
         """

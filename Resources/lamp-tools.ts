@@ -55,7 +55,7 @@
  *   the model before its next request.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { lstat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -210,6 +210,73 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 /** The person's messages sent since the agent started, taken from Lamp after each turn (Store.steer). pi puts
  * them in the conversation as the person's own, before the model's next request; after the agent's last
  * reply that request is made for them, so none is left for the turn after. */
+/** What Lamp sends for a handover holding a side answer (SideAnswer.record in Lamp). */
+type SideReceipt = { v: number; words?: string; replies: { to: string; reply: string }[]; note: string; fallback: string };
+const receiptType = "lamp-side-receipt";
+
+function receiptMessage(receipt: SideReceipt) {
+	return { customType: receiptType, content: receipt.fallback, display: false, details: receipt };
+}
+
+function isReceipt(message: any): boolean {
+	const details = message?.details;
+	return message?.role === "custom" && message.customType === receiptType && details?.v === 1
+		&& Array.isArray(details.replies) && details.replies.length > 0 && typeof details.note === "string";
+}
+
+/** An experiment: the answer Lamp's helper gave beside the turn reaches the model as the model's own reply, with Lamp's
+ * note after it. pi stores Lamp's one record as it is; only what each request shows the model changes, the same way
+ * every time, from what's stored. The run's own request carries its record through `before_agent_start`, a mid-turn
+ * handover through `takesMessagesMidTurn`. A record with no assistant message before it to take the reply's shape from
+ * stays as its stored text, today's receipt. */
+function answersAsItsOwn(pi: ExtensionAPI) {
+	const first = process.env.LAMP_SIDE_RECEIPT;
+	let given = false;
+	pi.on("before_agent_start", () => {
+		if (!first || given) return undefined;
+		given = true;
+		try {
+			return { message: receiptMessage(JSON.parse(first) as SideReceipt) };
+		} catch {
+			return undefined;
+		}
+	});
+	pi.on("context", (event) => {
+		if (!event.messages.some(isReceipt)) return undefined;
+		const zero = (value: any): any => typeof value === "number" ? 0
+			: value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, zero(v)])) : value;
+		const text = (words: string) => [{ type: "text" as const, text: words }];
+		const messages: any[] = [];
+		let shape: any;
+		for (const message of event.messages as any[]) {
+			if (message.role === "assistant") shape = message;
+			if (!isReceipt(message) || !shape) { messages.push(message); continue; }
+			const details = message.details as SideReceipt, timestamp = message.timestamp;
+			if (details.words) messages.push({ role: "user", content: text(details.words), timestamp });
+			messages.push({ role: "assistant", content: text(details.replies.map((r) => r.reply).join("\n\n")), api: shape.api,
+				provider: shape.provider, model: shape.model, usage: zero(shape.usage), stopReason: "stop", timestamp });
+			messages.push({ role: "user", content: text(details.note), timestamp });
+		}
+		return { messages };
+	});
+	// For the experiment's checks only (LAMP_CAPTURE_DIR, set when Lamp is told to): each request that carries one more
+	// receipt than the last, saved as sent.
+	const folder = process.env.LAMP_CAPTURE_DIR;
+	if (folder) {
+		let seen = 0;
+		pi.on("before_provider_request", (event) => {
+			const sent = JSON.stringify(event.payload);
+			const count = sent.split("Lamp note, not from the person").length + sent.split("Lamp context, not a new user instruction").length - 2;
+			if (count <= seen) return undefined;
+			seen = count;
+			try {
+				writeFileSync(path.join(folder, `request-${Date.now()}.json`), sent);
+			} catch {}
+			return undefined;
+		});
+	}
+}
+
 function takesMessagesMidTurn(pi: ExtensionAPI) {
 	pi.on("turn_end", async (_event, ctx) => {
 		const url = process.env.LAMP_STEER_URL;
@@ -221,8 +288,10 @@ function takesMessagesMidTurn(pi: ExtensionAPI) {
 				body: "{}",
 				signal: ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
 			});
-			const reply = (await response.json()) as { message?: string };
-			if (reply.message) pi.sendUserMessage(reply.message, { deliverAs: "steer" });
+			const reply = (await response.json()) as { message?: string; receipt?: SideReceipt };
+			// One message for the whole handover, so nothing can be asked of the model between its parts.
+			if (reply.receipt) pi.sendMessage(receiptMessage(reply.receipt), { deliverAs: "steer" });
+			else if (reply.message) pi.sendUserMessage(reply.message, { deliverAs: "steer" });
 		} catch {
 			// Lamp couldn't be reached: what's waiting there goes as the next request.
 		}
@@ -765,6 +834,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(editWithDoing());
 	pi.registerTool(writeWithDoing());
 	keepsPicturesFew(pi);
+	answersAsItsOwn(pi);
 	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);

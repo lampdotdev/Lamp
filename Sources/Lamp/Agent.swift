@@ -1102,6 +1102,8 @@ enum Agent {
             "LAMP_TRIM_PICTURES": String(Conversation.trimAbove),
         ]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
+        // For the side answer experiment's checks only: where pi saves the requests that carry a receipt. Unset, it saves none.
+        if let folder = UserDefaults.standard.string(forKey: "sideAnswerCaptureFolder") { env["LAMP_CAPTURE_DIR"] = folder }
         return env.merging(keyEnvironment(for: Builder.piProvider)) { $1 }
     }
 
@@ -1239,6 +1241,8 @@ enum Agent {
         case "message_end":
             guard let message = obj["message"] as? [String: Any] else { return [] }
             if message["role"] as? String == "user" { return [.received] }
+            // A handover with an answer in it is one custom message (`SideAnswer.record`).
+            if message["role"] as? String == "custom", message["customType"] as? String == SideAnswer.receiptType { return [.received] }
             guard message["role"] as? String == "assistant" else { return [] }
             var events: [AgentEvent] = []
             for block in message["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "text" {

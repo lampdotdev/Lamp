@@ -884,6 +884,8 @@ final class Store: ObservableObject {
         var sideRoute: SideAnswer.Route?
         /// The answers started beside this turn, however they ended.
         var sideAttempts = 0
+        /// The receipt record (`SideAnswer.record`) the turn's first pi run carries, in place of receipts in its request.
+        var ownReply: String?
         /// Claude Code's input, from its start until it has answered.
         var input: AgentInput?
         /// The engine is running a tool: a message written to it now reaches the model with the tool's result.
@@ -4814,7 +4816,12 @@ final class Store: ObservableObject {
         turns[project.id]?.request = prompt
         turns[project.id]?.requests = asked
         turns[project.id]?.carriedSetAside = carried
-        let receipts = messages.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
+        var receipts = messages.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
+        if Builder.engine == .pi, SideAnswer.ownReply, let record = SideAnswer.record(words: nil, taken: messages),
+           let data = try? JSONSerialization.data(withJSONObject: record) {
+            turns[project.id]?.ownReply = String(decoding: data, as: UTF8.self)
+            receipts = ""
+        }
         let ran = await runAgent(prompt + receipts + notes + crashAside, files: files, sendsRequest: true, on: project)
         project = current(project) ?? project
         settleHolds(carriedHolds, reached: asked.last.map { Self.reachedAgent($0, in: logs[project.id] ?? []) } ?? ran, for: project)
@@ -5221,6 +5228,10 @@ final class Store: ObservableObject {
         var run = Agent.run(prompt: prompt + missed + fresh, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
+        if engine == .pi, let record = turn.ownReply {
+            run.env["LAMP_SIDE_RECEIPT"] = record
+            turn.ownReply = nil
+        }
         turn.sideRoute = SideAnswer.route(env: run.env, engine: engine, local: Builder.piProvider == Builder.localProvider, keyProvider: Builder.piProvider,
                                           configFolder: EngineInstall.configFolder(engine).path, environment: EngineInstall.environment(for: engine))
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
@@ -5506,6 +5517,11 @@ final class Store: ObservableObject {
     /// turn (its version is the turn's) once the engine's output shows the model has it (`received`); until then
     /// it can still go back in line. Returns what the agent is sent, nil when nothing can go.
     private func handOver(_ project: LampProject) -> String? {
+        handOverParts(project).map { $0.words + $0.taken.compactMap(\.sideReply).map(SideAnswer.receipt).joined() + Agent.midTurnNote(for: $0.taken) }
+    }
+
+    /// What's handed over, before it's worded for an engine: the messages' words with Lamp's notes on them, and the messages.
+    private func handOverParts(_ project: LampProject) -> (words: String, taken: [QueuedMessage])? {
         // Nothing more while a handover is unconfirmed: a receipt confirms everything handed over, so one that
         // never arrived could otherwise be counted by the next one's receipt instead of going back in line.
         guard let turn = turns[project.id], turn.agent != nil, turn.steering != nil, !turn.asked, !turn.paused, !turn.stopped,
@@ -5526,11 +5542,9 @@ final class Store: ObservableObject {
         saveChat(project)
         turn.handed += lines.map { chat[$0].id }
         let words = taken.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
-        return (words.isEmpty ? Self.onlyFiles(saved.count) : words)
-            + taken.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
+        return ((words.isEmpty ? Self.onlyFiles(saved.count) : words)
             + Attachments.note(for: saved, inlined: false) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
-            + GameFun.note(for: project, apps: apps(of: project), request: words)
-            + Agent.midTurnNote(for: taken)
+            + GameFun.note(for: project, apps: apps(of: project), request: words), taken)
     }
 
     /// The engine's output shows the model has the requests handed to it: from now on they're the turn's.
@@ -13428,8 +13442,13 @@ final class Store: ObservableObject {
             return Self.withPictureData(await agentIconPicture((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
         }
         if route == "/agent/steer" {
-            guard turns[project.id]?.steering == .pi else { return (200, [:]) }
-            return (200, handOver(project).map { ["message": $0] } ?? [:])
+            guard turns[project.id]?.steering == .pi, let handover = handOverParts(project) else { return (200, [:]) }
+            // One record, sent as one message, so the reply and its note can't arrive apart from the words.
+            if SideAnswer.ownReply, let record = SideAnswer.record(words: handover.words, taken: handover.taken) {
+                return (200, ["receipt": record])
+            }
+            return (200, ["message": handover.words + handover.taken.compactMap(\.sideReply).map(SideAnswer.receipt).joined()
+                          + Agent.midTurnNote(for: handover.taken)])
         }
         if route == "/agent/integration" {
             return await agentIntegration((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)

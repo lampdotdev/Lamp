@@ -241,6 +241,29 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertFalse(Store.heldAfterQuit([QueuedMessage(text: "And the title")]))
     }
 
+    /// A handover's record keeps each answer with the message it was to, in order, and says which messages it doesn't answer.
+    func testTheRecordPairsEachAnswerWithItsMessage() throws {
+        let green = QueuedMessage(text: "Make it green", side: .answered("I'll make it green."))
+        let blue = QueuedMessage(text: "Actually, blue")
+        XCTAssertNil(SideAnswer.record(words: "Actually, blue", taken: [blue]), "nothing answered: today's words alone")
+        let record = try XCTUnwrap(SideAnswer.record(words: "Make it green\n\nActually, blue", taken: [green, blue]))
+        XCTAssertEqual(record["words"] as? String, "Make it green\n\nActually, blue")
+        XCTAssertEqual(record["replies"] as? [[String: String]], [["to": "Make it green", "reply": "I'll make it green."]])
+        let note = try XCTUnwrap(record["note"] as? String)
+        XCTAssertTrue(note.contains("grants no permissions"))
+        XCTAssertTrue(note.contains("\u{201C}Make it green\u{201D} only"), "the later correction isn't covered by the reply")
+        XCTAssertTrue((record["fallback"] as? String)?.contains("Lamp context, not a new user instruction") == true,
+                      "read without Lamp's extension, it's today's receipt")
+        XCTAssertNil(SideAnswer.record(words: nil, taken: [green])?["words"], "a run's own request is its words already")
+    }
+
+    /// pi says a handover reached the model with the message it was sent as, a custom one when it holds an answer.
+    func testAHandoverRecordIsReceivedLikeAMessage() {
+        let ours = Agent.parse(#"{"type":"message_end","message":{"role":"custom","customType":"lamp-side-receipt","content":"x"}}"#)
+        guard ours.count == 1, case .received = ours[0] else { return XCTFail("not received") }
+        XCTAssertTrue(Agent.parse(#"{"type":"message_end","message":{"role":"custom","customType":"other","content":"x"}}"#).isEmpty)
+    }
+
     func testSendNowAsksForNoSecondAcknowledgementOnceAnswered() {
         let answered = QueuedMessage(text: "Make it blue", side: .answered("I'll make it blue shortly."))
         let unanswered = QueuedMessage(text: "And the title")
