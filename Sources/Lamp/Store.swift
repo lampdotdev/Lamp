@@ -6862,6 +6862,11 @@ final class Store: ObservableObject {
             return (400, ["error": "make_app_for takes `kind`, \"game\" or \"app\"; `made`, \"web\" or \"native\"; and `devices`, every device "
                           + "the app is to be on from now on. Once the wish has an app, `app` names the one to change, or `another` adds one more."])
         }
+        let needs: [String]
+        switch Skills.gameNeeds(arguments["needs"]) {
+        case .success(let named): needs = named
+        case .failure(let refusal): return (400, ["error": refusal.reason])
+        }
         let members = members(of: wish)
         let plan: AppPlan
         switch AppPlanner.make(made, kind: intent, devices: devices, app: arguments["app"], another: arguments["another"], in: members) {
@@ -6882,7 +6887,7 @@ final class Store: ObservableObject {
                 }
                 into = only
             }
-            said += await add(target, to: into, intent: intent)
+            said += await add(target, to: into, intent: intent, needs: needs)
             if !FileManager.default.fileExists(atPath: into.dir.appendingPathComponent(".git").path) {
                 _ = await initRepo(into, message: "Scaffold")
             }
@@ -6890,7 +6895,7 @@ final class Store: ObservableObject {
             target = asked
             // Of a code the wish has none of (`AppPlanner.make`): the same call again finds that app there and is refused,
             // so it never makes a folder more.
-            said += await add(target, to: wish, intent: intent)
+            said += await add(target, to: wish, intent: intent, needs: needs)
             said.append("The wish's other apps stay as they are (" + members.map(describe).joined(separator: ", ") + ").")
         case .update(let member, let asked):
             target = asked
@@ -6969,7 +6974,7 @@ final class Store: ObservableObject {
     /// (`folder`, else `Parts.newFolder`), so an app this Mac can't build yet is the same app, with the same name among
     /// the wish's apps, whenever it's made, and another asked for meanwhile gets a folder of its own.
     /// An app on a list from before folders were kept has its folder by now (`givingWaitingAppsFolders`).
-    private func add(_ target: AppTarget, to wish: LampProject, folder kept: String? = nil, intent: AppIntent) async -> [String] {
+    private func add(_ target: AppTarget, to wish: LampProject, folder kept: String? = nil, intent: AppIntent, needs: [String] = []) async -> [String] {
         let kind = target.kind
         let folder = kept ?? Parts.newFolder(Parts.folder(for: kind, integration: kind == .device ? target.integration : nil), in: current(wish) ?? wish)
         var waiting = target.waiting
@@ -6993,15 +6998,22 @@ final class Store: ObservableObject {
                     + "with data of its own, starting empty: nothing another app of the wish saved is in it unless its code reads it from that app. Build it in this "
                     + "request, made to work with the rest. `make_app_for` and `remove_app` name it with `app` \"\(part.dir.lastPathComponent)\"; `look_at_app` and `use_app` reach it with `part` \"\(Parts.address(of: part, among: apps(of: current(wish) ?? wish)))\". "
                     + "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n"
-                    + rulesOfNew(part, kind: kind))
+                    + rulesOfNew(part, kind: kind, needs: needs))
         return said.filter { !$0.isEmpty }
     }
 
-    /// The rules said of an app as it's added: a new web game on the Mac has the short guide (the web-game skill).
-    private func rulesOfNew(_ part: LampProject, kind: Platform) -> String {
+    /// The rules said of an app as it's added: a new web game on the Mac has the short guide (the web-game skill), and
+    /// with it game-feel and the skills `needs` named, in this one reply rather than a `read_skill` each. They're the
+    /// skills as they are now, which a later request's line of skills that apply (`Skills.brief`) leaves to this
+    /// conversation unless Lamp changed them. Any other app has its kind's rules, and `needs` says nothing to it.
+    private func rulesOfNew(_ part: LampProject, kind: Platform, needs: [String] = []) -> String {
         let folder = part.dir.lastPathComponent
-        if let now = current(part), GameKit.isMacWebGame(now), let guide = Skills.all["web-game"]?.body { return Agent.Rules.newMacGame(in: folder, guide: guide) }
-        return Parts.pack(for: kind, in: folder, integration: Parts.listedIntegration(of: part))
+        if let now = current(part), GameKit.isMacWebGame(now), let guide = Skills.all["web-game"]?.body {
+            let handed = (["game-feel"] + needs).compactMap { name in Skills.all[name].map { "The \(name) skill, handed with this guide:\n\n" + $0.body } }
+            return Agent.Rules.newMacGame(in: folder, guide: ([guide] + handed).joined(separator: "\n\n---\n\n"))
+        }
+        let rules = Parts.pack(for: kind, in: folder, integration: Parts.listedIntegration(of: part))
+        return needs.isEmpty ? rules : rules + "\n\n`needs` is for a new web game at home on the Mac; for this app, open any skill that applies with `read_skill`."
     }
 
     /// One app of a wish made as the plan says, in place: its kind inside its code (`convert`), and its devices, the

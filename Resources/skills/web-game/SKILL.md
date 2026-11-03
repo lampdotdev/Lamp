@@ -1,11 +1,11 @@
 ---
 name: web-game
-description: The short guide to a new web game at home on the Mac, on Lamp's game runtime - the runtime's contract, the stage in the window, screens over the canvas, keeping the player's place, how it looks, and the checks. Lamp hands it over with make_app_for; it stands in for reading the game, 2d-game and game-ui skills first.
+description: The short guide to a new web game at home on the Mac, on Lamp's game runtime - the runtime's contract, the stage in the window, screens over the canvas, keeping the player's place, how it looks, and the checks. Lamp hands it over with make_app_for, with game-feel and the skills the call's `needs` named; for this game they stand in for the game, game-ui, 2d-game and 3d-game skills, which serve games elsewhere.
 ---
 
 # A new web game on the Mac
 
-This guide is enough to write the game. Don't open the game, 2d-game or game-ui skills first, or read Web/lamp-game.js or Web/lamp-phaser.js in full: grep them for one export when you need it. In 2D the game is Phaser 3.90 scenes through `phaser()`. In 3D, open the 3d-game skill for how it draws; the rest here holds. Write the first files together in one message, and look in that message's last call or the next one.
+This guide holds how the game runs on Lamp's runtime; game-feel, handed with it, holds what makes it good to play. Both are for every game, and with the skills `needs` named they're what you write it from: don't open the game, game-ui, 2d-game or 3d-game skills, or read Web/lamp-game.js or Web/lamp-phaser.js in full: grep them for one export when you need it. In 2D the game is Phaser 3.90 scenes through `phaser()`. In 3D, game-3d says how it draws; the rest here holds. Write the first files together in one message, and look in that message's last call or the next one.
 
 ## The runtime's contract
 
@@ -70,7 +70,7 @@ Title, play, results, unless the request plainly suits another opening; keep it 
 
 ## Keeping the player's place
 
-Changes go into the running game. Everything that says where the game is goes in the one `state` object, plain data: change its fields, never replace it. `create` reads it and builds that place, with no title over a game under way. HUD and menus are found at each start, never at a module's top level, and `busy()` is true while a round is on.
+Changes go into the running game, and these rules keep the player's place through every one; game-live is for a change that moves the game's structure. Everything that says where the game is goes in the one `state` object, plain data: change its fields, never replace it. `create` reads it and builds that place, with no title over a game under way. HUD and menus are found at each start, never at a module's top level, and `busy()` is true while a round is on.
 
 ## How it looks
 
@@ -83,8 +83,16 @@ The first `look_at_app` shows the draft in the game's window and plays it from t
 1. One `use_app` plays a whole round as the person would: **start**, **steer** both ways, take a **hit** (steer into one, watching the score), **finish** (wait out the round to the results), press A to **restart** into a new round.
 2. One `look_at_app` with `shape` "960x540" plays the **opening** and the first seconds of play in a **smaller window**: the player, HUD and Play show, nothing is cut off or under the canvas.
 
-No key name on the opening. Fix what fails and run that check again, with `reopen` for the opening at full size. Say what you didn't run.
+No key name on the opening. Fix what fails and run that check again, with `reopen` for the opening at full size. Then game-feel's one critique, from what these checks showed. Say what you didn't run.
 
-## More
+## More, when the game calls for it
 
-Open a skill only when the game needs it: **game** ("Changes while it's played": modules that swap in, big worlds; phones as players), **2d-game** (tilemaps, sprite sheets, physics, pixel art, cameras), **game-ui** (other flows, menus that are places), **assets** (choosing packs).
+What a game needs beyond this and game-feel follows from its mechanics and how it's drawn, not from the words of the request. The skills `make_app_for`'s `needs` named came with this guide; one the game turns out to need, now or in a later request, open with `read_skill` then. Most games need none.
+
+- **game-3d**: it's drawn in 3D, a world with depth and a camera in it.
+- **game-physics**: things move as bodies, falling, rolling, stacking, tilting, bouncing off each other. Steering, simple gravity and what touches what don't need it.
+- **game-levels**: more than one level or stage, unlocks and a level select, a menu that's a place.
+- **game-art**: the person asked for a look, or the game is mostly its look.
+- **2d-game**: tilemaps, a scrolling world, sprite-sheet animation.
+- **game-live**, never in `needs`: open it when a change to the open game moves its structure (new or split modules, a world that streams, what has to last renamed or moved) or won't go in. A color, a number or text needs only the rules above.
+- **assets**: choosing between packs.

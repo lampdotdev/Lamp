@@ -86,6 +86,12 @@ A capability given to one engine must be given to all of them that can take it, 
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
   update changed it is asked to open it again. A new skill is a folder there, its name
   in the `skills` or `named` of each kind whose prompt offers or names it, and, when an app's code can show it applies, a check in `Skills.applying`.
+  A skill can also be made of sections of others (`sections` in its frontmatter, put in where its body says
+  `{{sections}}`, `Skills.assembled`), so each section keeps one place: the narrow game skills a web game at home on the
+  Mac uses (`game-feel`, `game-3d`, `game-physics`, `game-levels`, `game-art`, `game-live`) are views of the `game`,
+  `game-ui`, `2d-game` and `3d-game` skills that games elsewhere read whole. Such a game names the ones it needs with
+  `make_app_for`'s `needs`, which every engine has from `lamp-tools.json`, and gets them with the guide; its code only
+  hints at `game-3d`, `game-physics` and `2d-game` later, never by Lamp's runtime or the Phaser every one draws with.
   So guidance that only matters for some apps (a game genre, a device feature, 3D design, phone controllers) goes
   in a skill, the way `phone-pages`, `iphone-hardware` and `apple-watch` did, never into the system prompt:
   every turn of every request reads the prompt, whether its app needs that or not. The prompt keeps at most a

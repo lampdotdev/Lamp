@@ -523,6 +523,20 @@
           "type": "boolean",
           "description": "true to add one more app, of a kind the wish doesn't have, beside its apps, only once the person chose that when you asked."
         },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "game-3d",
+              "game-physics",
+              "game-levels",
+              "game-art",
+              "2d-game"
+            ]
+          },
+          "description": "For a new web game at home on the Mac: the skills its mechanics and the way it's built call for, beyond the guide and game-feel that come anyway, handed with the reply. Choose by what the game must do and how it's drawn, not by the person's words: a car that drives on its wheels needs game-physics, stars that fall to be caught don't; a maze seen from above can be flat. game-3d: drawn in 3D, a world with depth and a camera in it. game-physics: things move as bodies (roll, stack, topple, tilt, bounce off each other). game-levels: more than one level or stage, unlocks and a level select, a menu that's a place. game-art: a look the person asked for, or a game that's mostly its look. 2d-game: tilemaps, a scrolling world, sprite-sheet animation. Most games need none. Leave out one you're unsure of, and open it with `read_skill` once the game needs it."
+        },
         "doing": {
           "type": "string",
           "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
