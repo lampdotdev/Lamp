@@ -282,13 +282,37 @@ enum Mix {
     static func preview(_ picked: [Change], in lineup: Lineup) async -> Preview {
         guard let (_, overlaps) = try? await replay(picked, in: lineup) else { return Preview() }
         let ordered = picked.sorted { $0.date < $1.date }
-        var preview = Preview()
+        // Which earlier change of the other side the later one overlaps: of those that touched the same file, the ones
+        // whose own edit clashes with the later one's, each carried onto where the later one began.
+        var pairs: [(earlier: Change, later: Change)] = []
         for (offset, later) in ordered.enumerated() {
-            for path in overlaps[later.id] ?? [] {
-                for earlier in ordered[..<offset] where earlier.side != later.side && earlier.files.contains(path) {
-                    preview.replaced[earlier.id] = later.title
-                }
+            let paths = Set(overlaps[later.id] ?? [])
+            for earlier in ordered[..<offset] where earlier.side != later.side && !paths.isDisjoint(with: earlier.files)
+                && !pairs.contains(where: { $0.earlier.id == earlier.id && $0.later.id == later.id }) {
+                pairs.append((earlier, later))
             }
+        }
+        guard !pairs.isEmpty else { return Preview() }
+        let script = """
+        mk() { git -c user.name=Lamp -c user.email=lamp@localhost commit-tree "$1" -m mix < /dev/null; }
+        while IFS=' ' read -r n ep ea lp la; do
+          [ -z "$la" ] && continue
+          e1=$(mk "$ep") && e2=$(mk "$ea") && l1=$(mk "$lp") && l2=$(mk "$la") || exit 3
+          x=$(git merge-tree --write-tree --name-only --no-messages -X theirs --merge-base="$e1" "$l1" "$e2"); s=$?
+          # A git too old for -X: a clash carrying it over is a clash with the later one too.
+          if [ $s -gt 1 ]; then echo "C $n"; continue; fi
+          xc=$(mk "$(printf '%s\n' "$x" | head -n 1)") || exit 3
+          git merge-tree --write-tree --name-only --no-messages --merge-base="$l1" "$l2" "$xc" > /dev/null; s=$?
+          [ $s -eq 1 ] && echo "C $n"
+        done <<< "$LAMP_PAIRS"
+        exit 0
+        """
+        let lines = pairs.enumerated().map { "\($0.offset) \($0.element.earlier.before) \($0.element.earlier.after) \($0.element.later.before) \($0.element.later.after)" }
+        let ran = await run(script, in: lineup.project, env: ["LAMP_PAIRS": lines.joined(separator: "\n")])
+        guard ran.status == 0 else { return Preview() }
+        var preview = Preview()
+        for line in ran.output.split(separator: "\n") where line.hasPrefix("C ") {
+            if let n = Int(line.dropFirst(2)), pairs.indices.contains(n) { preview.replaced[pairs[n].earlier.id] = pairs[n].later.title }
         }
         return preview
     }
