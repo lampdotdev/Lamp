@@ -316,8 +316,8 @@ private struct MixSide: View {
 }
 
 /// One change: in the middle and lit when it's kept, so keeping everything makes one column; nudged toward its owner's
-/// side and dimmed when it's left out. At the row's edges, thumbs that do what a click does: down on its owner's side, up
-/// on the other, the one that would change nothing dimmed.
+/// side and dimmed when it's left out. At the edge of its owner's side, a thumb that does what a click does: up while
+/// it's kept, turned over while it's out.
 private struct MixRow: View {
     let change: Mix.Change
     let on: Bool
@@ -333,26 +333,18 @@ private struct MixRow: View {
     var body: some View {
         card
             .frame(maxWidth: .infinity)
-            .overlay(alignment: .leading) { if theirs { keep } else { leave } }
-            .overlay(alignment: .trailing) { if theirs { leave } else { keep } }
+            .overlay(alignment: theirs ? .trailing : .leading) { thumb }
     }
 
-    /// Thumbs down, on its owner's side: it can be left out while it's kept.
-    private var leave: some View { thumbButton("hand.thumbsdown", label: "Leave it out", active: on) }
-
-    /// Thumbs up, on the other side: it can be kept while it's left out.
-    private var keep: some View { thumbButton("hand.thumbsup", label: "Keep it", active: !on) }
-
-    private func thumbButton(_ symbol: String, label: String, active: Bool) -> some View {
+    private var thumb: some View {
         Button(action: toggle) {
-            Image(systemName: symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(Paper.ink)
+            Image(systemName: "hand.thumbsup").font(.system(size: 15, weight: .medium)).foregroundStyle(Paper.ink)
+                .rotationEffect(.degrees(on ? 0 : 180))
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
                 .frame(width: Self.thumb, height: Self.thumb).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(active ? 1 : 0.2)
-        .disabled(!active)
-        .animation(.easeOut(duration: 0.15), value: on)
-        .accessibilityLabel(label)
+        .accessibilityLabel(on ? "Leave it out" : "Keep it")
     }
 
     private var theirs: Bool { change.side == .them }
