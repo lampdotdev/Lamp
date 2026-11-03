@@ -3079,6 +3079,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return
         }
+        if let head = await Versions.head(project) { MixHistory.keepStart(at: head, of: project) }
         // Listed before the original is given back, so a second Remix can't choose the same name.
         reload()
         finish(project)

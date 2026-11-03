@@ -142,6 +142,15 @@ struct MixHistory: Codable {
         return (now, now, now, nil)
     }
 
+    /// Keeps where an original's run starts, when it has no start yet, as the version a remix is made from: both have
+    /// it, so the original's file still lines up with the remix when it's first shared after they've moved apart.
+    static func keepStart(at commit: String, of project: LampProject) {
+        let file = project.dir.appendingPathComponent(startFile)
+        guard !FileManager.default.fileExists(atPath: file.path), let commit = Credits.validCommit(commit) else { return }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? commit.write(to: file, atomically: true, encoding: .utf8)
+    }
+
     /// The version a remix began as (Store's "Remix of …"), and the original's version before it.
     private static func remixed(from name: String, in project: LampProject) -> (commit: String, parent: String)? {
         let listed = Versions.gitBlocking("git log --first-parent --format='%H %P%x1f%s'", cwd: project.dir)

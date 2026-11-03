@@ -337,7 +337,7 @@ Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`),
 
 - **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
   the copies met (a copy's since it arrived, naming the version it was given; an original's since it was first
-  shared, `.lamp/mix-start`; a remix made on this Mac's since it was remixed, its "Remix of …" version sent to
+  shared or first remixed, `.lamp/mix-start`; a remix made on this Mac's since it was remixed, its "Remix of …" version sent to
   rebuild the rest on but never offered, so the original isn't renamed), each with its title, time and the files it
   changed as they were after it. A run
   longer than `MixHistory.limit` keeps its latest versions and carries the rest as one ("Earlier changes"), so it

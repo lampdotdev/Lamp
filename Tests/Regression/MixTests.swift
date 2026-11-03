@@ -188,6 +188,29 @@ final class MixTests: XCTestCase {
         XCTAssertNotEqual(try head(yours), original)
     }
 
+    /// The other way round: an original first shared after it was remixed still starts where the remix was made.
+    func testAnOriginalSharedAfterItsRemixMixesIntoTheRemix() async throws {
+        let (yours, theirs, _, _) = try await copies()
+        MixHistory.keepStart(at: try head(yours), of: yours.project)
+        _ = try escape.loose("rm -rf .git && /bin/cp -R \(Sandbox.quoted(yours.project.dir.path))/.git .git && git reset -q --hard && git clean -qfd",
+                             in: theirs.project.dir)
+        try commit(theirs, "Remix of Coin Flip", at: 310, ["Sources/Title.swift": "Coin Flip Remix\n"])
+        try commit(yours, "Shout the last line", at: 320, ["Sources/App.swift": "A-you\nb\nc\nd\nE-you\n"])
+
+        let stage = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-mix-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: stage) }
+        MixHistory.write(for: yours.project, credits: Credits.load(yours.project), identity: identity, into: stage)
+        let history = try XCTUnwrap(MixHistory.read(in: stage))
+        XCTAssertEqual(history.versions.map(\.title), ["Shout the last line"])
+        let package = Sharing.Package(name: "Coin Flip", identity: identity, folder: stage, sources: [], attachments: [], fileCount: 0)
+        let lineup = try await Mix.lineUp(package, history: history, with: theirs.project)
+        XCTAssertEqual(lineup.changes.map(\.title), ["Remix of Coin Flip", "Shout the last line"])
+        _ = try await Mix.apply(Set(lineup.changes.map(\.id)), in: lineup)
+        XCTAssertEqual(text(theirs), "A-you\nb\nc\nd\nE-you\n")
+        XCTAssertEqual(text(theirs, "Sources/Title.swift"), "Coin Flip Remix\n")
+    }
+
     func testTheirCopyLinesUpWithTheOriginalsNewerFile() async throws {
         // The other way round: the original's file, opened in the copy, starts where the copy was given it.
         let (yours, theirs, _, _) = try await copies()
