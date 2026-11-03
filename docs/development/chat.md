@@ -143,6 +143,14 @@ it), the app is asked to take the chat (`ChatPanel.place`, `MagicPanel.openChat`
 Chats on their own cascade, a step down and across from one another, so none hides another. Lamp's mark at the start of the bar brings
 the desk forward (⌘[).
 
+An answer made beside a running turn ("Messages sent while the agent works" in the engines guide) is part of the message
+it answers, in the state and on the screen (`SidebarQueued.sideReply`, `SidebarLine.sideReply`, `ChatLook.SideLine`): under
+it while it waits and when it goes into the chat, "Answering…" until then, "Still queued" when none comes. Once answered,
+the message reads as any sent message, with no caption, and Unsend and Send Now come up beside it under the pointer or
+keyboard focus (`ChatLook.QueuedRow`'s `answered`). At rest they aren't drawn: the row takes keyboard focus itself so Tab
+brings them up, and VoiceOver has them as actions on the bubble. One restored after a quit has no turn to reach, so it
+reads as waiting, with Send Now, which starts one (`SidebarQueued.noTurn`).
+
 What only Lamp could hold is handed to it, as Share hands over the file it makes: a setup card's header is in the chat,
 with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a hand-drawn icon, are in Lamp's sheet
 (`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. The same goes

@@ -273,6 +273,20 @@ enum Agent {
     colors and type across the app."), then carry on with it in mind.
     """
 
+    /// The person has heard back already (`SideAnswer`), so a reply here would say it to them twice. It says so only
+    /// when that's true of everything handed over: a message nobody has answered still reads as never heard.
+    static let midTurnAnsweredNote = """
+
+
+    Note from Lamp: the person sent this while you were working, and has already been answered, as above. Don't \
+    acknowledge or restate it: carry on with your next step with it in mind, and speak up only to correct what they \
+    were told.
+    """
+
+    static func midTurnNote(for messages: [QueuedMessage]) -> String {
+        messages.allSatisfy { $0.sideReply != nil } ? midTurnAnsweredNote : midTurnNote
+    }
+
     /// With each request to an app that's updated in place (LiveReload): which changes keep it open. Here and
     /// not in the system prompt, since it depends on the app's kind.
     static let liveNote = """
@@ -1126,10 +1140,15 @@ enum Agent {
         ]
         if defers { env["LAMP_DEFER_TOOLS"] = deferredTools.joined(separator: ",") }
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
-        // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
-        // the environment every shell command would inherit. The ticket is good for one answer, and pi spends
-        // it before the model has said anything: a command the agent runs later finds it used.
-        if let provider = Provider.keyProvider(Builder.piProvider) {
+        return env.merging(keyEnvironment(for: Builder.piProvider)) { $1 }
+    }
+
+    /// pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
+    /// the environment every shell command would inherit. The ticket is good for one answer, and pi spends
+    /// it before the model has said anything: a command the agent runs later finds it used.
+    static func keyEnvironment(for piProvider: String) -> [String: String] {
+        var env: [String: String] = [:]
+        if let provider = Provider.keyProvider(piProvider) {
             syncKeyFile()
             // No ticket unless pi is sure to spend it. It wouldn't if auth.json holds something else for
             // this provider (a sign-in of pi's, or a key that couldn't be taken out yet), or if Lamp was
@@ -1258,6 +1277,8 @@ enum Agent {
         case "message_end":
             guard let message = obj["message"] as? [String: Any] else { return [] }
             if message["role"] as? String == "user" { return [.received] }
+            // A handover with an answer in it is one custom message (`SideAnswer.record`).
+            if message["role"] as? String == "custom", message["customType"] as? String == SideAnswer.receiptType { return [.received] }
             guard message["role"] as? String == "assistant" else { return [] }
             var events: [AgentEvent] = []
             for block in message["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "text" {
@@ -1526,6 +1547,13 @@ enum KeyTicket {
         open = open.filter { Date().timeIntervalSince($0.value.issued) < lifetime }   // runs that never asked
         open[ticket] = (provider, Date())
         return ticket
+    }
+
+    /// A run that ended without asking: its ticket opens nothing from now on.
+    static func revoke(_ ticket: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        open[ticket] = nil
     }
 
     /// The key the ticket was issued for, the first time it's asked; nil for a used, old or made-up ticket.

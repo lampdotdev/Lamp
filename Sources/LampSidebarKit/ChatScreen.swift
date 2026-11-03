@@ -235,7 +235,8 @@ private struct Chat: View {
                         ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
                                                waitingForReload: state.waitingForReload ?? false,
-                                               sending: message.sendingNow == true, place: places[index],
+                                               sending: message.sendingNow == true, answered: message.isAnswered,
+                                               groupAnswered: queued.allSatisfy { $0.isAnswered || $0.sendingNow == true }, place: places[index],
                                                onRemove: { link.send(.unqueue(message.id)) },
                                                sendNow: message.canSendNow == true ? { link.send(.sendNow(message.id)) } : nil) {
                                 if let pointed = message.pointed { PointedPill(pointed: pointed) }
@@ -244,6 +245,11 @@ private struct Chat: View {
                                 }
                             }
                             .padding(.top, state.lines.isEmpty && index == 0 ? 0 : places[index].first ? 32 : 8)
+                            if message.sideAnswering == true || message.sideReply != nil || message.stillQueued == true {
+                                ChatLook.SideLine(answering: message.sideAnswering == true, reply: message.sideReply,
+                                                  stillQueued: message.stillQueued == true)
+                                    .padding(.top, 6)
+                            }
                         }
                         Color.clear.frame(height: 16).id("end")
                     }
@@ -357,26 +363,29 @@ private struct LineView: View {
     var body: some View {
         switch line.kind {
         case .user:
-            ChatLook.UserRow(text: line.text, busy: busy,
-                             goBack: line.canGoBack == true ? { before in link.send(.goBack(line.id, before: before)) } : nil,
-                             sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
-                             isLatest: line.isLatest ?? false) {
-                let attachments = line.attachments ?? []
-                // What was pointed at keeps its pill; its picture counts after the other files.
-                if let pointed = line.pointed {
-                    PointedPill(pointed: pointed, preview: { link.send(.preview(line.id, attachments.count)) })
-                }
-                ForEach(attachments.indices, id: \.self) { index in
-                    // A click shows it in Quick Look, as in Lamp's window.
-                    Button { link.send(.preview(line.id, index)) } label: {
-                        if attachments[index].isImage ?? (attachments[index].thumbnail != nil) {
-                            Thumbnail(attachment: attachments[index], size: 72)
-                        } else {
-                            AttachmentChip(attachment: attachments[index])
-                        }
+            VStack(spacing: 6) {
+                ChatLook.UserRow(text: line.text, busy: busy,
+                                 goBack: line.canGoBack == true ? { before in link.send(.goBack(line.id, before: before)) } : nil,
+                                 sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
+                                 isLatest: line.isLatest ?? false) {
+                    let attachments = line.attachments ?? []
+                    // What was pointed at keeps its pill; its picture counts after the other files.
+                    if let pointed = line.pointed {
+                        PointedPill(pointed: pointed, preview: { link.send(.preview(line.id, attachments.count)) })
                     }
-                    .buttonStyle(.plain)
+                    ForEach(attachments.indices, id: \.self) { index in
+                        // A click shows it in Quick Look, as in Lamp's window.
+                        Button { link.send(.preview(line.id, index)) } label: {
+                            if attachments[index].isImage ?? (attachments[index].thumbnail != nil) {
+                                Thumbnail(attachment: attachments[index], size: 72)
+                            } else {
+                                AttachmentChip(attachment: attachments[index])
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
+                if let reply = line.sideReply { ChatLook.SideLine(reply: reply) }
             }
         case .agent:
             ChatLook.AgentText(line.text, keep: !line.growing)

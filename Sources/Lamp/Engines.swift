@@ -233,7 +233,7 @@ enum ToolLocator {
 /// One agent turn: the shell command and its environment.
 struct AgentRun {
     let command: String
-    let env: [String: String]
+    var env: [String: String]
     /// For an engine that reads its request from its input and keeps reading while it works (Claude Code): the
     /// request as the first line written there. Nil for one given it on the command line.
     var opening: String? = nil

@@ -174,6 +174,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var canGoBack: Bool?
     public var canSendAgain: Bool?
     public var isLatest: Bool?
+    /// What was said beside the turn while the request waited, drawn under it.
+    public var sideReply: String?
     /// What a request pointed at in the app, its picture counting as the attachment after the last of `attachments`.
     public var pointed: SidebarPointed?
     /// The agent's steps, shown with Agent Details on (`tools`): what `text` sums up, one by one.
@@ -458,6 +460,13 @@ public struct SidebarQueued: Codable, Equatable, Identifiable {
     /// sent now and is on its way.
     public var canSendNow: Bool?
     public var sendingNow: Bool?
+    /// The answer beside the turn (`SideAnswer`): being made, made, or not to come, in which case it just waits.
+    public var sideAnswering: Bool?
+    public var sideReply: String?
+    public var stillQueued: Bool?
+    /// Answered, and Lamp has quit since, so no turn is coming to it: it reads as waiting until it's sent.
+    public var noTurn: Bool?
+    public var isAnswered: Bool { sideReply != nil && noTurn != true }
 
     public init(id: UUID, text: String, attachments: [SidebarAttachment]) {
         self.id = id
