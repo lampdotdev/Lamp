@@ -21,18 +21,6 @@ final class AwayReloadTests: XCTestCase {
         XCTAssertTrue(reloads.carriesOn("app"))
     }
 
-    /// A change held because the app reaches the person's devices and none is allowed: stepping away never has Lamp
-    /// press its Reload, which would run the new code; the person's own Reload puts it in, and a later ordinary wait is
-    /// pressed as before.
-    func testADeviceHoldIsNeverReloadedWhileAway() {
-        var reloads = AwayReloads()
-        reloads.heldForDevices("app")
-        XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away), [])
-        XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away * 10), [])
-        XCTAssertFalse(reloads.landed("app", stillWaits: false), "the person's Reload, not Lamp's")
-        XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away), ["app"])
-    }
-
     /// Stop pressed after Lamp pressed Reload but before it went in: that Reload is given up, and when one lands
     /// anyway the agent isn't carried on.
     func testAStopAfterLampPressedGivesTheReloadBack() {

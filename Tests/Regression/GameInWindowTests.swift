@@ -263,21 +263,14 @@ final class GameInWindowTests: XCTestCase {
         return LampProject(id: "lights", name: "Lights", exe: "Lights", dir: dir, platform: platform)
     }
 
-    /// A web game that reaches devices is played in the window the person plays it in, on the real network: a use is
-    /// refused unless it names a device they allowed, as any app's is.
+    /// A web game that reaches devices is played in the window the person plays it in, on the real network: a press there
+    /// can change a real device, so a use is refused unless it names a device they allowed, as any app's is.
     func testAWebGameThatReachesDevicesNeedsAnAllowedDevice() throws {
         let game = try app(platform: .game, marker: "A game made with Lamp.\nengine: web\n")
         XCTAssertTrue(DevicePermissions.reachesDevices(game))
         XCTAssertTrue(DevicePermissions.useNeedsDevice(game))
         XCTAssertTrue(DevicePermissions.useNeedsDevice(try app(platform: .game, marker: "A game made with Lamp.\n")))
         XCTAssertTrue(DevicePermissions.useNeedsDevice(try app(platform: .mac, marker: nil)))
-    }
-
-    /// Opening such a game, or starting it again, runs its device code with no one pressing anything: a look that does
-    /// is held to the same device. Other apps' looks aren't, as before.
-    func testOpeningAGameThatReachesDevicesNeedsAnAllowedDevice() throws {
-        XCTAssertTrue(DevicePermissions.openNeedsDevice(try app(platform: .game, marker: "A game made with Lamp.\nengine: web\n")))
-        XCTAssertFalse(DevicePermissions.openNeedsDevice(try app(platform: .mac, marker: nil)))
     }
 
     /// A game's phones join a relay of Lamp's own in the game, which declares nothing: a game with a phone page and no
@@ -289,84 +282,6 @@ final class GameInWindowTests: XCTestCase {
         try "<!doctype html><button>Go</button>".write(to: phone.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
         XCTAssertFalse(DevicePermissions.reachesDevices(game))
         XCTAssertFalse(DevicePermissions.useNeedsDevice(game))
-        XCTAssertFalse(DevicePermissions.openNeedsDevice(game))
-    }
-
-    /// A game's own declaration of the local network can't be told apart from one for devices, whatever it says and
-    /// however little its page names, so it needs an allowed device; the refusal may say why it's asked all the same. Only
-    /// a reason that's Lamp's own sentence for a game's phones, with nothing else of a device controller (Bonjour types to
-    /// look for, Lamp's device blocks in its Swift, no phone page at all), counts as being for its phones. The declaration
-    /// is left as it is either way.
-    func testOnlyLampsOwnPhoneReasonCountsAsDeclaringTheNetworkForPhones() throws {
-        func game(reason: String = "Phones on your Wi-Fi join the game as controllers.", page code: String = "game({ renderer });",
-                  bonjour: Bool = false, phonePage: Bool = true, swift: String? = nil) throws -> LampProject {
-            let dir = try folder()
-            var capabilities: [String: Any] = ["localNetwork": reason]
-            if bonjour { capabilities["bonjourServices"] = ["_sonos._tcp"] }
-            try JSONSerialization.data(withJSONObject: capabilities).write(to: dir.appendingPathComponent(Template.Capabilities.file))
-            try "A game made with Lamp.\nengine: web\n".write(to: dir.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8)
-            let web = dir.appendingPathComponent(GameKit.webFolder)
-            try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
-            try "<script type=\"module\" src=\"game.js\"></script>".write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
-            try ("import { game } from './lamp-game.js';\n" + code).write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
-            if phonePage {
-                let phone = dir.appendingPathComponent(TVTemplate.phoneFolder)
-                try FileManager.default.createDirectory(at: phone, withIntermediateDirectories: true)
-                try "<!doctype html><button>Go</button>".write(to: phone.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
-            }
-            if let swift {
-                let sources = dir.appendingPathComponent("Sources")
-                try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
-                try swift.write(to: sources.appendingPathComponent("Native.swift"), atomically: true, encoding: .utf8)
-            }
-            return LampProject(id: "pad", name: "Pad", exe: "Pad", dir: dir, platform: .game)
-        }
-        // The game's own words, its page naming no device: asked about, with why.
-        let own = try game()
-        XCTAssertFalse(DevicePermissions.declaresNetworkOnlyForPhones(own))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(own))
-        XCTAssertTrue(DevicePermissions.openNeedsDevice(own))
-        XCTAssertTrue(DevicePermissions.whyAsked(own).contains("may be only for its phones"))
-        // A page that builds its address, or names a host or an IPv6 one, is no different: the scan decides nothing.
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(page: "fetch('http://' + [192, 168, 1, 20].join('.') + ':1400/');")))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(page: "fetch('http://[fe80::1]:8060/keypress/Home', { method: 'POST' });")))
-        XCTAssertEqual(DevicePermissions.whyAsked(try game(page: "const tv = 'http://living-room.local:8001';")), "")
-
-        // Lamp's own sentence for a game's phones (with a plain hyphen, which a reason can hold): for its phones.
-        let lampsReason = "Pad lets phones on your Wi-Fi join as controllers, and talks to Lamp on your Mac."
-        let lamps = try game(reason: lampsReason)
-        XCTAssertTrue(DevicePermissions.declaresNetworkOnlyForPhones(lamps))
-        XCTAssertFalse(DevicePermissions.reachesDevices(lamps))
-        XCTAssertFalse(DevicePermissions.useNeedsDevice(lamps))
-        XCTAssertFalse(DevicePermissions.openNeedsDevice(lamps))
-        XCTAssertNotNil(Template.Capabilities.load(lamps).localNetwork, "the declaration stays")
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: lampsReason, bonjour: true)))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: lampsReason, phonePage: false)))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: lampsReason, swift: "import Foundation\nlet tv = LampRoku.self")))
-        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: "Other Game lets phones on your Wi-Fi join as controllers, and talks to Lamp on your Mac.")))
-    }
-
-    /// Which installs of a game that reaches the person's devices, with none allowed, wait for the person's own Reload.
-    /// Background work isn't the person's: a place kept current on Android with the Mac copy closed opens the copy
-    /// running there again, so it waits, as does a Reload Lamp pressed while they were away. Only a background install
-    /// that puts the build in place for a copy closed on this Mac runs nothing. Their own Open App, Undo or Reload never
-    /// waits, and nothing waits once a device is allowed or for a game that reaches none.
-    func testOnlyThePersonOrAClosedMacCopyRunsADeviceGameWithNoDeviceAllowed() {
-        func waits(_ by: InstallFor, quiet: Bool = false, onMac: Bool = true, macRunning: Bool = false,
-                   needsDevice: Bool = true, allowed: Bool = false) -> Bool {
-            DevicePermissions.installWaits(for: by, quiet: quiet, onMac: onMac, macRunning: macRunning, needsDevice: needsDevice, allowed: allowed)
-        }
-        XCTAssertTrue(waits(.background, quiet: true, onMac: false), "a place kept current on Android, its Mac copy closed")
-        XCTAssertTrue(waits(.background, quiet: true, onMac: false, macRunning: true))
-        XCTAssertTrue(waits(.background, quiet: true, macRunning: true), "a copy open on this Mac opens again")
-        XCTAssertTrue(waits(.background), "a Reload Lamp pressed while the person was away")
-        XCTAssertTrue(waits(.request), "the turn's end opening a closed game")
-        XCTAssertTrue(waits(.request, onMac: false))
-        XCTAssertFalse(waits(.background, quiet: true), "the build put in place for a closed Mac copy runs nothing")
-        XCTAssertFalse(waits(.person))
-        XCTAssertFalse(waits(.person, quiet: true, onMac: false))
-        XCTAssertFalse(waits(.background, quiet: true, onMac: false, allowed: true))
-        XCTAssertFalse(waits(.request, needsDevice: false))
     }
 
     // MARK: Stopping a batch

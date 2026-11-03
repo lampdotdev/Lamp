@@ -98,7 +98,7 @@ enum DeviceApps {
 
     /// The folder a device app's kind previews on this Mac (`app.declared.preview`), checked; nil when it has none.
     static func previewFolder(for project: LampProject) -> String? {
-        // A game is looked at in its own preview, which plays it from a script, whatever its engine.
+        // A game has none: a web game is looked at in its window on this Mac, and a C++ game only built (`AgentPreview`).
         guard project.hasDevice, !GameKit.isGame(project), let folder = appKind(for: project)?.declared?.preview,
               IntegrationCheck.isAppPath(folder) else { return nil }
         return folder
@@ -700,7 +700,6 @@ extension Agent.Rules {
     """
 
     static func deviceTry(_ project: LampProject) -> String {
-        let keys = DeviceApps.keys(for: project)
         let integration = DeviceApps.integration(for: project)
         let name = integration?.name ?? "device"
         if DeviceApps.previewFolder(for: project) != nil {
@@ -710,20 +709,9 @@ extension Agent.Rules {
                 + "back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's move), then shows it again. Try a game by "
                 + "playing it. Play puts the app on the \(name).\n"
         }
-        var rule = "- `look_at_app` makes the package, puts it on the person's \(name), opens it there and shows you a picture of its screen, "
-            + "with what the device answered to the install and what the app printed when the device has a log. "
-        if keys.isEmpty || integration?.bridge?.use == nil {
-            rule += "Lamp can't press the \(name)'s keys, so `use_app` doesn't work for it. "
-        } else {
-            rule += "`use_app` presses the remote's keys there, with `key` actions (\(keys.joined(separator: ", "))) and `wait`, then shows the screen again. "
-            if integration?.bridge?.type?.isEmpty == false { rule += "`type` with `text` types into a keyboard on its screen once one has focus. " }
-        }
-        if integration?.bridge?.look == nil { rule += "Its integration has no way to picture its screen, so ask the person what they see. " }
-        if integration?.bridge?.screen != nil {
-            return rule + "Both also give you the screen as text, as the \(name) describes it: the tree of the app's nodes, with what each "
-                + "shows, where it is and which one has focus. Read it to check text and focus the picture is too small for. There is no "
-                + "pointer: try the app the way the person will, with the keys.\n"
-        }
-        return rule + "There is no screen as text and no pointer: try the app the way the person will, with the keys.\n"
+        // Lamp never puts it on the person's device to look at it or press it: that's their Play (`AgentPreview`).
+        return "- The \(name) has no preview on this Mac, so `look_at_app` only builds the app's package and says whether it built: it "
+            + "never puts the app on the person's \(name), opens it or pictures it, and `use_app` can't press anything in it. Never say "
+            + "it works: say it's built, and that Play puts it on their \(name) for them to try.\n"
     }
 }

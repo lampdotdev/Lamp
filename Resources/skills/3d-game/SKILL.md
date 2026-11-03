@@ -89,7 +89,8 @@ WebGL 2 (next).
 
 The three.js Lamp ships asks the browser only for a WebGL 2 context and stops with an error when it gets none, so
 WebGL 2 comes before anything else here: check on the device that a canvas gives one (log whether
-`canvas.getContext('webgl2')` returns a context, and read the log with `look_at_app` and `on_device`). Most browsers
+`canvas.getContext('webgl2')` returns a context, and ask the person to try it there with Play, since Lamp's looks
+never reach their device). Most browsers
 have it; not every Samsung TV does. Where it's missing, make the game another way (2D with Phaser, which draws with WebGL 1 or a plain canvas, or native on that
 device) or tell the person why 3D in a page can't run there.
 
@@ -264,6 +265,7 @@ Some platforms might not be powerful enough to run three.js.
 
 `look_at_app` shows the game in its window on this Mac, where the person is in it, opening it when it's closed; its
 log says every ten seconds how it kept to its frames there, which says nothing of a slower device's: keep to the budget
-in the request's device line. `use_app` plays it there with Lamp's own controller. `look_at_app` with `on_device` opens
-the game where Try On points and shows its log, with that place's frame times.
+in the request's device line. `use_app` plays it there with Lamp's own controller. `look_at_app` with `on_device` looks
+at the game in the preview of where Try On points (the iPhone or iPad simulator), never the person's own device, so its
+frame times there say nothing of a phone's either.
 When the person asks you to try, play or test it, play it as the game skill's "Playtesting" says.

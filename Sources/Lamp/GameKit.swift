@@ -1133,8 +1133,8 @@ extension Agent.Rules {
     what the Mac window saved. Either way you get a picture with its screen as text and what its console printed; neither \
     is the person's Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys where you \
     last looked: the arrows, enter, back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's \
-    move), then shows it again, in plain sight, so only when the person asks you to try it. `look_at_app` with `on_device` opens it where Try On points (its \
-    window on this Mac, or the Xbox) and shows that screen and its log.
+    move), then shows it again, in plain sight, so only when the person asks you to try it. Neither ever reaches the \
+    person's Xbox: Play puts the game there.
 
     """
 
@@ -1223,8 +1223,8 @@ extension Agent.Rules {
     shows. AI in the page is LampAI from Web/lamp.js (read it), which reaches Lamp through the app. Both answer only in \
     the app on the Mac, iPhone and iPad (LampAI on Android and the Xbox too): elsewhere, and in Lamp's preview, \
     `LampNative.available` is false and the calls reject, so the page shows example content then, never an error. \
-    Make these calls once as it opens or from a menu, never every frame; `look_at_app` with `on_device` shows the \
-    real thing. Without Swift of its own the app on the Mac is Lamp's ready-made one, made in a second and with none \
+    Make these calls once as it opens or from a menu, never every frame; a look at the app's window on this Mac \
+    shows the real thing. Without Swift of its own the app on the Mac is Lamp's ready-made one, made in a second and with none \
     of Apple's tools; a call registered in Native.swift, or any other Swift in Sources/, makes Lamp compile the app \
     instead, which takes minutes the first time and needs Apple's tools on the person's Mac. So write Swift only for \
     what the page can't reach itself (the person's own things above), never for what the page or Lamp's scripts in \
@@ -1446,8 +1446,9 @@ extension Agent.Rules {
     in its window on this Mac: a look puts what you've saved into it and shows the window as the person has it (where \
     they are, not its start) in a few seconds, and opens the game when it's closed. What the window can't show (a change \
     waiting for Reload, one that didn't go in, a picture that looks blank) is said, never shown some other way. `reopen` \
-    starts it from its beginning, its saves kept, asking the person first while they play. A C++ game is looked at on \
-    the person's Xbox. Each look shows a picture and what the game logged (`lamp_log`, a line per event, never per \
+    starts it from its beginning, its saves kept, asking the person first while they play. A C++ game has no preview on \
+    this Mac: a look only builds it and says whether it built, never putting it on the person's Xbox, so never say it \
+    works. Each look shows a picture and what the game logged (`lamp_log`, a line per event, never per \
     frame; every ten seconds of play the log says how it kept to its frames); with `motion`, a frame every half second. \
     `use_app` plays the game in its window on this Mac with Lamp's own controller, in plain sight: `stick` (`target` \
     left or right, `x` and `y` -1 to 1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, \
@@ -1460,9 +1461,9 @@ extension Agent.Rules {
     it checked. Read how the game takes the controller first \
     (APP.md, its controls code): a vehicle's gas is often a trigger, held as `key` rt alongside the stick that steers, \
     and a game that barely moves under your moves is one you're driving with the wrong control, not one that can't be \
-    tried. `look_at_app` with `on_device` builds the game for where Try On points, opens it there and shows its own \
-    picture of the screen and its log: the game's window on this Mac, the iPhone or iPad simulator, or the person's \
-    Xbox (its frame times are in its log); `use_app` then takes only what that place takes. Lamp can't press a phone \
+    tried. `look_at_app` with `on_device` builds the game for where Try On points and looks at it in that place's \
+    preview: the game's window on this Mac, or the iPhone or iPad simulator, never the person's own iPhone, iPad or \
+    Xbox; `use_app` then takes only what that place takes. Lamp can't press a phone \
     page or a controller anywhere but the game's window on this Mac: only the person can play it there.
     """
 }

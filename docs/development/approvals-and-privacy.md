@@ -122,27 +122,18 @@ A capability given to one engine must be given to all of them that can take it, 
   nothing), in its own folder by the wish's instance, never in the app's folder, which the agent can write.
   `use_app` on an app that reaches devices (`DevicePermissions.reachesDevices`: LampRoku or LampNetwork in its code, or a
   local network reason or Bonjour types in capabilities.json) is refused unless its `device` names one the person allowed.
-  A game is no exception: it's played in the window the person plays it in, on the real network. A game that reaches
-  devices runs that code as it starts, so a `look_at_app` that opens it or starts it again (closed, `reopen`,
-  `on_device`, or a game looked at only where Try On points) is refused the same way unless its `device` names an allowed
-  one (`DevicePermissions.openNeedsDevice`). A look at it open in its window needs none. Its new code runs only while
-  the person has a device allowed: that's asked each time a change is about to go into the open game, wherever it
-  comes from (a step as the agent saves, a look, the turn's end, all through `Store.pageInPlace`), and before any
-  install that isn't the person's own opens the game or opens it again, on any device: a request's, or Lamp's in the
-  background, a place kept current or a Reload Lamp pressed while they were away (`Store.installNow`, `InstallFor`,
-  `DevicePermissions.installWaits`). Only the person's own Open App, Undo, restore and Reload, and a background install
-  that puts the build in place for a copy closed on this Mac, aren't held. Without one the change waits for a Reload only the person presses:
-  Lamp never presses it for them while they're away (`AwayReloads.devices`), and the agent hears why. A game's phones aren't devices it controls: the relay they join is Lamp's own, in the game (`GamePhones`), which
-  gives the system its reason itself, and needs nothing in capabilities.json. So a game's own local network
-  declaration counts as reaching devices, whatever its words, since they can't be told apart from a device
-  controller's; only Lamp's own sentence for a game's phones, in a game with a phone page and nothing else of a device
-  controller (Bonjour types to look for, LampRoku or LampNetwork in Swift of its own), counts as being for its phones
-  (`DevicePermissions.declaresNetworkOnlyForPhones`). What a game's page names (an address on the home network, a
-  `.local` name) decides nothing: it only explains, in the refusal, why a game that may have declared the network for
-  its phones under an older Lamp is asked about (`DevicePermissions.whyAsked`).
-  A TypeScript game's build runs with no network at all, since a Bun macro is the game's code run
-  at build time (`Sandbox.run`'s `offline`). All of this reads what the app declares, which the agent can change, as the
-  gate itself always has: it stops a mistaken press, not an agent set on one.
+  The agent looks at and uses an app only in a preview on this Mac (`AgentPreview`: its window here, the simulator, Lamp's
+  Android emulators, the TV preview, a device integration's own preview), never on a device of the person's, wherever Try
+  On points; that's their Play and Reload, and the turn's end delivers there as before. An app with no preview (a C++
+  game for the Xbox, a device app whose integration has none) is only built. A preview isn't held apart from the world:
+  it runs on the real network, and changes go into it as soon as they're saved, so an app's own code there can reach the
+  person's devices without a card. The card is for the agent's own press: `use_app` in a remote app's preview changes
+  the real TV, so it needs an allowed device, a game's window included. It never moves the test onto the device. A
+  game's phones aren't devices it controls: the relay they join is Lamp's own, in the game (`GamePhones`), which gives the
+  system its reason itself and declares nothing in capabilities.json; a game that declares the network anyway is taken
+  at its word. A TypeScript game's build runs with no network at all, since a Bun macro is the game's code run at build
+  time (`Sandbox.run`'s `offline`). All of this reads what the app declares, which the agent can change, as the gate
+  itself always has: it stops a mistaken press, not an agent set on one.
   Each engine's command check carries the same rule (`DevicePermissions.commandRule`): pi's `CommandRisk` counts such a
   command as reaching beyond the app, so it gets Lamp's card; Claude Code's auto mode gets it as a `soft_deny` rule after
   its own (`$defaults`, `Engines.swift`); Codex's reviewer is told to refuse it (`CodexReview`), but sees only what needs

@@ -275,8 +275,8 @@ messages, only to Lamp's own paths), and a claim tries the Mac's IPv4 addresses 
 `.local` name over IPv6, which the claim, opened for the device's IPv4 address, refuses. A game's or a screen's page of
 a wish talks to the wish's other apps through the host too: it opens the page's `ws://` links to the home network
 and passes their frames (`ws` web messages), while the page keeps the wish's handshake and seals (the "Wishes" guide). The page's console, uncaught
-errors and the host's own lines go to `LocalState\log.txt`, which the bridge's `log` reads, so `look_at_app` with
-`on_device` (which a web kind with a preview now honours) shows how the app really runs. A controller in WebView2
+errors and the host's own lines go to `LocalState\log.txt`, which the bridge's `log` reads for Lamp's own checks of an
+install; the agent's looks never reach the Xbox (`AgentPreview`), so a web kind is looked at in its preview. A controller in WebView2
 sends its buttons as key presses named "Unidentified" with Edge's old key codes; lamp.js renames them before the page
 hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and presses what has focus, B is Escape,
 the rest Edge's `Gamepad…` names). A key a page makes can't carry a key code, so the remote's arrows in a TV app or a screen (`Lamp.onKey`, `Lamp.key`) read a key by its name too (`nameOf`), or the controller would move nothing. `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
@@ -514,7 +514,8 @@ off until their next message. What Lamp holds also goes when the game's code run
 itself a second after the hold was due to end; the batch's hold on the controller ends by itself two seconds after the
 time it was given. Lamp's side ends the batch with the same signed stop (`Store.stopUse`) when the turn stops
 (`Turn.stopUse`, from `cancel`), when the wait for its answer runs out, and when another turn takes the app's place. Moves play from wherever the game is; nothing replays them from the start, and the game's random numbers
-differ each play. After a look with `on_device` (`Turn.gameOnDevice`) `use_app` takes only what that place takes, and a
+differ each play. After a look with `on_device` (`Turn.gameOnDevice`: the simulator's or the emulator's preview, never a
+device of the person's) `use_app` takes only what that place takes, and a
 controller move is refused with why; a game's phone page is never pressed (`Store.noPhoneUse`): only the person's
 phones join. The agent plays a game only when the person asks it to try, play or test it (`use_app`'s description, `Rules.gameTry`, the game skill's "Playtesting"), as with any app it uses in front of them: a request to change a game is built and looked at. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
@@ -815,10 +816,9 @@ of Microsoft's beside it), and zips App.exe with Assets/. Shaders are annotated 
 header with HLSL; the console compiles it at launch with its own d3dcompiler. The build runs in the app's sandbox
 (`Sandbox.run`).
 
-A C++ game has no window on this Mac: every look at it goes where Try On points, the Xbox, as one with `on_device`
-does, and `use_app` there takes what the Xbox's integration takes (its keys), never `stick` or `button`, which only a
-web game's window on this Mac takes (above). A look that can't reach the Xbox says why, and the agent says so rather than
-calling the game checked. On the Xbox, `on_device`, Play and the end of a turn build for the console and put it there through the
+A C++ game has no window on this Mac and no preview: the agent's look only builds it and says so (`AgentPreview`,
+`Store.buildWithoutPreview`), never putting it on the Xbox, and `use_app` is refused; the agent says it's built rather
+than calling the game checked. On the Xbox, Play, Reload and the end of a turn build for the console and put it there through the
 integration's bridge: `stop` ends
 the copy there first (installing over a running copy can leave the next launch failing with 0x800700BF), then
 `install` and `launch` through `IntegrationRunner.open`: a console only just done installing refuses the launch for a

@@ -82,78 +82,18 @@ enum DevicePermissions {
 
     /// Whether an app reaches the person's devices: its code uses Lamp's blocks for them, or it declares the local
     /// network or Bonjour types in capabilities.json. A game's phones aren't devices it controls, and need no declaration:
-    /// the relay they join is Lamp's own, in the game (`GamePhones`), which gives the reason the system shows itself. So
-    /// what a game declares is taken as being for devices, unless it's known to be only for its phones
-    /// (`declaresNetworkOnlyForPhones`).
+    /// the relay they join is Lamp's own, in the game (`GamePhones`), which gives the system its reason itself.
     static func reachesDevices(_ app: LampProject) -> Bool {
         let capabilities = Template.Capabilities.load(app).checked
-        let declared = capabilities.localNetwork != nil || !(capabilities.bonjourServices ?? []).isEmpty
-        return (declared && !declaresNetworkOnlyForPhones(app)) || Skills.appSwift(of: app, matches: #"\b(LampRoku|LampNetwork)\b"#)
+        return capabilities.localNetwork != nil || !(capabilities.bonjourServices ?? []).isEmpty
+            || Skills.appSwift(of: app, matches: #"\b(LampRoku|LampNetwork)\b"#)
     }
 
-    /// Whether a game's local network declaration is known to be for its phones and nothing else: its reason is the very
-    /// sentence Lamp gives a game's phones (`GamePhones.iosNetworkReason`, with the game's name), it has a phone page, and
-    /// nothing else of a device controller (Bonjour types to look for, Lamp's own wish service aside; Lamp's blocks for
-    /// devices in Swift of its own). A reason in the game's own words, whatever it says, can't be told apart from one for
-    /// devices, so it counts as reaching them. The declaration itself stays as the game wrote it.
-    static func declaresNetworkOnlyForPhones(_ app: LampProject) -> Bool {
-        guard hostsPhonesAndDeclaresNetwork(app), let reason = Template.Capabilities.load(app).checked.localNetwork else { return false }
-        let lamps = GamePhones.iosNetworkReason.replacingOccurrences(of: "{{NAME}}", with: app.name)
-        return plain(reason) == plain(lamps)
-    }
-
-    /// A web game with a phone page that declares the local network, and nothing else a device controller has.
-    private static func hostsPhonesAndDeclaresNetwork(_ app: LampProject) -> Bool {
-        guard GameKit.isGame(app), GameKit.engine(app) == .web, !GameKit.ownsLoop(app) else { return false }
-        let capabilities = Template.Capabilities.load(app).checked
-        return capabilities.localNetwork != nil && (capabilities.bonjourServices ?? []).allSatisfy({ $0 == Template.wishServiceType })
-            && FileManager.default.fileExists(atPath: app.dir.appendingPathComponent(TVTemplate.phoneFolder).appendingPathComponent("index.html").path)
-            && !Skills.appSwift(of: app, matches: #"\b(LampRoku|LampNetwork)\b"#)
-    }
-
-    /// A sentence as it's compared: case, spacing, the kind of hyphen and a closing period aside.
-    private static func plain(_ text: String) -> String {
-        text.lowercased().replacingOccurrences(of: "\u{2011}", with: "-")
-            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
-            .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-    }
-
-    /// Said after a refusal, for a game whose declaration may be only for its phones from an older Lamp (it has a phone
-    /// page, and its own page code names no address on the home network nor a `.local` name): why it's asked about all
-    /// the same. Only ever an explanation: what the page's code names decides nothing.
-    static func whyAsked(_ app: LampProject) -> String {
-        guard hostsPhonesAndDeclaresNetwork(app), !declaresNetworkOnlyForPhones(app), !pageNamesHomeNetwork(app) else { return "" }
-        return " Its capabilities.json declares the local network, which may be only for its phones (a game made by an older Lamp; "
-            + "its page names no device's address), but Lamp can't tell that apart from controlling a device, so it asks all the same."
-    }
-
-    /// Whether the game's own page code (Web/ and src/, Lamp's files and libraries aside) names an address on the home
-    /// network or a `.local` name.
-    private static func pageNamesHomeNetwork(_ app: LampProject) -> Bool {
-        let home = #"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b|\b[A-Za-z0-9][A-Za-z0-9-]*\.local\b"#
-        let lamps: Set<String> = ["three", "rapier", "phaser"]
-        for folder in [GameKit.webFolder, "src"] {
-            guard let walk = FileManager.default.enumerator(at: app.dir.appendingPathComponent(folder), includingPropertiesForKeys: nil) else { continue }
-            for case let url as URL in walk {
-                if url.hasDirectoryPath, lamps.contains(url.lastPathComponent) { walk.skipDescendants(); continue }
-                guard ["js", "mjs", "ts", "html", "json"].contains(url.pathExtension.lowercased()), !url.lastPathComponent.hasPrefix("lamp"),
-                      let text = AppFile.text(url, in: app) else { continue }
-                if text.range(of: home, options: .regularExpression) != nil { return true }
-            }
-        }
-        return false
-    }
-
-    /// Whether a `use_app` call on the app has to name a device the person allowed: whenever it reaches devices. A game
-    /// is used in the window the person plays it in, on the real network, as every app is.
+    /// Whether a `use_app` call on the app has to name a device the person allowed: whenever it reaches devices. The
+    /// agent only ever uses a preview on this Mac (`Store.agentPreview`), but a preview runs on the real network, so a
+    /// press in a remote app's preview changes the real TV. The card allows that press; it never moves the test to the TV.
     static func useNeedsDevice(_ app: LampProject) -> Bool {
         reachesDevices(app)
-    }
-
-    /// Whether a look that opens a game or starts it again has to name a device the person allowed: a game that reaches
-    /// devices runs that code as it starts, with no one pressing anything.
-    static func openNeedsDevice(_ app: LampProject) -> Bool {
-        GameKit.isGame(app) && reachesDevices(app)
     }
 
     /// The card: one question, three answers, only the person's to give.
@@ -204,35 +144,6 @@ enum DevicePermissions {
     static let commandRefusal = "This reaches a device on the person's network in a way that could change it. Ask with `device_permission` first; to read a device, use a plain `curl` GET."
 
     /// What `use_app` says on an app that reaches devices before the person has allowed one.
-    static let openRefusal = "This game controls the person's devices, and opening it or starting it again runs that code: do it only with a device they've allowed, named in `device` as on Lamp's card. Ask with `device_permission` first for a device they haven't allowed, naming it and that the game opens. A look at the game while it's open needs none."
-
-    /// Why a change waits for Reload in a game that reaches devices with none allowed (`Store.mayRunChange`).
-    static let heldForDevices = "the game controls the person's devices, and its new code runs only with a device they've allowed"
-
-    /// What background work (a place kept current, Reload on every place) hears of an install held that way.
-    static let heldForDevicesProblem = "It waits for your Reload: the game controls your devices, and none is allowed for it now."
-
-    /// Whether an install of an app has to wait for the person's own Reload: it would run a game that reaches their
-    /// devices with none allowed, and it isn't the person's own doing. Only a background install that puts the build in
-    /// place for a copy closed on this Mac runs nothing and needn't wait: on every other place a quiet install opens a
-    /// copy that's running there again, and Lamp can't tell from here whether one is.
-    static func installWaits(for by: InstallFor, quiet: Bool, onMac: Bool, macRunning: Bool, needsDevice: Bool, allowed: Bool) -> Bool {
-        guard needsDevice, !allowed, by != .person else { return false }
-        return !(quiet && onMac && !macRunning)
-    }
-
-    /// What the agent hears of such a change.
-    static let heldRefusal = "it controls the person's devices, and its new code runs only with a device they've allowed on Lamp's card, so it waits for the person's Reload, which puts it in: don't say it's in. Once they've allowed a device (ask with `device_permission`, naming it and that the game's changes go in) and that Reload is done, your changes go in as you save them."
-
     static let useRefusal = "This app controls the person's devices: use it only on a device they've allowed, named in `device` as on Lamp's card. Ask with `device_permission` first for a device they haven't allowed, naming it and what you'd press."
 }
 
-/// Whose an install is, for what it may run (`DevicePermissions.installWaits`).
-enum InstallFor {
-    /// The person's own: Open App, Undo, a restore, their Reload.
-    case person
-    /// A request's agent at work: its looks, its steps and the turn's end.
-    case request
-    /// Lamp's own in the background: a place kept current, a Reload pressed while the person was away.
-    case background
-}

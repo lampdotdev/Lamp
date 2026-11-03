@@ -794,8 +794,8 @@ final class Store: ObservableObject {
         /// Stops the `use_app` batch the app is carrying out for this turn, set while one runs: `cancel` sends it, so a
         /// stopped turn never leaves a game's controller held.
         var stopUse: (@MainActor () -> Void)?
-        /// The games whose last look was where Try On points (`on_device`, away from this Mac), by app: `use_app` goes
-        /// where the last look went, so it never presses in a copy the agent hasn't seen.
+        /// The games whose last look was in the preview of where Try On points (`on_device`: the simulator, the emulator),
+        /// by app: `use_app` goes where the last look went, so it never presses in a copy the agent hasn't seen.
         var gameOnDevice: Set<String> = []
         /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
         var warming: Task<Void, Never>?
@@ -973,8 +973,6 @@ final class Store: ObservableObject {
         // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
         guard begin(owner) != nil else { reloadWhenFree.insert(id); return }
         reloadWhenFree.remove(id)
-        // Pressed by Lamp while the person was away, or by them: recorded as Lamp presses it (`AwayReloads.toPress`).
-        let by: InstallFor = away.pressing.contains(id) ? .background : .person
         away.installs(id)
         Task {
             // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since); a
@@ -987,12 +985,12 @@ final class Store: ObservableObject {
                 } else {
                     var mac = project
                     mac.chosen = .mac
-                    _ = await install(mac, inFront: true, fresh: true, reload: true, for: by)
+                    _ = await install(mac, inFront: true, fresh: true, reload: true)
                     done = [project.id + "/mac"]
                 }
             }
             // Reload is the person's go-ahead: every other place they have the wish on gets the change too.
-            await reloadEverywhere(owner, done: done, for: by)
+            await reloadEverywhere(owner, done: done)
             // Lamp pressed it while the person was away, and the turn that left it is over (it ended asking for Reload,
             // paused, or the Reload was put off until its end): the agent goes on, as after a pause.
             if away.landed(id, stillWaits: waitingForReload(in: owner) != nil), away.carriesOn(id) { queueCarryOn(owner) }
@@ -1013,8 +1011,7 @@ final class Store: ObservableObject {
     /// when the change is in (`reloadWaiting`, `finish`), never after the person pressed Stop (`AwayReloads`).
     private func reloadIfAway() {
         // By the wish: a Stop or a question waiting in its chat holds its parts' Reloads too.
-        // Nor for a game that reaches devices none of which is allowed now: its Reload runs the game's new code.
-        let waiting = Array(Set(projects.filter { Runtime.waitsForReload($0) && mayRunChange(in: $0) }.map { Self.requestOwner(of: $0, among: projects).id }))
+        let waiting = Array(Set(projects.filter(Runtime.waitsForReload).map { Self.requestOwner(of: $0, among: projects).id }))
         for id in away.toPress(waiting: waiting, idle: AwayReloads.secondsSinceInput) {
             guard let project = projects.first(where: { $0.id == id }) else { continue }
             log(project, .status, "Reloaded \(project.name) while you were away")
@@ -6327,8 +6324,8 @@ final class Store: ObservableObject {
             return (400, ["error": "use_app needs a list of actions."])
         }
         // A game is played where it was last looked at, the copy the person has: its window on this Mac, with Lamp's own
-        // controller held in the game's page under the same Stop as any app's use (`GameKit.controls`), or where Try On
-        // points, with what that place takes. Never in a copy of its own, and never on a phone page Lamp hasn't got.
+        // controller held in the game's page under the same Stop as any app's use (`GameKit.controls`), or in the preview
+        // of where Try On points (`AgentPreview`), with what that place takes. Never in a copy of its own, and never on a phone page Lamp hasn't got.
         let game = GameKit.isGame(project) && !GameKit.ownsLoop(project)
         let inWindow = game && playsInWindow(project) && !turn.gameOnDevice.contains(project.id)
         if game {
@@ -6336,7 +6333,7 @@ final class Store: ObservableObject {
             let moves = actions.contains { ["stick", "button"].contains($0["action"] as? String ?? "") }
             if !inWindow, moves {
                 return (200, ["text": "Controller moves (`stick` and `button`) go only into the game's window on this Mac, and your last look "
-                    + "was \(playsInWindow(project) ? "where Try On points" : "on \(placeName(project))"), which takes what its own `use_app` takes. "
+                    + "was \(playsInWindow(project) ? "in the preview of where Try On points" : "on \(placeName(project))"), which takes what its own `use_app` takes. "
                     + (playsInWindow(project) ? "Look without `on_device` to play it in its window here." : "This game has no window on this Mac to play it in.")])
             }
             if inWindow {
@@ -8262,7 +8259,7 @@ final class Store: ObservableObject {
         var built = true
         if await build(there, inPlace: false) == nil {
             placesFailed[app.id + "/" + place.rawValue] = nil
-            let problem = turn.stopped ? nil : await install(there, inFront: false, saysReady: false, quiet: true, for: .background)
+            let problem = turn.stopped ? nil : await install(there, inFront: false, saysReady: false, quiet: true)
             // The record says what the place has, not what was built for it: a build that didn't reach it, a request having
             // stopped it before or during the install included, is taken back.
             if turn.stopped || problem != nil || turn.didNotOpen {
@@ -8347,7 +8344,7 @@ final class Store: ObservableObject {
     /// person's Lamp put it on (a TV, the Xbox, an iPhone or iPad, an Android device: `Runtime.placed`) is built for and
     /// given the change, an open copy opening again with it. `done` are the places already given it, as app/place. One
     /// line says where it went and which places couldn't be reached.
-    private func reloadEverywhere(_ wish: LampProject, done: Set<String>, for by: InstallFor) async {
+    private func reloadEverywhere(_ wish: LampProject, done: Set<String>) async {
         var reached: [String] = [], unreached: [String] = []
         if done.contains(where: { $0.hasSuffix("/mac") }) { reached.append("this Mac") }
         for app in apps(of: wish) {
@@ -8391,7 +8388,7 @@ final class Store: ObservableObject {
                 // what it shows; one the app is open on opens again with it, as Play would.
                 if !mine, !open { installsOnly.insert(app.id) }
                 let installed = problem == nil
-                    ? await install(there, inFront: !mine, fresh: true, reload: true, saysReady: false, quiet: mine && !open, for: by) : problem
+                    ? await install(there, inFront: !mine, fresh: true, reload: true, saysReady: false, quiet: mine && !open) : problem
                 installsOnly.remove(app.id)
                 if installed == nil {
                     reached.append(!mine && !open ? name + " (for next time)" : name)
@@ -9351,7 +9348,7 @@ final class Store: ObservableObject {
             } else {
                 log(current, .status, (PageLive.shared.holdsForPause(current) ? "Shows at the next pause, or after Reload" : "Shows after Reload")
                     + (words.map { ": " + $0 } ?? ""))
-                if let why = turn.reloadWhy ?? PageLive.shared.reason(current) { log(current, .detail, "It waits for Reload: \(why).") }
+                if let why = PageLive.shared.reason(current) { log(current, .detail, "It waits for Reload: \(why).") }
             }
             return
         }
@@ -9384,7 +9381,6 @@ final class Store: ObservableObject {
         reloadWhenFree.remove(project.id)
         // The wish's own app, or the part of it whose change waits.
         guard let current = waitingForReload(in: wish) else { away.dropped(project.id); return }   // a live change put it in
-        let by: InstallFor = away.pressing.contains(project.id) ? .background : .person
         away.installs(project.id)
         turn.reloading = true
         turn.applying = Task { [weak self] in
@@ -9393,8 +9389,8 @@ final class Store: ObservableObject {
             // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
             var mac = current
             mac.chosen = .mac
-            _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false, for: by)
-            await reloadEverywhere(wish, done: [current.id + "/mac"], for: by)
+            _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false)
+            await reloadEverywhere(wish, done: [current.id + "/mac"])
             // Lamp's, while the person was away, with the turn over meanwhile: the agent never heard the change is in.
             let lamps = away.landed(project.id, stillWaits: Runtime.waitsForReload(current))
             if lamps, turns[project.id] !== turn, away.carriesOn(project.id) { queueCarryOn(wish) }
@@ -9486,11 +9482,6 @@ final class Store: ObservableObject {
     /// installed as usual (a change of its Swift, a copy Lamp isn't hearing from, a page that didn't answer).
     private func pageInPlace(_ project: LampProject, at place: PageLive.Place, owner: Turn?, inFront: Bool) async -> Bool {
         guard PageLive.takes(project), PageLive.shared.isOpen(project, at: place) else { return false }
-        // Asked as the change is about to run, whoever put it in (a step as the agent saves, a look, the turn's end).
-        guard mayRunChange(in: project) else {
-            holdForDevices(project, owner: owner)
-            return true
-        }
         // A game on the Mac that can only serve its phone page from its bundle (an older Lamp built it): a change to the
         // page goes in with the game installed again, so the open game, its phones and any that join have the same page.
         if place == .mac, GamePhones.changed(project), !PageLive.shared.takesPhonePage(project, at: place) { return false }
@@ -9538,22 +9529,6 @@ final class Store: ObservableObject {
         }
         prepareIconMeanwhile(project)
         return true
-    }
-
-    /// Whether a change may run in the game now, checked each time one is about to go in: a game that reaches the person's
-    /// devices runs new code only while they have a device allowed on Lamp's card (`device_permission`). Anything else may.
-    private func mayRunChange(in project: LampProject) -> Bool {
-        !DevicePermissions.openNeedsDevice(project) || !DevicePermissions.allowed(wish(of: project)).isEmpty
-    }
-
-    /// A change held off a game that reaches devices (`mayRunChange`): it waits for the person's Reload, as a change that
-    /// needs the game opened again does, and the agent hears why.
-    private func holdForDevices(_ project: LampProject, owner: Turn?) {
-        owner?.reloadWhy = DevicePermissions.heldForDevices
-        // Its own kind of wait: only the person's Reload puts it in, never Lamp's while they're away (`reloadIfAway`).
-        away.heldForDevices(Self.requestOwner(of: project, among: projects).id)
-        awaitReload(project, owner: owner)
-        owner?.outcomes.append(.held)
     }
 
     /// A game's page took its change, at once or at a pause after holding it: nothing waits for Reload any more, and the
@@ -9808,12 +9783,9 @@ final class Store: ObservableObject {
     /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
     /// `quiet` is a place Try On doesn't point at, kept current in the background (`updatePlaces`): nothing is opened
     /// that wasn't open, and a copy that is open takes the change as a request's would.
-    /// `by` is who it's for: the person's own Open App, Undo, restore or Reload, a request's agent (the default), or work
-    /// of Lamp's in the background (a place kept current, a Reload Lamp pressed while the person was away).
     private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
-                         early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false,
-                         for by: InstallFor = .request) async -> String? {
-        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet, for: by)
+                         early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
+        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
         // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`). A game's
         // page still putting the change in keeps it until it's on screen (`pageShown`).
@@ -9857,25 +9829,13 @@ final class Store: ObservableObject {
         AppTransition.land(project)
     }
 
-    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool, for by: InstallFor) async -> String? {
+    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {
         guard exists(project), project.holdsApp else { return nil }
         // An update being prepared is built, never installed or opened, until the person has reviewed it.
         guard AppUpdates.mayOpen(wish(of: project)) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
-        // An install that isn't the person's own runs a game that reaches their devices, wherever it goes and whether it
-        // opens the game or opens it again (a look, a step, the turn's end, a place kept current, a Reload Lamp pressed
-        // while they were away), only with a device of theirs allowed; else it waits for their own Reload. A background
-        // install that puts the build in place for a copy closed on this Mac runs nothing (`DevicePermissions.installWaits`).
-        let onMac = !(project.onDevice || project.onTV || project.onAndroid || project.onIOS)
-        if DevicePermissions.installWaits(for: by, quiet: quiet, onMac: onMac, macRunning: isRunning(project),
-                                          needsDevice: DevicePermissions.openNeedsDevice(project),
-                                          allowed: !DevicePermissions.allowed(wish(of: project)).isEmpty) {
-            holdForDevices(project, owner: owner)
-            // Work that records where the change went (a place kept current, Reload on every place) hears it didn't go.
-            return by == .request ? nil : DevicePermissions.heldForDevicesProblem
-        }
         if project.onDevice {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
@@ -10417,138 +10377,25 @@ final class Store: ObservableObject {
         }
     }
 
-    /// `look_at_app` for a device app: put on the device when it changed, then the device's own picture of its screen,
-    /// what it answered to the install and what the app printed.
-    /// A kind with a preview is looked at there unless the look asks for the device itself (`on_device`), which is how its
-    /// real speed and log are seen.
-    private func lookOnDeviceApp(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool, onDevice: Bool = false) async -> (Int, [String: Any]) {
-        if DeviceApps.previewFolder(for: project) != nil, !onDevice { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen) }
-        let name = DeviceApps.integration(for: project)?.name ?? "device"
-        var summary: String
-        // What the device runs may be older than what was built since: a look in the preview builds without putting it there.
-        let stale = deviceRunBuilt[project.id] != Runtime.builtFingerprint(project)
-        if changed || stale || deviceRuns[project.id] == nil || reopen {
-            let problem = await install(project, inFront: false, early: true, onDevice: true)
-            turn.look.installed[project.id] = true
-            if let problem {
-                return (200, ["text": "The app isn't on the \(name).\n\n\(problem)\n\nWhen it's a step for the person, say in a sentence that "
-                              + "their \(name) needs it first and that the card in the chat shows how, then end: don't repeat the steps."])
-            }
-            summary = changed ? "Lamp put the app on the \(name) with your changes and opened it." : "Lamp opened the app on the \(name) again, so it started fresh."
-        } else {
-            summary = "The app is open on the \(name) with your latest code; nothing needed putting on it again."
-        }
-        guard let run = deviceRuns[project.id] else { return (200, ["text": summary]) }
-        note("Looking at \(project.name)", for: project)
-        var text = summary + " " + (await deviceAppPicture(project, run: run)) + (await deviceAppScreen(project, run: run))
-        if let answer = run.installAnswer, !answer.isEmpty { text += "\n\nWhat the \(name) answered when the app was put on it:\n\(answer)" }
-        if !Privacy.sharesLog { text += " " + Privacy.logOff }
-        if Privacy.sharesLog, let kept = try? await DeviceApps.log(project, on: run.device) {
-            // The app's own log, read from the device: what a game logged, and how it kept to its frames.
-            let tail = kept.split(separator: "\n", omittingEmptySubsequences: false).suffix(60).joined(separator: "\n").trimmed
-            text += tail.isEmpty ? "\n\nIt has logged nothing yet." : "\n\nWhat it logged on the \(name):\n\(tail)"
-        } else if Privacy.sharesLog, let tail = Runtime.logTail(project, lines: 60) { text += "\n\nWhat it printed (the device's log):\n\(tail)" }
-        let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
+    /// `look_at_app` for a device app, in its integration's preview on this Mac (`AgentPreview` sends only apps that have
+    /// one): never put on the device itself, which is the person's to do with Play or Try On.
+    private func lookOnDeviceApp(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
+        guard DeviceApps.previewFolder(for: project) != nil else { return (200, ["text": AgentPreview.none(project)]) }
+        return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen)
     }
 
-    /// The app's screen as text, as the device describes it (its integration's `screen`), for after its picture: what
-    /// each node shows and which has focus, which a picture of a TV across the room is often too small to tell. Shared
-    /// with the agent as pictures are; empty when the integration has no way to read it or the device didn't answer.
-    private func deviceAppScreen(_ project: LampProject, run: DeviceApps.Run) async -> String {
-        guard Privacy.sharesPictures, deviceRuns[project.id] === run,
-              let screen = try? await DeviceApps.screen(project, on: run.device), !screen.trimmed.isEmpty,
-              // Read again after the wait: another app put on the device meanwhile, or pictures turned off, keeps it back.
-              Privacy.sharesPictures, deviceRuns[project.id] === run else { return "" }
-        // Indentation between tags is most of a tree's size; what each node says is kept.
-        let compact = screen.replacingOccurrences(of: #">\s+<"#, with: "><", options: .regularExpression)
-        let cut = compact.count > 12_000 ? String(compact.prefix(12_000)) + "… (cut)" : compact
-        return "\n\nThe screen as text, as \(run.device.name) describes it (the app's tree of nodes):\n" + cut
-    }
-
-    /// Takes the device's picture of its screen into the app's runtime folder, and says what it is.
-    private func deviceAppPicture(_ project: LampProject, run: DeviceApps.Run) async -> String {
-        let device = run.device
-        let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        AppFolder.remove(picture, in: project.dir)
-        guard Privacy.sharesPictures else { return Privacy.picturesOff }
-        do {
-            let data = try await DeviceApps.picture(project, on: device)
-            // Another app put on the device while the picture was taken would be in it: it isn't this app's screen.
-            guard deviceRuns[project.id] === run else { return "\(device.name) shows another app now, so no picture of this one could be taken." }
-            guard let png = DeviceApps.png(data), (try? AppFolder.write(png.data, to: picture, in: project.dir)) != nil else {
-                return "\(device.name)'s picture of its screen couldn't be read."
-            }
-            return "A picture of \(device.name)'s whole screen follows, \(png.width)×\(png.height) pixels, as the device took it."
-        } catch {
-            return "No picture of the screen could be taken: \(error.localizedDescription)"
-        }
-    }
-
-    /// `use_app` for a device app: the remote's keys, pressed through the integration's bridge, and waits; then the
-    /// screen again.
+    /// `use_app` for a device app, in its integration's preview on this Mac, as its look was: never on the device itself.
     private func useOnDeviceApp(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
-        if DeviceApps.previewFolder(for: project) != nil { return await useOnTV(project, actions: actions, json: json) }
-        let name = DeviceApps.integration(for: project)?.name ?? "device"
-        guard let run = deviceRuns[project.id] else { return (200, ["text": "The app isn't on the \(name). Call look_at_app first: it puts it there and opens it."]) }
-        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
-        let keys = DeviceApps.keys(for: project)
-        guard !keys.isEmpty, DeviceApps.integration(for: project)?.bridge?.use != nil else {
-            return (200, ["text": "Lamp can't press the \(name)'s keys: its integration doesn't say how."])
-        }
-        let typing = DeviceApps.integration(for: project)?.bridge?.type?.isEmpty == false
-        var report: [String] = []
-        for action in actions {
-            guard turns[project.id] === owner, !owner.stopped else { report.append("Stopped."); break }
-            guard deviceRuns[project.id] === run else { report.append("Another app was put on the \(name) meanwhile, so nothing more was pressed."); break }
-            let kind = action["action"] as? String ?? ""
-            if kind == "wait" {
-                let seconds = min(max(action["amount"] as? Double ?? 1, 0.2), 10)
-                try? await Task.sleep(for: .seconds(seconds))
-                report.append("Waited \(seconds.formatted()) s.")
-            } else if kind == "key", let key = (action["key"] as? String)?.lowercased() {
-                do {
-                    try await DeviceApps.press(key, in: project, on: run.device)
-                    report.append("Pressed \(key).")
-                    // The device draws what the key did before the next one, as a person's pace would let it.
-                    try? await Task.sleep(for: .milliseconds(400))
-                } catch {
-                    report.append("Couldn't press \(key): \(error.localizedDescription)")
-                    break
-                }
-            } else if kind == "type", typing, let text = action["text"] as? String, !text.isEmpty {
-                do {
-                    try await DeviceApps.type(text, in: project, on: run.device) { [weak self] in
-                        self?.turns[project.id] === owner && !owner.stopped && self?.deviceRuns[project.id] === run
-                    }
-                    report.append("Typed \"\(text)\".")
-                    try? await Task.sleep(for: .milliseconds(400))
-                } catch {
-                    report.append("Couldn't type \"\(text)\": \(error.localizedDescription)")
-                    break
-                }
-            } else {
-                report.append("\(kind.isEmpty ? "That" : kind) isn't something a \(name) does: only `key` (\(keys.joined(separator: ", ")))\(typing ? ", `type`" : "") and `wait`.")
-                break
-            }
-        }
-        try? await Task.sleep(for: .seconds(1))
-        var text = "What happened:\n" + report.joined(separator: "\n")
-        if Runtime.sourcesChanged(project) {
-            text += "\n\nThis is the app as last put on the \(name): it doesn't have the changes you've made to the code since. Call look_at_app to put them there."
-        }
-        guard deviceRuns[project.id] === run else { return (200, ["text": text + "\n\nThe \(name) shows another app now. Call look_at_app to put this one back."]) }
-        text += "\n\n" + (await deviceAppPicture(project, run: run)) + (await deviceAppScreen(project, run: run))
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
-        let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
+        guard DeviceApps.previewFolder(for: project) != nil else { return (200, ["text": AgentPreview.none(project)]) }
+        return await useOnTV(project, actions: actions, json: json)
     }
 
     // MARK: Games in their window
 
     /// Whether a game is looked at and used in its window on this Mac, the one the person plays in: a game on Lamp's web
-    /// runtime with the Mac among its places. Any other (a C++ game, whose one place is the Xbox; a game with no Mac
-    /// place) is looked at and used where Try On points. A page with a loop of its own goes its own way (`pageOnMac`).
+    /// runtime with the Mac among its places. Any other is looked at and used in the preview of where Try On points (the
+    /// simulator, the emulator), and a C++ game, whose one place is the Xbox, only built (`AgentPreview`). A page with a
+    /// loop of its own goes its own way (`pageOnMac`).
     private func playsInWindow(_ project: LampProject) -> Bool {
         GameKit.isGame(project) && !GameKit.ownsLoop(project) && GameKit.engine(project) == .web && project.hasMac
     }
@@ -10557,8 +10404,7 @@ final class Store: ObservableObject {
     /// agent's latest change has gone in. Pictures are asked of the game itself (`Runtime.requestScreenshots`), so the
     /// window isn't brought forward or touched, and nothing is pressed: it shows where the person is, as they left it.
     /// What the window can't show is said, never shown some other way: a change that waits for Reload or didn't go in,
-    /// a picture that looks blank, a change held because the game reaches devices none of which the person has allowed
-    /// (`mayRunChange`). Nil only when the game isn't open on this Mac, for the look to open it.
+    /// a picture that looks blank. Nil only when the game isn't open on this Mac, for the look to open it.
     private func lookAtOpenGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any])? {
         guard playsInWindow(project), stepsPage(project.at(.mac)) else { return nil }
         let began = Date()
@@ -10580,9 +10426,7 @@ final class Store: ObservableObject {
         guard stepsPage(mac) else { return nil }
         // What the window shows without the change, said rather than played anywhere else.
         var without = ""
-        if Runtime.waitsForReload(mac), turn.reloadWhy == DevicePermissions.heldForDevices {
-            without = " This is the game without your latest change: " + DevicePermissions.heldRefusal
-        } else if Runtime.waitsForReload(mac) || PageLive.shared.holds(mac) {
+        if Runtime.waitsForReload(mac) || PageLive.shared.holds(mac) {
             without = " This is the game without your latest change: it waits for the person's Reload, so don't say it's in."
         } else {
             let shown = !turn.shownSources.isEmpty && turn.shownSources == Runtime.fingerprint(mac)
@@ -10857,7 +10701,8 @@ final class Store: ObservableObject {
     /// read as text, with what it logged.
     private func lookOnAndroid(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
         var summary = "The app built and is running."
-        let running = await isAndroidRunning(project)
+        // Only a copy open in one of Lamp's emulators: one the person's Play opened on their own device isn't looked at.
+        let running = await isAndroidRunning(project) && androidApps[project.id].map { AgentPreview.isEmulator($0.device) } == true
         if changed || !running || reopen {
             if reopen { androidFresh.insert(project.id) }
             let crash = await install(project, inFront: false, early: true)
@@ -10931,7 +10776,9 @@ final class Store: ObservableObject {
     /// `use_app` for an Android app: the actions carried out with adb, the screen read between them.
     private func useOnAndroid(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
         // One selector for the whole call: the actions, and every check between them, go to the TV it was checked at.
-        guard let open = androidApps[project.id], let serial = await liveSerial(open), await isAndroidRunning(project, at: serial) else {
+        // Only a copy open in one of Lamp's emulators (`AgentPreview`): never one on the person's own device.
+        guard let open = androidApps[project.id], AgentPreview.isEmulator(open.device), let serial = await liveSerial(open),
+              await isAndroidRunning(project, at: serial) else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
@@ -11448,7 +11295,7 @@ final class Store: ObservableObject {
     /// app while it installs, so the fix waits for it to let go (`fixHeldCrash`, from `finish`).
     private func installReportingCrash(_ project: LampProject) async {
         let owner = turns[project.id]
-        guard let crash = await install(project, for: .person), owner?.stopped != true else { return }
+        guard let crash = await install(project), owner?.stopped != true else { return }
         // Only an app that opened and died is worth a fix; one that never opened says why in the chat already.
         if owner?.diedOnLaunch == true { crashesAfterRelease[project.id] = crash }
         // A TV, an Android device or another device that didn't take the app has said why already: it never opened, so
@@ -13880,19 +13727,13 @@ final class Store: ObservableObject {
         guard AppUpdates.mayOpen(wish(of: project)) else { return (400, ["error": AppUpdates.notOpenedYet]) }
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
-        // A game that controls the person's devices runs that code as it opens: a look that opens it, or starts it again,
-        // is one on a device they allowed, as a use is. Looking at it open in its window starts nothing.
-        // The look is told whether it may open the game, for one that closes while it looks (`mayOpen`), and whether it
-        // may put the agent's saved change into the open game, which runs the new code (the same answer).
         let reopen = arguments["reopen"] as? Bool ?? false, onDevice = arguments["on_device"] as? Bool ?? false
-        let device = (arguments["device"] as? String)?.trimmed ?? ""
-        let mayOpen = !DevicePermissions.openNeedsDevice(app) || (!device.isEmpty && DevicePermissions.allowed(wish(of: project)).contains(device))
-        if !mayOpen, reopen || onDevice || !playsInWindow(app) || !isRunning(app.at(.mac)) {
-            return (400, ["error": DevicePermissions.openRefusal + DevicePermissions.whyAsked(app)])
-        }
+        // Looked at in its preview on this Mac, never on a device of the person's, wherever Try On points
+        // (`AgentPreview`); with none to open, only built.
+        guard let preview = AgentPreview.app(for: app) else { return await underTurn(of: project, app) { await buildWithoutPreview(app) } }
         return await underTurn(of: project, app) {
-            await look(at: app, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                       reopen: reopen, onDevice: onDevice, shape: arguments["shape"] as? String, mayOpen: mayOpen)
+            await look(at: preview, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
+                       reopen: reopen, onDevice: onDevice, shape: arguments["shape"] as? String, tryOn: app.device)
         }
     }
 
@@ -13906,14 +13747,33 @@ final class Store: ObservableObject {
         if DevicePermissions.useNeedsDevice(app) {
             let device = (arguments["device"] as? String)?.trimmed ?? ""
             guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
-                return (400, ["error": DevicePermissions.useRefusal + DevicePermissions.whyAsked(app)])
+                return (400, ["error": DevicePermissions.useRefusal])
             }
         }
+        // Used in the same preview its look went to (`AgentPreview`), never on a device of the person's.
+        guard let preview = AgentPreview.app(for: app) else { return (200, ["text": AgentPreview.none(app)]) }
         var actions = arguments
         actions["part"] = nil
         actions["device"] = nil
         let body = (try? JSONSerialization.data(withJSONObject: actions)) ?? Data("{}".utf8)
-        return await underTurn(of: project, app) { await use(app, request: body) }
+        return await underTurn(of: project, app) { await use(preview, request: body) }
+    }
+
+    /// A look at an app with no preview Lamp can open (`AgentPreview`): built for its place, never put on a device, and
+    /// said so.
+    private func buildWithoutPreview(_ project: LampProject) async -> (Int, [String: Any]) {
+        guard let turn = turns[project.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
+        turn.look.inProgress = true
+        defer { turn.look.inProgress = false }
+        try? await writeOwnFiles(project, all: false)
+        if Runtime.sourcesChanged(project), let errors = await build(project, inPlace: false) {
+            if errors == gameToolsProblem(project) {
+                return (200, ["text": "The game can't be built yet, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
+            }
+            return (200, ["text": "The app doesn't build yet. Fix these compiler errors:\n\n\(errors)"])
+        }
+        return (200, ["text": AgentPreview.none(project)])
     }
 
     /// The app of the wish a tool call is for: the one its `part` names ("iphone", "tv", "mac"), which may be left out
@@ -13955,16 +13815,16 @@ final class Store: ObservableObject {
     /// way, asking about unsaved work, and opens a fresh copy: for what only a launch shows (how long it takes to
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
-    /// `onDevice`: for a game, where Try On points (its window, the simulator or the Xbox) rather than its window on this Mac.
-    /// `mayOpen` false: a game that reaches devices, looked at with no allowed device, is only looked at open, never opened,
-    /// and nothing the agent saved is put into it, since that runs the game's new code.
+    /// `onDevice`: for a game, the preview of the place Try On points at (the simulator, the emulator) rather than its window
+    /// on this Mac. `project` is the app's preview (`AgentPreview`); `tryOn` the device of the person's Try On points at,
+    /// which the look only speaks of, and which the turn's end delivers to.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
-                      shape: String? = nil, mayOpen: Bool = true) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, mayOpen: mayOpen), of: project)
+                      shape: String? = nil, tryOn: String? = nil) async -> (Int, [String: Any]) {
+        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, tryOn: tryOn), of: project)
     }
 
     private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool, shape: String? = nil,
-                         mayOpen: Bool = true) async -> (Int, [String: Any]) {
+                         tryOn: String? = nil) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -13998,7 +13858,8 @@ final class Store: ObservableObject {
 
         try? await writeOwnFiles(project, all: false)
         // A game is looked at where the person plays it, never in a copy of its own: its window on this Mac
-        // (`playsInWindow`), opened by the look when it's closed, or else where Try On points (a C++ game's Xbox).
+        // (`playsInWindow`), opened by the look when it's closed, or else in the preview of where Try On points (the
+        // simulator, the emulator: `AgentPreview`).
         let inWindow = !onDevice && playsInWindow(project)
         let onDevice = onDevice || (GameKit.isGame(project) && !GameKit.ownsLoop(project) && !inWindow)
         // `use_app` goes where this look went.
@@ -14017,8 +13878,6 @@ final class Store: ObservableObject {
         }
         // A game open in its window is looked at there as it is; closed, or asked to start again, it's opened as a Mac app is.
         if inWindow, !wantsFresh, let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
-        // Closed while it was looked at, or not ready to be looked at in place: opening it again runs its device code.
-        if GameKit.isGame(project), !mayOpen { return (400, ["error": DevicePermissions.openRefusal]) }
         // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
         // the preview, at any shape the agent asks for.
@@ -14046,7 +13905,7 @@ final class Store: ObservableObject {
         turn.autoApplied = 0
         if project.onAndroid { return await lookOnAndroid(project, turn: turn, changed: changed, reopen: reopen) }
         if project.onTV { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen, shape: shape) }
-        if project.onDevice { return await lookOnDeviceApp(project, turn: turn, changed: changed, reopen: reopen, onDevice: onDevice) }
+        if project.onDevice { return await lookOnDeviceApp(project, turn: turn, changed: changed, reopen: reopen) }
         if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
@@ -14063,7 +13922,7 @@ final class Store: ObservableObject {
                 // With a phone chosen under Try On, what's open in the simulator is this code, as after a launch: the
                 // turn's end puts it on the phone, as it does after a look that opened it. Without one the simulator is
                 // left as the agent found it, its state kept.
-                if project.device != nil {
+                if tryOn != nil {
                     turn.look.installed[project.id] = true
                     turn.look.crashes[project.id] = nil
                 }
@@ -14079,8 +13938,8 @@ final class Store: ObservableObject {
                 turn.look.toldPhone = true
                 // The phones are asked for only when the app is set to open on one: devicectl can have macOS ask about
                 // the local network, and an app on the simulator gives no reason to.
-                if project.device != nil { await refreshAppleDevices() }
-                on += " " + Devices.tryOnNote(chosen: project.device, among: devices, listed: looked || project.device != nil)
+                if tryOn != nil { await refreshAppleDevices() }
+                on += " " + Devices.tryOnNote(chosen: tryOn, among: devices, listed: looked || tryOn != nil)
             }
             var text = note + on + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)

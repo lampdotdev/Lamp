@@ -27,19 +27,14 @@ struct AwayReloads {
     /// The person pressed Stop, or the agent asked them a question they haven't answered: nothing of Lamp's starts
     /// the agent again, or reloads for it, until they send a request (an answer to the card is one).
     private(set) var held: Set<String> = []
-    /// Held because the app reaches the person's devices and none is allowed (`Store.holdForDevices`): the Reload runs
-    /// the app's new code, so it's only ever the person's to press, never Lamp's while they're away. Until that wait is
-    /// over.
-    private(set) var devices: Set<String> = []
 
     /// The apps waiting for Reload that Lamp presses it for now, marked as pressed.
     mutating func toPress(waiting: [String], idle: Double) -> [String] {
         // A press whose wait went some other way (a live change, the app closing, a crash set aside) before its
         // install began has nothing left to land: it mustn't keep the app's later held changes from being pressed.
         pressing = pressing.filter { waiting.contains($0) || installing.contains($0) }
-        devices = devices.filter { waiting.contains($0) }
         guard idle >= Self.after else { failed = []; return [] }
-        let ids = waiting.filter { !pressing.contains($0) && !failed.contains($0) && !held.contains($0) && !devices.contains($0) }
+        let ids = waiting.filter { !pressing.contains($0) && !failed.contains($0) && !held.contains($0) }
         pressing.formUnion(ids)
         return ids
     }
@@ -48,7 +43,6 @@ struct AwayReloads {
     /// sent on (`carriesOn`).
     mutating func landed(_ id: String, stillWaits: Bool) -> Bool {
         installing.remove(id)
-        if !stillWaits { devices.remove(id) }
         guard pressing.remove(id) != nil else { return false }
         if stillWaits { failed.insert(id); return false }
         return true
@@ -63,9 +57,6 @@ struct AwayReloads {
     /// Whether Lamp's own request to carry on may go to the agent: not once the person has stopped it, nor while a
     /// question of the agent's waits for their answer.
     func carriesOn(_ id: String) -> Bool { !held.contains(id) }
-
-    /// A change waits for Reload because the app reaches devices none of which is allowed: only the person presses it.
-    mutating func heldForDevices(_ id: String) { devices.insert(id) }
 
     /// The person pressed Stop. True when a Reload of Lamp's was still on its way, which is then given up: they're
     /// at the Mac, and the Reload is theirs again.

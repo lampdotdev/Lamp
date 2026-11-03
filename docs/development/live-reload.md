@@ -188,7 +188,7 @@ change waits for it, Lamp presses it and says so in the chat (`Store.reloadIfAwa
 between its steps; once the turn is over (paused, the agent asking for Reload in its reply, or the Reload put off until
 its end) the agent gets the same carry-on request as after a pause (`Store.queueCarryOn`), decided when the change is
 actually in, so it looks and finishes what was left. After the person's Stop, or while a question of the agent's waits for
-their answer, Lamp neither reloads for the agent nor carries it on until they send a request (`AwayReloads`). A change held because the app reaches the person's devices and none is allowed is never reloaded for them: its Reload runs the new code, so it's theirs alone (`AwayReloads.devices`, the approvals and privacy guide). A message typed meanwhile waits in the same line (the chats say "Sent once you
+their answer, Lamp neither reloads for the agent nor carries it on until they send a request (`AwayReloads`). A message typed meanwhile waits in the same line (the chats say "Sent once you
 press Reload" under it, `ChatLook.waitingForReload`), since the chat is beside the app and a reopen takes the chat
 down with it, and nothing the agent did meanwhile could be seen. So the note asks for the changes that go in live
 first and the held ones last, naming what's held (the icon, capabilities.json, a widget or Share item, what's read at launch, a Codable
