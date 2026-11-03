@@ -382,7 +382,7 @@ and an app kind that takes places one at a time (an Apple TV or a TV beside a Sw
 A game is drawn with three.js, or with Phaser when it's 2D (`GameKit.Engine.web`, written in its `.lamp-game` mark): the
 model writes both best and every place has a web view, and on the Xbox a game installed as a game gets enough of the
 console. Which of the two is the agent's choice as it writes the game, from what the person asked for: `Rules.gameWebKit`
-has it choose 2D or 3D and read the `game` and `game-ui` skills with the `2d-game` or `3d-game` skill, which are the only guidance that
+has it choose 2D or 3D and read the `game` and `game-ui` skills with the `2d-game` or `3d-game` skill (a new game played only on the Mac is handed the short `web-game` skill with `make_app_for` instead, `Rules.newMacGame`, and its first look opens the draft in its window while the same look plays it in the hidden preview, `Store.showDraft`, which counts it as on screen once its page says this launch has drawn, `FirstFrames`; a window behind another draws nothing and macOS won't take the person from what they're doing, so neither the look nor the turn's end waits for it: each says what's known, and a window not heard from isn't counted), which are the only guidance that
 names the library and its recipe (entry point, renderer, frame callback, where setup goes). How a new game opens, teaches, restarts and returns is chosen
 for that game in the `game-ui` skill and kept in a `Flow:` line in APP.md; `Rules.gameFlow`, in every game's prompt, only points there. The kind and the scaffold are
 the same, and the placeholder card is three.js's either way. A web game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,

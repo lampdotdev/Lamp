@@ -85,6 +85,23 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         return (preview.pictures, result)
     }
 
+    /// One play in a page of its own at another window's size (a look's `shape`): the page is born at that size, so
+    /// nothing has to be resized under it. It's built from cold, stopped as any play is and closed when it ends, and the
+    /// preview kept open for this game stays as it was, with the moves played so far, ready for the next play.
+    static func playOnce(_ staged: URL, script: [String], for id: String, size: CGSize, policy: NetworkPolicy? = nil,
+                         limit: Duration = .seconds(120)) async -> (pictures: [String: Data], result: [String: Any])? {
+        let preview = WebGamePreview()
+        underWay[id] = preview
+        defer {
+            if underWay[id] === preview { underWay[id] = nil }
+            preview.close()
+        }
+        preview.files.policy = policy
+        preview.files.own = "lamp-game://app"
+        guard let result = await preview.run(staged, script: script, limit: limit, size: size) else { return nil }
+        return (preview.pictures, result)
+    }
+
     private static func phoneFolder(_ folder: URL?, if phoned: Bool) -> URL? { phoned ? folder : nil }
 
     /// Kept open after a play that ended cleanly, closed once it has waited `keptFor` with no look and no work on the game.
@@ -167,7 +184,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         return found
     }
 
-    private func run(_ staged: URL, script: [String], limit: Duration) async -> [String: Any]? {
+    private func run(_ staged: URL, script: [String], limit: Duration, size: CGSize = CGSize(width: GameKit.width, height: GameKit.height)) async -> [String: Any]? {
         began = Date()
         builtIn = nil
         files.folder = staged
@@ -182,7 +199,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "lampPreview")
         let json = (try? JSONSerialization.data(withJSONObject: ["script": script, "warm": true] as [String: Any])).map { String(decoding: $0, as: UTF8.self) } ?? "{\"script\":[]}"
         configuration.userContentController.addUserScript(WKUserScript(source: "window.lampPreview = \(json);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: GameKit.width, height: GameKit.height), configuration: configuration)
+        let view = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration)
         webView = view
         view.navigationDelegate = self
         view.load(URLRequest(url: URL(string: "lamp-game://app/index.html")!))
@@ -257,9 +274,10 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply, WKNavigat
             }
             let configuration = WKSnapshotConfiguration()
             configuration.afterScreenUpdates = true
+            let size = webView.bounds.size
             webView.takeSnapshot(with: configuration) { [weak self] image, _ in
                 MainActor.assumeIsolated {
-                    if let self, let image, let png = Self.png(image, width: GameKit.width, height: GameKit.height) { self.keep(png, as: name) }
+                    if let self, let image, let png = Self.png(image, width: Int(size.width), height: Int(size.height)) { self.keep(png, as: name) }
                     guard let self, let phone = self.phone else { return replyHandler(true, nil) }
                     Task { @MainActor in
                         if let png = await phone.picture() { self.keep(png, as: GameKit.phonePicture + name) }

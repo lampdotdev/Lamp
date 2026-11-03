@@ -639,6 +639,7 @@ final class LampPagePlaying: NSObject, WKScriptMessageHandler {
                 LampPageItems.playing = false
                 LampRuntime.gameLoading()
             case "playing":
+                LampPageLive.current?.sayPlaying()
                 guard LampPageItems.playing != true else { return }
                 LampPageItems.playing = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { LampRuntime.gamePlaying() } }
@@ -1205,6 +1206,10 @@ final class LampPageBlockedHost: NSObject {
 /// What the page did is told back to Lamp, which says so in the chat. The files are kept for the next launch of this
 /// same bundle, so the app opens as Lamp last changed it; a new bundle (Lamp installed the app again) starts from its own.
 @MainActor final class LampPageLive: NSObject, WKScriptMessageHandler {
+    #if os(macOS)
+    /// The one page this app takes changes for, which says when it has drawn (`LampPagePlaying`).
+    private(set) weak static var current: LampPageLive?
+    #endif
     private let files: LampPageFiles
     private weak var page: WKWebView?
     private var epoch = "", gen = 0
@@ -1238,6 +1243,9 @@ final class LampPageBlockedHost: NSObject {
     init(files: LampPageFiles) {
         self.files = files
         super.init()
+        #if os(macOS)
+        Self.current = self
+        #endif
         // The changes this bundle was last given, kept from an earlier launch.
         if let data = try? Data(contentsOf: Self.manifest), let kept = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            kept["bundle"] as? String == Self.bundle, let hashes = kept["files"] as? [String: String] {
@@ -1377,6 +1385,11 @@ final class LampPageBlockedHost: NSObject {
         let more = said.filter { ["built", "kept", "waits", "pause", "frozen", "firstFrame", "later"].contains($0.key) }
         tell(said["gen"] as? Int ?? gen, state, why: said["why"] as? String, more: more)
     }
+
+    #if os(macOS)
+    /// The page has drawn: told to Lamp as this process's, so Lamp can tell this launch from an earlier one.
+    func sayPlaying() { tell(gen, "playing", more: ["pid": Int(ProcessInfo.processInfo.processIdentifier)]) }
+    #endif
 
     /// `why` is the page's reason for opening again or holding a change (code it couldn't swap in), or what came through.
     private func tell(_ gen: Int, _ state: String, why: String? = nil, more: [String: Any] = [:]) {

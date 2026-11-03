@@ -43,7 +43,7 @@ final class SkillsTests: XCTestCase {
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
                                            "scripting", "game", "game-ui", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
                                            "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode",
-                                           "roku-developer-mode", "more-apps", "github-projects", "assets"])
+                                           "roku-developer-mode", "more-apps", "github-projects", "assets", "web-game"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -52,10 +52,10 @@ final class SkillsTests: XCTestCase {
         // The integrations' skill and the one on controlling the person's devices are named by the devices' rule, in every
         // prompt, rather than in the list, and how to build a page for phones by the phone-controllers skill and by an app
         // whose code has one; designing for a TV by the TV rows of the table (`Place.skills`), to an app on one, whatever
-        // its kind; a device's setup step by the skill itself (`SetupGuides`), to Lamp's setup alone; every other one is offered to some prompt. How an app's copies and a wish's apps share data
+        // its kind; a device's setup step by the skill itself (`SetupGuides`), to Lamp's setup alone; the short guide to a new Mac game comes whole with make_app_for; every other one is offered to some prompt. How an app's copies and a wish's apps share data
         // is offered to every kind that carries `LampWish`, which is every kind but a device's.
         let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0) + Skills.named($0) }
-        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design"])
+        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design", "web-game"])
                                                        .subtracting(SetupGuides.registrations(shipped).map(\.skill))) }
         XCTAssertTrue(shipped["phone-controllers"]!.body.contains("phone-pages skill"))
         // How an app is made and on which devices, games and their screens, 3D in a page, web apps, phones as controllers, and whether a
@@ -297,7 +297,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, game-ui, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, game-ui, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-game, web-or-native, wish-links.")
     }
 
     func testParsing() {

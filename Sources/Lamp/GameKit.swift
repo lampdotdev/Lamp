@@ -791,6 +791,11 @@ enum GameKit {
     }
 
     /// Whether the game is still the scaffold: its code is as Lamp wrote it, every file of it.
+    /// A web game played only on the Mac, which is what the short guide and the first show of a draft are for.
+    static func isMacWebGame(_ project: LampProject) -> Bool {
+        isGame(project) && engine(project) == .web && !ownsLoop(project) && project.openPlaces == [.mac]
+    }
+
     static func isScaffold(_ project: LampProject) -> Bool {
         let web = engine(project) == .web
         return scaffoldCode(web: web).allSatisfy { path in
@@ -1177,14 +1182,17 @@ enum GameKit {
     }
 
     /// Plays the script on a web game's page, as `play` does on a C++ game's preview, from the copy `stageWeb` made.
-    @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
+    @MainActor static func playWeb(_ project: LampProject, script given: [String], window: CGSize? = nil) async throws -> Played {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
         let limit = previewLimit(project)
-        guard let (drawn, result) = await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project),
-                                                              phone: phonePreviewFolder(project), limit: .seconds(limit)) else {
-            throw Failure(message: "Stopped.")
+        let play = if let window {
+            await WebGamePreview.playOnce(page, script: script, for: project.id, size: window, policy: previewPolicy(project), limit: .seconds(limit))
+        } else {
+            await WebGamePreview.play(page, script: script, for: project.id, policy: previewPolicy(project),
+                                      phone: phonePreviewFolder(project), limit: .seconds(limit))
         }
+        guard let (drawn, result) = play else { throw Failure(message: "Stopped.") }
         let logs = result["logs"] as? [String] ?? []
         // Only a build from the top counts: a play in the preview kept open builds just what changed.
         if result["cold"] as? Bool == true, let took = result["took"] as? TimeInterval {
@@ -1348,6 +1356,25 @@ extension Agent {
 }
 
 extension Agent.Rules {
+    /// What a new web game played only on the Mac is told with `make_app_for`, in place of `gamePrompt(part:)` and the
+    /// skills that one has it read: the web-game skill whole, which saves the turn it would take to open it, and only
+    /// the rules a first game needs. A game at home elsewhere, and every later request, has the full rules.
+    static func newMacGame(in folder: String, guide: String) -> String {
+        let rules = ["- Your tools and shell start in the wish's folder: every file of this game is under \(folder)/. Only the wish's description is there itself, in \(AppDescription.file), with `write`.\n" + newMacGameEdit, guide + "\n", Agent.Rules.pageNative + "\n", Agent.Rules.gameBudget, Agent.Rules.gameWebAssets, Agent.Rules.gameTry]
+        return (Agent.Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac", folder: folder) + "\n\nRules:\n" + rules.joined())
+            .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again where Try On points")
+    }
+
+    static let newMacGameEdit = """
+    - Lamp builds by itself when you look and at the end of your turn, so don't run a build, a server or a browser \
+    yourself, and leave .lamp/ alone. Where else the game is played is the person's to ask for (make_app_for). The guide \
+    that follows says how to write it.
+
+
+    """
+
     static let gameOwnLoop = """
     - This game's page was made for the Xbox before Lamp had a game runtime: it runs its own loop and reads the controller \
     and keyboard itself. Keep it that way and change what's asked within it. Moving it onto `game()` from Web/lamp-game.js \

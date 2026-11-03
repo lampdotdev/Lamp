@@ -1,6 +1,6 @@
 ---
 name: game-ui
-description: A game's screens and how they feel - picking the screen flow that fits this game (how it opens, teaches, restarts and returns) before drawing any of them, what the shared display and each phone show in each phase, authored art direction, an overworld where one suits, one signature motion, phone controllers built for the player's job, teaching controls in play, and checking the real opening. Read before designing or changing a game's opening, title, menus, level select, HUD, pause or results, whatever the game is made with.
+description: A game's screens and how they feel - picking the screen flow that fits this game (how it opens, teaches, restarts and returns) before drawing any of them, what the shared display and each phone show in each phase, authored art direction, an overworld where one suits, one signature motion, phone controllers built for the player's job, teaching controls in play, and checking the real opening. Read before designing or changing a game's opening, title, menus, level select, HUD, pause or results, whatever the game is made with; a new web game on the Mac starts from the web-game guide instead, which says when to open this.
 ---
 
 # A game's screens

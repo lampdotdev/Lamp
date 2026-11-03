@@ -67,6 +67,14 @@ import { createBashTool, createEditTool, createWriteTool, defineTool, type Exten
  * (Lamp says where with LAMP_TOOLS_JSON). Lamp's MCP endpoint serves the same file to Claude Code and Codex,
  * so there is one definition of each tool. Only the `execute` bodies live here.
  */
+/**
+ * The tools a new wish's first turn leaves out of what it sends each request, until `make_app_for` says what's being
+ * made (`Agent.deferredTools`): pi declares a `deferred` tool only once `tool_search` loads it. A make_app_for whose reply
+ * says `allTools` (anything but a new web game on the Mac) declares the rest, since that app's rules may want any of
+ * them. A run that resumes a conversation sets nothing here: it names all its tools.
+ */
+const deferred = new Set((process.env.LAMP_DEFER_TOOLS ?? "").split(",").filter(Boolean));
+
 const registryPath = process.env.LAMP_TOOLS_JSON ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "lamp-tools.json");
 const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
 	name: string; label: string; description: string; inputSchema: Record<string, unknown>;
@@ -74,12 +82,22 @@ const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
 function spec(name: string) {
 	const tool = registry.find((t) => t.name === name);
 	if (!tool) throw new Error(`lamp-tools.json has no tool named ${name}`);
-	// biome-ignore lint/suspicious/noExplicitAny: the schema is JSON, typed where each tool uses its params
-	return { name: tool.name, label: tool.label, description: tool.description, parameters: Type.Unsafe<any>(tool.inputSchema) };
+	return {
+		name: tool.name, label: tool.label, description: tool.description,
+		// biome-ignore lint/suspicious/noExplicitAny: the schema is JSON, typed where each tool uses its params
+		parameters: Type.Unsafe<any>(tool.inputSchema),
+		...(deferred.has(name) ? { exposure: "deferred" as const } : {}),
+	};
 }
 
+/**
+ * pi runs the calls of one message together, unless one of them is sequential, when it runs them all in the order given.
+ * A look or a use reads what the calls before it wrote, so each is: a write listed before it is done when it runs. Its
+ * tool description says to put it last, since one listed first runs first.
+ */
 const lookAtApp = defineTool({
 	...spec("look_at_app"),
+	executionMode: "sequential",
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 		const url = process.env.LAMP_LOOK_URL;
 		if (!url) throw new Error("Lamp isn't available to look at the app.");
@@ -232,6 +250,7 @@ function takesMessagesMidTurn(pi: ExtensionAPI) {
 
 const useApp = defineTool({
 	...spec("use_app"),
+	executionMode: "sequential",
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 		const url = process.env.LAMP_USE_URL;
 		if (!url) throw new Error("Lamp isn't available to use the app.");
@@ -294,12 +313,20 @@ const webFetch = defineTool({
  * tools take only what they act on, so nothing else says it in words a person can follow, and a command's text or a
  * file's name is never read for it. An extension may register a tool under a built-in's name to replace it (pi's
  * extension docs); the rest is pi's tool as it is, which runs once the words are set aside. The field is required:
- * left optional, Sonnet through pi left it off every command, where Opus filled it in.
+ * left optional, Sonnet through pi left it off every command, where Opus filled it in. A call that leaves it off all the
+ * same isn't worth a whole request to the model to refuse: pi's `prepareArguments`, which runs before its validation,
+ * gives it empty words, and Lamp names the step as it does any step without them ("Running a command",
+ * `TurnProgress.activity`). Only this field: anything wrong with what the tool acts on is still refused. pi's edit has a
+ * `prepareArguments` of its own, which runs first.
  */
-function withWords<T extends { parameters: { properties: Record<string, unknown> }; execute: unknown }>(tool: T, field: string, words: string): T {
+function withWords<T extends { parameters: { properties: Record<string, unknown> }; execute: unknown; prepareArguments?: (raw: unknown) => unknown }>(tool: T, field: string, words: string): T {
 	return {
 		...tool,
 		parameters: Type.Object({ ...tool.parameters.properties, [field]: Type.String({ description: words }) }),
+		prepareArguments(raw: unknown) {
+			const given = (tool.prepareArguments ? tool.prepareArguments(raw) : raw) as Record<string, unknown> | undefined;
+			return given && typeof given === "object" && given[field] === undefined ? { ...given, [field]: "" } : given;
+		},
 		async execute(id: string, params: Record<string, unknown>, ...rest: unknown[]) {
 			const { [field]: _said, ...run } = params;
 			return (tool.execute as (...args: unknown[]) => unknown)(id, run, ...rest);
@@ -587,7 +614,7 @@ const offerSetup = defineTool({
 	},
 });
 
-const makeAppFor = defineTool({
+const makeAppFor = (pi: ExtensionAPI) => defineTool({
 	...spec("make_app_for"),
 	async execute(_toolCallId, params, signal) {
 		const url = process.env.LAMP_KIND_URL;
@@ -598,8 +625,9 @@ const makeAppFor = defineTool({
 			body: JSON.stringify(params),
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
 		});
-		const reply = (await response.json()) as { text?: string; error?: string };
+		const reply = (await response.json()) as { text?: string; error?: string; allTools?: boolean };
 		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		if (reply.allTools) pi.setActiveTools([...new Set([...pi.getActiveTools(), ...deferred])]);
 		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
 	},
 });
@@ -777,7 +805,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(makeArt);
 	pi.registerTool(assets);
 	pi.registerTool(offerSetup);
-	pi.registerTool(makeAppFor);
+	pi.registerTool(makeAppFor(pi));
 	pi.registerTool(removeApp);
 	pi.registerTool(renameApp);
 	pi.registerTool(useIconPicture);

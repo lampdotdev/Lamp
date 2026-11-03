@@ -309,9 +309,10 @@ extension Agent {
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
             env["LAMP_STEER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/steer"
             env["LAMP_TOKEN"] = token
-            return AgentRun(command: command(fileCount: files.count),
+            let defers = defersTools(project, session: session)
+            return AgentRun(command: command(fileCount: files.count, defers: defers),
                             env: env.merging(environment(prompt: prompt, files: files, project: project, session: session ?? "",
-                                                         sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path)) { $1 })
+                                                         sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path, defers: defers)) { $1 })
         case .claude:
             // Lamp builds the app itself. Attachments are listed in the prompt; Claude reads them.
             // Isolated from the user's own Claude Code setup, whether this is their copy (with their sign-in) or

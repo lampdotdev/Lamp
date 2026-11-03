@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "use_icon_picture": .icon, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "tool_search": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "use_icon_picture": .icon, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
