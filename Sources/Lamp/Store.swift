@@ -10547,10 +10547,6 @@ final class Store: ObservableObject {
         guard turns[project.id] === turn, !turn.stopped else { return (200, ["text": "Stopped."]) }
         // Closed meanwhile: the look opens it.
         guard stepsPage(mac) else { return nil }
-        // A first draft's window that hasn't drawn shows nothing of the game yet (`showDraft`): said, with no picture.
-        guard windowDrew(mac.id, in: turn) else {
-            return (200, ["text": Self.draftWords(turn.look.draftKnown[mac.id]) ?? "The game's window hasn't drawn yet."])
-        }
         // What the window shows without the change, said rather than played anywhere else.
         var without = ""
         if Runtime.waitsForReload(mac) || PageLive.shared.holds(mac) {
@@ -10571,8 +10567,13 @@ final class Store: ObservableObject {
         let asked = Date()
         Runtime.requestScreenshots(of: mac)
         var screenshots = await Runtime.screenshots(of: mac, since: asked, waiting: 3)
+        // Each look's own picture is the newest word on a first draft's window (`showDraft`): what an earlier look or its
+        // watch found (nothing drawn in time, a blank frame, no picture) stands only until a picture shows the game.
+        let drewBefore = windowDrew(mac.id, in: turn)
+        if let first = screenshots.first { draftPictured(mac.id, blank: GameKit.isBlank(first), in: turn) }
         var text = "Lamp looked at the game open on the person's Mac, in its window: this is where they are in it, as they left it, "
             + "not a play from the start." + without
+        if !drewBefore, !windowDrew(mac.id, in: turn), let said = Self.draftWords(turn.look.draftKnown[mac.id]) { text = said + " " + text }
         // One even color where the game is drawn: a window covered, on another Space or on a sleeping display draws
         // nothing once its page stops drawing, and so does a game that draws nothing. Which it is can't be told here.
         if let first = screenshots.first, GameKit.isBlank(first) {
@@ -14335,13 +14336,15 @@ final class Store: ObservableObject {
     /// Waits for the page of this launch to say it has drawn, within one limit from when the window was presented, and
     /// makes one picture of what it drew. This runs on past the look that opened it, and past the part's hold on the turn
     /// (`underTurn`), so it goes by the turn itself: the turn's end takes what's known (`settleDraft`) and ends the wait.
-    private func watchDraft(_ mac: LampProject, launch: Int32, in turn: Turn) async -> DraftWindow {
-        let id = mac.id, limit = Self.draftLimit, began = Date()
-        let drew = await firstFrames.wait(app: id, launch: launch, limit: .seconds(limit))
+    func watchDraft(_ mac: LampProject, launch: Int32, in turn: Turn, limit: TimeInterval = draftLimit) async -> DraftWindow {
+        let id = mac.id, began = Date()
+        let drew = await firstFrames.wait(app: id, launch: launch, limit: .milliseconds(Int(limit * 1000)))
         guard !turn.stopped else { return .stopped }
         switch drew {
         case .timedOut:
             log(mac, .detail, "The game's window drew nothing for \(Int(limit)) s.")
+            // A frame that comes after the wait still counts: the page's word that this launch drew puts it right.
+            firstFrames.whenDrawn(app: id, launch: launch) { [weak self] in self?.draftDrewLate(id, in: turn) }
             return .timedOut(seconds: Int(limit))
         // Ended by the turn's end, which doesn't wait for a window that hasn't drawn: not that the person closed it.
         case .ended: return turn.look.draftsDone ? .pending : .closed
@@ -14391,6 +14394,21 @@ final class Store: ObservableObject {
     func recordDraft(_ window: DraftWindow, for id: String, in turn: Turn) {
         guard turn.look.draftKnown[id] != .content else { return }
         turn.look.draftKnown[id] = window
+    }
+
+    /// A look's picture of a first draft's window: one that shows the game says it's on screen now, whatever an earlier
+    /// look or the draft's watch found. A blank one changes nothing.
+    func draftPictured(_ id: String, blank: Bool, in turn: Turn) {
+        guard !blank, turn.look.draftOpen.contains(id), turn.look.draftKnown[id] != .content, !turn.look.draftsDone else { return }
+        turn.look.draftKnown[id] = .content
+        turn.shown.append(Date())
+    }
+
+    /// A first draft's window that drew nothing within its watch has drawn since: it's on screen, while its turn goes on.
+    func draftDrewLate(_ id: String, in turn: Turn) {
+        guard turn.look.draftOpen.contains(id), turn.look.draftKnown[id] != .content, !turn.look.draftsDone, !turn.stopped else { return }
+        turn.look.draftKnown[id] = .content
+        turn.shown.append(Date())
     }
 
     /// Whether what's in the game's window on this Mac can be said to be where the person is: not a draft that hasn't drawn.

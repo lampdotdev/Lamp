@@ -147,6 +147,43 @@ import XCTest
         XCTAssertTrue(shown)
     }
 
+    /// A first draft's window that drew nothing within its watch, and draws after: the page's word that this launch drew
+    /// puts it right, so later looks and the turn's end don't go on saying it hasn't drawn.
+    func testADraftThatTimedOutThenDrawsIsOnScreen() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = Store.shared
+        let game = LampProject(id: "draft-late-" + UUID().uuidString, name: "Draft", exe: "Draft", dir: dir, platform: .game)
+        let turn = Store.Turn()
+        turn.look.draftOpen.insert(game.id)
+        defer { store.firstFrames.forget(app: game.id) }
+
+        let window = await store.watchDraft(game, launch: 7, in: turn, limit: 0.05)
+        XCTAssertEqual(window, .timedOut(seconds: 0))
+        store.recordDraft(window, for: game.id, in: turn)
+        XCTAssertFalse(store.windowDrew(game.id, in: turn))
+
+        store.firstFrames.report(app: game.id, launch: 7)
+        XCTAssertTrue(store.windowDrew(game.id, in: turn), "the late frame clears the timed-out word")
+        XCTAssertEqual(turn.look.draftKnown[game.id], .content)
+    }
+
+    /// A first draft whose watch saw a frame of one color, and a later look whose picture shows the game: that picture is
+    /// the newer word. A blank picture leaves the earlier word as it was.
+    func testADraftThatLookedBlankThenShowsTheGameIsOnScreen() {
+        let store = Store.shared, id = "draft-blank-" + UUID().uuidString
+        let turn = Store.Turn()
+        turn.look.draftOpen.insert(id)
+        store.recordDraft(.blank, for: id, in: turn)
+        XCTAssertFalse(store.windowDrew(id, in: turn))
+
+        store.draftPictured(id, blank: true, in: turn)
+        XCTAssertEqual(turn.look.draftKnown[id], .blank)
+        store.draftPictured(id, blank: false, in: turn)
+        XCTAssertTrue(store.windowDrew(id, in: turn), "a picture of the game clears the blank word")
+    }
+
     /// Calls sent in one message on a part of the wish: the first to finish doesn't take the part from the others.
     func testAPartStaysHeldUntilTheLastCallOnItFinishes() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("first-draft-\(UUID().uuidString)")
