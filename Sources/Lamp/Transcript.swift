@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, rename, connectors, network, ask, progress, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, assets, offer, kind, remove, rename, icon, connectors, network, ask, progress, result, wish, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "tool_search": .learn, "save_notes": .remember, "make_art": .art, "assets": .assets, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "rename_app": .rename, "use_icon_picture": .icon, "connectors": .connectors, "lampify": .kind, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
@@ -62,6 +62,7 @@ struct ToolCall {
         case .kind: "laptopcomputer.and.iphone"
         case .remove: "minus.circle"
         case .rename: "character.cursor.ibeam"
+        case .icon: "app.badge"
         case .connectors: "link"
         case .network: "wifi"
         case .ask: "questionmark.bubble"
@@ -95,6 +96,7 @@ struct ToolCall {
         case .kind: "Changed what it runs on"
         case .remove: "Took an app away"
         case .rename: "Renamed it"
+        case .icon: "Changed the icon"
         case .connectors: "Looked up a connector"
         case .network: "Looked around your network"
         case .ask: "Asked you"
@@ -130,6 +132,7 @@ struct ToolCall {
         case .kind: "changed what it runs on"
         case .remove: "took an app away"
         case .rename: "renamed it"
+        case .icon: "changed the icon"
         case .connectors: "looked up \(n("connector", "connectors"))"
         case .network: "looked around your network"
         case .ask: "asked you"
@@ -670,14 +673,27 @@ enum ToolGroup {
 /// The line under a change that waits for the app to be reopened (`Store.awaitReload`): its button does what the
 /// one in the app's title bar does.
 enum ReloadLine {
-    static func text(_ name: String) -> String { "Reload \(name) to see this change." }
+    /// `held` is how much of the change the open game took (`PageLive.Hold`): a page may have some of it, or take it by
+    /// itself at a pause, and the line says so rather than that nothing shows until Reload.
+    static func text(_ name: String, held: PageLive.Hold.Kind = .reload) -> String {
+        switch held {
+        case .reload: "Reload \(name) to see this change."
+        case .partly: "Part of this change is in. Reload \(name) to see the rest."
+        case .pause: "This change goes in at the next pause, or Reload \(name) to see it now."
+        }
+    }
     /// Reload reaches the wish's other places too (`Store.reloadEverywhere`): where it opens the app again (where it's
     /// open) and where it only puts the new version, for next time, so nobody using a TV or a phone is surprised.
-    static func text(_ name: String, reopens: [String], updates: [String]) -> String {
-        guard reopens.count + updates.count > 1 || !updates.isEmpty else { return text(name) }
+    static func text(_ name: String, reopens: [String], updates: [String], held: PageLive.Hold.Kind = .reload) -> String {
+        guard reopens.count + updates.count > 1 || !updates.isEmpty else { return text(name, held: held) }
         let open = reopens.isEmpty ? "" : "Reload opens \(name) again on \(listed(reopens))"
         let next = updates.isEmpty ? "" : (open.isEmpty ? "Reload puts this change on " : ", and puts it on ") + listed(updates) + " for next time"
-        return open + next + "."
+        let lead = switch held {
+        case .reload: ""
+        case .partly: "Part of this change is in. "
+        case .pause: "This change goes in at the next pause. "
+        }
+        return lead + open + next + "."
     }
     static func listed(_ names: [String]) -> String {
         names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!

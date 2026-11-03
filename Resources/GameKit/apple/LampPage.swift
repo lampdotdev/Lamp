@@ -52,6 +52,8 @@ import UIKit
 
 @MainActor enum LampPage {
     private static var registered = false
+    /// Whether this launch's fresh start (`-LampFreshStart`) has gone to a page already.
+    static var freshStartGiven = false
 
     /// Gives the page in `configuration` its ways to Lamp and to this device, for pages served at `scheme`. A page that
     /// logs its own errors (a game's runtime does) leaves `catchErrors` off, or each would be logged twice.
@@ -63,6 +65,20 @@ import UIKit
         configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the wish's other apps
         configuration.userContentController.addScriptMessageHandler(LampPageVoice(scheme: scheme), contentWorld: .page, name: "lampVoice")
         configuration.userContentController.add(LampPageLog(), name: "lampLog")
+        #if os(macOS)
+        configuration.userContentController.add(LampPagePlaying(), contentWorld: .page, name: "lampPlaying")
+        configuration.userContentController.add(LampPageDriveTaken(scheme: scheme), contentWorld: .page, name: "lampDriveTakenOver")
+        // A fresh start Lamp asked for when it opened the app (`-LampFreshStart YES`): a game starts from its beginning
+        // (lamp-game.js's claim()), once, at this launch's first page; a page opened again later in the same launch
+        // (Reload, a change) starts where the player was, as ever.
+        if UserDefaults.standard.bool(forKey: "LampFreshStart"), !LampPage.freshStartGiven {
+            // Once a launch, whatever opens later in it (another window of the game) starting where the player was.
+            LampPage.freshStartGiven = true
+            configuration.userContentController.addUserScript(WKUserScript(source: """
+                try { if (!sessionStorage.getItem('lamp.freshStart')) { sessionStorage.setItem('lamp.freshStart', '1'); window.lampFreshStart = true; } } catch (e) {}
+                """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+        #endif
         // The page's console, into the app's log.
         configuration.userContentController.addUserScript(WKUserScript(source: """
             (function () {
@@ -623,6 +639,42 @@ final class LampPageLog: NSObject, WKScriptMessageHandler {
     }
 }
 
+#if os(macOS)
+/// A game's page saying the person played while Lamp held its controller (lamp-game.js, "Lamp's hands on the
+/// controller"): it has let go already, and Lamp's batch ends there, as it does for their click or key in the app.
+final class LampPageDriveTaken: NSObject, WKScriptMessageHandler {
+    private let scheme: String
+    init(scheme: String) { self.scheme = scheme }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard LampPage.isOwnPage(message, scheme: scheme) else { return }
+        MainActor.assumeIsolated { LampDriver.Handover.current?.stop() }
+    }
+}
+
+/// A game's page saying it's loading, and then that it's playing (lamp-game.js): the picture of the app Lamp's desk shows
+/// waits for play, and is taken a moment after it starts, once the loading screen has faded (`LampRuntime.snapshot`).
+final class LampPagePlaying: NSObject, WKScriptMessageHandler {
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        let said = message.body as? String
+        MainActor.assumeIsolated {
+            switch said {
+            case "loading":
+                guard LampPageItems.playing == nil else { return }
+                LampPageItems.playing = false
+                LampRuntime.gameLoading()
+            case "playing":
+                LampPageLive.current?.sayPlaying()
+                guard LampPageItems.playing != true else { return }
+                LampPageItems.playing = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { LampRuntime.gamePlaying() } }
+            default: break
+            }
+        }
+    }
+}
+#endif
+
 // MARK: - Serving and showing the page
 
 /// The page's files, from the app's bundle (Web/), each a plain file inside it, at <scheme>://app/; and those Lamp has
@@ -987,6 +1039,12 @@ final class LampPageBlockedHost: NSObject {
         LampPageGuard.watch(view, scheme: files.scheme)
         #if os(macOS)
         LampPageReader.watch(view)
+        // The app menu's Reload, when Lamp has no change waiting: the page of the window in front opens again, a game
+        // where the player was. The pages are the reader's (`LampPageReader.page`), so a closed window's isn't chosen.
+        LampReload.page = {
+            LampPageReader.page(in: NSApp.keyWindow ?? NSApp.mainWindow)?
+                .evaluateJavaScript("window.__lampReloadNow ? window.__lampReloadNow() : location.reload()", in: nil, in: .page) { _ in }
+        }
         #endif
         view.load(URLRequest(url: URL(string: "\(files.scheme)://app/index.html")!))
         return view
@@ -1013,11 +1071,75 @@ final class LampPageBlockedHost: NSObject {
     private static var read: [Int: [LampScreen.Item]] = [:]
     private static let script = "{{PAGE_SCREEN_SCRIPT}}"
 
+    /// The page shown in a window, or, with none there, the first shown anywhere: what the app menu's Reload reopens.
+    static func page(in window: NSWindow?) -> WKWebView? {
+        let shown = pages.allObjects.filter { $0.window != nil }
+        return shown.first { $0.window === window } ?? shown.first { $0.window?.isVisible == true } ?? shown.first
+    }
+
     static func watch(_ view: WKWebView) {
         pages.add(view)
         LampPageItems.refresh = refresh
         LampPageItems.items = { read[$0.windowNumber] ?? [] }
         LampPageItems.act = act
+        LampPageItems.own = { own($0, batch: $1) }
+        LampPageItems.hold = { hold($0, in: $1, for: $2, said: $3) }
+    }
+
+    /// A game's controller given to Lamp for batch `id`'s `use_app` moves (`seconds` it may run), or back (nil), in every
+    /// page shown (lamp-game.js, "Lamp's hands on the controller"): for the whole batch the person's input takes it back.
+    /// Given back by name, so a batch's end that reaches the page late gives back nothing a newer batch has.
+    private static func own(_ seconds: Double?, batch id: String) {
+        let name = quoted(id)
+        let call = seconds.map { "window.__lampOwn && window.__lampOwn(\($0), \(name))" } ?? "window.__lampOwn && window.__lampOwn(null, \(name))"
+        for page in pages.allObjects where page.window != nil { page.evaluateJavaScript(call) }
+    }
+
+    /// Each hold's name in the page: its batch's id and a number of its own.
+    private static var holds = 0
+
+    /// A game's controller held for a `stick` or `button` action of `batch`, in the game's own script, for `amount`
+    /// seconds and let go after, or at once if the batch stops or a newer one takes its place. What the report says is the
+    /// page's answer: held, or why not (no Lamp runtime in the page yet, or the page failing). False when the app has no
+    /// game. The hold is let go by its name, so a release that reaches the page late lets go of nothing newer.
+    private static func hold(_ action: LampDriver.Action, in window: NSWindow, for batch: LampDriver.Handover,
+                             said: @escaping @MainActor (String, Bool) -> Void) -> Bool {
+        let shown = pages.allObjects.filter { $0.window === window }
+        guard LampPageItems.playing != nil, let held = action.controller, let page = shown.first ?? pages.allObjects.first(where: { $0.window != nil })
+        else { return false }
+        let seconds = min(max(action.amount ?? 0, 1.0 / 60), 10)
+        guard let json = try? JSONSerialization.data(withJSONObject: held.merging(["seconds": seconds]) { $1 }) else { return false }
+        holds += 1
+        let name = quoted("\(batch.id)#\(holds)")
+        let release = { page.evaluateJavaScript("window.__lampDrive && window.__lampDrive(null, \(name))") }
+        let call = "window.__lampDrive(\(String(decoding: json, as: UTF8.self)), \(name), \(quoted(batch.id)))"
+        page.evaluateJavaScript("window.__lampDrive ? \(call) : 'missing'") { answer, error in
+            MainActor.assumeIsolated {
+                // Stopped or replaced while the page answered (the batch gave up waiting for it, too): nothing more is
+                // Lamp's, and the batch has said how it ended, so this answer adds nothing to its report.
+                guard batch.carriesOn else {
+                    if answer as? Bool == true { release() }
+                    return
+                }
+                if answer as? String == "ended" {
+                    return said("\(action.action): stopped before the game took it", false)
+                }
+                if let error {
+                    return said("\(action.action): the game's page couldn't take it (\(error.localizedDescription))", false)
+                }
+                guard answer as? Bool == true else {
+                    return said("\(action.action): the game didn't take Lamp's controller: its page has no Lamp game runtime running (still loading, or built by an older Lamp)", false)
+                }
+                batch.hold(for: seconds, release: release)
+                said(action.text ?? "held the game's controller for \(LampScreen.number(seconds)) s", true)
+            }
+        }
+        return true
+    }
+
+    /// A string as a script's literal.
+    private static func quoted(_ text: String) -> String {
+        (try? JSONSerialization.data(withJSONObject: [text])).map { String(decoding: $0.dropFirst().dropLast(), as: UTF8.self) } ?? "null"
     }
 
     /// The keys an action names, as the page reads them (`e.key`, and the code lamp.js and older pages read).
@@ -1167,6 +1289,10 @@ final class LampPageBlockedHost: NSObject {
 /// What the page did is told back to Lamp, which says so in the chat. The files are kept for the next launch of this
 /// same bundle, so the app opens as Lamp last changed it; a new bundle (Lamp installed the app again) starts from its own.
 @MainActor final class LampPageLive: NSObject, WKScriptMessageHandler {
+    #if os(macOS)
+    /// The one page this app takes changes for, which says when it has drawn (`LampPagePlaying`).
+    private(set) weak static var current: LampPageLive?
+    #endif
     private let files: LampPageFiles
     private weak var page: WKWebView?
     private var epoch = "", gen = 0
@@ -1200,6 +1326,9 @@ final class LampPageBlockedHost: NSObject {
     init(files: LampPageFiles) {
         self.files = files
         super.init()
+        #if os(macOS)
+        Self.current = self
+        #endif
         // The changes this bundle was last given, kept from an earlier launch.
         if let data = try? Data(contentsOf: Self.manifest), let kept = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            kept["bundle"] as? String == Self.bundle, let hashes = kept["files"] as? [String: String] {
@@ -1278,7 +1407,7 @@ final class LampPageBlockedHost: NSObject {
         let pageChanged = answer["changed"] as? [String] ?? []
         // Only the phone page: the game's own page has nothing to do.
         if pageChanged.isEmpty, !now { tell(next, "phone"); return }
-        let change: [String: Any] = ["gen": next, "changed": pageChanged, "now": now, "pill": Self.place != "mac"]
+        let change: [String: Any] = ["gen": next, "changed": pageChanged, "removed": answer["removed"] as? [String] ?? [], "now": now, "pill": Self.place != "mac"]
         guard let page, let json = try? JSONSerialization.data(withJSONObject: change) else { return }
         let taken = try? await page.evaluateJavaScript("window.__lampLive ? window.__lampLive(\(String(decoding: json, as: UTF8.self))) : false", in: nil, contentWorld: .page)
         // A page without Lamp's game runtime is opened again as it is.
@@ -1334,13 +1463,22 @@ final class LampPageBlockedHost: NSObject {
     /// What the page did with a change (lamp-game.js): put in, reopened, waiting for a pause, back where it was.
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, let said = message.body as? [String: Any], let state = said["state"] as? String else { return }
-        tell(said["gen"] as? Int ?? gen, state, why: said["why"] as? String)
+        // A report also says what was built again, what waits for Reload and how long the game stood still for it, and
+        // a held change whether it goes in at the game's next pause by itself: passed on as the page gave them.
+        let more = said.filter { ["built", "kept", "waits", "pause", "frozen", "firstFrame", "later"].contains($0.key) }
+        tell(said["gen"] as? Int ?? gen, state, why: said["why"] as? String, more: more)
     }
 
+    #if os(macOS)
+    /// The page has drawn: told to Lamp as this process's, so Lamp can tell this launch from an earlier one.
+    func sayPlaying() { tell(gen, "playing", more: ["pid": Int(ProcessInfo.processInfo.processIdentifier)]) }
+    #endif
+
     /// `why` is the page's reason for opening again or holding a change (code it couldn't swap in), or what came through.
-    private func tell(_ gen: Int, _ state: String, why: String? = nil) {
+    private func tell(_ gen: Int, _ state: String, why: String? = nil, more: [String: Any] = [:]) {
         var body: [String: Any] = ["gen": gen, "state": state, "epoch": epoch, "place": Self.place]
         if let why { body["why"] = String(why.prefix(600)) }
+        for (key, value) in more where JSONSerialization.isValidJSONObject([key: value]) { body[key] = value }
         Task { _ = try? await call("/app/page/state", body, timeout: 10) }
     }
 

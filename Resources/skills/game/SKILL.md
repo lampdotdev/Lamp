@@ -1,6 +1,6 @@
 ---
 name: game
-description: Games, 2D or 3D, made either way - what makes one fun and playtesting it, the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page, in 2D or with three.js, for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game.
+description: Games, 2D or 3D, made either way - what makes one fun and playtesting it, the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page, in 2D or with three.js, for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game; a new web game at home on the Mac starts from the web-game guide and game-feel instead, and the parts of this it needs come as the skills that guide names.
 ---
 
 # Games
@@ -8,14 +8,15 @@ description: Games, 2D or 3D, made either way - what makes one fun and playtesti
 A game is something played in real time, rather than used. What follows holds for every game, whichever way it's
 made; each part then names the tools for each make. For a game in 2D, open the 2d-game skill too (Phaser or SpriteKit,
 and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityKit in Swift). Before designing its
-title, menus, level select, HUD, pause or results, read the game-ui skill.
+opening, title, menus, level select, HUD, pause or results, read the game-ui skill: a new game picks its screen flow
+there before any screen is drawn, however it's made.
 
 The tools Lamp has for games:
 
 - **Web**: Lamp's game runtime, `Web/lamp-game.js`, with Phaser for 2D (through `Web/lamp-phaser.js`) or three.js for
   3D, in a game `make_app_for` made with `kind` "game". It's a game's default make, 2D or 3D, wherever Lamp has a host
   for a page, and the same on every one of them. Read lamp-game.js first, all of it (and lamp-phaser.js for 2D): their
-  comments are the whole interface. Below, "Web" means this runtime.
+  comments are the whole interface. (A new game at home on the Mac starts from the web-game guide, which needs neither read whole.) Below, "Web" means this runtime.
 - **TypeScript**: a game whose source is TypeScript (one brought in from a Vite project, or when the person asks for
   it) keeps it in `src/` with `src/main.ts` as its entry, and Lamp bundles it into `Web/app/` before every build and
   look (types stripped, not checked): `Web/index.html` loads `app/main.js` (and `app/main.css` when the source imports
@@ -27,13 +28,13 @@ The tools Lamp has for games:
 - **Phones as players**: a game on the runtime takes phones on the Wi‑Fi with `Lamp.controllers` (Web/lamp.js) and
   its page for them in Phone/ (the phone-controllers and phone-pages skills), on the Mac, in the TV preview, on a
   Samsung or LG TV and on the Xbox; elsewhere `Lamp.controllers` says it can't start, so the game stays whole with a controller,
-  the keys or touch. Lamp's preview of the game plays with its scripted pad, and can join the game's phone page as one
-  player (the phone-pages skill). Read a phone's buttons in `frame(f)` from `f.phones`, as the pads are read (`frame().phones`
+  the keys or touch. Lamp plays the game with a controller of its own, never as a phone: only the person's phones
+  join. Read a phone's buttons in `frame(f)` from `f.phones`, as the pads are read (`frame().phones`
   in a Phaser scene): one `{ player, down, pressed, released }` for each phone joined, each button by the name the phone
-  page gave it, so `for (const p of f.phones) if (p.pressed.a) start()`. `pressed` and `released` last the one frame after
+  page gave it, so `for (const p of f.phones) if (p.pressed.go) start()`. `pressed` and `released` last the one frame after
   it happened, and a press let go again between two frames is still a press. `onButton` runs between frames, so a flag
   it sets and `frame` clears is lost: keep it for what can't wait for a frame. Sticks and messages still come by
-  `onAxis` and `onMessage`.
+  `onAxis` and `onMessage`, so the game keeps its own queue for them (the phone-pages skill's "Views and moves").
 - **A TV app's page**: a game made as a Samsung or LG TV app before games took phones (`kind` "app") has no
   lamp-game.js: it follows the TV rules and lamp.js instead, with its own `requestAnimationFrame`. The rest of this
   skill holds for it wherever it doesn't name the runtime.
@@ -70,7 +71,7 @@ textures, sound effects and music, fetched and credited by the `assets` tool (th
 how to keep one style). Sound looks in those assets first ("Sound", below). Either way it's the person's to share. Any other file only when the person gives it or names where it comes from and its license allows sharing; it goes into the game's own
 folder, credited as the rules say. The game never loads anything from the network while it's played.
 
-When asked to make a game more fun, play it first and find what's flat (a loop that doesn't pull, a curve that's
+When asked to make a game more fun, look at it first and find what's flat (a loop that doesn't pull, a curve that's
 too easy or too hard, an action that answers with nothing), then work on those four: the loop and the curve, the
 juice, the surprises, and the variety. Keep what the person likes about it, and its controls.
 
@@ -81,8 +82,8 @@ different rates, and a slow frame must not slow the game.
 
 - Web (the runtime): `game({ renderer, init, frame })` from lamp-game.js, moving by `f.dt`; in 2D, Phaser's scenes
   through `phaser({ scenes })` from lamp-phaser.js, moving by `update`'s `delta`, on the same one loop. Never requestAnimationFrame, timers, the
-  clock, Math.random or localStorage: `random()`, `save()` and `load()` from the runtime let Lamp's preview replay a
-  play exactly.
+  clock, Math.random or localStorage: `random()`, `save()` and `load()` from the runtime, which keep through a change
+  of the code.
   Physics is the one exception to moving by `f.dt`: it steps at a fixed 1/60 s inside the frame, through `fixedStep`
   from lamp-game.js, so it behaves the same at any frame rate (Rapier for 3D, in the 3d-game skill).
 - SpriteKit: in a SpriteView, one SKScene subclass for each screen with `scaleMode = .resizeFill`; movement in
@@ -102,7 +103,9 @@ Switch controller, the keyboard or the touch screen, and switch while playing.
   button's name on that input ("A", "✕", "Space") and `glyph(CONTROLS.jump)` its badge, an element to put in the text.
   Both are null where the input has nothing for that action: leave the line out. Never write a key's or a button's
   name yourself; a page that reads the keys itself (`keyboard: false`) names its own keys by their codes,
-  `label('KeyH')`.
+  `label('KeyH')`. When the person names the keys to move with, the hints use them: `keyboardHints: { leftStick:
+  'arrows' }` to `game()` or `phaser()` makes `label(STICK.LEFT)` and `glyph(STICK.LEFT)` name the arrow keys (`'wasd'`
+  is the default). Both sets of keys still move the player.
 - **Swift**: GameController's `GCController` for a controller, with the button's name from the controller itself
   (`localizedName`, `sfSymbolsName`) rather than a fixed letter; keys on a Mac with
   `NSEvent.addLocalMonitorForEvents`.
@@ -159,7 +162,7 @@ game is written to keep the player's place through one:
   }, { target: () => controls.target });
   const play = live.state('play', {
       version: 1,
-      start: () => ({ mode: 'title', menu: null, level: 1, score: 0, lives: 3, player: { x: 0, z: 0, heading: 0, speed: 0 } }),
+      start: () => ({ mode: 'opening', menu: null, level: 1, score: 0, lives: 3, player: { x: 0, z: 0, heading: 0, speed: 0 } }),
   });
   ```
 
@@ -184,7 +187,7 @@ game is written to keep the player's place through one:
   it's `start()`, and the same object stays the whole time. So `init` (in a 2D game, the first scene's `init` or
   `create`) reads the state and builds exactly that screen: that mode, that menu or overlay open, and nothing a fresh
   start shows (a title card, an intro, a tutorial prompt, a fade in) built or shown at all. Never start fresh and then
-  put the place back, which leaves the title over the game and input in the title's mode. A later restart (a new
+  put the place back, which leaves the opening over the game and input in the opening's mode. A later restart (a new
   round, a death) sets the state's fields back itself. A 2D game registers its state; Phaser's game and cameras are made
   again from it.
 - **A game from before this**, or one brought in, may use `snapshot()` in game() (or phaser()), plain JSON of where it
@@ -218,8 +221,8 @@ game is written to keep the player's place through one:
     fields, an exported function, a new module): the page is put back as the new HTML has it, every module of the game
     runs again, and the game starts straight from what it registered, as a reload would but without one. What's
     registered stays: the renderer and its compiled shaders, the cameras, the state, and each part kept with
-    `hot(import.meta).keep(key, build, { inputs })`, and so do the files the runtime loaded, so the change costs only
-    what's built again. The listeners,
+    `hot(import.meta).keep(key, build, { inputs, from, background })`, and so do the files the runtime loaded, so the change costs only
+    what's built again, and a part built in the background costs the person nothing. The listeners,
     timers, sound contexts and workers the old code started are taken away by Lamp, and so are its `Lamp.controllers`
     callbacks, which the new code sets again as it starts; `dispose` in game() is for anything else it must let go of,
     and never stops the phones (a `stop()` there is ignored).
@@ -238,12 +241,55 @@ game is written to keep the player's place through one:
     scene.add(ground.group, trees.group);
     ```
 
-    A kept part is built again only when its own module (or one it imports) changed, its build function changed, or
-    one of its `inputs` (the parts it's built from) was built again. So build each part of the world (the ground, the
-    buildings, the trees and street details, the props, the traffic) in a module of its own, into a group of its own
-    that's added to the scene at each start, and do everything to it (setting it on the ground, cutting it for
-    culling) inside its build, never to a kept part afterwards. The build function in the starting module names the
-    module it builds from (`buildTrees`), since that's how Lamp tells which change is its own.
+    A kept part is built again only when its own module (or one it imports) changed, its build function changed, one
+    of its `inputs` (the parts it's built from) was built again, or a file it read as it was built changed. So build
+    each part of the world (the ground, the buildings, the trees and street details, the props, the traffic) in a
+    module of its own, into a group of its own that's added to the scene at each start, and do everything to it
+    (setting it on the ground, cutting it for culling) inside its build, never to a kept part afterwards. The build
+    function in the starting module names the module it builds from (`buildTrees`), since that's how Lamp tells which
+    change is its own. Declare the data each part is built from in its `from` (files beside the page, a module of
+    generated data, or a folder ending in /), so a change to that data builds the part again in place, with the rest
+    of the world and the player's place kept:
+
+    ```js
+    const streets = live.keep('streets', () => buildStreets(), { from: ['js/map-data.js'] });
+    const paint = live.keep('roadPaint', () => buildRoadPaint(streets.network), { inputs: [streets], from: ['js/map-data.js'] });
+    ```
+
+    A part that takes more than a frame or two to build (a city from its map data, a terrain, a road network, the
+    traffic on it) is built in the background with `background: true`, so a change to it never holds the game still:
+    the person plays on with the part they have, "Building…" shows over the game, and once the new part is built its
+    shaders are compiled and it swaps in, in about a frame. Until then the game's logic and the controller use the old
+    part, so code that reads a part works with either. Its build is either a generator that yields every few
+    milliseconds of work (a row of blocks, a chunk of terrain), which Lamp steps between frames, or an async function
+    that hands the pure data work (parsing, the arrays geometry is made from) to a worker with `work()` from
+    lamp-game.js and makes only the three.js objects from what comes back:
+
+    ```js
+    const city = live.keep('city', function* () {
+        const group = new THREE.Group();
+        for (const block of MAP.blocks) { group.add(buildBlock(block)); yield; }
+        return { group };
+    }, { from: ['js/map-data.js'], background: true });
+
+    const ground = live.keep('ground', async () => {
+        const { positions, normals } = await work('js/ground-worker.js', { size: MAP.size });   // posted back with their buffers as transfer
+        return { group: groundMesh(positions, normals) };
+    }, { from: ['js/elevation.js'], background: true });
+    ```
+
+    The first build, as the game starts, is built whole. A part built from one being built (its `inputs`) is built
+    again from the new one once that's in, so parts that must change together are one part. Keep a part's three.js
+    objects in the value it returns (one object, or a plain object of them, as `{ group }`), so Lamp can compile them
+    ahead and let go of the old ones. Make a part's materials once, in a kept part of their own
+    (`live.keep('cityMaterials', () => makeCityMaterials())`), and build only its geometry in the background: a
+    material made anew is a shader to compile, which holds the frames on screen while it compiles (about a third of a
+    second each in WebKit), and the old part goes without taking the materials the new one still uses.
+
+    After a run, the look says which parts were built again, how long each took, which are still being built in the
+    background, how long the game stood still, and what of the change nothing read again, which shows only after
+    Reload. A look shows the person's open game as it is: a change built into a part that was kept isn't in it until
+    that part is built again.
 
     A big 3D world on three.js's `WebGPURenderer` keeps its scene and lights the same way, as its camera is. For a new one of
     them it works out how to draw every object again, which holds a big world still for a second at each change. Empty
@@ -271,6 +317,23 @@ game is written to keep the player's place through one:
     variables at the module's top. An exported plain object (`export const TUNING = {…}`) takes the values a change
     changed and keeps the rest. What a constructor built once stays as built through a swap: give
     `accept((next, { changed }) => …)` the rebuild, or have it return false to run the code again.
+    **What's at a module's top level outlives it.** The page keeps every version of a module for as long as it's open,
+    with whatever its variables point at, so a list of objects or a memo at a module's top level holds the old run's
+    world, and each run of the code gets slower. Release what the module gathered in `hot(import.meta).dispose(…)`, and
+    have the run or the part that owns a system drop it where it's registered (the game's `dispose` for what a run made,
+    a part's own `dispose` for what it keeps, which stays registered while the part is kept). A kept renderer doesn't
+    manage what a run builds around it: every render pipeline, pass and effect made in a run gets an explicit teardown in
+    the game's `dispose`, the pipeline first and the scene pass it reads last, each step safe if an earlier one throws,
+    and never `renderer.dispose()`. A build hands on only the data a later consumer needs: one closure kept at a module's
+    top level holds everything the function that made it gathered. A reusable generated texture needs an explicit kept
+    owner and what invalidates it (a `keep` with `from`, or the kept object it's made from); a transient one needs
+    teardown, and not every texture at a module's top level belongs in `keep`. Keeping a compound object doesn't dispose
+    what's nested in it, so its `keep` takes a `dispose`, and a custom `dispose` spares what another owner still uses,
+    since it replaces the runtime's own. A big table that doesn't
+    change as it's played is built inside `keep`, with what it's read from in `from`, so a run reuses it; what changes
+    as it's played stays out of `keep`. Name the file's address outside the build (`const address = new URL('./x.bin',
+    import.meta.url)`): the runtime writes `import.meta` out differently each run, so a build that names it is built
+    again every time.
     `hot(import.meta).dispose(data => …)` takes away what a version made at its top level, keeping in `data` what the
     next version reads as `hot(import.meta).data`.
 
@@ -303,19 +366,30 @@ to time. When frames are late, draw less.
 Sprites, characters and backgrounds are art from `make_art` or one ready-made pack (the assets skill), all in one
 style, on a transparent background where they move. Shapes and colors made in code, well lit, look better than
 mismatched models. Score, pause and menus are large and easy to read, over the game (SwiftUI over a SpriteView; HTML
-over the canvas in a page), and made for its world: the game-ui skill says which screens a game needs and how to give
-them its theme.
+over the canvas in a page), and made for its world: the game-ui skill says how to choose the screens a game needs and
+give them its theme.
 
 After changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches flicker a
 single picture hides.
 
 ## Playtesting
 
-Play it the way the person would before you finish: a game that only looks right isn't done. Web: Lamp's preview
-plays the game from a script of the controller's moves (`use_app` with `stick`, `button` and `wait`), with the same
-random numbers each time, so the same moves after a change show exactly what it changed. Play a whole round: start,
-learn the controls, score, get hit, lose, win, pause. Ask of each stretch whether it's fun: is there always something
-to do, does each action answer, is it too easy or too hard, does anything surprise. Fix what isn't, and play it again.
+`use_app` plays the game in front of the person, so play it only when they ask you to try, play or test it; then play it
+the way they would, since a game that only looks right isn't done. For a request to change it, build and look, and say
+in your report what you didn't play rather than calling it checked. On Lamp's game runtime, `use_app` plays the game in its window on this Mac, the one the person has open, with Lamp's own controller (`stick`,
+`button` and `wait`), in plain sight and from wherever the game is: a menu, a pause screen, the middle of a level. Read
+the last picture first and get to what you mean to check; to begin again, look with `reopen` (which asks the person
+first while they play). Play a whole round: start, learn the controls, score, get hit, lose, win, pause. Ask of each
+stretch whether it's fun: is there always something to do, does each action answer, is it too easy or too hard, does
+anything surprise. Fix what isn't, and play it again.
+
+A fix goes into the open game as you save it (or with a look), so play on after one with `use_app`; nothing replays the
+moves before it, and the game's random numbers differ each time, so play to the same place again rather than expecting
+the same frames. The person playing takes the game back at once: then use_app is off until their next message.
+
+A C++ game (played on the Xbox), SpriteKit in a Swift app and a page with a loop of its own take no controller from Lamp:
+`use_app` there acts as that place takes it, where the person sees it, so it waits for them to ask. Without that, keep to
+what `look_at_app` shows, and say what you didn't play rather than calling it checked.
 
 ## A game and the wish's other apps
 

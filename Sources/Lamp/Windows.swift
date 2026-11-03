@@ -1,9 +1,10 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// Lamp's window: the desk. Each wish's chat is beside whatever shows it (`ChatPanel`). `Store.selection` is the wish
 /// whose chat is in front (nil for the desk), so what acts on "this wish" (the menu bar's commands, the dialogs) acts
-/// on the chat being looked at. File → Duplicate… acts on the desk's pick while the desk is in front (`DeskPick`).
+/// on the chat being looked at. The menu bar's commands act on the desk's pick while the desk is in front (`DeskPick`).
 @MainActor
 enum LampWindows {
     /// SwiftUI's way to open a window, handed over by the first window to appear. It opens any of the app's
@@ -36,6 +37,62 @@ final class DeskPick: ObservableObject {
 
     /// A chat or Settings in front never acts on a row behind it.
     var target: LampProject.ID? { deskIsKey ? wish : nil }
+}
+
+/// Whether the wish the menu bar's commands act on has a version to name. Knowing takes git, which never runs while a
+/// menu is drawn: it's read here as what the commands act on or that wish's versions change, and the menu reads the answer.
+@MainActor
+final class MenuVersions: ObservableObject {
+    static let shared = MenuVersions(store: .shared, pick: .shared)
+
+    /// The wish last found to have versions. An id rather than a yes, so another wish never borrows the answer while
+    /// its own is being read.
+    @Published private var withVersions: LampProject.ID?
+
+    private struct Question: Equatable {
+        let wish: LampProject.ID
+        let dir: URL
+        let revision: Int
+        let busy: Bool
+    }
+
+    private let store: Store
+    private let pick: DeskPick
+    private let read: (LampProject) async -> Bool
+    private var asked: Question?
+    private var reading: Task<Void, Never>?
+    private var watching: AnyCancellable?
+
+    init(store: Store, pick: DeskPick, read: @escaping (LampProject) async -> Bool = { await Versions.head($0) != nil }) {
+        self.store = store
+        self.pick = pick
+        self.read = read
+        watching = store.$projects.map { _ in }
+            .merge(with: store.$selection.map { _ in }, store.$busy.map { _ in }, store.$versionsRevision.map { _ in },
+                   pick.$wish.map { _ in }, pick.$deskIsKey.map { _ in })
+            // These fire just before the change: the look comes on the next turn, once it's made.
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in MainActor.assumeIsolated { self?.refresh() } }
+    }
+
+    func hasVersions(_ project: LampProject) -> Bool { withVersions == project.id }
+
+    private func refresh() {
+        let target = store.commandTarget(deskPick: pick.target)
+        let question = target.map { Question(wish: $0.id, dir: $0.dir, revision: store.versionsRevision, busy: store.busy.contains($0.id)) }
+        guard question != asked else { return }
+        asked = question
+        reading?.cancel()
+        guard let target else {
+            withVersions = nil
+            return
+        }
+        reading = Task {
+            let found = await read(target)
+            guard !Task.isCancelled else { return }
+            withVersions = found ? target.id : nil
+        }
+    }
 }
 
 /// Notes the window the desk is drawn in (`LampWindows.desk`), so what's asked of the desk asks the real window.

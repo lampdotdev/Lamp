@@ -43,7 +43,8 @@ final class SkillsTests: XCTestCase {
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
                                            "scripting", "game", "game-ui", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
                                            "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode",
-                                           "roku-developer-mode", "more-apps", "github-projects", "assets"])
+                                           "roku-developer-mode", "more-apps", "github-projects", "assets", "web-game", "game-feel", "game-3d",
+                                           "game-physics", "game-levels", "game-art", "game-live", "game-playtest"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -52,16 +53,18 @@ final class SkillsTests: XCTestCase {
         // The integrations' skill and the one on controlling the person's devices are named by the devices' rule, in every
         // prompt, rather than in the list, and how to build a page for phones by the phone-controllers skill and by an app
         // whose code has one; designing for a TV by the TV rows of the table (`Place.skills`), to an app on one, whatever
-        // its kind; a device's setup step by the skill itself (`SetupGuides`), to Lamp's setup alone; every other one is offered to some prompt. How an app's copies and a wish's apps share data
+        // its kind; a device's setup step by the skill itself (`SetupGuides`), to Lamp's setup alone; the short guide to a new Mac game comes whole with make_app_for; every other one is offered to some prompt. How an app's copies and a wish's apps share data
         // is offered to every kind that carries `LampWish`, which is every kind but a device's.
         let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0) + Skills.named($0) }
-        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design"])
+        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design", "web-game"])
                                                        .subtracting(SetupGuides.registrations(shipped).map(\.skill))) }
         XCTAssertTrue(shipped["phone-controllers"]!.body.contains("phone-pages skill"))
         // How an app is made and on which devices, games and their screens, 3D in a page, web apps, phones as controllers, and whether a
         // request is for one more app or a change to the one the wish has, and someone's project on GitHub, are offered to
-        // every kind, first, whatever the app is now.
-        let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
+        // every kind, first, whatever the app is now; so are the narrow skills a web game at home on the Mac names with
+        // `make_app_for`, before it's made.
+        let everywhere = ["web-or-native", "game", "game-ui", "2d-game", "3d-game", "game-feel", "game-3d", "game-physics", "game-levels", "game-art",
+                          "game-live", "game-playtest", "assets", "web-app", "phone-controllers", "more-apps", "github-projects"]
         XCTAssertEqual(Skills.offered(.android), everywhere + ["android-design", "wish-links"])
         XCTAssertEqual(Skills.offered(.tv), everywhere + ["wish-links"])
         XCTAssertEqual(Skills.offered(.device), everywhere)
@@ -252,6 +255,12 @@ final class SkillsTests: XCTestCase {
 
     /// A page on Lamp's game runtime, a page drawing with three.js or Phaser and Swift on SpriteKit each show the game
     /// skills apply; Lamp's own runtime, lamp.js, three.js and Phaser in Web/ don't count.
+    private func game(on places: [Destination]) -> LampProject {
+        var project = app(.game)
+        project.places = places
+        return project
+    }
+
     func testAGamesCodeShowsTheGameSkillsApply() throws {
         let web = folder.appendingPathComponent("Web")
         try FileManager.default.createDirectory(at: web.appendingPathComponent("three/addons"), withIntermediateDirectories: true)
@@ -259,20 +268,140 @@ final class SkillsTests: XCTestCase {
         try "import { x } from 'three'; // lamp-game.js".write(to: web.appendingPathComponent("three/addons/loader.js"), atomically: true, encoding: .utf8)
         try "/* lamp-game.js */".write(to: web.appendingPathComponent("lamp.js"), atomically: true, encoding: .utf8)
         try "import * as Phaser from 'phaser'; import { game } from './lamp-game.js';".write(to: web.appendingPathComponent("lamp-phaser.js"), atomically: true, encoding: .utf8)
-        XCTAssertTrue(Skills.applying(to: app(.game)).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.isEmpty, "Lamp's own files don't count")
-        XCTAssertFalse(DeviceSupport.usesPhaser(app(.game), page: "Web"), "Phaser goes into a page only once its own files use it")
+        XCTAssertTrue(Skills.applying(to: game(on: [.mac, .ios])).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.isEmpty, "Lamp's own files don't count")
+        XCTAssertFalse(DeviceSupport.usesPhaser(game(on: [.mac, .ios]), page: "Web"), "Phaser goes into a page only once its own files use it")
 
         try "import * as THREE from 'three';\nimport { game } from './lamp-game.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
-        let found = Skills.applying(to: app(.game)).filter { ["game", "game-ui", "3d-game"].contains($0.name) }
+        let found = Skills.applying(to: game(on: [.mac, .ios])).filter { ["game", "game-ui", "3d-game"].contains($0.name) }
         XCTAssertEqual(found.map(\.name), ["game", "game-ui", "3d-game"])
         XCTAssertEqual(found.first?.because, "its page runs on Lamp's game runtime")
         try "import * as Phaser from 'phaser';\nimport { phaser } from './lamp-phaser.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
-        XCTAssertEqual(Skills.applying(to: app(.game)).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.map(\.name), ["game", "2d-game"])
-        XCTAssertTrue(DeviceSupport.usesPhaser(app(.game), page: "Web"))
+        XCTAssertEqual(Skills.applying(to: game(on: [.mac, .ios])).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.map(\.name), ["game", "2d-game"])
+        XCTAssertTrue(DeviceSupport.usesPhaser(game(on: [.mac, .ios]), page: "Web"))
 
         try FileManager.default.removeItem(at: web)
         try source("Scene.swift", "import SpriteKit\n")
         XCTAssertEqual(Skills.applying(to: app(.iphone)).filter { ["game", "game-ui"].contains($0.name) }.map(\.because), ["it's a SpriteKit game", "it's a SpriteKit game"])
+    }
+
+    /// A web game at home on the Mac starts from the guide and game-feel: its own code hints at game-3d, game-physics and
+    /// 2d-game, never Lamp's runtime or the Phaser every such game draws with; the broad skills serve games elsewhere.
+    func testAMacWebGamesCodeHintsAtTheNarrowSkillsOnly() throws {
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web.appendingPathComponent("rapier"), withIntermediateDirectories: true)
+        try "import * as Phaser from 'phaser'; import { game } from './lamp-game.js';".write(to: web.appendingPathComponent("lamp-phaser.js"), atomically: true, encoding: .utf8)
+        try "import RAPIER from '@dimforge/rapier3d-compat'; this.make.tilemap({})".write(to: web.appendingPathComponent("rapier/rapier.js"), atomically: true, encoding: .utf8)
+        let mac = game(on: [.mac])
+        XCTAssertTrue(GameKit.isMacWebGame(mac))
+        XCTAssertTrue(Skills.applying(to: mac).filter { $0.name.contains("game") }.isEmpty, "Lamp's own files don't count")
+
+        try "import * as Phaser from 'phaser';\nimport { phaser } from './lamp-phaser.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: mac).filter { $0.name.contains("game") }.map(\.name), ["game-feel"], "Phaser alone is how every such game draws")
+
+        try "import * as THREE from 'three';\nimport RAPIER from '@dimforge/rapier3d-compat';\nimport { game } from './lamp-game.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: mac).filter { $0.name.contains("game") }.map(\.name), ["game-feel", "game-3d", "game-physics"])
+
+        try "import { phaser } from './lamp-phaser.js';\nconst map = this.make.tilemap({ data, tileWidth: 64 });\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: mac).filter { $0.name.contains("game") }.map(\.name), ["game-feel", "2d-game"])
+    }
+
+    /// A web game at home on the Mac is looked at and played only when the person asks, in every set of rules it's
+    /// given: made, changed later in the wish's own folder or in a folder of its own. A game played elsewhere too is
+    /// looked at as it's made, and checks its opening before it's done, but is played only when the person asks too:
+    /// it's played in their window, in front of them.
+    func testAMacWebGamesRulesLeaveTryingItToThePerson() throws {
+        let mac = game(on: [.mac]), both = game(on: [.mac, .ios])
+        XCTAssertTrue(GameKit.isMacWebGame(mac))
+        XCTAssertFalse(GameKit.isMacWebGame(both))
+        let mandates = ["Play it as the person would before you finish", "before you say it's done, run that skill's check"]
+        let asked = Agent.Rules.macWebGameChecks
+        for (place, rules) in [("new", Agent.Rules.newMacGame(in: "Game", guide: "")), ("own folder", Agent.gamePrompt(for: mac)),
+                               ("part", Parts.packs(for: [mac])[Parts.skill(of: mac)]?.body ?? ""), ("became a game", Agent.Rules.gameChange(mac))] {
+            XCTAssertTrue(rules.contains(asked), place)
+            for mandate in mandates { XCTAssertFalse(rules.contains(mandate), "\(place): \(mandate)") }
+        }
+        for (place, rules) in [("own folder", Agent.gamePrompt(for: both)), ("part", Parts.packs(for: [both])[Parts.skill(of: both)]?.body ?? "")] {
+            XCTAssertFalse(rules.contains(asked), place)
+            XCTAssertTrue(rules.contains(mandates[1]), place)
+            XCTAssertFalse(rules.contains(mandates[0]), place)
+            XCTAssertTrue(rules.contains("play it only when they ask you to try, play or test it"), place)
+        }
+    }
+
+    /// A page that runs none of the game's own code leaves its window empty with nothing to say why, so it's sent back
+    /// as the code's problem. The page names its first module by any name, or writes it inline; Lamp's files don't count.
+    func testAMacWebGamesPageMustRunItsOwnCode() throws {
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
+        let mac = game(on: [.mac])
+        func page(_ body: String) throws -> String? {
+            try "<!doctype html><head><script src=\"lamp.js\"></script><script type=\"importmap\">{}</script></head><body>\(body)</body>"
+                .write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+            return GameKit.entryProblem(of: web, project: mac)
+        }
+        try "export {};".write(to: web.appendingPathComponent("main.js"), atomically: true, encoding: .utf8)
+        try "export {};".write(to: web.appendingPathComponent("lamp-game.js"), atomically: true, encoding: .utf8)
+        XCTAssertNotNil(try page(""), "a page that runs nothing of the game's")
+        XCTAssertNotNil(try page("<script type=\"module\" src=\"game.js\"></script>"), "a module that isn't there")
+        XCTAssertNotNil(try page("<script type=\"module\" src=\"lamp-game.js\"></script>"), "Lamp's runtime isn't the game")
+        XCTAssertNotNil(try page("<script src=\"main.js\"></script>"), "a classic script can't import the runtime")
+        XCTAssertNil(try page("<script type=\"module\" src=\"./main.js?v=2\"></script>"))
+        XCTAssertNil(try page("<script type='module'>import { phaser } from './lamp-phaser.js'; phaser({});</script>"))
+    }
+
+    /// A page with no module of its own at all is the code's problem too, not a page with nothing to check.
+    func testAMacWebGamesPageWithNoModulesIsSentBack() async throws {
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
+        try "<!doctype html><head><script src=\"lamp.js\"></script></head><body></body>".write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        let problem = await GameKit.codeProblem(game(on: [.mac]))
+        XCTAssertTrue(problem?.contains("runs none of the game's code") == true, String(describing: problem))
+    }
+
+    /// `needs` names only the skills a new Mac web game can be handed, in one order whatever the agent's.
+    func testNeedsTakesOnlyTheNarrowGameSkills() {
+        XCTAssertEqual(try Skills.gameNeeds(nil).get(), [])
+        XCTAssertEqual(try Skills.gameNeeds(["game-levels", "game-3d"]).get(), ["game-3d", "game-levels"])
+        guard case .failure(let refusal) = Skills.gameNeeds(["game-3d", "game"]) else { return XCTFail("the broad skill isn't a need") }
+        XCTAssertTrue(refusal.reason.contains("not game."), refusal.reason)
+        guard case .failure = Skills.gameNeeds("game-3d") else { return XCTFail("a list, not a name") }
+        XCTAssertEqual(Set(Skills.gameNeeds).subtracting(shipped.keys), [])
+    }
+
+    /// A skill made of sections of others shows each of them whole: a heading renamed where it comes from would leave a
+    /// hole that nothing else notices.
+    func testEverySectionASkillShowsIsThere() throws {
+        let raw = Skills.load(from: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Resources/skills"))
+        var viewed = 0
+        for (name, skill) in raw {
+            guard let list = skill.meta["sections"] else { continue }
+            for section in Skills.sectionNames(list) {
+                XCTAssertNotNil(Skills.section(section, in: raw), "\(name): \(section)")
+                viewed += 1
+            }
+            XCTAssertFalse(skill.body.contains("{{sections}}"), name)
+        }
+        XCTAssertEqual(viewed, 23)
+        let feel = try XCTUnwrap(raw["game-feel"]).body
+        XCTAssertTrue(feel.contains("## Fun\n\nA game is for fun"))
+        // A web game at home on the Mac is played and judged only when the person asks: what the skills it's written
+        // from carry is how to make it, and the checks are game-playtest's alone.
+        for name in ["game-feel", "game-3d", "game-art", "game-physics", "game-levels"] {
+            let body = try XCTUnwrap(raw[name]).body
+            for check in ["## Playtesting", "## Check the real opening", "## Proof", "## Checking it", "critique", "before you finish"] {
+                XCTAssertFalse(body.contains(check), "\(name): \(check)")
+            }
+        }
+        let playtest = try XCTUnwrap(raw["game-playtest"]).body
+        for check in ["## Playtesting", "## Check the real opening", "## Proof", "## Checking it", "**A critique:**"] { XCTAssertTrue(playtest.contains(check), check) }
+        XCTAssertFalse(Skills.gameNeeds.contains("game-playtest"), "opened when asked, never handed")
+        let physics = try XCTUnwrap(raw["game-physics"]).body
+        XCTAssertTrue(physics.contains("**Whether a game needs it.**"))
+        XCTAssertFalse(physics.contains("## What costs the most"), "a section ends at the next heading as high")
+        let threeD = try XCTUnwrap(raw["game-3d"]).body
+        XCTAssertTrue(threeD.contains("three.js runs in a page"), "the text before 3d-game's first section")
+        XCTAssertFalse(threeD.contains("# 3D in a web page\n"), "without its title")
     }
 
     /// A TV app's page brings in three.js by the path of Lamp's copy as well as by the import map's name, in a module
@@ -297,7 +426,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, game-ui, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, assets, building-blocks, device-control, device-integrations, finder-files, game, game-3d, game-art, game-feel, game-levels, game-live, game-physics, game-playtest, game-ui, github-projects, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-game, web-or-native, wish-links.")
     }
 
     func testParsing() {

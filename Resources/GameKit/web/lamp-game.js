@@ -5,9 +5,7 @@
 // the game is played (on the Mac and on an iPhone or iPad in Lamp's app around the page, on the Xbox in its web host),
 // draws at 1920x1080 scaled to the screen (smaller when frames run slow there), and hands each frame the controllers
 // as pads: a controller connected to the device, the keyboard as the first pad, and on a touch screen the touch
-// controls it draws. Lamp's preview runs the same
-// page out of sight from a script of the controller's moves, at exactly 1/60 s a frame with the same random numbers
-// every play, so use frame.dt, random() and save()/load() from here, never requestAnimationFrame, Math.random, the
+// controls it draws. Use frame.dt, random() and save()/load() from here, never requestAnimationFrame, Math.random, the
 // clock or localStorage yourself. What the player is holding (a controller, and whose, the keyboard or the touch screen)
 // is input(), and label() and glyph() name and draw a button for it, so a prompt never names one the player hasn't got.
 //
@@ -28,8 +26,6 @@ export const BUTTON = { A: 1, B: 2, X: 4, Y: 8, LB: 16, RB: 32, MENU: 64, VIEW: 
 export const STICK = { LEFT: 'stick-left', RIGHT: 'stick-right' };
 export const TRIGGER = { LT: 'lt', RT: 'rt' };
 
-const preview = window.lampPreview || null;   // set by Lamp's preview before the page runs
-const logs = [];
 // The browser's own functions, kept before the runtime starts watching what the game's code leaves running (see
 // "Running the game's code again"): the runtime's own listeners, timers and sound go through these, so they stay when
 // the game's are taken away.
@@ -45,10 +41,12 @@ const browser = {
 const listen = (target, ...rest) => browser.listen.call(target, ...rest);
 const after = (ms, fn) => browser.setTimeout.call(window, fn, ms);
 const nextFrame = fn => browser.frame.call(window, fn);
+// A runtime run outside a page (Lamp's tests) may have no performance clock.
+const clockNow = () => globalThis.performance ? performance.now() : Date.now();
 
-// MARK: Random numbers, the same each preview play (xorshift64*, as the C++ kit has it)
+// MARK: Random numbers (xorshift64*, as the C++ kit has it)
 
-let seed = preview ? 1n : BigInt(Date.now()) | 1n;
+let seed = BigInt(Date.now()) | 1n;
 const mask = (1n << 64n) - 1n;
 // How many have been drawn, so a part that's kept rather than built again can skip the draws its build made.
 let draws = 0;
@@ -57,35 +55,25 @@ export function random() {
     seed ^= seed >> 12n; seed ^= (seed << 25n) & mask; seed ^= seed >> 27n;
     return Number(((seed * 0x2545F4914F6CDD1Dn) & mask) >> 40n) / 16777216;
 }
-let clock = 0;
-if (preview) {
-    // three.js and the game's own code may reach for these: in the preview they're the game's clock and seed too.
-    Math.random = random;
-    performance.now = () => clock;
-    Date.now = () => 1700000000000 + clock;
-    window.__lampAdvance = ms => { clock += ms; };
-}
 
 // MARK: The log, saves and files
 
 export function log(...parts) {
     const line = parts.map(p => typeof p === 'string' ? p : JSON.stringify(p)).join(' ');
     const said = `[${time.toFixed(2)} s] ${line}`;
-    if (preview) { if (logs.length < 400) logs.push(said); return; }
     // The app around the page puts its console into the app's log.
     console.log(said);
 }
 window.addEventListener('error', e => log(`Error: ${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
 window.addEventListener('unhandledrejection', e => log(`Error: ${e.reason && e.reason.message || e.reason}`));
 
-const saved = preview ? new Map() : null;
 export function save(name, value) {
     const text = JSON.stringify(value);
-    if (saved) saved.set(name, text); else try { localStorage.setItem('lamp.save.' + name, text); } catch (e) { return false; }
+    try { localStorage.setItem('lamp.save.' + name, text); } catch (e) { return false; }
     return true;
 }
 export function load(name) {
-    const text = saved ? saved.get(name) : (() => { try { return localStorage.getItem('lamp.save.' + name); } catch (e) { return null; } })();
+    const text = (() => { try { return localStorage.getItem('lamp.save.' + name); } catch (e) { return null; } })();
     try { return text == null ? null : JSON.parse(text); } catch (e) { return null; }
 }
 
@@ -99,12 +87,46 @@ export async function asset(path) {
     return answer.arrayBuffer();
 }
 
+// Work done in a worker (js/city-worker.js, a module beside the page), off the frame the game draws: `message` is sent
+// to it, with `transfer` (ArrayBuffers handed over rather than copied), and what it posts back first is the answer,
+// after which it ends. For the pure data work of a part built in the background (see "Building in the background"):
+// parsing, and the arrays of positions, normals and indices that geometry is made from, posted back with their buffers
+// as transfer. The part built with it is built again when the worker's file changes.
+//
+//   // js/city-worker.js: onmessage = e => { const positions = new Float32Array(…); postMessage({ positions }, [positions.buffer]); };
+//   const { positions } = await work('js/city-worker.js', { blocks: MAP.blocks });
+export function work(path, message, transfer = []) {
+    read(clean(path));
+    return new Promise((done, fail) => {
+        const worker = new browser.Worker(`${addressOf(clean(path))}?lamp=${++versionCount}`, { type: 'module' });
+        worker.onmessage = e => { worker.terminate(); done(e.data); };
+        worker.onerror = e => { worker.terminate(); fail(new Error(`${path}: ${e.message || 'the worker failed'}`)); };
+        worker.postMessage(message, transfer);
+    });
+}
+
 // The files the game loaded through the runtime, and how the runtime puts a new copy of each in by itself.
 const loaded = new Set(), swaps = new Map();
+// Every file of the page this copy has read, through the runtime, fetched or started as a worker: what the running game
+// holds may have come from any of them (`unusedFiles`, `waitsFor`). What a worker reads for itself the page never sees.
+const everRead = new Set();
+let workerStarted = false;
 const clean = path => String(path).replace(/^\.?\//, '').split(/[?#]/)[0];
 // Asked again after a change, a file is asked for by a new address, so nothing on the way keeps the old one.
 let changes = 0;
 const fresh = path => changes ? `${path}${String(path).includes('?') ? '&' : '?'}lamp=${changes}` : path;
+// So is a file of the page's that the game's own code fetches (a city's building data), once anything has changed. What
+// a part kept with keep() fetches as it's built is what it's built from (`read`), as a file loaded through the runtime is.
+if (window.fetch) {
+    const fetchFile = window.fetch;
+    window.fetch = function (input, init) {
+        const url = typeof input === 'string' || input instanceof URL ? String(input) : input && input.url;
+        const path = url ? pathOf(url) : null;
+        if (path != null) read(clean(path));
+        if (changes && !(init && init.cache) && path != null) init = { ...init, cache: 'no-store' };
+        return fetchFile.call(this, input, init);
+    };
+}
 
 // A picture beside the page as a three.js texture, set up by `setup(texture)` (its color space, wrapping, repeat…). A
 // new copy of the picture goes into the same texture while the game is played, so every material using it shows it.
@@ -143,15 +165,13 @@ export async function model(path) {
     return group;
 }
 
-// MARK: Sound, mixed by the browser's Web Audio; the preview plays nothing and says what was played
+// MARK: Sound, mixed by the browser's Web Audio
 
 const sounds = [];
 let audio = null, effectsVolume = 1, musicVolume = 1, musicVoice = null, music = { gain: 0 };
-const played = new Map();
 // The effects playing now, so a change of the effects volume reaches them too.
 const voices = new Set();
 function context() {
-    if (preview) return null;
     if (!audio) { try { audio = new browser.AudioContext({ sampleRate: 48000 }); } catch (e) { return null; } }
     if (audio.state === 'suspended') audio.resume();
     return audio;
@@ -220,7 +240,6 @@ export const sound = {
     // made (2 an octave up). loop plays it over and over until stopped.
     play(s, { volume = 1, pan = 0, pitch = 1, loop = false } = {}) {
         if (!s) return null;
-        played.set(s.name, (played.get(s.name) || 0) + 1);
         const ctx = context(), buffer = bufferOf(s) || s.buffer;
         if (!ctx || !buffer) return null;
         const source = ctx.createBufferSource(), gain = ctx.createGain(), panner = ctx.createStereoPanner();
@@ -243,7 +262,6 @@ export const sound = {
     // Music: a sound played over and over under the effects (keep it quiet, 0.3 to 0.5); null fades it out.
     music(s, volume = 0.4) {
         const ctx = context();
-        if (s) played.set('music: ' + s.name, 1);
         if (musicVoice && ctx) { const old = musicVoice; old.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.3); after(1500, () => sound.stop(old)); }
         musicVoice = null;
         music.gain = volume;
@@ -279,13 +297,16 @@ window.addEventListener('keyup', e => { if (e.isTrusted) keys.delete(codeOf(e));
 window.addEventListener('blur', () => keys.clear());
 
 // The keyboard as a pad: the keys for each button and for each way a stick or trigger goes, the first the one a
-// prompt names (`label`).
+// prompt names (`label`), but for the left stick, where a game's `keyboardHints` can name the arrows instead.
 const KEYS = { [BUTTON.A]: ['Space', 'Enter'], [BUTTON.B]: ['Escape', 'Backspace'], [BUTTON.X]: ['KeyF'], [BUTTON.Y]: ['KeyR'],
                [BUTTON.LB]: ['KeyQ'], [BUTTON.RB]: ['KeyE'], [BUTTON.MENU]: ['KeyP'], [BUTTON.VIEW]: ['Tab'],
                [BUTTON.UP]: ['ArrowUp'], [BUTTON.DOWN]: ['ArrowDown'], [BUTTON.LEFT]: ['ArrowLeft'], [BUTTON.RIGHT]: ['ArrowRight'] };
 const STICK_KEYS = { left: { up: ['KeyW', 'ArrowUp'], left: ['KeyA', 'ArrowLeft'], down: ['KeyS', 'ArrowDown'], right: ['KeyD', 'ArrowRight'] },
                      right: { up: ['KeyI'], left: ['KeyJ'], down: ['KeyK'], right: ['KeyL'] } };
 const TRIGGER_KEYS = { lt: ['KeyZ'], rt: ['KeyC'] };
+// Which of the left stick's keys a prompt names, by their place in STICK_KEYS.left. Both always move the stick.
+const LEFT_STICK_HINTS = { wasd: 0, arrows: 1 };
+let leftStickHint = LEFT_STICK_HINTS.wasd;
 
 function keyboardPad() {
     const any = codes => codes.some(c => keys.has(c)), axis = (plus, minus) => (any(plus) ? 1 : 0) - (any(minus) ? 1 : 0);
@@ -325,7 +346,6 @@ function merge(pad, more) {
 // The controller's rumble, 0 to 1 for its two motors, for `seconds` (a short shake by default).
 export function rumble(pad, low, high, seconds = 0.2) {
     const g = (pads[pad] || {}).gamepad;
-    if (preview) { if (low || high) log(`rumble: controller ${pad + 1} ${low.toFixed(2)} ${high.toFixed(2)}`); return; }
     g && g.vibrationActuator && g.vibrationActuator.playEffect('dual-rumble', { duration: seconds * 1000, strongMagnitude: low, weakMagnitude: high }).catch(() => {});
 }
 
@@ -338,7 +358,7 @@ const touch = { lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0 };
 // A tap shorter than a frame still reaches the game: held for the next frame it reads.
 let tapped = 0;
 let touchShown = false, touchLayer = null;
-const touchScreen = !preview && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+const touchScreen = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
 function buildTouch() {
     touchLayer = document.createElement('div');
@@ -420,10 +440,10 @@ const LAYOUTS = Object.fromEntries(controllers.layouts.map(layout => [layout.id,
 const BASE = LAYOUTS[controllers.base];
 
 // The input the player used last: a controller (and whose), the keyboard (with the mouse) or the touch screen. A
-// device that comes with a controller starts on it, a touch screen on touch, anything else and Lamp's preview on the
+// device that comes with a controller starts on it, a touch screen on touch, anything else on the
 // keyboard (the controller named by the device's one layout where it has one, as every controller there is); it
 // changes as soon as the player presses a key, touches the screen or moves a controller.
-let current = preview ? { kind: 'keyboard' } : device.controller ? { kind: 'controller', family: device.layout || device.controller }
+let current = device.controller ? { kind: 'controller', family: device.layout || device.controller }
     : touchScreen ? { kind: 'touch' } : { kind: 'keyboard' };
 // The controller's own name, for a model that marks a button differently from the rest of its layout (a DualShock's
 // Share where a DualSense has Create).
@@ -440,15 +460,16 @@ export function onInput(changed) {
     return () => listeners.delete(changed);
 }
 
+const drawPrompts = () => { for (const changed of listeners) try { changed(input()); } catch (e) { log(`Error: ${e.message}`); } };
+
 function use(kind, family, name = '') {
-    if (preview) return;
     // A new controller of the same family can still change a label (a DualShock's Share where a DualSense has Create).
     const relabels = variantOf(family, name) !== variantOf(family, padName);
     padName = name;
     if (current.kind === kind && current.family === family && !relabels) return;
     current = family ? { kind, family } : { kind };
     log(`Lamp: playing with ${family ? (LAYOUTS[family] || {}).spoken || controllers.unknown : 'the ' + kind}.`);
-    for (const changed of listeners) try { changed(input()); } catch (e) { log(`Error: ${e.message}`); }
+    drawPrompts();
 }
 
 // Whose controller it is: the device's one layout where it has one, or else what the controller reports, its name as
@@ -466,12 +487,10 @@ function vendorFamily(vendor) {
     return found ? found.id : 'other';
 }
 
-if (!preview) {
-    window.addEventListener('keydown', e => { if (e.isTrusted) use('keyboard'); }, { capture: true });
-    window.addEventListener('pointerdown', e => {
-        if (e.pointerType === 'touch' || e.pointerType === 'pen') use('touch'); else if (e.pointerType === 'mouse') use('keyboard');
-    }, { capture: true, passive: true });
-}
+window.addEventListener('keydown', e => { if (e.isTrusted) use('keyboard'); }, { capture: true });
+window.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') use('touch'); else if (e.pointerType === 'mouse') use('keyboard');
+}, { capture: true, passive: true });
 
 // What a prompt names each part of the pad by is the layout's (a part it leaves out is the base layout's): BUTTON.A
 // is a place, the bottom face button, so a prompt names what's printed on the button in that place on the player's
@@ -494,8 +513,8 @@ function keyName(code) {
 
 function keysFor(name) {
     if (name === 'STICK_L' || name === 'STICK_R') {
-        const s = STICK_KEYS[name === 'STICK_L' ? 'left' : 'right'];
-        return [s.up[0], s.left[0], s.down[0], s.right[0]];
+        const s = STICK_KEYS[name === 'STICK_L' ? 'left' : 'right'], at = name === 'STICK_L' ? leftStickHint : 0;
+        return [s.up[at], s.left[at], s.down[at], s.right[at]];
     }
     if (name === 'LT' || name === 'RT') return [TRIGGER_KEYS[name.toLowerCase()][0]];
     const codes = KEYS[BUTTON[name]];
@@ -503,7 +522,7 @@ function keysFor(name) {
 }
 
 // What to call a button (BUTTON.A…), a stick (STICK.LEFT) or a trigger (TRIGGER.RT) on the input the player is using
-// (or the one given): "A", "✕", "Space", "W A S D". A key's code ('KeyH'), for a page that reads keys itself, is that
+// (or the one given): "A", "✕", "Space", "W A S D" ("↑ ← ↓ →" with game()'s `keyboardHints`). A key's code ('KeyH'), for a page that reads keys itself, is that
 // key's name whatever the input. null when the input has nothing for it (no key for a stick's click, no touch button
 // the game didn't ask for), so the prompt is left out.
 export function label(what, on = current) {
@@ -576,12 +595,10 @@ export function glyph(what, on = current) {
 // MARK: A fixed step, for physics
 
 // Physics (Rapier's world.step(), or the game's own) wants the same step every time, whatever the device's frame rate:
-// a step that follows the frame bounces and tunnels differently at 30, 60 and 120 frames a second, and the preview's
-// replay only matches the play when the steps do. fixedStep(step) gives a function to call once a frame with f.dt: it
+// a step that follows the frame bounces and tunnels differently at 30, 60 and 120 frames a second. fixedStep(step) gives a function to call once a frame with f.dt: it
 // runs step() as many times as the time since the last frame holds, at 1/60 s each (`rate` a second), and at most `most`
 // times, so a device that can't keep up slows the game down rather than falling further behind. It returns how far the
 // frame is into the next step, 0 to 1, for a game that places what it draws between the last two steps (most needn't).
-// In the preview every frame is exactly one step.
 //
 //   const physics = fixedStep(() => world.step(events));
 //   frame(f) { steer(f.pads[0]); physics(f.dt); place(); renderer.render(scene, camera); }
@@ -602,35 +619,37 @@ export function fixedStep(step, { rate = 60, most = 4 } = {}) {
 
 let time = 0, number = 0;
 const pads = [0, 1, 2, 3].map(() => ({ connected: false, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0, pressed: 0, released: 0 }));
-let renderer = null, frameFunction = null, scripted = null, before = [0, 0, 0, 0], seenControllers = -1;
+let renderer = null, frameFunction = null, before = [0, 0, 0, 0], seenControllers = -1;
 
 // Whether a controller is being played with now: a button down or a stick off its center.
 const inUse = g => g.buttons.some(b => b && b.pressed) || g.axes.some(a => Math.abs(a) > 0.3);
 
 function readPads() {
-    const found = scripted ? [] : Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(g => g && g.connected);
+    if (driven && clockNow() > drivenUntil) driven = null;
+    if (lampHas && clockNow() > lampHasUntil) letGoOfLamp(null);
+    const found = Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(g => g && g.connected);
     // The touch controls are there from the start, step aside once a controller is played with (a connected one alone
     // may only be the simulator passing the Mac's through), and come back when the screen is touched.
     const played = found.find(inUse);
     const nativeInUse = nativePad && (nativePad.down || [nativePad.lx, nativePad.ly, nativePad.rx, nativePad.ry, nativePad.lt, nativePad.rt].some(a => Math.abs(a) > 0.3));
-    if (touchScreen && !scripted) {
+    if (touchScreen) {
         if (seenControllers === -1) showTouch();
         if (touchShown && (played || nativeInUse)) hideTouch();
     }
-    // The controller played with is the input now (and in the preview it stays the keyboard).
+    // The controller played with is the input now.
     if (played) use('controller', familyOf(played.id), played.id);
     else if (nativeInUse) use('controller', vendorFamily(nativePad.vendor));
-    if (!scripted && found.length !== seenControllers) { seenControllers = found.length; log(`Lamp: ${found.length} controller${found.length === 1 ? '' : 's'} connected.`); }
+    if (found.length !== seenControllers) { seenControllers = found.length; log(`Lamp: ${found.length} controller${found.length === 1 ? '' : 's'} connected.`); }
     for (let i = 0; i < 4; i++) {
         let pad = found[i] ? gamepadPad(found[i]) : { connected: false, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0 };
         if (i === 0) {
-            if (scripted) pad = Object.assign({}, scripted);
-            else {
-                if (nativePad) merge(pad, nativePad);
-                if (readsKeyboard) merge(pad, keyboardPad());
-                merge(pad, Object.assign({}, touch, { down: touch.down | tapped }));
-                tapped = 0;
-            }
+            if (nativePad) merge(pad, nativePad);
+            if (readsKeyboard) merge(pad, keyboardPad());
+            merge(pad, Object.assign({}, touch, { down: touch.down | tapped }));
+            tapped = 0;
+            // The person's own input while Lamp has the controller, holding something or not, takes the game back.
+            if (lampHas && (played || nativeInUse || pressing(pad))) letGoOfLamp('the person played');
+            if (driven) pad = Object.assign({}, driven);
             pad.connected = true;
         }
         pad.pressed = pad.down & ~before[i];
@@ -647,6 +666,7 @@ function readPads() {
 // code that was playing: what arrives while the code runs again changes what's held and is never replayed as a press.
 const phoneButtons = new Map();
 function phoneButton(player, name, down) {
+    if (down && lampHas) letGoOfLamp('a phone played');
     let buttons = phoneButtons.get(player);
     if (!buttons) phoneButtons.set(player, buttons = newPhoneButtons());
     if (!!buttons.down[name] === down) return;
@@ -668,8 +688,6 @@ function readPhones() {
     return list;
 }
 
-// What the frame function returns is handed back: in the preview a promise from it (lamp-phaser.js's, while a scene
-// loads) is waited for before the next frame.
 function step(dt) {
     readPads();
     const phonesNow = readPhones();
@@ -681,8 +699,8 @@ function step(dt) {
 
 // MARK: The frame rate, measured on the device
 
-// Every ten seconds of play the log says how fast frames really came, so the agent sees the device's own frame rate,
-// not the preview's fixed 1/60 s. And when frames run slow the game is drawn smaller and scaled up to the screen, a
+// Every ten seconds of play the log says how fast frames really came, so the agent sees the device's own frame rate.
+// And when frames run slow the game is drawn smaller and scaled up to the screen, a
 // step at a time: on whatever device it is, a scene that fills the screen with pixels is the usual cost, and fewer
 // pixels the usual cure. A step that doesn't make frames faster is undone and no more are tried, since then the
 // drawing isn't what's slow (a busy frame function, or a screen that refreshes only 30 times a second).
@@ -748,7 +766,9 @@ function fit() {
 // page gives them: `p.pressed.a` is true for the one frame after a press, even one let go again since). `touch` names
 // the buttons the touch controls show (BUTTON.A | BUTTON.B | BUTTON.MENU unless given; BUTTON.RSTICK adds a right stick),
 // or `false` for a page that draws touch controls of its own. `keyboard: false` is for a page that reads the keys itself:
-// the keyboard then isn't the first pad as well, so a key isn't heard twice. The preview's script is the first pad either way.
+// the keyboard then isn't the first pad as well, so a key isn't heard twice. Lamp's own controller is the first pad either way.
+// `keyboardHints: { leftStick: 'arrows' }` is for a game whose person asked for the arrow keys: label() and glyph() name
+// them for the left stick instead of W A S D ('wasd', the default). It only chooses the name: both keep moving the stick.
 // The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialized before game() is called). A 2D
 // game calls phaser() from lamp-phaser.js instead, which calls this with Phaser's canvas.
 // `sharp: true` keeps it drawn at 1920x1080 however slow frames are (the log still says how fast they come).
@@ -757,7 +777,7 @@ function fit() {
 // smaller when frames run slow, and the runtime only measures and logs the frame rate.
 // `snapshot`, `restore`, `busy`, `assetChanged` and `dispose` keep the player's place through a change Lamp makes while
 // the game is played (see "Changes while it's played" below).
-export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false, fill = false,
+export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, keyboardHints, sharp = false, fill = false,
                              snapshot, restore, busy, assetChanged, dispose, flat = false }) {
     // The game's code run again in place for a change calls this again: the page, the frame loop's clock and whatever
     // the game kept stay, and the new init starts from where the player was.
@@ -765,6 +785,7 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     if (again) again.called = true;
     const old = renderer;
     renderer = given;
+    watchRender(renderer);
     fills = fill;
     adapting = !sharp && !fill;
     // Drawn at full size from here (setSize below), however small the code run before drew it.
@@ -778,6 +799,10 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     if (buttons === false) drawsTouch = false;
     else if (buttons != null) touchButtons = buttons;
     readsKeyboard = keyboard !== false;
+    // Set on every call, so code run again for a change that takes the hint away goes back to the default. Prompts drawn
+    // before this call are drawn again.
+    const hint = LEFT_STICK_HINTS[keyboardHints && keyboardHints.leftStick] ?? LEFT_STICK_HINTS.wasd;
+    if (hint !== leftStickHint) { leftStickHint = hint; drawPrompts(); }
     if (!fill) {
         renderer.setPixelRatio(1);
         renderer.setSize(WIDTH, HEIGHT, false);
@@ -796,37 +821,44 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     }
     // Where the player was, if the page is opened again for a change: known before init, so the game starts there.
     if (again) { pending = { state: again.state && again.state.state, held: again.state && again.state.held, gen: again.change.gen }; reopened = true; taken = false; }
-    else if (!preview) { await claim(); keepPage(); }
+    else { await claim(); keepPage(); }
     // What the game registered takes its place before init reads it.
     if (pending && pending.held) {
         restoring = pending.held;
         if (!again) guarding = true;
         for (const entry of states.values()) settle(entry);
     }
-    // In the preview a start-up that fails ends the play with what it said, rather than leaving Lamp waiting for frames.
     if (init) {
         try { await init({ width: WIDTH, height: HEIGHT }); } catch (e) {
             if (again) return ranAgainFailed(again, e);
             if (taken || guarding) return startFresh(e);
             log(`Error: ${e && e.message || e}`);
-            if (preview) { window.webkit.messageHandlers.lampPreview.postMessage({ done: true, failed: String(e && e.message || e), logs }); return; }
             throw e;
         }
     }
-    if (preview) { if (again) ranAgain(again); return runPreview(); }
     // Whatever the start set on a camera, it's where the player left it at the first frame.
     if (restoring) for (const entry of cameras.values()) putPose(entry, restoring.cameras[entry.id]);
     await putBack();
     if (again) ranAgain(again);
+    // The first frame of code run again has its shaders compiled before it's drawn (`watchRender`).
+    if (again && renderer.__lampRender) warming = 'ask';
     // One loop at a time: the game's code run again starts a new one, and the old one stops at its next frame.
     const mine = ++loops;
     reopenedFrame = 0;
     let last = 0;
     const loop = now => {
         if (mine !== loops) return;
+        // Its shaders compiling: the frame before stays on screen, and the game waits for them.
+        if (warming && warming !== 'ask') { nextFrame(loop); return; }
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
+        // How long the page took to build the game, for the log.
+        const first = !last && mine === 1;
+        if (first) log(`Lamp: the game was built and drawn ${(now / 1000).toFixed(1)} s after the page opened.`);
         last = now;
         measure(now);
+        drewThisFrame = false;
+        framesDrawn++;
+        const began = clockNow();
         try { step(dt); } catch (e) {
             // New code swapped in or run again that fails as it runs goes back out the safe way: the page opens again
             // from where the player was before it.
@@ -835,7 +867,15 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         }
         // The first frame drawn from a snapshot has gone without an error: from here an error is the game's own.
         guarding = false;
+        // A frame that drew nothing through the renderer has nothing to compile.
+        if (warming === 'ask') warming = null;
+        const cost = clockNow() - began;
+        frameCost = frameCost ? frameCost * 0.9 + cost * 0.1 : cost;
+        if (reporting && !warming) firstDrawn(cost);
         shoot();
+        // The first frame of play is drawn, and on screen at the next: the app's picture for Lamp's desk is taken from
+        // there, past the loading screen (`tellPlaying`).
+        if (first) nextFrame(() => tellPlaying('playing'));
         // Opened again for a change: it's on screen with this first frame.
         if (shownFor != null && !curtain && !runningAgain && reopenedFrame++ > 0) { tellHost(shownFor, 'shown'); shownFor = null; }
         lift();
@@ -897,20 +937,25 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
 // swap doesn't (build again what a changed method built once), and returns false to have the code run again
 // instead. For what a module makes at its top level (a listener, an element, a timer), `hot(import.meta).dispose(data
 // => …)` takes it away as the old version goes, keeping in `data` what the next needs, which reads it as
-// `hot(import.meta).data`. Nothing here runs in Lamp's preview or where changes come by an install.
+// `hot(import.meta).data`. Nothing here runs where changes come by an install.
 
 let hooks = {}, started = false, waiting = null, pill = null;
 // The place this copy starts in (claim()), whether the game read it (pendingRestore()), and whether an error now means
 // the state didn't take.
 let pending = null, reopened = false, taken = false, guarding = false;
 const host = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampLive;
-const tellHost = (gen, state, why) => { try { const h = host(); h && h.postMessage(why ? { gen, state, why } : { gen, state }); } catch (e) {} };
+// Whether the game is past its loading screen, for the picture of the app Lamp's desk shows (`LampPagePlaying` in a Mac
+// app): 'loading' from when this runtime loads, 'playing' at the first frame of play.
+const tellPlaying = state => { try { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampPlaying; h && h.postMessage(state); } catch (e) {} };
+tellPlaying('loading');
+// Putting in what was built in the background says only its report: the change it's part of has said the rest.
+const tellHost = (gen, state, why, more) => { if (runningAgain && runningAgain.change.quiet && state !== 'report') return; try { const h = host(); h && h.postMessage({ gen, state, ...(why ? { why } : {}), ...more }); } catch (e) {} };
 // What a change of these is, is code: swapped in, or the page is opened again for it.
 const CODE = /\.(m?js|html?|css)$/i;
 // Each copy of the page names its build (lamp-build.js, written with lamp-device.js), so a snapshot is restored only by a
 // newer build. A copy without one restores only what the page itself kept for its reopening.
 let buildID = null;
-const build = preview ? Promise.resolve(null) : import('./lamp-build.js').then(m => (buildID = m.default), () => null);
+const build = import('./lamp-build.js').then(m => (buildID = m.default), () => null);
 const LIVE = 'lamp.live', LAST = 'lamp.live.last';
 const store = kind => { try { return kind === 'session' ? sessionStorage : localStorage; } catch (e) { return null; } };
 
@@ -934,25 +979,56 @@ function isBusy() {
 // put in at a time, so one arriving during a swap waits for it.
 let queue = Promise.resolve();
 window.__lampLive = change => {
-    if (preview) return false;
     changes = Math.max(changes + 1, change.gen || 0);
     queue = queue.then(() => {
-        if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])] };
+        // What the code run again couldn't take in goes in as the page opens again, at Reload.
+        if (waiting && waiting.reopens && change.now) { waiting = null; return reopen(change); }
+        // A file taken away while a change waits, and made again since, is a changed file like any other.
+        if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])],
+            removed: [...new Set([...(waiting.removed || []).filter(p => !change.changed.includes(p)), ...(change.removed || [])])] };
         waiting = null;
         return apply(change);
     }).catch(e => log(`Lamp: ${e && e.message || e}`));
     return true;
 };
 
+// The app menu's Reload with no change waiting: the game opens again from its files, every part of it built afresh, with
+// the player where they were.
+// After any change being put in (one at a time, `queue`), with the place a rerun under way kept for itself, never one
+// taken from a game it has half started again.
+window.__lampReloadNow = () => {
+    const held = runningAgain && runningAgain.state;
+    queue = queue.then(() => reopen({ gen: changes, why: 'Reload' }, held || takeSnapshot()))
+        .catch(e => log(`Lamp: ${e && e.message || e}`));
+    return true;
+};
+
 async function apply(change) {
-    const paths = (change.changed || []).map(clean);
+    let paths = (change.changed || []).map(clean);
     // Not started yet: nothing to keep.
     if (!started) { tellHost(change.gen, 'reloading'); location.reload(); return; }
     // Where the player is before anything is swapped, for the page to open from should the swap not take.
     const before = takeSnapshot(), roster = phonesHere(), began = performance.now();
+    // Files taken away that the running game has no use for are no part of the change. With nothing else in it there's
+    // nothing to put in, and the game goes on as it was.
+    const unused = await unusedFiles(change, paths);
+    if (unused.length) {
+        for (const path of unused) texts.delete(path);
+        paths = paths.filter(p => !unused.includes(p));
+        change = { ...change, changed: paths };
+        log(`Lamp: ${unused.join(', ')} ${unused.length === 1 ? 'was' : 'were'} taken away, and the running game has no use for ${unused.length === 1 ? 'it' : 'them'}.`);
+        if (!paths.length) { hidePill(); tellHost(change.gen, 'swapped'); return; }
+    }
     const said = [];
     let why = paths.length ? null : 'nothing to put in', touched = false;
-    for (const path of paths.filter(p => !CODE.test(p))) {
+    // A part declared as built from a changed file is built again, with everything else kept: a swap would leave it as
+    // it was built.
+    if (paths.some(p => /\.m?js$/i.test(p)) && [...kept.values()].some(k => k.from.length)) {
+        try { await readModules(paths.filter(p => /\.m?js$/i.test(p))); } catch (e) {}
+    }
+    const own = builtFrom(paths);
+    if (own) why = `${own.path} changed, which ${own.key} is built from`;
+    for (const path of why ? [] : paths.filter(p => !CODE.test(p))) {
         let done = false;
         for (const swap of swaps.get(path) || []) { try { await swap(); done = true; } catch (e) { log(`Lamp: couldn't put in the new ${path} (${e && e.message || e}).`); } }
         if (hooks.assetChanged) { try { if (await hooks.assetChanged(path)) done = true; } catch (e) { log(`Error: assetChanged('${path}'): ${e && e.message || e}`); } }
@@ -971,7 +1047,7 @@ async function apply(change) {
         tellHost(change.gen, 'swapped');
         return;
     }
-    change = { ...change, why };
+    change = { ...change, why, put: said };
     // A run that would start the game over waits for the person: only they can say the place is worth losing.
     if (!keepsPlace() && !change.now && !touched) {
         const unkept = unregistered();
@@ -982,7 +1058,7 @@ async function apply(change) {
     if (isBusy() && !change.now && !touched) {
         waiting = change;
         log(`Lamp: a change that needs the game's code run again (${why}) waits for a pause in the game.`);
-        tellHost(change.gen, 'held', why);
+        tellHost(change.gen, 'held', why, { pause: true });
         if (change.pill) showPill();
         return;
     }
@@ -1000,11 +1076,10 @@ function startAgain(change, state = takeSnapshot(), roster = phonesHere()) {
 
 // A change that needs the page opened again is held for the person's Reload, never opened under them: the app and the
 // chat show Reload (`held`), and it goes in when they press it (`now`). The code run again in place goes in by itself.
-// Lamp's preview, which nobody watches, opens a new page instead.
 // A swap that already changed the running game (its old version's disposers run, its exports put in) leaves nothing safe
 // to wait in: that opens the page again at once, from where the player was before it.
 function reopenOrHold(change, state) {
-    if (change.now || change.touched || preview) return reopen(change, state);
+    if (change.now || change.touched) return reopen(change, state);
     waiting = { ...change, hard: true };
     log(`Lamp: a change that needs the game opened again (${change.why}) waits for Reload.`);
     tellHost(change.gen, 'held', change.why);
@@ -1014,8 +1089,6 @@ function reopenOrHold(change, state) {
 // Opens the page again with the new code, with the player's place kept for the new code to restore: where it is now, or
 // `state` taken before a swap that didn't take.
 function reopen(change, snap = takeSnapshot()) {
-    // A warm preview can't open its page again with a new play: Lamp starts it cold instead.
-    if (preview) { window.webkit.messageHandlers.lampPreview.postMessage({ done: true, again: false, logs }); return; }
     hidePill();
     try { store('session').setItem(LIVE, JSON.stringify({ ...snap, input: current, padName, gen: change.gen })); } catch (e) {}
     const why = change.why ? ` (${change.why})` : '';
@@ -1029,6 +1102,7 @@ function reopen(change, snap = takeSnapshot()) {
 let keptAt = 0;
 function live() {
     if (swapGuard && time > swapGuard.until) swapGuard = null;
+    if (swapWaits && !isBusy() && !runningAgain) { swapWaits = false; swapIn(); }
     if (waiting && !waiting.hard && !isBusy()) { const change = waiting; waiting = null; queue = queue.then(() => startAgain(change)).catch(e => log(`Lamp: ${e && e.message || e}`)); }
     if ((hooks.snapshot || cameras.size || states.size) && time - keptAt >= 5) { keptAt = time; keepLast(); }
 }
@@ -1062,14 +1136,16 @@ const bare = text => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').replace(/\
 
 // A module's handle on its changes while the game is played (see "Changes while it's played" above): `accept()` takes
 // them, `dispose(fn)` takes away what this version made as it goes, `data` is what the last version's disposers kept,
-// `keep(key, build)` a part of the game kept when its code runs again (see "Running the game's code again"), and
+// `keep(key, build, { inputs, from, background })` a part of the game kept when its code runs again (see "Running the game's code
+// again" and "Building in the background"), and
 // `renderer(build)`, `camera(id, build)` and `state(id, { version, start })` what the runtime keeps for the game (see
 // "What the game registers").
 export function hot(meta) {
     const path = pathOf(meta && meta.url);
     // A page that takes no changes still restores what's registered when a newer install opens it.
-    const quiet = { data: {}, accept() {}, dispose() {}, keep(key, build) { return build(); }, renderer: build => build(), camera, state };
-    if ((preview && !preview.warm) || path == null || (!preview && !host())) return quiet;
+    const quiet = { data: {}, accept() {}, dispose() {}, renderer: build => build(), camera, state,
+                    keep(key, build, options) { const v = build(); return options && options.background && isSteps(v) ? stepThrough(v) : v; } };
+    if (path == null || !host()) return quiet;
     let entry = modules.get(path);
     if (!entry) modules.set(path, entry = { path, accepts: false, onAccept: null, disposers: [], data: {}, versions: [], text: null });
     // Each version says for itself whether it takes the next, and what to take away when it goes.
@@ -1078,7 +1154,11 @@ export function hot(meta) {
     entry.disposers = [];
     if (!loading.has(path) && !entry.versions.length) {
         // The version the page loaded first, which every module that imported it holds: known once it has run.
-        import(meta.url).then(ns => { if (!entry.versions.length) entry.versions.push(versionOf(ns)); }, () => {});
+        // A module that awaits at its top level can be handed over before it has finished: its exports can't be read
+        // yet, so it's asked again.
+        const first = tries => import(meta.url).then(ns => { if (!entry.versions.length) addVersion(entry, versionOf(ns)); })
+            .catch(e => { if (e instanceof ReferenceError && tries) after(250, () => first(tries - 1)); });
+        first(40);
         fetch(meta.url, { cache: 'no-store' }).then(a => a.ok ? a.text() : null).then(t => { if (entry.text == null) entry.text = t; }, () => {});
     }
     return {
@@ -1091,6 +1171,12 @@ export function hot(meta) {
     };
 }
 
+// Only the last version's text is compared with: an array's can be megabytes, for every run of the code.
+function addVersion(m, version) {
+    const last = m.versions[m.versions.length - 1];
+    if (last) last.made = null;
+    m.versions.push(version);
+}
 function versionOf(ns) {
     const made = {};
     for (const name of Object.keys(ns)) {
@@ -1171,6 +1257,36 @@ async function readModules(changed, page = document) {
         next = unread();
     }
     return roots;
+}
+
+// Whether `text` names a file: by its whole name, so `world.js` doesn't name `orld.js`. Only a name: a comment naming the
+// file counts, and two files of one name in different folders count as each other, which errs toward saying a file is used.
+function names(text, path) {
+    const name = path.split('/').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^\\w$.-])${name}($|[^\\w$-])`).test(text);
+}
+
+// What of a change's files taken away the running game clearly has no use for: nothing it runs imports them, it never read
+// them, no part is built from them, and neither its code, its page nor its stylesheets name them. Anything else (a
+// worker it started, data it fetched, a module it imports, a name in a comment) is left in the change, which goes on to
+// say honestly what came of it. With a worker started, what's read is only partly known, so no file is known to be
+// unused, and a page that can't be read says the same. Not for the person's Reload, which puts everything in.
+async function unusedFiles(change, paths) {
+    const removed = (change.removed || []).map(clean).filter(p => paths.includes(p));
+    if (!removed.length || change.now || workerStarted) return [];
+    try {
+        if (removed.includes(pagePath())) return [];
+        const html = await readText(pagePath()), parsed = parse(html);
+        await readModules(paths.filter(p => /\.m?js$/i.test(p)), parsed);
+        const styles = [...parsed.querySelectorAll('link[rel~="stylesheet"]')].map(l => pathOf(new URL(l.getAttribute('href'), location.href).href));
+        const asked = removed.filter(p => !lampOwn(p) && !imports.has(p) && !loaded.has(p) && !everRead.has(p) && !swaps.has(p) && !builtFrom([p]));
+        const sources = [html];
+        for (const path of [...imports.keys(), ...styles]) {
+            if (path == null || lampOwn(path) || removed.includes(path)) continue;
+            sources.push(texts.get(path) ?? inline.get(path) ?? await readText(path));
+        }
+        return asked.filter(p => !sources.some(text => names(text, p)));
+    } catch (e) { return []; }
 }
 
 // Puts changed modules and stylesheets into the running game: { said } what went in, or { why } it couldn't, with
@@ -1289,7 +1405,7 @@ async function swapModules(changed) {
     for (const path of boundaries) {
         const m = modules.get(path), ns = loaded.get(path);
         const changedNames = putIn(m, ns);
-        m.versions.push(made.get(path));
+        addVersion(m, made.get(path));
         m.text = texts.get(path);
         if (m.onAccept) {
             try {
@@ -1301,7 +1417,7 @@ async function swapModules(changed) {
     for (const path of order) {
         latest.set(path, addresses.get(path));
         const m = modules.get(path);
-        if (m && !boundaries.has(path)) { m.versions.push(made.get(path)); m.text = texts.get(path); }
+        if (m && !boundaries.has(path)) { addVersion(m, made.get(path)); m.text = texts.get(path); }
         if (!boundaries.has(path)) said.push(`${path}, run again for the modules that import it`);
     }
     for (const path of changed) texts.delete(path);
@@ -1426,18 +1542,31 @@ function putClass(C, N) {
 // shaders compiled for it, the files the runtime loaded, the sound, the controllers, the phones that joined, and every
 // part the game kept.
 //
-// A part is kept with `hot(import.meta).keep(key, build, { inputs, dispose })`: the first time it calls build() and
-// returns what that made (or its promise), and when the code runs again it returns the same thing without building it,
-// unless the module that kept it, or one it imports, changed since, the build function's own code changed, or one of
-// `inputs` isn't the same as before (another part's result it's built from, as a dependency list goes), or a file it
-// loaded through the runtime (asset(), texture(), model(), sound.load()) changed. The module that
-// starts the game imports everything and changes often, so what it keeps goes by the modules whose imports the build
-// function names, and theirs: a change of its own code outside the build function keeps what it kept. A part that's
-// built again, or not asked for any more, goes: `dispose(value)` when given, else a three.js object is taken out of its
-// scene and its geometry and materials let go, and anything with dispose() or destroy() has it called.
+// A part is kept with `hot(import.meta).keep(key, build, { inputs, from, dispose, background })`: the first time it calls build()
+// and returns what that made (or its promise), and when the code runs again it returns the same thing without building
+// it, unless the module that kept it, or one it imports, changed since, the build function's own code changed, or one
+// of `inputs` isn't the same as before (another part's result it's built from, as a dependency list goes), or a file
+// it read as it was built (loaded through the runtime, asset(), texture(), model(), sound.load(), or fetched) changed.
+// The module that starts the game imports everything and changes often, so what it keeps goes by the modules whose
+// imports the build function names, and theirs: a change of its own code outside the build function keeps what it kept.
+// `from` declares what the part is built from beyond that: files beside the page, a module meaning it and what it
+// imports, a path ending in / a folder (`from: ['js/map-data.js', 'data/streets/']`). A change to one builds the part
+// again in place even where its module would take the change by a swap, since a swap leaves what was built as it was,
+// and the parts made from it (their `inputs`) with it; everything else stays, and so does the player's place. A part
+// that's built again, or not asked for any more, goes: `dispose(value)` when given, else a three.js object (or each in a
+// plain object, as { group }) is taken out of its scene and its geometry and materials let go, and anything else with
+// dispose() or destroy() has it called. A part that's slow to build says `background: true`, and the game plays on
+// while it's built again (see "Building in the background").
 //
 //   const renderer = await hot(import.meta).keep('renderer', async () => { const r = new THREE.WebGPURenderer(); await r.init(); return r; });
 //   const blocks = live.keep('blocks', () => buildBlocks(landmarks.colliders), { inputs: [landmarks] });
+//   const paint = live.keep('roadPaint', () => buildRoadPaint(streets.network), { inputs: [streets], from: ['js/map-data.js'] });
+//
+// After a run, Lamp is told what was built again (each part, how long it took and why) and what of the change nothing
+// read again (a file the game uses whose part was kept, or that its code read once at the start): that waits for the
+// person's Reload, which opens the page again, and Lamp's chat says so rather than that it's in. The first frame of the
+// new code has its shaders compiled before it's drawn, with the last frame held on screen, and the report says how long
+// the game stood still for the change, from the old code's last frame to the new code's first.
 //
 // What the game's code leaves running is watched from the start: listeners it adds (to the window, the document or
 // anything else), timers, sound contexts it makes itself and workers. Each is taken away when the code runs again,
@@ -1455,22 +1584,59 @@ const kept = new Map();
 let keeping = 0;
 
 function keep(path, key, build, options = {}) {
-    const { dispose, inputs = [], lasting = false } = typeof options === 'function' ? { dispose: options } : options;
+    const { dispose, inputs = [], lasting = false, from = [], background = false } = typeof options === 'function' ? { dispose: options } : options;
     const id = `${path} ${key}`, text = lasting ? bare(source(build)) : source(build), had = kept.get(id), again = runningAgain;
     if (lasting && had && had.text !== text && redeclare(key)) return had.value;
-    const same = had && had.inputs.length === inputs.length && inputs.every((v, i) => Object.is(v, had.inputs[i]));
-    // In the preview a part whose async build drew random numbers while it waited is built again: how many were its
-    // own can't be told, and a play must give the numbers a cold one does.
-    if (had && !had.stale && had.text === text && same && !(preview && had.draws == null)) {
+    const sameAs = list => list.length === inputs.length && inputs.every((v, i) => Object.is(v, list[i]));
+    const same = had && sameAs(had.inputs);
+    const sources = [from].flat().filter(f => typeof f === 'string' && f).map(clean);
+    const sameSources = had && had.from.join('\n') === sources.join('\n');
+    // A part being built in the background goes on being built while nothing it's built from changed again, and the
+    // game goes on with the part it has until the new one swaps in.
+    if (had && had.pending) {
+        const p = had.pending;
+        if (!had.stale && p.text === text && sameAs(p.inputs) && p.from.join('\n') === sources.join('\n')) {
+            had.used = true;
+            if (again) tally.building.push({ key, cause: p.cause });
+            return had.value;
+        }
+        stopBuilding(had);
+    }
+    if (had && !had.stale && had.text === text && same && sameSources) {
         had.used = true;
-        if (again) tally.kept.push(key);
+        // Built in the background since the code last ran: in the game from this run on.
+        if (again && had.fresh) { had.fresh = false; tally.swapped.push(had); }
+        else if (again) tally.kept.push(key);
         // The random numbers its build drew are drawn past, so what comes after gets the numbers it got then.
         for (let i = 0; i < (had.draws || 0); i++) random();
         return had.value;
     }
-    if (had) letGo(had);
-    const entry = { path, key, text, inputs, lasting, dispose: typeof dispose === 'function' ? dispose : null, used: true, stale: false,
-                    value: undefined, made: undefined, assets: new Set(), draws: 0 };
+    // Why it's built again, for the agent: the file that changed, its own code, or a part it's built from.
+    const cause = !had ? null : typeof had.stale === 'string' ? had.stale : had.text !== text ? 'its build changed'
+        : !same ? 'a part it\'s built from was built again' : !sameSources ? 'what it\'s built from changed' : null;
+    // Built from a part that's being built in the background: built from the new one once that swaps in, and until
+    // then the game goes on with the one it has.
+    // (an async part's value is its promise; what the game passes on is what it gave, `made`)
+    if (again && had && !lasting && inputs.some(v => [...kept.values()].some(k => k.pending && (Object.is(k.value, v) || Object.is(k.made, v))))) {
+        had.used = true;
+        tally.waiting.push(key);
+        return had.value;
+    }
+    // A part built in the background is built again while the game goes on with the one it has (see "Building in the
+    // background").
+    if (background && again && had && !lasting) {
+        had.used = true;
+        had.stale = false;
+        had.pending = { text, inputs, from: sources, dispose: typeof dispose === 'function' ? dispose : null, build, cause,
+                        gen: again.change.gen, began: performance.now(), busy: 0, steps: null, assets: new Set(), timers: [] };
+        backgrounds.add(had);
+        tally.building.push({ key, cause });
+        slices();
+        return had.value;
+    }
+    const entry = { path, key, text, inputs, lasting, from: sources, dispose: typeof dispose === 'function' ? dispose : null, used: true,
+                    stale: false, value: undefined, made: undefined, assets: new Set(), draws: 0, cause, ms: null };
+    const began = performance.now();
     // What the build starts as it runs belongs to the part. An async build's later work can't be told from other code
     // that runs while it waits, so of what's started meanwhile only what's the part's own stays with it: listeners on
     // the part (its object, its canvas, an element inside it) and a worker or sound context that is the part or one of
@@ -1481,19 +1647,35 @@ function keep(path, key, build, options = {}) {
     building.push(entry);
     const drawn = draws;
     let value;
-    try { value = build(); } finally { keeping--; building.pop(); entry.draws = draws - drawn; }
+    // A build made of steps (a generator) is built whole the first time: there's no part yet to play with meanwhile.
+    try { value = build(); if (background && isSteps(value)) value = stepThrough(value); } finally { keeping--; building.pop(); entry.draws = draws - drawn; }
     if (value && typeof value.then === 'function') {
         const waiting = { added: [], made: [], timers: [], assets: entry.assets };
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
         const drawnBefore = draws;
-        value.then(v => { entry.made = v; entry.timers = waiting.timers; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
-            () => { if (kept.get(id) === entry) kept.delete(id); });
-    } else entry.made = value;
+        value.then(v => { entry.made = v; entry.settled = true; entry.timers = waiting.timers; entry.ms = performance.now() - began; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
+            () => { entry.settled = true; if (kept.get(id) === entry) kept.delete(id); });
+    } else { entry.made = value; entry.settled = true; entry.ms = performance.now() - began; }
     entry.value = value;
+    // The part it replaces goes, sparing what the new one shares with it (materials made once, so compiled once).
+    if (had) Promise.resolve(value).then(v => letGo(had, usedBy(v)), () => letGo(had));
     kept.set(id, entry);
-    if (again && had) tally.built.push(key);
+    if (again && had) tally.built.push(entry);
     return value;
+}
+
+// The kept parts built from one of `paths`, as the game declared them (`from`: a file, a module and what it imports, or
+// a folder ending in /): a change to one is the part's own, so it's built again in place rather than swapped around it.
+function builtFrom(paths) {
+    for (const k of kept.values()) {
+        if (k.lasting || !k.from.length) continue;
+        const deps = new Set();
+        for (const f of k.from) if (!f.endsWith('/')) { deps.add(f); for (const dep of below(f)) deps.add(dep); }
+        const hit = paths.find(p => deps.has(p) || k.from.some(f => f.endsWith('/') && p.startsWith(f)));
+        if (hit) return { key: k.key, path: hit };
+    }
+    return null;
 }
 
 const isKept = v => [...kept.values()].some(k => k.made === v);
@@ -1505,6 +1687,14 @@ const keepsWaiting = new Set();
 const building = [];
 function took(path) {
     loaded.add(path);
+    read(path);
+}
+// A file of the page's read, through the runtime or fetched: by the parts being built, and since the code last ran again
+// (`readSince`, for what of a change nothing read again: `waitsFor`).
+let readSince = new Set();
+function read(path) {
+    readSince.add(path);
+    everRead.add(path);
     for (const entry of building) entry.assets.add(path);
     for (const waiting of keepsWaiting) waiting.assets.add(path);
 }
@@ -1522,18 +1712,379 @@ function own(made, waiting) {
     }
 }
 
-function letGo(k) {
+// `spare` holds the geometry and materials a part that replaces this one goes on using (made once and shared by both,
+// so the new part's shaders were compiled long ago): those stay, and so does whatever the game still holds elsewhere
+// (`stillHeld`). A part with a `dispose` of its own takes care of everything it made, and one with no three.js objects
+// has nothing to look for. What the game's listeners throw costs only the object they were told of.
+function letGo(k, spare = new Set()) {
+    // A part built in the background lets go of the one it replaced once it's let go of itself.
+    if (k.replaces) { letGo(k.replaces); k.replaces = null; }
     Promise.resolve(k.value).then(v => {
         try {
             if (k.dispose) return k.dispose(v);
-            if (v && v.isObject3D) {
-                v.removeFromParent();
-                v.traverse(o => { if (o.geometry) o.geometry.dispose(); for (const m of [o.material].flat()) if (m && m.dispose) m.dispose(); });
-            } else if (v && typeof v.dispose === 'function') v.dispose();
-            else if (v && typeof v.destroy === 'function') v.destroy(true);
+            const failed = e => log(`Lamp: letting go of ${k.key} kept in ${k.path} failed (${e && e.message || e}).`);
+            const parts = objectsOf(v);
+            if (parts.length) {
+                // A part that's a plain object of three.js objects ({ group, heights }) lets go of each, out of its scene
+                // first, or the scene would count as still holding it.
+                const roots = keptRoots(), objects = parts.filter(o => !roots.has(o));
+                for (const o of objects) { try { o.removeFromParent(); } catch (e) { failed(e); } }
+                const held = stillHeld(roots);
+                for (const o of objects) {
+                    // A scene still being drawn waits: disposed of now, the renderer would only make it all again, and
+                    // nothing would dispose of that. It's disposed of when it's taken apart.
+                    if (held.has(o)) { retire(o, true); continue; }
+                    disposeTree(o, spare, held, failed);
+                    retire(o);
+                }
+            }
+            if (v && !v.isObject3D && typeof v.dispose === 'function') v.dispose();
+            else if (v && !v.isObject3D && typeof v.destroy === 'function') v.destroy(true);
         } catch (e) { log(`Lamp: letting go of ${k.key} kept in ${k.path} failed (${e && e.message || e}).`); }
     }, () => {});
 }
+
+// A part let go of can go on being reachable: a module runs again as a new module, and the browser keeps the one it
+// replaces, with whatever its variables point at, for as long as the page is open, and a kept renderer holds on to
+// what it drew. Left as they are, a few such references keep every old part's buffers and objects in the page, the
+// garbage collector walks them all, and each run of the code takes longer than the last until the page runs out of
+// memory. So once nothing is deciding what the game goes on with, what's left of a part is taken apart: its objects
+// lose their children and their own hold on geometry and materials, and whatever still points at them points at
+// nothing heavy. Objects stay valid, on blank geometry and a blank material, for old code that's still calling them.
+//
+// Only roots are remembered, weakly: a part nothing holds simply goes, and this list keeps nothing alive.
+const retired = [], blanks = new Map();
+function disposeTree(root, spare, held, failed = e => { throw e; }) {
+    const dispose = thing => { if (spare.has(thing) || held.has(thing)) return; try { thing.dispose(); } catch (e) { failed(e); } };
+    root.traverse(o => {
+        if (o.geometry) dispose(o.geometry);
+        for (const m of [o.material].flat()) if (m && m.dispose) dispose(m);
+    });
+}
+let emptying = false, emptyAfter = 3000;
+function retire(o, undisposed = false) {
+    retired.push({ ref: new WeakRef(o), undisposed });
+    emptyAfter = 3000;
+    emptySoon();
+}
+function emptySoon() {
+    if (emptying) return;
+    emptying = true;
+    after(emptyAfter, emptyRetired);
+}
+function emptyRetired() {
+    emptying = false;
+    if (!retired.length) return;
+    // A run under way, a build still to finish or an async part still to arrive may yet use what's in the list.
+    if (runningAgain || backgrounds.size || [...kept.values()].some(k => !k.settled)) return emptySoon();
+    try {
+        const roots = keptRoots(), held = stillHeld(roots), drawing = scenesDrawing(), list = retired.splice(0);
+        for (const entry of list) {
+            const root = entry.ref.deref();
+            if (!root || root.parent || roots.has(root)) continue;
+            // Put back in a scene, or kept by something else since: no longer retired. A scene something still draws
+            // is asked about again, more rarely each time, and goes once it isn't drawn.
+            if (drawing.includes(root)) { retired.push(entry); continue; }
+            if (held.has(root)) continue;
+            if (entry.undisposed) disposeTree(root, new Set(), held);
+            emptyOut(root, held);
+        }
+    // Only ever a saving: what couldn't be taken apart goes on as it was.
+    } catch (e) { log(`Lamp: taking apart what the game let go of failed (${e && e.message || e}).`); }
+    if (!retired.length) { emptyAfter = 3000; return; }
+    emptyAfter = Math.min(emptyAfter * 2, 60000);
+    emptySoon();
+}
+function emptyOut(root, held) {
+    const stack = [root];
+    while (stack.length) {
+        const o = stack.pop();
+        if (held.has(o)) continue;
+        // A child that's held elsewhere leaves too: its parent no longer lists it, so it can't go on inheriting from it.
+        for (const child of o.children) { if (child.parent === o) child.parent = null; stack.push(child); }
+        o.children = [];
+        if (o.geometry) o.geometry = blankOf(o.geometry);
+        if (o.material) o.material = blankOf([o.material].flat()[0]);
+    }
+}
+// One empty object of the plainest class a geometry or material comes from, beneath three.js's event dispatcher.
+function blankOf(thing) {
+    if (!thing) return null;
+    const chain = [];
+    for (let c = thing.constructor; c && c !== Function.prototype; c = Object.getPrototypeOf(c)) chain.push(c);
+    const base = chain[Math.max(0, chain.length - 2)];
+    if (!blanks.has(base)) { let made = null; try { made = new base(); } catch (e) {} blanks.set(base, made); }
+    return blanks.get(base);
+}
+// What the game keeps by name: the three.js objects, geometry and materials of every part kept (with its pools,
+// however they're held, so a detached object counts), of what's being built or waiting to be swapped in, and the
+// cameras registered. `stillHeld` is all that with what hangs under it, and every scene the renderer is drawing.
+function keptRoots() {
+    const roots = new Set(), seen = new Set();
+    const walk = (v, depth) => {
+        if (!v || typeof v !== 'object') return;
+        if (v.isObject3D || v.isBufferGeometry || v.isMaterial) { roots.add(v); return; }
+        // What's kept can be big tables: a row at the last depth has been dealt with by here.
+        if (depth <= 0 || seen.has(v) || ArrayBuffer.isView(v) || v instanceof ArrayBuffer || (globalThis.Node && v instanceof Node)) return;
+        seen.add(v);
+        // Another library's object can throw on being read: what can't be read can't be told to be held.
+        let each = [];
+        try { each = v instanceof Map ? [...v.values()] : v instanceof Set ? [...v] : Object.values(v); } catch (e) {}
+        for (const x of each) walk(x, depth - 1);
+    };
+    for (const k of kept.values()) {
+        walk(k.made, 3);
+        if (k.replaces) walk(k.replaces.made, 3);
+        if (k.pending) walk(k.pending.value, 3);
+    }
+    for (const entry of cameras.values()) walk(entry, 2);
+    return roots;
+}
+function stillHeld(roots = keptRoots()) {
+    const held = new Set();
+    const add = root => root.traverse(o => {
+        held.add(o);
+        if (o.geometry) held.add(o.geometry);
+        for (const x of [o.material].flat()) if (x) held.add(x);
+    });
+    for (const root of roots) { if (root.isObject3D) add(root); else held.add(root); }
+    for (const scene of scenesDrawing()) if (!held.has(scene)) add(scene);
+    return held;
+}
+
+// MARK: Building in the background
+//
+// A part that takes long to build (a city from its map data, a terrain, a navigation mesh) says so with
+// `background: true`, and when a change builds it again the game goes on as it was while the new one is built: frames
+// keep coming, the controller and the game's logic keep working with the part it has, and a small "Building…" shows
+// over the game. Once the new part is built, its materials' shaders are compiled while the old one is still drawn, and
+// the code runs again in place with it, as for any change, which takes about a frame since everything else is kept:
+// what used the old part uses the new one from there, and the old one goes. A part built from one being built (its
+// `inputs`) is built again from the new one once that's in, and parts that must change together are built in one
+// part. The first build, with no part to play meanwhile, is built whole as the game starts.
+//
+// Its build is made of steps or waits for its work done elsewhere:
+//
+//   - a generator that yields between steps (a row of the city, a chunk of the terrain), which the runtime steps a few
+//     milliseconds each frame;
+//   - or an async function that hands the pure data work (parsing, geometry arrays) to a worker with work(), making
+//     only the three.js objects itself from the arrays it gets back;
+//   - a plain function is built in one go a frame after the code ran again: it still holds that frame, but nothing
+//     else does.
+//
+//   const city = live.keep('city', function* () {
+//       const rows = [];
+//       for (const block of MAP.blocks) { rows.push(buildBlock(block)); yield; }
+//       return { group: merge(rows) };
+//   }, { from: ['js/map-data.js'], background: true });
+//
+// The part's three.js objects are compiled for the scene the game last drew, with the camera it drew it with, when the
+// part is one or a plain object holding them ({ group }), a material a frame. A material made anew still holds the frames
+// on screen while its shader compiles, so a part's materials are made once, in a kept part of their own, and the part
+// built in the background makes only geometry with them: the old part goes without the materials the new one uses. The log and Lamp's report say what was built in the
+// background and for how long, and how long the game stood still for the change (about a frame).
+
+// The parts being built in the background: each the part the game has now, with what's being built in `pending`.
+const backgrounds = new Set();
+// Each frame, the steps of what's built in the background get this many milliseconds, fewer when the game's own
+// frame is slow, so the game keeps its frame rate as it's built.
+let slicing = false, frameCost = 0;
+const isSteps = v => !!v && typeof v.next === 'function' && typeof v[Symbol.iterator] === 'function' && typeof v.then !== 'function';
+function stepThrough(steps) {
+    for (;;) { const s = steps.next(); if (s.done) return s.value; }
+}
+function slices() {
+    if (slicing || !backgrounds.size) return;
+    slicing = true;
+    after(400, () => { if (backgrounds.size) showHint(); });
+    // Between frames, or every 50 ms where frames come slower (a window out of sight), so the build goes on.
+    const mine = ++sliceCount, go = () => { if (mine === sliceCount) { sliceCount++; slice(); } };
+    nextFrame(go);
+    after(50, go);
+}
+let sliceCount = 0;
+function slice() {
+    const began = performance.now(), budget = Math.max(4, Math.min(10, 14 - frameCost));
+    for (const k of [...backgrounds]) {
+        while (k.pending && !k.pending.waits && performance.now() - began < budget) stepPart(k);
+    }
+    slicing = false;
+    if ([...backgrounds].some(k => k.pending && !k.pending.waits)) slices();
+}
+function stepPart(k) {
+    const p = k.pending, t = performance.now();
+    keeping++;
+    building.push(p);
+    try {
+        if (!p.steps) {
+            const made = p.build();
+            if (isSteps(made)) { p.steps = made; return; }
+            if (made && typeof made.then === 'function') {
+                // Its work is done elsewhere (a worker): what it starts meanwhile is the part's when it's the part's own.
+                p.waits = true;
+                const waiting = { added: [], made: [], timers: p.timers, assets: p.assets };
+                keepsWaiting.add(waiting);
+                Promise.resolve(made).finally(() => keepsWaiting.delete(waiting))
+                    .then(v => { own(v, waiting); built(k, p, v); }, e => failed(k, p, e));
+                return;
+            }
+            return built(k, p, made);
+        }
+        const s = p.steps.next();
+        if (s.done) built(k, p, s.value);
+    } catch (e) { failed(k, p, e); }
+    finally { keeping--; building.pop(); p.busy += performance.now() - t; }
+}
+// Whether a part being built in the background is built from `path`: what changed it, what its last build read, or
+// what it declares it's built from. Its new build reads it, so it doesn't wait for Reload.
+function buildingFrom(path) {
+    for (const k of backgrounds) {
+        if (!k.pending) continue;
+        if (k.pending.cause === path || k.assets.has(path) || k.pending.assets.has(path)) return true;
+        if (k.from.some(f => f === path || (f.endsWith('/') && path.startsWith(f)) || (!f.endsWith('/') && below(f).has(path)))) return true;
+    }
+    return false;
+}
+
+// Built: its shaders are compiled while the old part is drawn, and it waits to be swapped in with the others.
+async function built(k, p, value) {
+    p.waits = true;
+    p.value = value;
+    p.ms = performance.now() - p.began;
+    p.compiled = await compileAhead(value);
+    // Not while the code runs again: that run decides which part the game goes on with.
+    while (runningAgain) await new Promise(done => after(50, done));
+    // Built again since, or let go of: what this build made goes.
+    if (k.pending !== p) {
+        // Sparing what the parts kept still use: the materials made once and shared, the geometry of the part on screen.
+        const spare = new Set();
+        for (const other of kept.values()) for (const used of usedBy(other.made)) spare.add(used);
+        return letGo({ key: k.key, path: k.path, value, dispose: p.dispose }, spare);
+    }
+    k.pending = null;
+    backgrounds.delete(k);
+    const entry = { path: k.path, key: k.key, text: p.text, inputs: p.inputs, lasting: false, from: p.from, dispose: p.dispose, used: false,
+                    stale: false, value, made: value, assets: p.assets, timers: p.timers, draws: 0, cause: p.cause, ms: p.ms,
+                    busy: p.busy, compiled: p.compiled, gen: p.gen, fresh: true, replaces: k, settled: true };
+    kept.set(`${k.path} ${k.key}`, entry);
+    log(`Lamp: ${k.key} was built in the background in ${seconds(p.ms)} while the game ran${p.compiled == null ? '' : ` (its shaders compiled ahead in ${Math.round(p.compiled)} ms)`}.`);
+    if (!backgrounds.size) swapIn();
+}
+function failed(k, p, e) {
+    if (k.pending !== p) return;
+    k.pending = null;
+    backgrounds.delete(k);
+    if (p.steps) { try { p.steps.return(); } catch (e2) {} }
+    const why = `building ${k.key} in the background failed (${e && e.message || e}), so the game goes on with the one it had`;
+    log(`Error: ${why}.`);
+    // Lamp hears it's no longer being built, and the agent why.
+    tellHost(p.gen, 'report', why, { built: [{ part: k.key, background: true, ms: Math.round(performance.now() - p.began), cause: 'its build failed' }], waits: [], later: true });
+    if (!backgrounds.size) { hideHint(); swapIn(); }
+}
+function stopBuilding(k) {
+    const p = k.pending;
+    k.pending = null;
+    backgrounds.delete(k);
+    if (p && p.steps) { try { p.steps.return(); } catch (e) {} }
+    if (!backgrounds.size) hideHint();
+}
+const seconds = ms => ms < 10000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 1000)} s`;
+
+// What the game drew last (the first render of the frame), for compiling a part ahead for that scene and camera; and a
+// compile under way before the first frame after the code ran again (`warming`).
+let lastDrawn = null, drewThisFrame = false, warming = null, warmed = null;
+// Watches the renderer's render() for what it draws, and after the code ran again has its first frame's shaders
+// compiled with compileAsync() before it's drawn, the old frame held on screen meanwhile, so nothing compiles in a
+// frame the player sees. A renderer without compileAsync (Phaser's) is left as it is.
+// Every scene drawn lately, weakly, with the frame it was last drawn in: a second scene (a minimap's, a mirror's) is the
+// game's as much as the first, and one not drawn for a while no longer is. Counted in frames, so a run of the code or a
+// window out of sight, which draw nothing, don't make a scene look abandoned.
+const drawnScenes = [];
+let framesDrawn = 0;
+function noteDrawn(scene) {
+    if (!scene || !scene.isObject3D) return;
+    const known = drawnScenes.find(d => d.ref.deref() === scene);
+    if (known) { known.frame = framesDrawn; return; }
+    drawnScenes.push({ ref: new WeakRef(scene), frame: framesDrawn });
+    if (drawnScenes.length > 8) drawnScenes.splice(drawnScenes.indexOf(drawnScenes.reduce((a, b) => b.frame < a.frame ? b : a)), 1);
+}
+function scenesDrawing() {
+    return drawnScenes.filter(d => framesDrawn - d.frame <= 60).map(d => d.ref.deref()).filter(Boolean);
+}
+function watchRender(r) {
+    if (!r || r.__lampRender || typeof r.render !== 'function' || typeof r.compileAsync !== 'function') return;
+    const draw = r.render;
+    r.__lampRender = true;
+    r.render = function (scene, camera, ...rest) {
+        if (!drewThisFrame && scene && scene.isObject3D && camera && camera.isCamera) { lastDrawn = { scene, camera }; drewThisFrame = true; }
+        noteDrawn(scene);
+        if (warming === 'ask' && lastDrawn) {
+            const t = performance.now();
+            warming = Promise.resolve().then(() => this.compileAsync(scene, camera)).catch(() => {})
+                .then(() => { warmed = performance.now() - t; warming = null; });
+            return;
+        }
+        if (warming) return;
+        return draw.call(this, scene, camera, ...rest);
+    };
+}
+// A part's three.js objects compiled ahead for the scene and camera the game draws, a material at a time with a frame
+// between: a pipeline's compiling holds the frames the GPU presents meanwhile (WebKit's WebGPU), so one at a time keeps
+// each hold to one material's.
+const objectsOf = v => v && v.isObject3D ? [v] : isPlain(v) ? Object.values(v).filter(o => o && o.isObject3D) : [];
+// The geometry and materials of a part's three.js objects.
+function usedBy(v) {
+    const used = new Set();
+    for (const o of objectsOf(v)) o.traverse(m => { if (m.geometry) used.add(m.geometry); for (const x of [m.material].flat()) if (x) used.add(x); });
+    return used;
+}
+async function compileAhead(value) {
+    const objects = objectsOf(value);
+    if (!objects.length || !lastDrawn || !renderer || typeof renderer.compileAsync !== 'function') return null;
+    const t = performance.now(), seen = new Set(), each = [];
+    for (const o of objects) o.traverse(m => {
+        const materials = [m.material].flat().filter(Boolean);
+        if (!materials.length || materials.every(x => seen.has(x))) return;
+        materials.forEach(x => seen.add(x));
+        each.push(m);
+    });
+    for (const m of each) {
+        try { await renderer.compileAsync(m, lastDrawn.camera, lastDrawn.scene); } catch (e) {}
+        await new Promise(nextFrame);
+    }
+    return performance.now() - t;
+}
+
+// The parts built in the background go in: the code runs again in place, at once, or at the next pause while the game
+// is busy. A change that ran the code again meanwhile has already put them in.
+let swapWaits = false;
+function swapIn() {
+    queue = queue.then(() => {
+        const fresh = [...kept.values()].filter(k => k.fresh);
+        if (!fresh.length || !frameFunction || runningAgain) return;
+        if (isBusy()) { swapWaits = true; return; }
+        hideHint();
+        const gen = Math.max(...fresh.map(k => k.gen || 0));
+        return runAgain({ gen, why: `${fresh.map(k => k.key).join(', ')} built in the background`, changed: [], quiet: true }, takeSnapshot(), phonesHere());
+    }).catch(e => log(`Lamp: ${e && e.message || e}`));
+}
+
+// "Building…" over the game while a part is built in the background, at the top right, below where the app around
+// the page puts its own buttons.
+let hint = null;
+function showHint() {
+    if (!document.body) return;
+    if (!hint) {
+        hint = document.createElement('div');
+        hint.textContent = 'Building…';
+        hint.style.cssText = 'position:fixed;z-index:20;right:14px;top:calc(48px + env(safe-area-inset-top));pointer-events:none;'
+            + 'padding:6px 14px;border-radius:16px;background:rgba(20,20,24,.6);color:rgba(255,255,255,.85);font:600 13px -apple-system,system-ui,sans-serif;'
+            + '-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);transition:opacity .3s;opacity:0';
+    }
+    if (!hint.isConnected) document.body.append(hint);
+    nextFrame(() => { if (hint) hint.style.opacity = '1'; });
+}
+function hideHint() { if (hint) hint.style.opacity = '0'; }
 
 // MARK: What the game registers
 //
@@ -1563,7 +2114,7 @@ function letGo(k) {
 // it where it's used, build the start from it (`play.mode` says what to show, with no title drawn first) and keep
 // nothing derived from it in a kept part. Raise `version` when a field's meaning changes: `migrate(old, oldVersion)`
 // gives the new state, and a version raised with no migrate, or one that throws, starts that state from `start()`. At a
-// fresh start, and in a new play of the preview, it's `start()`. It must be registered once per run, before game()
+// fresh start it's `start()`. It must be registered once per run, before game()
 // starts or in init; read in a module's top level it still has its start values. A swap leaves what's registered as it
 // is, so a change to a declaration in a module that takes its changes runs the code again.
 //
@@ -1575,7 +2126,7 @@ function letGo(k) {
 
 const cameras = new Map(), states = new Map();
 // What the run starting now was given back.
-let tally = { kept: [], built: [], reset: [] }, flatGame = false, asksPlace = false;
+let tally = { kept: [], built: [], reset: [], building: [], waiting: [], swapped: [] }, flatGame = false, asksPlace = false;
 // What the run starting now is to put back: the old run's `heldNow()`, or what the page kept for its opening.
 let restoring = null;
 // What a swap's new versions declared differently. A swap keeps what's registered as it is, so it can't take that in: the
@@ -1595,9 +2146,8 @@ function camera(id, build, { target } = {}) {
         if (entry.text !== text) redeclare(`camera ${id}`);
         return entry.value;
     }
-    // A new play of the preview starts from what build() sets, as a cold one does.
-    if (!entry || entry.text !== text || (preview && again)) {
-        if (entry && again) tally.built.push(`camera ${id}`);
+    if (!entry || entry.text !== text) {
+        if (entry && again) tally.built.push({ key: `camera ${id}`, ms: null, cause: 'its build changed' });
         cameras.set(id, entry = { id, text, value: build() });
     } else if (again) tally.kept.push(`camera ${id}`);
     entry.target = target;
@@ -1695,10 +2245,17 @@ function unregistered() {
 
 // What came through a change, for the log and for the agent: kept, built again, reset, and what started again unasked
 // because it isn't registered.
-function cameThrough() {
+function cameThrough(waits = []) {
     const left = unregistered();
-    return [tally.kept.length ? `kept ${tally.kept.join(', ')}` : '', tally.built.length ? `built again ${tally.built.join(', ')}` : '',
-            tally.reset.length ? `reset ${tally.reset.join(', ')}` : '', left.length ? `not registered, so started again: ${left.join(', ')}` : ''].filter(Boolean).join('; ');
+    const why = k => !k.cause ? '' : /^[^\s]+[./][^\s]+$/.test(k.cause) ? `, ${k.cause} changed` : `, ${k.cause}`;
+    const built = tally.built.map(k => k.ms == null && !k.cause ? k.key : `${k.key} (${k.ms == null ? '' : `${Math.round(k.ms)} ms`}${k.ms == null ? why(k).slice(2) : why(k)})`);
+    const swapped = tally.swapped.map(k => `${k.key} (built in ${seconds(k.ms)}${why(k)})`);
+    return [tally.kept.length ? `kept ${tally.kept.join(', ')}` : '', built.length ? `built again ${built.join(', ')}` : '',
+            tally.building.length ? `building in the background ${tally.building.map(k => k.key + why(k).replace(/^, /, ' (') + (k.cause ? ')' : '')).join(', ')}` : '',
+            swapped.length ? `put in what was built in the background: ${swapped.join(', ')}` : '',
+            tally.waiting.length ? `built again once what they're built from is in: ${tally.waiting.join(', ')}` : '',
+            tally.reset.length ? `reset ${tally.reset.join(', ')}` : '', left.length ? `not registered, so started again: ${left.join(', ')}` : '',
+            waits.length ? `waits for Reload: ${waits.join(', ')}, which nothing read again` : ''].filter(Boolean).join('; ');
 }
 
 // Everything registered, as plain JSON: for the new run, or for a page that opens again.
@@ -1736,7 +2293,9 @@ function markStale(paths) {
                 for (const dep of below(from)) deps.add(dep);
             }
         } else { deps = below(k.path); deps.add(k.path); }
-        if (paths.some(p => deps.has(p) || k.assets.has(p))) k.stale = true;
+        for (const f of k.from) if (!f.endsWith('/')) { deps.add(f); for (const dep of below(f)) deps.add(dep); }
+        const hit = paths.find(p => deps.has(p) || k.assets.has(p) || k.from.some(f => f.endsWith('/') && p.startsWith(f)));
+        if (hit) k.stale = hit;
     }
 }
 
@@ -1760,9 +2319,37 @@ function canRunAgain(change) {
     return null;
 }
 
+// The game's modules that name a changed data file the runtime didn't load (one a module fetches itself, as a city's
+// building data is), read as changed themselves: a part kept from what they made is built again from the new file
+// rather than kept from the old one.
+// `named` gets each changed file outside the modules (data, or a script nothing imports, as a worker's) that the game's
+// code names, for what of a change nothing read again (`waitsFor`).
+async function namingData(paths, order, named = new Set()) {
+    const outside = paths.filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p));
+    const data = paths.filter(p => !CODE.test(p) && !loaded.has(p));
+    if (!outside.length) return [];
+    const naming = [];
+    for (const path of order) {
+        if (lampOwn(path) || paths.includes(path)) continue;
+        const text = texts.get(path) ?? inline.get(path) ?? await readText(path).catch(() => '');
+        for (const p of outside) if (names(text, p)) named.add(p);
+        if (data.some(p => names(text, p))) naming.push(path);
+    }
+    return naming;
+}
+
+// What of a change the code run again didn't take in: a file the game uses (one it loaded through the runtime, read in
+// any other way, or that its code names) that nothing read again, nor put in as it was (`put`), so a part kept from it,
+// or code that read it once, shows the old one until the page opens again. That waits for Reload.
+function waitsFor(change, named) {
+    return (change.changed || []).map(clean).filter(p => !/\.(html?|css)$/i.test(p) && !imports.has(p) && !readSince.has(p) && !buildingFrom(p)
+        && !(change.put || []).includes(p) && (loaded.has(p) || everRead.has(p) || named.has(p)));
+}
+
 async function runAgain(change, state, roster) {
     const began = performance.now(), why = change.why;
-    const cannot = reason => reopenOrHold({ ...change, why: `${why}; ${reason}` }, state);
+    // What was built in the background waits for the next change that can run the code again.
+    const cannot = reason => change.quiet ? log(`Lamp: ${why} waits for the next change (${reason}).`) : reopenOrHold({ ...change, why: `${why}; ${reason}` }, state);
     const paths = (change.changed || []).map(clean);
     let text, page;
     try { text = await readText(pagePath()); page = parse(text); } catch (e) { return cannot('its page couldn\'t be read'); }
@@ -1787,21 +2374,28 @@ async function runAgain(change, state, roster) {
         };
         for (const root of roots) visit(root);
     } catch (e) { return cannot(e.message); }
-    markStale(paths);
+    const named = new Set();
+    markStale([...paths, ...await namingData(paths, order, named)]);
 
-    tellHost(change.gen, 'rerun', why);
-    log(`Lamp: running the game's code again in place for a change (${why}), keeping where the player was.`);
+    if (!change.quiet) {
+        tellHost(change.gen, 'rerun', why);
+        log(`Lamp: running the game's code again in place for a change (${why}), keeping where the player was.`);
+    }
     // The frame on screen now, held there until the new code draws its first.
-    const still = preview ? null : await new Promise(done => { shooting = done; after(250, () => { if (shooting === done) { shooting = null; done(null); } }); });
-    const again = runningAgain = { change, state, began, called: false, done: null };
+    const still = await new Promise(done => { shooting = done; after(250, () => { if (shooting === done) { shooting = null; done(null); } }); });
+    // What Lamp holds is let go: the code it was pressing for is going. Its batch still has the controller.
+    driven = null;
+    const again = runningAgain = { change, state, began, called: false, done: null, named };
+    readSince = new Set();
     const done = new Promise(resolve => { again.done = resolve; });
     // The old code stops: its frame loop, what it asked to have taken away, and what it left running.
     loops++;
+    again.stopped = performance.now();
     started = false;
     // What's registered, as the last frame left it, or as it was before a swap that went wrong, which may have changed
-    // it. A preview's new play has none: it starts from the top.
+    // it.
     restoring = !state ? null : change.touched ? state.held : heldNow();
-    tally = { kept: [], built: [], reset: [] };
+    tally = { kept: [], built: [], reset: [], building: [], waiting: [], swapped: [] };
     if (state) again.state = { ...state, held: restoring };
     for (const entry of [...cameras.values(), ...states.values()]) entry.used = entry.settled = false;
     swapGuard = null;
@@ -1815,7 +2409,7 @@ async function runAgain(change, state, roster) {
         m.disposers = [];
     }
     // A part whose async build started a timer still running loses it now, so it's built again.
-    for (const k of kept.values()) if ((k.timers || []).some(t => intervals.has(t) || timeouts.has(t))) k.stale = true;
+    for (const k of kept.values()) if ((k.timers || []).some(t => intervals.has(t) || timeouts.has(t))) k.stale = 'a timer it started';
     takeAwayLeft();
     if (phonesWaiting) phonesWaiting.leaving = false;
     listeners.clear();
@@ -1849,7 +2443,7 @@ async function runAgain(change, state, roster) {
             }
             const ns = await import(from);
             const m = modules.get(path);
-            if (m) { m.versions.push(versionOf(ns)); m.text = code; }
+            if (m) { addVersion(m, versionOf(ns)); m.text = code; }
             latest.set(path, from);
         } catch (e) {
             return ranAgainFailed(again, `${path} didn't load (${e && e.message || e})`);
@@ -1897,15 +2491,14 @@ async function putPage(page, paths, still) {
     // The old page stays in view, still, over the new one until the new code has drawn (`lift`): its elements go last,
     // so the new code finds its own by id, and the frame it showed stands where the canvas was.
     const canvas = renderer && renderer.domElement;
-    if (preview) { body.replaceChildren(...[...page.body.childNodes].map(n => document.adoptNode(n))); return; }
-    const old = [...body.childNodes].filter(n => n !== touchLayer && n !== pill && n !== canvas && n !== curtain);
+    const old = [...body.childNodes].filter(n => n !== touchLayer && n !== pill && n !== hint && n !== canvas && n !== curtain);
     if (curtain) curtain.remove();
     curtain = document.createElement('div');
     curtain.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none';
     if (still) curtain.append(still);
     curtain.append(...old);
     // Scripts from the new page don't run as they go in: the modules run from runAgain.
-    body.replaceChildren(...[...page.body.childNodes].map(n => document.adoptNode(n)), curtain, ...[touchLayer, pill].filter(Boolean));
+    body.replaceChildren(...[...page.body.childNodes].map(n => document.adoptNode(n)), curtain, ...[touchLayer, pill, hint].filter(Boolean));
 }
 
 // The frame just drawn, as a picture placed where the game's canvas is, for runAgain to hold on screen; asked of the
@@ -1949,17 +2542,48 @@ function ranAgain(again) {
     bringPhones();
     runningAgain = null;
     lifting = 0;
-    shownFor = again.change.gen;
+    // Putting in what was built in the background is the change's own going in, said by its report, not a change.
+    shownFor = again.change.quiet ? null : again.change.gen;
     // No old frame held (a page with no canvas to picture): on screen at the next frame.
-    if (!curtain) after(0, () => { if (shownFor === again.change.gen) { tellHost(shownFor, 'shown'); shownFor = null; } });
-    for (const [id, k] of kept) if (!k.used) { letGo(k); kept.delete(id); }
+    if (!curtain && !again.change.quiet) after(0, () => { if (shownFor === again.change.gen) { tellHost(shownFor, 'shown'); shownFor = null; } });
+    for (const [id, k] of kept) if (!k.used) { if (k.pending) stopBuilding(k); letGo(k); kept.delete(id); }
+    // What a part built in the background replaced goes once the new one is on screen, not in its first frames.
+    for (const k of kept.values()) if (k.used && k.replaces) { const old = k.replaces, spare = usedBy(k.made); k.replaces = null; after(1000, () => letGo(old, spare)); }
     for (const list of [cameras, states]) for (const [id, entry] of list) if (!entry.used) list.delete(id);
     restoring = null;
-    const said = cameThrough();
-    log(`Lamp: the game's code ran again in place${said ? ` (${said})` : ''} in ${Math.round(performance.now() - again.began)} ms.`);
-    tellHost(again.change.gen, 'report', said);
+    const waits = waitsFor(again.change, again.named);
+    const said = cameThrough(waits);
+    // What was built again, each with how long it took and why, what's being built in the background, and what waits
+    // for Reload: Lamp's chat and the agent's next look say it, so neither says the person sees what they don't. Said
+    // once the new code's first frame is drawn, with how long the game stood still for it (`firstDrawn`).
+    const ms = k => k.ms == null ? {} : { ms: Math.round(k.ms) }, cause = k => k.cause ? { cause: k.cause } : {};
+    reporting = { again, said, ran: performance.now() - again.began, more: {
+        built: [...tally.built.map(k => ({ part: k.key, ...ms(k), ...cause(k) })),
+                ...tally.building.map(k => ({ part: k.key, background: true, ...cause(k) })),
+                ...tally.swapped.map(k => ({ part: k.key, background: true, ...ms(k), ...cause(k) }))],
+        kept: tally.kept.length, waits, ...(again.change.quiet ? { later: true } : {}) } };
+    if (waits.length) {
+        // The rest of the change goes in when the page opens again, at the person's Reload.
+        waiting = { ...again.change, changed: waits, why: `nothing in the running game read ${waits.join(', ')} again`, hard: true, reopens: true };
+        log(`Lamp: ${waits.join(', ')} changed, and nothing in the running game read ${waits.length === 1 ? 'it' : 'them'} again: that waits for Reload.`);
+        if (again.change.pill) showPill();
+    }
     swapGuard = { until: time + 1, change: again.change, state: again.state };
     again.done();
+}
+
+// The new code's first frame is drawn: what came through is said, with how long the game stood still for it, from the
+// old code's last frame to this one, and that frame's own time.
+let reporting = null;
+function firstDrawn(cost) {
+    if (!reporting) return;
+    const { again, said, ran, more } = reporting, still = performance.now() - again.stopped, compiled = warmed;
+    reporting = warmed = null;
+    const timing = `the game stood still ${Math.round(still)} ms (its first frame ${Math.round(cost)} ms`
+        + `${compiled == null ? '' : `, drawn once its shaders had compiled in ${Math.round(compiled)} ms`})`;
+    log(again.change.quiet ? `Lamp: put in what was built in the background${said ? ` (${said})` : ''}; ${timing}.`
+        : `Lamp: the game's code ran again in place${said ? ` (${said})` : ''} in ${Math.round(ran)} ms; ${timing}.`);
+    tellHost(again.change.gen, 'report', said, { ...more, frozen: Math.round(still), firstFrame: Math.round(cost) });
 }
 
 // New code that fails before it's running opens the page again, from the same place.
@@ -1970,11 +2594,9 @@ function ranAgainFailed(again, e) {
     reopen({ ...again.change, why: `the game's code run again failed (${e && e.message || e})` }, again.state);
     return new Promise(() => {});
 }
-if (!preview) {
-    // Until the new code is running (`ranAgain`), anything it throws opens the page again: half a start is no place to play.
-    listen(window, 'error', e => { if (runningAgain) ranAgainFailed(runningAgain, e.error || e.message); });
-    listen(window, 'unhandledrejection', e => { if (runningAgain) ranAgainFailed(runningAgain, e.reason); });
-}
+// Until the new code is running (`ranAgain`), anything it throws opens the page again: half a start is no place to play.
+listen(window, 'error', e => { if (runningAgain) ranAgainFailed(runningAgain, e.error || e.message); });
+listen(window, 'unhandledrejection', e => { if (runningAgain) ranAgainFailed(runningAgain, e.reason); });
 
 // What the game's code leaves running: each listener by its target (held weakly, so an element thrown away goes with
 // its listeners), timers, sound contexts and workers.
@@ -2040,7 +2662,16 @@ function watch() {
         return Watched;
     };
     if (browser.AudioContext) window.AudioContext = window.webkitAudioContext = owning(browser.AudioContext, c => c.state !== 'closed' && c.close());
-    if (browser.Worker) window.Worker = owning(browser.Worker, w => w.terminate());
+    if (browser.Worker) {
+        const Started = owning(browser.Worker, w => w.terminate());
+        window.Worker = function (url, ...rest) {
+            const path = pathOf(String(url));
+            if (path != null) read(clean(path));
+            workerStarted = true;
+            return new Started(url, ...rest);
+        };
+        window.Worker.prototype = browser.Worker.prototype;
+    }
     watchPhones();
 }
 
@@ -2126,7 +2757,7 @@ function swapFailed(e) {
     swapGuard = null;
     reopen({ ...guard.change, why: `the code swapped in failed as it ran (${e && e.message || e})` }, guard.state);
 }
-if (!preview) window.addEventListener('error', e => { if (swapGuard) swapFailed(e.error || e.message); });
+window.addEventListener('error', e => { if (swapGuard) swapFailed(e.error || e.message); });
 
 function keepLast() {
     if (!buildID) return;
@@ -2134,15 +2765,20 @@ function keepLast() {
     if (snap == null) return;
     try { store('local').setItem(LAST, JSON.stringify({ build: buildID, at: Date.now(), ...snap, input: current })); } catch (e) {}
 }
-if (!preview) {
-    window.addEventListener('pagehide', () => { if (started) keepLast(); });
-    document.addEventListener('visibilitychange', () => { if (started && document.hidden) keepLast(); });
-}
+window.addEventListener('pagehide', () => { if (started) keepLast(); });
+document.addEventListener('visibilitychange', () => { if (started && document.hidden) keepLast(); });
 
 // Where this copy of the page starts: the place it kept for its reopening, or else the latest snapshot of an older
-// build (Lamp installed a new one since). Taken from storage as it's read, so it's restored at most once.
+// build (Lamp installed a new one since). Taken from storage as it's read, so it's restored at most once. A fresh start
+// Lamp asked for (`lampFreshStart`, set by the app around the page for the one launch it was asked for) restores
+// neither, and leaves the game's saves (save()) as they are: they're the person's.
 async function claim() {
     const session = store('session'), local = store('local');
+    if (window.lampFreshStart) {
+        try { session.removeItem(LIVE); local.removeItem(LAST); } catch (e) {}
+        log('Lamp: a fresh start, as asked: the game starts from its beginning, with its saves kept.');
+        return;
+    }
     let said = null;
     try { said = JSON.parse(session.getItem(LIVE) || 'null'); session.removeItem(LIVE); reopened = !!said; } catch (e) {}
     if (said && said.fresh) { tellHost(said.gen, 'fresh'); return; }
@@ -2193,8 +2829,9 @@ async function putBack() {
     } else if (reopened && said && !said.fresh) tellHost(said.gen, 'started');
     if (reopened && said && !said.fresh && !runningAgain) {
         for (const entry of cameras.values()) if (said.held && said.held.cameras[entry.id]) tally.kept.push(`camera ${entry.id}`);
-        tally.built.push(...[...kept.values()].map(k => k.key));
-        tellHost(said.gen, 'report', cameThrough());
+        tally.built.push(...[...kept.values()].map(k => ({ key: k.key, ms: k.ms, cause: null })));
+        tellHost(said.gen, 'report', cameThrough(), {
+            built: tally.built.map(k => ({ part: k.key, ...(k.ms == null ? {} : { ms: Math.round(k.ms) }) })), kept: tally.kept.length, waits: [] });
     }
     pending = null;
     restoring = null;
@@ -2218,121 +2855,91 @@ function showPill() {
     pill.style.cssText = 'position:fixed;z-index:20;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));'
         + 'padding:8px 16px;border:0;border-radius:18px;background:rgba(20,20,24,.72);color:#fff;font:600 15px -apple-system,system-ui,sans-serif;'
         + '-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)';
-    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = { ...waiting, now: true }; waiting = null; queue = queue.then(() => startAgain(change)); } };
+    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = { ...waiting, now: true }; waiting = null; queue = queue.then(() => change.reopens ? reopen(change) : startAgain(change)); } };
     listen(pill, 'pointerdown', press);
     document.body.append(pill);
 }
 function hidePill() { if (pill) pill.style.display = 'none'; }
 
-// MARK: Lamp's preview: the script played out of sight, a picture where it says
+// MARK: Lamp's hands on the controller
 //
-// A preview Lamp keeps open between looks (`warm`) is handed each new play with the files changed since the last:
-// the game's code runs again in place from a fresh start (see "Running the game's code again"), with the clock, the
-// seed, the saves and the log as a new page has them, keeping what the game keeps, and the script plays. So only the
-// first play of a while builds the whole game. A kept part skips the random numbers its build drew, so the same script
-// gives the same pictures as a cold play; one whose async build drew any while it waited is built again. Returns false
-// when it can't (the game hasn't started, or is starting), and Lamp opens a new preview.
-if (preview && preview.warm) {
-    window.__lampPreviewAgain = next => {
-        if (!frameFunction || runningAgain) return false;
-        preview.script = next.script || [];
-        // Files loaded afresh, under a new query, as a change in the open game has them.
-        changes++;
-        seed = 1n; clock = 0; time = 0; number = 0;
-        saved.clear(); played.clear(); logs.length = 0;
-        scripted = null; before = [0, 0, 0, 0];
-        queue = queue.then(() => startAgain({ gen: 0, changed: next.changed || [], why: 'a new play in the preview' }, null))
-            .catch(e => window.webkit.messageHandlers.lampPreview.postMessage({ done: true, again: false, logs: [String(e && e.message || e)] }));
+// Lamp's agent plays the game in its window, the one the person sees, with a controller of its own: `use_app`'s stick and
+// button moves, which the app around the page hands here (LampPageReader in LampPage.swift) as part of the same batch
+// as any of its clicks and keys (`LampDriver.Handover`). The app says when a batch with them begins (`__lampOwn`, with
+// how long it may run) and when it ends; for all that time, its waits and the gaps between presses too, Lamp has the
+// first player. While it holds something it is that player, in place of the player's own controller, keyboard and
+// touch, never mixed with them. Any input of the person's while Lamp has the controller (a controller, a key, the touch
+// screen, a phone's button, stick or tilt moved, or anything a phone sends) lets go of all of it and tells the app, which
+// ends the batch, so the game is theirs again at once. What Lamp holds also goes when its batch moves on, stops or is
+// replaced (the app hands null), when the game's code runs again or its page opens again, and by itself a second after
+// the hold was due to end; the batch's own hold on the controller ends with the time it was given and two seconds more,
+// should the app never say.
+let driven = null, drivenUntil = 0, lampHas = false, lampHasUntil = 0, lampBatch = null;
+// Each batch and each hold has a name of its own (the batch's id, and a number after it for each hold), and what gives
+// one back names it: a release that reaches the page late, after a newer batch or hold took the controller, is for one
+// that's gone already and lets go of nothing that's held now. A hold reaching the page after its batch ended, or after a
+// newer one took its place, is turned down ('ended'): nothing of a batch that's over is pressed.
+window.__lampOwn = (seconds, batch) => {
+    if (!seconds) {
+        if (batch != null && batch !== lampBatch) return true;
+        lampHas = false; driven = null; lampBatch = null;
         return true;
-    };
-}
-
-// The game's phone page in the preview (`PhonePreview`): a `phone` line of the script is a step on the page, and the
-// messages both ways wait for such a step, so they arrive between the same two frames in every play. The page's clock
-// goes by the game's frames, handed over at each step, since a play runs far faster than the time it stands for. To the
-// game the phone is a player that came another way than the relay (`Lamp.controllers._attach`).
-let phone = null;
-async function phoneStep(step) {
-    if (!phone) {
-        phone = { hooks: null, here: false, joined: false, out: [], frames: 0,
-                  start(hooks) { this.hooks = hooks; },
-                  stop() { this.hooks = null; this.joined = false; } };
-        phone.route = { key: 'phone', place: 0, text: m => (phone.out.push(m), true),
-                        say: data => (phone.out.push({ t: 'message', data }), true), binary: () => false, buffered: () => 0 };
-        const controllers = window.Lamp && window.Lamp.controllers;
-        if (controllers && controllers._attach) controllers._attach(phone);
     }
-    // A page not joined yet gets its player number and what the game says on a join first: a person's press comes after
-    // those, and a page may hold its controls until it has them.
-    if (!phone.joined) await phoneExchange({ do: 'sync' });
-    await phoneExchange(step);
-}
-
-async function phoneExchange(step) {
-    const post = message => window.webkit.messageHandlers.lampPreview.postMessage(message);
-    // Round again while either side has more to say: a game answers a join, and the page its player number, at once.
-    for (let round = 0, next = step; round < 4; round++, next = { do: 'sync' }) {
-        const elapsed = phone.frames * 1000 / 60;
-        phone.frames = 0;
-        const answer = await post({ phone: next, inbox: JSON.stringify(phone.out.splice(0)), hosted: !!phone.hooks, elapsed });
-        if (answer == null) { log('Lamp: the phone page did not open in the preview.'); return; }
-        const messages = JSON.parse(answer).messages || [];
-        for (const m of messages) {
-            if (m.t === 'hello') phone.here = true;
-            if (m.t === 'bye') { phone.here = false; if (phone.joined) phone.hooks.leave('phone'); phone.joined = false; }
-            // A game that starts its controllers after the page opened has it join then.
-            if (phone.here && phone.hooks && !phone.joined) { phone.hooks.join('phone', phone.route); phone.joined = true; }
-            if (phone.joined && m.t !== 'hello') phone.hooks.input('phone', m);
-        }
-        if (phone.here && phone.hooks && !phone.joined) { phone.hooks.join('phone', phone.route); phone.joined = true; }
-        if (!messages.length && !phone.out.length) return;
+    if (!lampHas) takeController();
+    lampHas = true;
+    lampBatch = batch == null ? null : String(batch);
+    lampHasUntil = clockNow() + Math.min(Math.max(Number(seconds) || 0, 0), 600) * 1000 + 2000;
+    return true;
+};
+window.__lampDrive = (hold, name, batch) => {
+    if (hold && batch != null && String(batch) !== lampBatch) return 'ended';
+    if (!hold) {
+        if (name != null && (!driven || driven.name !== String(name))) return true;
+        driven = null;
+        return true;
     }
+    const axis = v => Math.max(-1, Math.min(1, Number(v) || 0)), trigger = v => Math.max(0, Math.min(1, Number(v) || 0));
+    driven = { lx: axis(hold.lx), ly: axis(hold.ly), rx: axis(hold.rx), ry: axis(hold.ry), lt: trigger(hold.lt), rt: trigger(hold.rt), down: hold.down | 0 };
+    // Kept off the pad itself, which the game reads.
+    Object.defineProperty(driven, 'name', { value: name == null ? null : String(name) });
+    drivenUntil = clockNow() + Math.min(Math.max(Number(hold.seconds) || 0, 0), 60) * 1000 + 1000;
+    // A hold is Lamp's, whether or not the app said its batch began.
+    if (!lampHas) takeController();
+    if (!lampHas || lampHasUntil < drivenUntil) { lampHas = true; lampHasUntil = drivenUntil; }
+    return true;
+};
+const pressing = pad => !!pad.down || ['lx', 'ly', 'rx', 'ry', 'lt', 'rt'].some(axis => Math.abs(pad[axis]) > 0.3);
+function letGoOfLamp(why) {
+    if (!lampHas && !driven) return;
+    lampHas = false;
+    driven = null;
+    lampBatch = null;
+    if (!why) return;
+    log(`Lamp: let go of the controller (${why}).`);
+    try { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampDriveTakenOver; h && h.postMessage(why); } catch (e) {}
 }
-
-async function runPreview() {
-    // Lamp answers each picture once it has taken it, of the whole page as drawn (the canvas and anything over it).
-    const post = message => window.webkit.messageHandlers.lampPreview.postMessage(message);
-    let mostCalls = 0, mostTriangles = 0, triangles = 0, frames = 0;
-    const limit = 60 * 600;
-    for (const line of preview.script) {
-        const words = line.trim().split(/\s+/);
-        if (words[0] === 'phone') {
-            await phoneStep(JSON.parse(line.trim().slice(6)));
-            continue;
-        }
-        if (words[0] === 'shot') {
-            if (phone) await phoneStep({ do: 'sync' });
-            await post({ shot: words[1] });
-            continue;
-        }
-        if (words[0] !== 'hold') continue;
-        const [n, lx, ly, rx, ry, lt, rt, down] = words.slice(1).map(Number);
-        scripted = { lx, ly, rx, ry, lt, rt, down: down | 0 };
-        for (let i = 0; i < n && frames < limit; i++) {
-            window.__lampAdvance(1000 / 60);
-            renderer.info.reset();
-            renderer.info.autoReset = false;
-            try { const waiting = step(1 / 60); if (waiting && waiting.then) await waiting; } catch (e) { log(`Error: ${e.message}`); post({ done: true, failed: e.message, logs }); return; }
-            const info = renderer.info.render;
-            mostCalls = Math.max(mostCalls, info.calls);
-            mostTriangles = Math.max(mostTriangles, info.triangles);
-            triangles += info.triangles;
-            frames++;
-            if (phone) phone.frames++;
-        }
-    }
-    const said = [...played.entries()].map(([name, count]) => count > 1 ? `${name} ${count} times` : name);
-    post({ done: true, logs,
-           stats: `${frames} frames (${(frames / 60).toFixed(1)} s of play); at most ${mostCalls} draws and ${mostTriangles} triangles in a frame, ${Math.round(frames ? triangles / frames : 0)} triangles a frame on average.`,
-           sound: said.length ? 'played ' + said.join(', ') : 'nothing played' });
+// A phone's stick or tilt is a person's when it moves away from where it was as Lamp took the controller: one held still
+// at an angle (a phone lying tilted) says the same value over and over, and isn't someone playing, while a thumb pushing
+// the stick over slowly gets there however small each step is. A stick or tilt first heard while Lamp has the
+// controller is measured from the middle.
+const phoneAxes = new Map();
+let phoneAxesAtTake = new Map();
+function takeController() { phoneAxesAtTake = new Map(phoneAxes); }
+function phoneAxis(player, name, x, y) {
+    const key = `${player} ${name}`, now = [Number(x) || 0, Number(y) || 0];
+    phoneAxes.set(key, now);
+    if (!lampHas) return;
+    const from = phoneAxesAtTake.get(key) || [0, 0];
+    if (Math.abs(now[0] - from[0]) > 0.3 || Math.abs(now[1] - from[1]) > 0.3) letGoOfLamp('a phone played');
 }
 
 // Heard for as long as the page lasts, under what `watchPhones` wraps, so it belongs to no run of the game's code.
 if (window.Lamp && window.Lamp.controllers) {
     window.Lamp.controllers.onButton(phoneButton);
-    window.Lamp.controllers.onLeave(player => phoneButtons.delete(player));
+    window.Lamp.controllers.onLeave(player => { phoneButtons.delete(player); for (const axes of [phoneAxes, phoneAxesAtTake]) for (const key of axes.keys()) if (key.startsWith(`${player} `)) axes.delete(key); });
+    if (window.Lamp.controllers.onAxis) window.Lamp.controllers.onAxis(phoneAxis);
+    if (window.Lamp.controllers.onMessage) window.Lamp.controllers.onMessage(() => { if (lampHas) letGoOfLamp('a phone sent something'); });
 }
 
-// Watched from here, after the runtime's own listeners: only where Lamp puts changes into the open game, or plays
-// again in a preview it keeps warm.
-if (preview ? preview.warm : host()) watch();
+// Watched from here, after the runtime's own listeners: only where Lamp puts changes into the open game.
+if (host()) watch();

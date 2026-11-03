@@ -172,9 +172,11 @@ private struct Chat: View {
                     RepoCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo, url: card.url,
                              credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, size: card.size, copied: card.copied, update: card.update,
                              canPut: card.canPut, isPrivate: card.isPrivate, license: card.license, canChooseLicense: card.canChooseLicense,
+                             page: card.page, pageUp: card.pageUp ?? false, privateGame: card.privateGame ?? false, plays: card.plays ?? true,
+                             picture: card.picture.flatMap(NSImage.init(data:)), showsPicture: card.showsPicture ?? false,
                              put: { link.send(.repo(.put)) }, fix: { link.send(.repo(.fix)) }, makeLink: { link.send(.repo(.makeLink)) },
                              setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },
-                             openRepo: { link.send(.repo(.openRepo)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
+                             setPicture: { link.send(.repo(.setPicture($0))) }, openRepo: { link.send(.repo(.openRepo)) }, play: { link.send(.repo(.play)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
                 }
             } else if let card = state.contribute {
                 ScrollView {
@@ -184,21 +186,11 @@ private struct Chat: View {
                                    openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
                                    close: { link.send(.contribute(.close)) }, width: nil)
                 }
-            } else if let card = state.publish {
-                ScrollView {
-                    PublishCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo,
-                                page: card.page, credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, size: card.size, copied: card.copied,
-                                republish: card.republish, canPublish: card.canPublish, publish: { link.send(.publish(.publish)) }, fix: { link.send(.publish(.fix)) },
-                                makeLink: { link.send(.publish(.makeLink)) },
-                                openPage: { link.send(.publish(.openPage)) }, copy: { link.send(.publish(.copy)) },
-                                close: { link.send(.publish(.close)) }, width: nil)
-                }
             } else if let card = state.wishLink {
                 WishLinkPanel(card: card)
             } else {
                 switch state.panel {
                 case .versions: VersionsPanel(state: state)
-                case .info: InfoPanel(state: state)
                 case nil: chat
                 }
             }
@@ -243,7 +235,8 @@ private struct Chat: View {
                         ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
                                                waitingForReload: state.waitingForReload ?? false,
-                                               sending: message.sendingNow == true, place: places[index],
+                                               sending: message.sendingNow == true, answered: message.isAnswered,
+                                               groupAnswered: queued.allSatisfy { $0.isAnswered || $0.sendingNow == true }, place: places[index],
                                                onRemove: { link.send(.unqueue(message.id)) },
                                                sendNow: message.canSendNow == true ? { link.send(.sendNow(message.id)) } : nil) {
                                 if let pointed = message.pointed { PointedPill(pointed: pointed) }
@@ -252,6 +245,11 @@ private struct Chat: View {
                                 }
                             }
                             .padding(.top, state.lines.isEmpty && index == 0 ? 0 : places[index].first ? 32 : 8)
+                            if message.sideAnswering == true || message.sideReply != nil || message.stillQueued == true {
+                                ChatLook.SideLine(answering: message.sideAnswering == true, reply: message.sideReply,
+                                                  stillQueued: message.stillQueued == true)
+                                    .padding(.top, 6)
+                            }
                         }
                         Color.clear.frame(height: 16).id("end")
                     }
@@ -365,26 +363,29 @@ private struct LineView: View {
     var body: some View {
         switch line.kind {
         case .user:
-            ChatLook.UserRow(text: line.text, busy: busy,
-                             goBack: line.canGoBack == true ? { before in link.send(.goBack(line.id, before: before)) } : nil,
-                             sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
-                             isLatest: line.isLatest ?? false) {
-                let attachments = line.attachments ?? []
-                // What was pointed at keeps its pill; its picture counts after the other files.
-                if let pointed = line.pointed {
-                    PointedPill(pointed: pointed, preview: { link.send(.preview(line.id, attachments.count)) })
-                }
-                ForEach(attachments.indices, id: \.self) { index in
-                    // A click shows it in Quick Look, as in Lamp's window.
-                    Button { link.send(.preview(line.id, index)) } label: {
-                        if attachments[index].isImage ?? (attachments[index].thumbnail != nil) {
-                            Thumbnail(attachment: attachments[index], size: 72)
-                        } else {
-                            AttachmentChip(attachment: attachments[index])
-                        }
+            VStack(spacing: 6) {
+                ChatLook.UserRow(text: line.text, busy: busy,
+                                 goBack: line.canGoBack == true ? { before in link.send(.goBack(line.id, before: before)) } : nil,
+                                 sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
+                                 isLatest: line.isLatest ?? false) {
+                    let attachments = line.attachments ?? []
+                    // What was pointed at keeps its pill; its picture counts after the other files.
+                    if let pointed = line.pointed {
+                        PointedPill(pointed: pointed, preview: { link.send(.preview(line.id, attachments.count)) })
                     }
-                    .buttonStyle(.plain)
+                    ForEach(attachments.indices, id: \.self) { index in
+                        // A click shows it in Quick Look, as in Lamp's window.
+                        Button { link.send(.preview(line.id, index)) } label: {
+                            if attachments[index].isImage ?? (attachments[index].thumbnail != nil) {
+                                Thumbnail(attachment: attachments[index], size: 72)
+                            } else {
+                                AttachmentChip(attachment: attachments[index])
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
+                if let reply = line.sideReply { ChatLook.SideLine(reply: reply) }
             }
         case .agent:
             ChatLook.AgentText(line.text, keep: !line.growing)
@@ -700,7 +701,7 @@ extension View {
 
 /// The bar at the top of the chat, one row: the red button that closes the chat, what the chat is for, and its
 /// buttons (for a wish that isn't a Mac app beside the chat, Play or Stop and Try On's device button first), the same at
-/// every width: Undo, and a button for the rest, which pressed stays lit and puts them in the title's place: Wish Info,
+/// every width: Undo, and a button for the rest, which pressed stays lit and puts them in the title's place:
 /// Share, Agent Details, Delete and Versions. Each does what its button in Lamp's window does: the sidebar only passes the click on. Closing
 /// and the room between the buttons, which moves the chat, are the app's to do (`Host`): the panel is its window.
 struct ChatBar: View {
@@ -737,7 +738,7 @@ struct ChatBar: View {
                                    on: more, plain: true) {
                             withAnimation(.snappy(duration: 0.2)) { more.toggle() }
                         }
-                        .help(more ? "Show the title again" : "Wish info, sharing, agent details, delete and versions")
+                        .help(more ? "Show the title again" : "Sharing, agent details, delete and versions")
                         // Changed where it stands, the symbol simply filled: not faded or slid in as a new button.
                         .transaction { $0.animation = nil }
                     }
@@ -853,15 +854,10 @@ struct ChatBar: View {
 
     /// What the button for the rest shows (Versions goes beside Undo, the two being about the same thing).
     @ViewBuilder private func rest(_ state: SidebarState, _ toolbar: SidebarToolbar) -> some View {
-        ToolButton("info.circle", "Wish Info", on: state.panel == .info) {
-            link.send(.panel(state.panel == .info ? nil : .info))
-        }
-        .help(toolbar.usage.map { "Usage, cost and models. \($0)" } ?? "Usage, cost and models")
         Menu {
             Button("Share Link…") { link.send(.wishLink(.open)) }
             Button("Put on GitHub…") { link.send(.repo(.open)) }
             if toolbar.canContribute == true { Button("Send Changes Back…") { link.send(.contribute(.open)) } }
-            if toolbar.canPublish == true { Button("Publish as Web Page…") { link.send(.publish(.open)) } }
             Divider()
             Button("Copy Wish File") { link.send(.copyWishFile) }
             Button("Share…") { link.send(.share) }
@@ -1205,54 +1201,13 @@ struct VersionsPanel: View {
                 .frame(width: width, height: height)
                 .clipShape(shape)
                 .overlay(shape.strokeBorder(.separator))
+                // Opened, it keeps its own proportions, no taller than a glance needs: a tall window's picture would
+                // otherwise fill the panel.
+                .frame(maxWidth: width == nil ? .infinity : nil, maxHeight: width == nil ? 220 : nil, alignment: .leading)
         } else if width != nil {
             shape.fill(.quaternary)
                 .frame(width: width, height: height)
                 .overlay(Image(systemName: "macwindow").foregroundStyle(.tertiary))
-        }
-    }
-}
-
-/// The wish's info, in place of the chat: what it has cost, what answers its AI, how Lamp builds it and where it
-/// lives, the same rows as Lamp's info panel. It chooses nothing: its buttons lead to where things are chosen.
-struct InfoPanel: View {
-    @EnvironmentObject private var link: ChatLink
-    let state: SidebarState
-
-    var body: some View {
-        Form {
-            ForEach(state.info ?? []) { section in
-                Section {
-                    ForEach(section.rows, id: \.label) { row in
-                        LabeledContent(row.label) {
-                            if let value = row.value {
-                                Text(value).textSelection(.enabled)
-                            } else {
-                                HStack(spacing: 4) { Image(systemName: "exclamationmark.circle.fill"); Text("Not Ready") }
-                                    .foregroundStyle(.orange)
-                            }
-                        }
-                    }
-                } header: {
-                    if let title = section.title { Text(title) }
-                } footer: {
-                    if !section.buttons.isEmpty {
-                        // One under another: the panel is narrow.
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(section.buttons, id: \.action) { button in
-                                Button(button.title) { link.send(.infoAction(button.action)) }
-                            }
-                        }
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .overlay {
-            if state.info == nil { ProgressView().controlSize(.small) }
         }
     }
 }
@@ -1297,7 +1252,7 @@ struct WishLinkPanel: View {
                          stage: card.sending ? .sending : card.problem.map(WishLinkCard.Stage.failed) ?? .editing,
                          copied: card.copied && !changed,
                          retake: card.canRetake ? { link.send(.wishLink(.retake)) } : nil, retaking: card.retaking,
-                         canIncludeFile: card.canIncludeFile ?? false,
+                         canIncludeFile: card.canIncludeFile ?? false, noLicense: card.noLicense,
                          share: {
                              link.send(.wishLink(.share(SidebarWishLinkValues(name: values.name, line: values.line, words: values.words,
                                                                                includePicture: values.includePicture,

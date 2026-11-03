@@ -19,10 +19,12 @@ extension Target {
                            tryOnHelp: { _ in "Where it's shown: this Mac, an iPhone or iPad, an Android device, a Samsung or LG TV, or your Xbox" },
                            place: { _ in .window }),
         guidance: Guidance(prompt: Agent.screenPrompt(for:),
-                           // The web app's own design rule, not a TV's 1920x1080, with the shapes read off the request's device line: an app is
-                           // given its kind before `make_app_for` sets its places, so its places here may not be the ones asked for.
-                           changeRules: { _ in Agent.Rules.screenEdit + Agent.Rules.tvFrameworks + Agent.Rules.screenDesign(nil) + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.screenTry },
-                           skills: { [] },
+                           // The web app's own rules, an app of the device it's on rather than a TV's 1920x1080, with the shapes read off the
+                           // request's device line: an app is given its kind before `make_app_for` sets its places, so its places here may not
+                           // be the ones asked for.
+                           changeRules: { _ in Agent.Rules.screenEdit + Agent.Rules.webAppPage(nil).joined() + Agent.Rules.tvData + Agent.Rules.screenTry },
+                           // How each kind of app is laid out, as for a native app on the Mac: a web app is what an app is by default.
+                           skills: { ["app-kinds"] },
                            elsewhere: { _ in "- On the person's TV, iPad, Android device or Xbox: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI" }),
         recipe: Recipe(language: .web, fill: ScreenKit.fill, ownedFiles: ScreenKit.write(for:), support: ScreenKit.write(for:),
                        isMade: ScreenKit.isWebAppMade, scaffolded: { dir, _ in ScreenKit.isWebAppMade(dir) },
@@ -40,11 +42,11 @@ extension Target {
                        refines: .tv,
                        // Its page and the Swift beside it travel in a shared file (`ScreenFiles`).
                        shareRefusal: nil),
-        part: Part(folder: "WebApp", family: "web-app", word: "web-app", menu: ("Web App", "globe"), rules: { Agent.screenPrompt(part: $0, alone: $1) },
+        part: Part(folder: "WebApp", family: "web-app", word: "web-app", menu: ("Web App", "globe"), rules: { Agent.screenPrompt(part: $0, alone: $1, webApp: true) },
                    // How its places are given beside the wish's other apps, and how it reaches them.
                    wishRule: Agent.Rules.screenAmongApps) { dir, wish in
             AppFile.read(dir.appendingPathComponent(ScreenKit.webAppPage.marker), inFolder: wish, last: 1) != nil
         },
         setup: .none,
-        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true }, changesAreWeb: { _ in true }, installFolder: "Web Apps", looksInTVPreview: true)
+        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true }, changesAreWeb: { _ in true }, publishedPage: { _ in .use }, installFolder: "Web Apps", looksInTVPreview: true)
 }

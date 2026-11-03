@@ -26,7 +26,7 @@ feature at hand is worth the interruption.
 - **One answer to "what answers this?"** `AppAI.resolve(capability, for: app, in: .mac | .phoneAway)`
   returns a `Resolution`: what answers, its `tier`, a `note` on why it isn't the best, and the `upgrades`
   that would make it better, best first. Everything reads it: the gateway, the card, Settings' menus and
-  Not Ready rows, an app's info panel, the sharing review, the keys a phone takes away, the agent's status line. Don't work
+  Not Ready rows, the sharing review, the keys a phone takes away, the agent's status line. Don't work
   out availability anywhere else; add to `resolve`.
 - **A new capability** is a case of `Capability` (title and SF Symbol), a branch in `resolve`, the gateway
   tagging its setup failures with `AppAI.Failure(…, needs:)`, a reason in `Store.offerReason`, a title and

@@ -5,6 +5,43 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.32.0
+
+- New starter: Chores, a to-do list you type into in plain words ("call mom friday 6pm"), with projects, labels and
+  smart lists.
+- Give Lamp a picture or an icon file and ask for it to be the app's icon: it uses it as is.
+- The desk answers every click again, and opening an app brings it to the front with its chat.
+- Your devices are on the desk, where "More" shows every other one Lamp can find on your network.
+- Check for Updates… for a wish from GitHub is in its ⋯ menu on the desk, where Wish Info used to be.
+- The wand in an app always opens its chat, and a wish whose first naming didn't work gets its name at the next
+  request.
+
+## 0.31.1
+
+- Put on GitHub can show a picture of your wish in its README: the card shows the picture, so you can leave it out.
+- Games hold on to much less memory from one change to the next, so they slow down and stand still far less as you
+  keep changing them.
+- Update from the Original, asked for while a change is under way, now waits for it to finish instead of holding
+  Lamp still behind an alert.
+
+## 0.31.0
+
+- Put a web game on GitHub with a page to play it: Put on GitHub now publishes the game's page alongside its code and
+  gives you the link.
+- Share a wish that uses data with no stated license: Lamp warns you and lets you decide, and when sharing fails it
+  says why.
+- Reload, in every app's menu (⌥⌘R), puts the latest change on screen.
+- Open and Play work while a change is being made: the app opens as it is and takes the change when it's done.
+- Changing a big game no longer freezes it: only the part of its world a change touches is built again, in the
+  background while you keep playing, and the chat says when something waits for Reload.
+- Lamp checks a game in the window you have open, so changes to a game finish sooner.
+- A remixed app gets its own icon drawn, and the desk shows a picture of a game rather than its loading screen.
+- Long requests keep going: only a model running on your Mac pauses after 150 steps, and a conversation that grows
+  too long is shortened without stopping the change.
+- Setup shows how far downloads have got, can try again, and explains connection problems plainly.
+- With a wish picked on the desk, Name This Version… and Copy Wish File act on it.
+- Games use the latest three.js.
+
 ## 0.30.0
 
 - A much smaller download: Lamp is about 70 MB instead of 264 MB. Starter apps are fetched the first time you open

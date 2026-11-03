@@ -354,7 +354,12 @@ enum DeviceSupport {
       // Where Lamp is: filled in by Lamp in the package it puts on a device. Never the app's token, which the app asks
       // Lamp for once, just after Lamp has put it on the device, and keeps.
       var installed = /*LAMP_INSTALL*/null;
-      var prefix = 'lamp:';
+      // A page put on GitHub Pages shares its origin (<owner>.github.io, or the account's own domain) with every other page
+      // of that account, so what it saves is kept under its repository's name, filled in by Lamp in the published copy:
+      // two apps' 'notes' never meet.
+      var here = window.location || {};
+      var scope = /*LAMP_PAGE_SCOPE*/null;
+      var prefix = 'lamp:' + (typeof scope === 'string' && scope ? scope + ':' : '');
       // Taken as the page loads: the wait before asking Lamp again is the page's, and a game's runtime takes away only
       // the timers the game's own code left running (`Lamp.controllers` renews its session through this).
       var browserTimeout = window.setTimeout;
@@ -518,6 +523,13 @@ enum DeviceSupport {
         });
       }
 
+      // Why a copy Lamp didn't put on a device has no AI: a page on the web (its published page) is away from Lamp.
+      function unplaced() {
+        return here.protocol === 'https:'
+          ? 'This page is on the web, away from Lamp, so it has no AI here. Open it in Lamp for that.'
+          : 'This copy of the app wasn\'t put here by Lamp, so it can\'t use AI. Open it from Lamp on your Mac.';
+      }
+
       // Each way to the Mac in turn, until one answers; when none does, once more after a moment, in case Lamp is
       // just starting.
       function send(path, body, token, timeout, deadline) {
@@ -528,9 +540,7 @@ enum DeviceSupport {
           var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
           list = list.filter(function (r) { return ipv4.test(r); }).concat(list.filter(function (r) { return !ipv4.test(r); }));
         }
-        // Lamp's preview of a game replays a play exactly, so nothing in it answers from outside.
-        if (window.lampPreview) return Promise.reject(new Failure('Lamp\'s preview has no AI: show example content here, and look at the game on the device for the real answers.'));
-        if (!list.length) return Promise.reject(new Failure('This copy of the app wasn\'t put here by Lamp, so it can\'t use AI. Open it from Lamp on your Mac.'));
+        if (!list.length) return Promise.reject(new Failure(unplaced()));
         // With a deadline (LampAI.act's turn), each try gets only the time left, and none starts after it.
         function left() { return deadline ? deadline - Date.now() : timeout; }
         function attempt(i, round) {
@@ -553,7 +563,7 @@ enum DeviceSupport {
       function token() {
         var kept = read('install.token', null);
         if (kept && installed && kept.app === installed.app) return Promise.resolve(kept.token);
-        if (!installed) return Promise.reject(new Failure('This copy of the app wasn\'t put here by Lamp, so it can\'t use AI. Open it from Lamp on your Mac.'));
+        if (!installed) return Promise.reject(new Failure(unplaced()));
         return send('/app/claim', { app: installed.app }, null, 10000).then(function (answer) {
           if (answer.status !== 200 || !answer.reply.token) {
             throw new Failure('This app needs Lamp to put it on this device once more before it can use AI: press Play in Lamp on your Mac.');

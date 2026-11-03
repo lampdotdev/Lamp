@@ -36,6 +36,98 @@ import Foundation
 
     private struct Key: Hashable { let id: String; let place: Place }
 
+    /// A change a copy hasn't taken whole, as the page last said: for the chat's Reload line (`kind`, in plain words) and
+    /// the agent (what's waiting, by name). Worked out from what the page said each time it's asked, so Reload or a
+    /// later change that goes in ends it, and a later change that's held too is a hold of its own (`gen`).
+    struct Hold: Equatable {
+        enum Kind: Equatable {
+            /// Its code ran with the change, and part of it waits for Reload.
+            case partly
+            /// All of it waits for a pause in the game, or Reload.
+            case pause
+            /// All of it waits for Reload.
+            case reload
+        }
+        var project: String
+        var place: Place
+        var gen: Int
+        var kind: Kind
+        var why: String?
+        var files: [String] = []
+        /// Which hold this is: told to the agent once.
+        var id: String { "\(project) \(place.rawValue) \(gen) \(kind)" }
+    }
+
+    /// What came through the page's last run of its code (lamp-game.js, `cameThrough`): in its words, the parts of the
+    /// world built again (each with how long it took and why, and whether it's built in the background while the game
+    /// plays on), the changed files nothing in the running game read again, which wait for Reload, and how long the game
+    /// stood still for it. A part built in the background goes in later, with a report of its own (`later`).
+    struct Report: Equatable {
+        struct Built: Equatable { var part: String; var ms: Int?; var cause: String?; var background = false }
+        var words: String?
+        var built: [Built] = []
+        var waits: [String] = []
+        /// Whether the page said which parts it built again: a copy built by an earlier Lamp says it only in words.
+        var tellsParts = false
+        /// How long the game stood still for the change, from its last frame before to its first after, in ms.
+        var frozen: Int?
+        /// The report of parts built in the background going in, after the change's own report.
+        var later = false
+
+        init(words: String?, built: [Built] = [], waits: [String] = []) {
+            self.words = words
+            self.built = built
+            self.waits = waits
+        }
+
+        init(_ body: [String: Any]) {
+            words = (body["why"] as? String).map { String($0.prefix(600)) }
+            built = (body["built"] as? [[String: Any]] ?? []).prefix(40).compactMap { item in
+                (item["part"] as? String).map { Built(part: String($0.prefix(80)), ms: item["ms"] as? Int, cause: (item["cause"] as? String).map { String($0.prefix(160)) },
+                                                      background: item["background"] as? Bool ?? false) }
+            }
+            waits = (body["waits"] as? [String] ?? []).prefix(20).map { String($0.prefix(200)) }
+            tellsParts = body["built"] is [Any]
+            frozen = body["frozen"] as? Int
+            later = body["later"] as? Bool ?? false
+        }
+
+        /// The parts built again in the person's words ("the road paint"), and how long they took together; parts
+        /// still being built in the background are said apart ("building the city in the background").
+        var rebuilt: String? {
+            let now = built.filter { !$0.background || $0.ms != nil }, building = built.filter { $0.background && $0.ms == nil }
+            func listed(_ parts: [Built]) -> String {
+                let names = parts.map { "the " + Self.words(of: $0.part) }
+                return names.count <= 3 ? ListFormatter.localizedString(byJoining: names) : "\(names.count) parts of the world"
+            }
+            var said: [String] = []
+            if !now.isEmpty {
+                let ms = now.compactMap(\.ms).reduce(0, +)
+                said.append(ms > 0 ? "\(listed(now)) in \(Self.seconds(ms))" : listed(now))
+            }
+            if !building.isEmpty { said.append((now.isEmpty ? "" : "and building ") + "\(listed(building)) in the background") }
+            return said.isEmpty ? nil : said.joined(separator: " ")
+        }
+
+        /// The parts still being built in the background as the game plays on: one built has its time.
+        var building: [String] { built.filter { $0.background && $0.ms == nil }.map(\.part) }
+
+        /// A part's key as words: `roadPaint` → "road paint", `street_details` → "street details".
+        static func words(of key: String) -> String {
+            var out = ""
+            for c in key {
+                if c == "_" || c == "-" { out += " "; continue }
+                if c.isUppercase, let last = out.last, last.isLowercase || last.isNumber { out += " " }
+                out += String(c).lowercased()
+            }
+            return out.trimmingCharacters(in: .whitespaces)
+        }
+
+        static func seconds(_ ms: Int) -> String {
+            ms < 100 ? "less than 0.1 s" : ms < 10_000 ? String(format: "%.1f s", Double(ms) / 1000) : "\(Int((Double(ms) / 1000).rounded())) s"
+        }
+    }
+
     /// What a copy was installed with: the page's files by their hashes, and the rest of the app's (`native`).
     private struct Installed: Codable {
         var files: [String: String]
@@ -52,12 +144,15 @@ import Foundation
     }
 
     /// The change the copy has been given: every file that differs from what it was installed with, by its hash, and
-    /// those it no longer has.
+    /// those of the install it no longer has (`gone`, which the app serves from); what this change changed, measured
+    /// against what the copy had, and which of those it took away (`removed`, for the page, which a file made since the
+    /// install and deleted again is in, though it was never in `gone`).
     private struct Given: Codable {
         var gen: Int
         var files: [String: String]
         var gone: [String]
         var changed: [String]
+        var removed: [String]? = nil
         var now = false
         /// The page said it holds this change for a pause, and hasn't said it went in since: kept with it, so a Lamp
         /// started again while the game waits still shows Reload.
@@ -77,6 +172,8 @@ import Foundation
     private var listening: [Key: [(id: UUID, waiter: CheckedContinuation<Void, Never>)]] = [:]
     private var deciding: [Key: (gen: Int, answer: CheckedContinuation<String?, Never>)] = [:]
     private var held: Set<Key> = []
+    /// Copies holding a change only until the game's next pause (`busy()`), which then goes in by itself.
+    private var pausing: Set<Key> = []
     private var putting: Set<Key> = []
     /// Copies that said they serve a phone page Lamp hands them (`LampPageLive`, as it asks): one built by an earlier
     /// Lamp gets the game installed again for a change of it, as before.
@@ -86,7 +183,7 @@ import Foundation
     private var reasons: [String: String] = [:]
     /// What came through the page's last run of its code, in its words (lamp-game.js, `cameThrough`), by copy: for the
     /// agent's look, so anything lost is put right in the same turn.
-    private var reports: [Key: String] = [:]
+    private var reports: [Key: Report] = [:]
     /// Asked of the copy on the Mac: what its page has saved, for a preview to start from (`saved(of:)`).
     private var asking: [String: CheckedContinuation<[String: String]?, Never>] = [:]
     /// What each app's copy on the Mac last said it had saved, by app, kept only while Lamp runs.
@@ -208,7 +305,8 @@ import Foundation
         let gen = (given[key]?.gen ?? 0) + 1
         // A change of the phone page while the page holds one of its own for Reload leaves that one waiting.
         let waiting = changed.isEmpty && held.contains(key)
-        give(Given(gen: gen, files: files, gone: gone, changed: waiting ? lastGiven(project, key)?.changed ?? [] : changed,
+        let removed = waiting ? lastGiven(project, key)?.removed ?? [] : changed.filter { now[$0] == nil }
+        give(Given(gen: gen, files: files, gone: gone, changed: waiting ? lastGiven(project, key)?.changed ?? [] : changed, removed: removed,
                    waits: waiting ? true : nil, phone: phone, phoneOnly: changed.isEmpty ? true : nil), to: key, in: project)
         if !waiting { held.remove(key) }
         let said = await answer(key, gen: gen)
@@ -255,10 +353,28 @@ import Foundation
     func reason(_ project: LampProject) -> String? { reasons[project.id] }
 
     /// What the copy at `place` last said came through a run of its code; nil after a swap, or when it hasn't said.
-    func report(_ project: LampProject, at place: Place) -> String? { reports[Key(id: project.id, place: place)] }
+    func report(_ project: LampProject, at place: Place) -> String? { reports[Key(id: project.id, place: place)]?.words }
+
+    /// The copy's last report whole: what was built again, and what waits for Reload.
+    func lastReport(_ project: LampProject, at place: Place) -> Report? { reports[Key(id: project.id, place: place)] }
+
+    /// What the app's open copies hold of a change, each as the page last said.
+    func holds(of project: LampProject) -> [Hold] {
+        [Place.mac, .simulator].compactMap { place in
+            let key = Key(id: project.id, place: place)
+            guard held.contains(key), let gen = lastGiven(project, key)?.gen else { return nil }
+            if let report = reports[key], !report.waits.isEmpty {
+                return Hold(project: project.id, place: place, gen: gen, kind: .partly, why: report.words, files: report.waits)
+            }
+            return Hold(project: project.id, place: place, gen: gen, kind: pausing.contains(key) ? .pause : .reload, why: reasons[project.id])
+        }
+    }
 
     /// Whether a copy is holding a change for a pause.
     func holds(_ project: LampProject) -> Bool { held.contains { $0.id == project.id } }
+
+    /// Whether what a copy holds goes in by itself at the game's next pause, rather than only at Reload.
+    func holdsForPause(_ project: LampProject) -> Bool { held.contains { $0.id == project.id && pausing.contains($0) } }
 
     private func answer(_ key: Key, gen: Int) async -> String? {
         deciding[key]?.answer.resume(returning: nil)
@@ -339,7 +455,8 @@ import Foundation
         // What its page saved is asked for before anything else: a preview waits on it.
         if wanted() { return (200, ["epoch": epoch, "gen": after, "send": "saved"]) }
         guard let change = newer() else { return (200, ["epoch": epoch, "gen": given[key]?.gen ?? 0]) }
-        var answer: [String: Any] = ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.phoneOnly == true ? [] : change.changed, "now": change.now]
+        var answer: [String: Any] = ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.phoneOnly == true ? [] : change.changed,
+                                     "removed": change.phoneOnly == true ? [] : change.removed ?? [], "now": change.now]
         if let phone = change.phone { answer["phone"] = ["version": phone.version, "files": phone.files] }
         return (200, answer)
     }
@@ -365,20 +482,44 @@ import Foundation
         }
         let key = Key(id: project.id, place: place)
         let gen = body["gen"] as? Int ?? 0
+        // The page has drawn, for this launch of its app: nothing to do with any change, so none of what follows applies.
+        if state == "playing" {
+            if place == .mac, let pid = body["pid"] as? Int, let launch = Int32(exactly: pid) { Store.shared.firstFrames.report(app: project.id, launch: launch) }
+            return (200, [:])
+        }
         // The change is on screen: the light Lamp holds over the window while it's put in crosses it now.
         if state == "shown" {
             Store.shared.pageShown(project)
             return (200, [:])
         }
         if state == "report" {
-            reports[key] = (body["why"] as? String).map { String($0.prefix(600)) }
+            var report = Report(body)
+            // Parts built in the background going in: what of the change waits for Reload still does.
+            if report.later {
+                report.waits = reports[key]?.waits ?? []
+                reports[key] = report
+                return (200, [:])
+            }
+            reports[key] = report
+            // Part of the change didn't reach the running game: the page holds it for Reload, and so does the chat.
+            if !report.waits.isEmpty {
+                held.insert(key)
+                if var change = lastGiven(project, key), change.waits != true {
+                    change.waits = true
+                    give(change, to: key, in: project)
+                }
+                Store.shared.pageWaitsInPart(project)
+            }
             return (200, [:])
         }
         if ["held", "reloading", "rerun", "swapped"].contains(state) {
             reasons[project.id] = (body["why"] as? String).map { String($0.prefix(600)) }
             reports[key] = nil
         }
-        if state == "held" { held.insert(key) }
+        if state == "held" {
+            held.insert(key)
+            if body["pause"] as? Bool == true { pausing.insert(key) } else { pausing.remove(key) }
+        } else if ["swapped", "rerun", "reloading"].contains(state) { pausing.remove(key) }
         if let change = lastGiven(project, key), ["held", "swapped", "rerun", "reloading"].contains(state) {
             var marked = change
             marked.waits = state == "held"

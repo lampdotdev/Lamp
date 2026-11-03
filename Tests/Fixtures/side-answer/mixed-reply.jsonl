@@ -1,0 +1,4 @@
+{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Sure, I will take a look at that shortly."}, {"type": "toolCall", "id": "toolu_01QEEjdX76Sy3A9KnqprwJtb", "name": "bash", "arguments": {"command": "touch /tmp/side-canary-mixed", "description": "canary"}}], "stopReason": "toolUse", "usage": {"input": 4, "output": 140, "cacheRead": 0, "cacheWrite": 26195, "totalTokens": 26339, "cost": {"input": 8e-06, "output": 0.0014000000000000002, "cacheRead": 0, "cacheWrite": 0.0654875, "total": 0.06689550000000001}, "cacheWrite1h": 0, "reasoning": 42}}}
+{"type": "tool_execution_start", "toolName": "bash"}
+{"type": "tool_execution_end", "toolName": "bash", "result": {"content": [{"type": "text", "text": "Tools can't run while answering beside the work."}], "details": {}, "terminate": true}, "isError": true}
+{"type": "agent_settled"}

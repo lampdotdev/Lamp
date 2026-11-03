@@ -85,7 +85,9 @@ extension ChatLook {
 
     /// A message waiting for the current change to finish. It can still be taken back. The latest of its group has
     /// the group's caption, and, where the agent can take them while it works, Send Now for the whole group
-    /// (`sendNow`); once that's asked, the caption says they're on their way.
+    /// (`sendNow`); once that's asked, the caption says they're on their way. One Lamp has already answered (`answered`,
+    /// `SideLine`) reads as any message of the conversation: its bubble is a sent one, with no caption, and Unsend and Send
+    /// Now come up beside it under the pointer or keyboard focus, in the same place either way so nothing moves.
     public struct QueuedRow<Chips: View>: View {
         let text: String
         let waitingForSetup: Bool
@@ -94,9 +96,16 @@ extension ChatLook {
         let place: QueuedPlace
         let onRemove: () -> Void
         let sendNow: (() -> Void)?
+        let answered: Bool
+        let groupAnswered: Bool
         let chips: Chips
+        @State private var pointerOver = false
+        @FocusState private var focused: Focus?
 
-        public init(text: String, waitingForSetup: Bool, waitingForReload: Bool = false, sending: Bool = false,
+        private enum Focus: Hashable { case row, sendNow, unsend }
+
+        public init(text: String, waitingForSetup: Bool, waitingForReload: Bool = false, sending: Bool = false, answered: Bool = false,
+                    groupAnswered: Bool = false,
                     place: QueuedPlace = QueuedPlace(last: true, count: 1, first: true), onRemove: @escaping () -> Void,
                     sendNow: (() -> Void)? = nil, @ViewBuilder chips: () -> Chips) {
             self.text = text
@@ -106,25 +115,78 @@ extension ChatLook {
             self.place = place
             self.onRemove = onRemove
             self.sendNow = sendNow
+            self.answered = answered
+            self.groupAnswered = groupAnswered
             self.chips = chips()
         }
+
+        /// Sent now, or held for setup or Reload, it says so whatever was answered.
+        private var quiet: Bool { answered && !sending && !waitingForSetup && !waitingForReload }
+        /// The controls come up under the pointer or keyboard focus, which the row takes itself so there's something to
+        /// tab to while they're away. VoiceOver has them as the bubble's actions, whatever's on screen.
+        private var showsControls: Bool { !quiet || pointerOver || focused != nil }
 
         public var body: some View {
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 6) { chips }
                 HStack(spacing: 6) {
-                    Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain)
-                        .help("Unsend")
-                        .accessibilityLabel("Unsend")
-                    UserBubble(text, waiting: true)
+                    if showsControls {
+                        if quiet, groupAnswered, let sendNow {
+                            Button(sendNowTitle, action: sendNow).buttonStyle(.link).font(.caption)
+                                .help(place.count > 1 ? "Send these to the agent while it works" : "Send this to the agent while it works")
+                                .focused($focused, equals: .sendNow)
+                        }
+                        Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                            .buttonStyle(.plain)
+                            .help("Unsend")
+                            .accessibilityLabel("Unsend")
+                            .focused($focused, equals: .unsend)
+                    }
+                    bubble
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
                 .frame(maxWidth: 480 + 22 + ChatLook.tailRoom, alignment: .trailing)
                 .padding(.leading, 40)
-                if place.last { caption.padding(.trailing, ChatLook.tailRoom) }
+                // A message still unanswered beside it keeps the group's caption, and Send Now in it.
+                if place.last, !(quiet && groupAnswered) { caption.padding(.trailing, ChatLook.tailRoom) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+            .contentShape(Rectangle())
+            .onHover { pointerOver = $0 }
+            .focusable(quiet)
+            .focused($focused, equals: .row)
+            // Focused, the row answers the keys its controls would, for a keyboard that doesn't tab to buttons.
+            .onKeyPress(.return) {
+                guard focused == .row, quiet, groupAnswered, let sendNow else { return .ignored }
+                sendNow()
+                return .handled
+            }
+            .onKeyPress(.delete) {
+                guard focused == .row, quiet else { return .ignored }
+                onRemove()
+                return .handled
+            }
+        }
+
+        private var sendNowTitle: String { place.count > 1 ? "Send All Now" : "Send Now" }
+
+        @ViewBuilder private var bubble: some View {
+            if quiet {
+                UserBubble(text, waiting: false)
+                    .accessibilityAction(named: "Unsend", onRemove)
+                    .modifier(SendNowAction(title: sendNowTitle, sendNow: groupAnswered ? sendNow : nil))
+            } else {
+                UserBubble(text, waiting: true)
+            }
+        }
+
+        private struct SendNowAction: ViewModifier {
+            let title: String
+            let sendNow: (() -> Void)?
+
+            func body(content: Content) -> some View {
+                if let sendNow { content.accessibilityAction(named: title, sendNow) } else { content }
+            }
         }
 
         @ViewBuilder private var caption: some View {
@@ -148,6 +210,34 @@ extension ChatLook {
                     }
                 }
             }
+        }
+    }
+
+    /// Under a message: what Lamp said back while the turn went on, in the chat's one voice, or that it's saying it, or
+    /// that nothing came and the message just waits. It follows its message into the chat.
+    public struct SideLine: View {
+        let answering: Bool
+        let reply: String?
+        let stillQueued: Bool
+
+        public init(answering: Bool = false, reply: String? = nil, stillQueued: Bool = false) {
+            self.answering = answering
+            self.reply = reply
+            self.stillQueued = stillQueued
+        }
+
+        public var body: some View {
+            Group {
+                if let reply {
+                    ChatLook.AgentText(reply)
+                } else if answering {
+                    Label { Text("Answering…") } icon: { ProgressView().controlSize(.mini) }
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if stillQueued {
+                    Text("Still queued").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

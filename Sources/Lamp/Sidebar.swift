@@ -273,7 +273,7 @@ final class SidebarServer {
         listener = Listener(server: self)
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
-            .merge(with: WishLinkCards.shared.objectWillChange).merge(with: PublishCards.shared.objectWillChange)
+            .merge(with: WishLinkCards.shared.objectWillChange)
             .merge(with: GitHubRepoCards.shared.objectWillChange).merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
@@ -346,13 +346,6 @@ final class SidebarServer {
         local.push()
     }
 
-    /// A wish's chat opened from the desk on one of its panels (Wish Info): what the bar's buttons open, kept until the
-    /// chat is shown, which reads it as it connects.
-    func show(_ panel: SidebarPanel, for project: LampProject) {
-        panels[project.id] = panel
-        scheduleUpdate()
-    }
-
     private func scheduleUpdate() {
         guard !pending, !connections.isEmpty || !locals.isEmpty else { return }
         pending = true
@@ -418,6 +411,14 @@ final class SidebarServer {
             queued.sendingNow = message.sendNow ? true : nil
             // Send Now is the group's: offered once, under the latest waiting message.
             queued.canSendNow = canSendNow && message.id == lastWaiting ? true : nil
+            switch message.side {
+            case .answering: queued.sideAnswering = true
+            case .answered(let reply):
+                queued.sideReply = reply
+                queued.noTurn = store.isHeldAfterQuit(project) ? true : nil
+            case .stillQueued: queued.stillQueued = true
+            case nil: break
+            }
             return queued
         }
         let waiting = store.queued[project.id] ?? []
@@ -451,8 +452,7 @@ final class SidebarServer {
         if !untold && !project.makesNoApp {
             let made = history?.made ?? false
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
-                                         hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
-            toolbar.canPublish = Publish.canPublish(project) && made ? true : nil
+                                         hasVersions: history?.saved ?? false, details: details)
             toolbar.canContribute = Contribute.canContribute(project) && made ? true : nil
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
@@ -479,14 +479,10 @@ final class SidebarServer {
             let versions = versions(for: project, busy: busy)
             state.versions = versions.list
             state.hasEarlierVersions = versions.more
-        case .info:
-            state.info = AppInfoView.sections(for: project, models: AppModels.load(project), store: store,
-                                              changedFromOriginal: changedFromOriginal(project, busy: busy, lines: log.count))
         case nil: break
         }
         state.sharing = sharing.removeValue(forKey: project.id)
         if let card = WishLinkCards.shared.card(for: project), card.inSidebar { state.wishLink = wishLink(card, of: project) }
-        if let card = PublishCards.shared.card(for: project) { state.publish = PublishCards.shared.wire(card, of: project) }
         if let card = GitHubRepoCards.shared.card(for: project) { state.repo = GitHubRepoCards.shared.wire(card, of: project) }
         if let card = ContributeCards.shared.card(for: project) { state.contribute = ContributeCards.shared.wire(card, of: project) }
         return state
@@ -592,7 +588,8 @@ final class SidebarServer {
             newPicture: shown?.picture != nil && shown?.picture != card.pictureDigest,
             sending: card.stage == .sending, problem: { if case .failed(let message) = card.stage { message } else { nil } }(),
             copied: card.copied, canRetake: WishLinkCards.shared.canRetake(project), retaking: card.retaking,
-            limits: [WishLink.Limit.name, WishLink.Limit.line, WishLink.Limit.words])
+            limits: [WishLink.Limit.name, WishLink.Limit.line, WishLink.Limit.words],
+            noLicense: ShareCheck.warningLine(Credits.load(project)))
     }
 
     private var wishLinkPictures: [String: (digest: String?, data: Data?)] = [:]
@@ -604,27 +601,17 @@ final class SidebarServer {
 
     /// The panel each app's sidebar shows in place of the chat.
     private var panels: [String: SidebarPanel] = [:]
+
+    /// A wish's chat brought up on its Versions panel, as its toolbar's Versions button shows it: asked from the desk,
+    /// so going back to a version needs no app open. The chat comes up where it is now (`Store.showChat`), so a wish
+    /// with no app running shows it in Lamp's panel and opens nothing.
+    func showVersions(of project: LampProject) {
+        panels[project.id] = .versions
+        scheduleUpdate()
+        Store.shared.showChat(project.id)
+    }
     /// The wish's file after Share…, until it's been sent.
     private var sharing: [String: SidebarSharing] = [:]
-
-    /// Whether each wish has changed since it arrived, for its info panel's credits, read again (it asks git) when a turn
-    /// starts or ends and when the chat changes.
-    private var originals: [String: (key: String, changed: Bool)] = [:]
-
-    private func changedFromOriginal(_ project: LampProject, busy: Bool, lines: Int) -> Bool {
-        let key = "\(busy) \(lines)"
-        let known = originals[project.id]?.changed ?? false
-        if originals[project.id]?.key != key {
-            originals[project.id] = (key, known)
-            Task { [weak self] in
-                let changed = await Store.shared.original(toStartAgain: project) != nil
-                guard let self, self.originals[project.id]?.key == key else { return }
-                self.originals[project.id] = (key, changed)
-                if changed != known { self.scheduleUpdate() }
-            }
-        }
-        return known
-    }
 
     /// What the toolbar knows of each app's history, read again as Lamp's window reads it: when a turn starts or ends
     /// and when the chat changes.
@@ -685,7 +672,7 @@ final class SidebarServer {
 
     /// A version's picture, small enough to send with the list every time the chat changes.
     private nonisolated static func versionPicture(_ url: URL) -> Data? {
-        NSImage(contentsOf: url).flatMap(smallPicture)
+        Versions.showsNothing(url) ? nil : NSImage(contentsOf: url).flatMap(smallPicture)
     }
 
     private nonisolated static func smallPicture(_ data: Data) -> Data? { NSImage(data: data).flatMap(smallPicture) }
@@ -704,6 +691,7 @@ final class SidebarServer {
 
     /// Share…: the file is made here, where the wish is, and handed to the sidebar, which shows the share menu.
     private func share(_ project: LampProject) {
+        guard Sharing.askToShare(project) else { return }
         Task { [weak self] in
             do {
                 let file = try await Task.detached(priority: .userInitiated) { () -> SidebarFile in
@@ -714,7 +702,8 @@ final class SidebarServer {
                 self?.sharing[project.id] = SidebarSharing(id: UUID(), file: file, wish: project.id)
                 self?.scheduleUpdate()
             } catch {
-                Store.shared.log(project, .error, error.localizedDescription)
+                // What's wrong and what to do about it, as an alert would show both.
+                Store.shared.log(project, .error, WishLinkCards.problem(error))
             }
         }
     }
@@ -872,6 +861,7 @@ final class SidebarServer {
                     request.canGoBack = line.version != nil
                     request.canSendAgain = context.canSendAgain && line.canSendAgain
                     request.isLatest = line.id == context.latestRequest
+                    request.sideReply = line.sideReply
                     out.append(request)
                 case .agent:
                     out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))
@@ -1153,7 +1143,9 @@ final class SidebarServer {
 
     // MARK: What the person did
 
-    func handle(_ command: SidebarCommand, from projectID: String) {
+    /// `wire` is the version the chat that sent it speaks (`SidebarWire.version`): an app's chat from before an update
+    /// can be open still, and doesn't show what's newer.
+    func handle(_ command: SidebarCommand, from projectID: String, wire: Int = SidebarWire.version) {
         let store = Store.shared
         guard let project = store.projects.first(where: { $0.id == projectID }) else { return }
         switch command {
@@ -1359,29 +1351,21 @@ final class SidebarServer {
             case .retake: cards.retake(project)
             case .close: cards.close(project)
             }
-        case .publish(let command):
-            let cards = PublishCards.shared
-            switch command {
-            case .open: cards.open(project)
-            case .publish: cards.publish(project)
-            case .fix: cards.fix(project)
-            case .openPage: cards.openPage(project)
-            case .copy: cards.copy(project)
-            case .close: cards.close(project)
-            case .makeLink: cards.makeLink(project)
-            }
         case .repo(let command):
             let cards = GitHubRepoCards.shared
             switch command {
-            case .open: cards.open(project)
+            // A chat that can't show the picture never sends it up: the person would publish what they never saw.
+            case .open: cards.open(project, canShowPicture: wire >= 12)
             case .put: cards.put(project)
             case .fix: cards.fix(project)
             case .openRepo: cards.openRepo(project)
+            case .play: cards.play(project)
             case .copy: cards.copy(project)
             case .close: cards.close(project)
             case .makeLink: cards.makeLink(project)
             case .setPrivate(let value): cards.setPrivate(project, value)
             case .setLicense(let value): cards.setLicense(project, value)
+            case .setPicture(let value): cards.setPicture(project, value)
             }
         case .contribute(let command):
             let cards = ContributeCards.shared
@@ -1393,11 +1377,6 @@ final class SidebarServer {
             case .copy: cards.copy(project)
             case .close: cards.close(project)
             }
-        case .infoAction(let action):
-            AppInfoView.perform(action, for: project) { tab in
-                SettingsMenu.show(tab: tab)
-            }
-            scheduleUpdate()
         case .tryOn(let id):
             // One of the wish's other apps: "part:<its id>:<what>".
             if id.hasPrefix("part:"), let part = store.parts(of: project).first(where: { id.hasPrefix("part:\($0.id):") }) {
@@ -1545,7 +1524,7 @@ final class SidebarServer {
                 } else if case .pointAgain = command, let app = Store.shared.projects.first(where: { $0.id == appID }), app.isPart {
                     MagicPanel.shared.pointAgain(in: app)
                 } else {
-                    server?.handle(command, from: projectID)
+                    server?.handle(command, from: projectID, wire: version)
                 }
             }
         }

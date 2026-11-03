@@ -26,7 +26,6 @@
         ".roku",
         ".agents"
       ],
-      "inspect": "roku-sdk",
       "output": "build/app.zip",
       "package": "pnpm install --prefer-offline --config.confirm-modules-purge=false --reporter=append-only && pnpm exec rk dev --no-sideload && rm -rf build && mkdir -p build && cd dist-dev/pkg-dir && /usr/bin/zip -qr ../../build/app.zip . -x '*.DS_Store'",
       "prepare": "pnpm install --prefer-offline --config.confirm-modules-purge=false --reporter=append-only && pnpm exec rk update-ai-context --yes",

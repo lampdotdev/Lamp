@@ -39,6 +39,17 @@ enum AppFile {
         read(url, inFolder: folder).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    /// Copies the file out, as `read` reads it, and only when it has no other name: a second name (a hard link) put in the
+    /// app's folder for a file outside it would read as the app's own.
+    static func copy(_ url: URL, in project: LampProject, to destination: URL) -> Bool {
+        guard let fd = open(url, inFolder: project.dir) else { return false }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1,
+              let data = try? handle.readToEnd() else { return false }
+        return FileManager.default.createFile(atPath: destination.path, contents: data, attributes: [.posixPermissions: 0o600])
+    }
+
     /// Opens the file step by step from the folder holding the app's, which is Lamp's: the app's folder by its
     /// name and every step below it refused when it's a link.
     private static func open(_ url: URL, inFolder folder: URL) -> Int32? {

@@ -268,7 +268,12 @@ final class MagicPanel {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: folder.appendingPathComponent("open-sidebar").path, contents: nil)
         follow(project.id)
-        Store.shared.macCopies(of: project).first?.activate()
+        // Lamp hands over the front before asking: macOS lets an app come forward only when the app in front yields
+        // to it, so without this an app already open stayed behind the desk, and so did its own bid on the word below.
+        if let app = Store.shared.macCopies(of: project).first {
+            NSApp.yieldActivation(to: app)
+            app.activate()
+        }
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "openSidebar"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
     }

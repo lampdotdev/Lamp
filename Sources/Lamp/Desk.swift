@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import LampSidebarKit
 import AVFoundation
+import UniformTypeIdentifiers
 
 /// Lamp's home: the person's wishes in one list (remixes under their originals), the starters Lamp comes with under them,
 /// the place to make a new one, by typing it, saying it, or finding it with the agent's help, and the person's devices
@@ -9,6 +10,8 @@ import AVFoundation
 /// a new copy of it to become something else.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.openWindow) private var openWindow
+    @AppStorage(Mix.switchKey) private var mixOn = false
     @StateObject private var dictation = Dictation()
     @State private var hasMicrophone = true
     @FocusState private var barFocused: Bool
@@ -58,7 +61,7 @@ struct WishDesk: View {
     private static let top: CGFloat = 14
 
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
-    /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
+    /// A device's setup conversation isn't a wish: it's reached from the device, down the desk's side.
     private var wishes: [LampProject] { store.wishes.filter { !$0.isDeviceSetup } }
 
     private var sections: DeskList.Sections {
@@ -117,6 +120,16 @@ struct WishDesk: View {
             } }
         }
         .modifier(ClearToolbar())
+        // A wish file dropped anywhere on the desk opens as one opened from the Finder: its review, then a new wish, or
+        // with mixing on, Mix… into the copy already here.
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            guard let provider = providers.first else { return false }
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, url.pathExtension == "lampapp" else { return }
+                Task { @MainActor in Store.shared.importApp(from: url) }
+            }
+            return true
+        }
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
@@ -159,16 +172,31 @@ struct WishDesk: View {
                 }
                 .padding(.horizontal, 12).padding(.top, Self.top).padding(.bottom, 20)
             }
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Paper.muted)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
+            HStack(spacing: 4) {
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Paper.muted)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings (⌘,)")
+                .accessibilityLabel("Settings")
+                // The mix window, while mixing copies is an experiment (Settings → Experimental).
+                if mixOn && Edition.isDev {
+                    Button { openWindow(id: "mix") } label: {
+                        Image(systemName: "arrow.triangle.merge")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Paper.muted)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mix Copies")
+                    .accessibilityLabel("Mix Copies")
+                }
             }
-            .buttonStyle(.plain)
-            .help("Settings (⌘,)")
-            .accessibilityLabel("Settings")
             .padding(.leading, 14).padding(.bottom, 12)
         }
         .frame(width: 220)
@@ -200,8 +228,9 @@ struct WishDesk: View {
                     .padding(.top, 6).padding(.bottom, 24)
                 }
                 .scrollContentBackground(.hidden)
-                // Up and down move the pick, the list following it; Return opens it.
-                .focusable()
+                // Up and down move the pick, the list following it; Return opens it. Focusable for keys alone: focusable
+                // to clicks too, the list took every click inside it for itself, and no row, Open or heading got one.
+                .focusable(interactions: .edit)
                 .focusEffectDisabled()
                 .focused($listFocused)
                 .onKeyPress(.upArrow) { step(-1, scroller) }
@@ -350,6 +379,7 @@ struct WishDesk: View {
                 .font(.system(size: 15))
                 .lineLimit(1...5)
                 .focused($barFocused)
+                .onChange(of: barFocused, initial: true) { if barFocused { NoTextCompletion.inFocusedBox() } }
                 .onSubmit { send() }
             if hasWish {
                 Button { send() } label: {
@@ -793,6 +823,15 @@ struct WishDrag: NSViewRepresentable {
         }
 
         private func begin(from event: NSEvent) {
+            // A wish with work under no license asks first, as Share… does; a drag can't wait on the answer, so it's the
+            // next drag that carries the file.
+            if store.canShare(project) {
+                let credits = Credits.load(project)
+                if ShareCheck.warning(of: project, credits: credits) != nil, !ShareCheck.accepted(project, credits: credits) {
+                    _ = Sharing.askToShare(project)
+                    return
+                }
+            }
             let writer: NSPasteboardWriting
             if store.canShare(project) {
                 let installed = project.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
@@ -1365,12 +1404,6 @@ extension Store {
         ContributeCards.shared.open(project)
     }
 
-    /// Wish Info from the desk: the wish's chat, on its info panel, with its credits first.
-    func showInfo(_ project: LampProject) {
-        SidebarServer.shared.show(.info, for: project)
-        open(fromDesk: project)
-    }
-
     /// Change… on a wish: its chat beside it in its own window, opening it when it's closed, for a Mac app with
     /// windows that has been made; anything else (a wish still being found, a menu bar app, a widget, an iPhone
     /// app) in Lamp's panel, beside whatever shows it or on its own (`ChatPanel`).
@@ -1443,7 +1476,8 @@ extension Store {
         apps.contains { $0.destination != .mac }
     }
 
-    /// A wish double-clicked on the desk: used when it's made and nothing's waiting on it, else its chat is shown.
+    /// A wish double-clicked on the desk: used when it's made, even while a turn changes it (its installed copy, as it is),
+    /// else its chat is shown.
     /// Where opening it brings nothing to the front (the menu bar, a widget, the background, the person's own
     /// phone), the desk says where it is.
     func use(_ project: LampProject) {
@@ -1457,8 +1491,11 @@ extension Store {
             prepareStarters()
             return
         }
-        guard made, !project.finding, !busy.contains(project.id), Talk.waiting(in: logs[project.id] ?? []) == nil,
-              queued[project.id]?.isEmpty != false else {
+        // A turn going on, or messages waiting for it, needn't keep the person from using it: the installed copy opens as it
+        // is and takes the turn's changes live (`open`). A question waiting for them, or nothing installed yet, shows the chat.
+        let installed = apps(of: project).contains { $0.hasMac && FileManager.default.fileExists(atPath: $0.installedURL.path) }
+        let working = busy.contains(project.id) || queued[project.id]?.isEmpty == false
+        guard made, !project.finding, !working || installed, Talk.waiting(in: logs[project.id] ?? []) == nil else {
             return showChat(project.id)
         }
         unread.remove(project.id)
@@ -1494,6 +1531,18 @@ extension Store {
                 break
             }
             openWish(project)
+        }
+    }
+}
+
+/// macOS offers completions of its own under a box of more than one line, in a pop-up that can stay over what's below
+/// it with nothing in it, taking every click there: the desk's list, under its bar, took none. Nothing the desk's boxes
+/// are for is completed from a dictionary, so the box being typed in is told not to (the text view behind a SwiftUI box
+/// is only reached as the window's first responder, once it has focus).
+enum NoTextCompletion {
+    @MainActor static func inFocusedBox() {
+        DispatchQueue.main.async {
+            (NSApp.keyWindow?.firstResponder as? NSTextView)?.isAutomaticTextCompletionEnabled = false
         }
     }
 }

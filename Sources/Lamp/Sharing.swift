@@ -55,8 +55,28 @@ enum Sharing {
         anchors.allObjects.first { $0.origin == origin && $0.window === window && !$0.isHiddenOrHasHiddenAncestor }
     }
 
+    /// Before Share…, Copy Wish File, Export… or a drag makes the file: a wish using work that came with no license says
+    /// so once, and goes only with Share Anyway. The answer is kept for the wish until it takes in more such work
+    /// (`ShareCheck.accepted`), so the same question isn't asked at every copy.
+    @MainActor static func askToShare(_ project: LampProject) -> Bool {
+        // Asked again if the wish took in more such work while the question was up: only what was named is agreed to.
+        while true {
+            let credits = Credits.load(project)
+            guard let warning = ShareCheck.warning(of: project, credits: credits), !ShareCheck.accepted(project, credits: credits) else { return true }
+            // Asked from the chat beside an app too, so Lamp comes forward with its question.
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = warning.message
+            alert.informativeText = warning.detail ?? ""
+            alert.addButton(withTitle: "Share Anyway")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+            ShareCheck.accept(project, sources: ShareCheck.fingerprint(credits))
+        }
+    }
+
     @MainActor static func share(_ project: LampProject, from origin: Origin) {
-        guard let window = NSApp.keyWindow, let content = window.contentView else { return }
+        guard let window = NSApp.keyWindow, let content = window.contentView, askToShare(project) else { return }
         // Where the command was clicked, for when its control has gone by the time the file is ready.
         let clicked = NSRect(origin: content.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil),
                              size: NSSize(width: 1, height: 1))
@@ -105,6 +125,9 @@ enum Sharing {
         var family: DeviceFamily?
         /// The wish's other apps, each in its folder (`Part`). Files from before wishes had them carry none.
         var parts: [Part]?
+        /// A web app that's a plain site, its page a repository's root (`ScreenKit.isSite`, `StaticSite`). An older
+        /// Lamp opens it as any web app.
+        var site: Bool? = nil
     }
 
     /// Which app a shared file is, so a Mac that already has it can take the new one as an update rather
@@ -214,7 +237,8 @@ enum Sharing {
                 throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share games written in C++.")
             }
         }
-        // Others' work in it goes only with its license and credit, and work with no license doesn't go at all.
+        // Others' work in it goes only with its license and credit. Work with no license goes too: the person was told
+        // before the share began (`askToShare`, a sheet's line).
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
         let fm = FileManager.default
@@ -291,7 +315,7 @@ enum Sharing {
                                     platform: root.platform, family: root.hasIOS ? root.family : nil,
                                     parts: parts.isEmpty ? nil : parts.map {
                                         Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.hasIOS ? $0.family : nil)
-                                    }))
+                                    }, site: parts.isEmpty && ScreenKit.isSite(root) ? true : nil))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
         // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
@@ -303,19 +327,34 @@ enum Sharing {
                                   detail: "The license of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
             }
         }
+        // With mixing on, the file also carries the versions since the copies last met (`MixHistory`). It's the first
+        // thing given up: a key in an old version, or a history too big to send, sends the file without it.
+        let history = stage.appendingPathComponent(MixHistory.folder)
+        if Mix.isOn { MixHistory.write(for: project, credits: credits, identity: identity(of: project), into: stage) }
         // Every app's: each of a wish's apps keeps its own secrets and token.
         let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
-        let leaks = ShareCheck.secrets(in: stage, known: known)
+        var leaks = ShareCheck.secrets(in: stage, known: known)
+        if leaks.contains(where: { $0.hasPrefix(MixHistory.folder + "/") }) {
+            try? fm.removeItem(at: history)
+            leaks = ShareCheck.secrets(in: stage, known: known)
+        }
         if let first = leaks.first {
             throw ImportError("\(project.name) can't be shared: it holds a key or a password.",
                               detail: "It's in \(first)\(leaks.count > 1 ? " and \(leaks.count - 1) more" : ""). Ask Lamp to take it out and keep it out of the code.")
         }
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
         // bytes before compression), so Lamp never makes a file another Lamp refuses.
-        let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
-        guard staged.count <= maxFiles else { throw ImportError("\(project.name) has too many files to share.") }
-        let unpacked = staged.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
-        guard unpacked <= maxUnpackedBytes else { throw ImportError("\(project.name) is too big to share.") }
+        func measured() -> (count: Int, bytes: Int) {
+            let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
+            return (staged.count, staged.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) })
+        }
+        var measure = measured()
+        if measure.count > maxFiles || measure.bytes > maxUnpackedBytes, fm.fileExists(atPath: history.path) {
+            try? fm.removeItem(at: history)
+            measure = measured()
+        }
+        guard measure.count <= maxFiles else { throw ImportError("\(project.name) has too many files to share.") }
+        guard measure.bytes <= maxUnpackedBytes else { throw ImportError("\(project.name) is too big to share.") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
@@ -521,6 +560,8 @@ enum Sharing {
         /// The wish's other apps (`Part`), each read from its folder as the app at the root is, for the review and the
         /// install alike: a part's code reaches an app's folder only from here.
         var parts: [Part] = []
+        /// A web app that's a plain site (`Manifest.site`).
+        var site = false
     }
 
     /// An app file is a few source files and some attachments: anything much bigger isn't one, and a file
@@ -571,6 +612,7 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.site = platform == .webApp && manifest.site == true
         package.licences = (package.credits?.upstream ?? []).flatMap(\.termsFiles).filter(Credits.isLicenceFile).compactMap { path in
             let file = folder.appendingPathComponent(path)
             let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
@@ -600,6 +642,12 @@ enum Sharing {
                               detail: "Its build file doesn't name the app's package in a way Lamp can read.")
         }
         return package
+    }
+
+    /// Leaves a hidden item out of a walk of a folder: a folder's insides with it. Only a folder's: told to skip after
+    /// a file, the enumerator skips the next folder it comes to instead (a site's .gitignore took its media/ with it).
+    static func skip(_ item: URL, in items: FileManager.DirectoryEnumerator) {
+        if (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { items.skipDescendants() }
     }
 
     /// Whether a kind is an app around a page: a web app or a screen (`ScreenKit`), or a web game. Its page travels as
@@ -873,9 +921,9 @@ enum Sharing {
             newArtwork = GlassArt.load(from: Icons.glassURL(project, spec: spec)) != glass
             try? Icons.save(glass, for: project, spec: spec)
         // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons, but a
-        // game's painting fills its tile.
+        // game's painting, or the sender's own icon, fills its tile.
         } else if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-           spec.game || Icons.isCutOut(art) {
+           spec.fillsTile || Icons.isCutOut(art) {
             let url = Icons.artURL(project, spec: spec)
             newArtwork = (try? Data(contentsOf: url)) != art
             try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1094,19 +1142,19 @@ extension Sharing {
         if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
             return await Icons.preview(spec, art: .glass(glass))
         }
-        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png"), game: spec.game)
+        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png"), fillsTile: spec.fillsTile)
             .map(Icons.Artwork.picture))
     }
 
-    /// The artwork, when it's a cut-out object (what `finishImport` keeps) no larger than Lamp paints them.
+    /// The artwork, when it's a cut-out object (what `finishImport` keeps), or fills the tile, no larger than Lamp paints them.
     /// The size comes from the file's header, so a picture made to exhaust memory is never unpacked.
-    private static func artwork(at url: URL, game: Bool) -> NSImage? {
+    private static func artwork(at url: URL, fillsTile: Bool) -> NSImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               max(width, height) <= 4096,
-              let art = try? Data(contentsOf: url), game || Icons.isCutOut(art) else { return nil }
+              let art = try? Data(contentsOf: url), fillsTile || Icons.isCutOut(art) else { return nil }
         return NSImage(data: art)
     }
 

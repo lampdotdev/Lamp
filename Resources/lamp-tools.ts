@@ -25,6 +25,7 @@
  *   reply says how to adapt the code and gives a new app's rules.
  * - `remove_app`: takes one of the wish's apps away, by its folder; its versions keep it.
  * - `rename_app`: gives the wish the name the person asked for, as Rename on the desk does.
+ * - `use_icon_picture`: makes a picture the person gave the wish's icon; the reply shows the icon.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
  * - `lampify`: gives an app made from someone's project on GitHub its credit at one pinned commit, the project's
@@ -66,6 +67,14 @@ import { createBashTool, createEditTool, createWriteTool, defineTool, type Exten
  * (Lamp says where with LAMP_TOOLS_JSON). Lamp's MCP endpoint serves the same file to Claude Code and Codex,
  * so there is one definition of each tool. Only the `execute` bodies live here.
  */
+/**
+ * The tools a new wish's first turn leaves out of what it sends each request, until `make_app_for` says what's being
+ * made (`Agent.deferredTools`): pi declares a `deferred` tool only once `tool_search` loads it. A make_app_for whose reply
+ * says `allTools` (anything but a new web game on the Mac) declares the rest, since that app's rules may want any of
+ * them. A run that resumes a conversation sets nothing here: it names all its tools.
+ */
+const deferred = new Set((process.env.LAMP_DEFER_TOOLS ?? "").split(",").filter(Boolean));
+
 const registryPath = process.env.LAMP_TOOLS_JSON ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "lamp-tools.json");
 const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
 	name: string; label: string; description: string; inputSchema: Record<string, unknown>;
@@ -73,12 +82,22 @@ const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
 function spec(name: string) {
 	const tool = registry.find((t) => t.name === name);
 	if (!tool) throw new Error(`lamp-tools.json has no tool named ${name}`);
-	// biome-ignore lint/suspicious/noExplicitAny: the schema is JSON, typed where each tool uses its params
-	return { name: tool.name, label: tool.label, description: tool.description, parameters: Type.Unsafe<any>(tool.inputSchema) };
+	return {
+		name: tool.name, label: tool.label, description: tool.description,
+		// biome-ignore lint/suspicious/noExplicitAny: the schema is JSON, typed where each tool uses its params
+		parameters: Type.Unsafe<any>(tool.inputSchema),
+		...(deferred.has(name) ? { exposure: "deferred" as const } : {}),
+	};
 }
 
+/**
+ * pi runs the calls of one message together, unless one of them is sequential, when it runs them all in the order given.
+ * A look or a use reads what the calls before it wrote, so each is: a write listed before it is done when it runs. Its
+ * tool description says to put it last, since one listed first runs first.
+ */
 const lookAtApp = defineTool({
 	...spec("look_at_app"),
+	executionMode: "sequential",
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 		const url = process.env.LAMP_LOOK_URL;
 		if (!url) throw new Error("Lamp isn't available to look at the app.");
@@ -206,26 +225,60 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 	});
 }
 
-/** Compacts the conversation at Lamp's size (`Conversation.compactAt`, in LAMP_COMPACT_TOKENS) rather than near the
- * model's window, as Claude Code and Codex are told to: a model with a million tokens would otherwise carry every
- * request's history, and its cost, for days. pi's own compaction does the work, and reports it as it does when it
- * compacts on its own (`compaction_end`). Once per run: the summary it leaves is far under the line. */
-function compactsEarly(pi: ExtensionAPI) {
-	const limit = Number(process.env.LAMP_COMPACT_TOKENS ?? "");
-	if (!Number.isFinite(limit) || limit <= 0) return;
-	let compacted = false;
-	pi.on("turn_end", (_event, ctx) => {
-		const tokens = ctx.getContextUsage()?.tokens;
-		if (compacted || tokens == null || tokens <= limit) return undefined;
-		compacted = true;
-		ctx.compact({});
-		return undefined;
-	});
-}
-
 /** The person's messages sent since the agent started, taken from Lamp after each turn (Store.steer). pi puts
  * them in the conversation as the person's own, before the model's next request; after the agent's last
  * reply that request is made for them, so none is left for the turn after. */
+/** What Lamp sends for a handover holding a side answer (SideAnswer.record in Lamp). */
+type SideReceipt = { v: number; words?: string; replies: { to: string; reply: string }[]; note: string; fallback: string };
+const receiptType = "lamp-side-receipt";
+
+function receiptMessage(receipt: SideReceipt) {
+	return { customType: receiptType, content: receipt.fallback, display: false, details: receipt };
+}
+
+function isReceipt(message: any): boolean {
+	const details = message?.details;
+	return message?.role === "custom" && message.customType === receiptType && details?.v === 1
+		&& Array.isArray(details.replies) && details.replies.length > 0 && typeof details.note === "string";
+}
+
+/** An experiment: the answer Lamp's helper gave beside the turn reaches the model as the model's own reply, with Lamp's
+ * note after it. pi stores Lamp's one record as it is; only what each request shows the model changes, the same way
+ * every time, from what's stored. The run's own request carries its record through `before_agent_start`, a mid-turn
+ * handover through `takesMessagesMidTurn`. A record with no assistant message before it to take the reply's shape from
+ * stays as its stored text, today's receipt. */
+function answersAsItsOwn(pi: ExtensionAPI) {
+	const first = process.env.LAMP_SIDE_RECEIPT;
+	let given = false;
+	pi.on("before_agent_start", () => {
+		if (!first || given) return undefined;
+		given = true;
+		try {
+			return { message: receiptMessage(JSON.parse(first) as SideReceipt) };
+		} catch {
+			return undefined;
+		}
+	});
+	pi.on("context", (event) => {
+		if (!event.messages.some(isReceipt)) return undefined;
+		const zero = (value: any): any => typeof value === "number" ? 0
+			: value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, zero(v)])) : value;
+		const text = (words: string) => [{ type: "text" as const, text: words }];
+		const messages: any[] = [];
+		let shape: any;
+		for (const message of event.messages as any[]) {
+			if (message.role === "assistant") shape = message;
+			if (!isReceipt(message) || !shape) { messages.push(message); continue; }
+			const details = message.details as SideReceipt, timestamp = message.timestamp;
+			if (details.words) messages.push({ role: "user", content: text(details.words), timestamp });
+			messages.push({ role: "assistant", content: text(details.replies.map((r) => r.reply).join("\n\n")), api: shape.api,
+				provider: shape.provider, model: shape.model, usage: zero(shape.usage), stopReason: "stop", timestamp });
+			messages.push({ role: "user", content: text(details.note), timestamp });
+		}
+		return { messages };
+	});
+}
+
 function takesMessagesMidTurn(pi: ExtensionAPI) {
 	pi.on("turn_end", async (_event, ctx) => {
 		const url = process.env.LAMP_STEER_URL;
@@ -237,8 +290,10 @@ function takesMessagesMidTurn(pi: ExtensionAPI) {
 				body: "{}",
 				signal: ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
 			});
-			const reply = (await response.json()) as { message?: string };
-			if (reply.message) pi.sendUserMessage(reply.message, { deliverAs: "steer" });
+			const reply = (await response.json()) as { message?: string; receipt?: SideReceipt };
+			// One message for the whole handover, so nothing can be asked of the model between its parts.
+			if (reply.receipt) pi.sendMessage(receiptMessage(reply.receipt), { deliverAs: "steer" });
+			else if (reply.message) pi.sendUserMessage(reply.message, { deliverAs: "steer" });
 		} catch {
 			// Lamp couldn't be reached: what's waiting there goes as the next request.
 		}
@@ -248,6 +303,7 @@ function takesMessagesMidTurn(pi: ExtensionAPI) {
 
 const useApp = defineTool({
 	...spec("use_app"),
+	executionMode: "sequential",
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 		const url = process.env.LAMP_USE_URL;
 		if (!url) throw new Error("Lamp isn't available to use the app.");
@@ -310,12 +366,20 @@ const webFetch = defineTool({
  * tools take only what they act on, so nothing else says it in words a person can follow, and a command's text or a
  * file's name is never read for it. An extension may register a tool under a built-in's name to replace it (pi's
  * extension docs); the rest is pi's tool as it is, which runs once the words are set aside. The field is required:
- * left optional, Sonnet through pi left it off every command, where Opus filled it in.
+ * left optional, Sonnet through pi left it off every command, where Opus filled it in. A call that leaves it off all the
+ * same isn't worth a whole request to the model to refuse: pi's `prepareArguments`, which runs before its validation,
+ * gives it empty words, and Lamp names the step as it does any step without them ("Running a command",
+ * `TurnProgress.activity`). Only this field: anything wrong with what the tool acts on is still refused. pi's edit has a
+ * `prepareArguments` of its own, which runs first.
  */
-function withWords<T extends { parameters: { properties: Record<string, unknown> }; execute: unknown }>(tool: T, field: string, words: string): T {
+function withWords<T extends { parameters: { properties: Record<string, unknown> }; execute: unknown; prepareArguments?: (raw: unknown) => unknown }>(tool: T, field: string, words: string): T {
 	return {
 		...tool,
 		parameters: Type.Object({ ...tool.parameters.properties, [field]: Type.String({ description: words }) }),
+		prepareArguments(raw: unknown) {
+			const given = (tool.prepareArguments ? tool.prepareArguments(raw) : raw) as Record<string, unknown> | undefined;
+			return given && typeof given === "object" && given[field] === undefined ? { ...given, [field]: "" } : given;
+		},
 		async execute(id: string, params: Record<string, unknown>, ...rest: unknown[]) {
 			const { [field]: _said, ...run } = params;
 			return (tool.execute as (...args: unknown[]) => unknown)(id, run, ...rest);
@@ -603,7 +667,7 @@ const offerSetup = defineTool({
 	},
 });
 
-const makeAppFor = defineTool({
+const makeAppFor = (pi: ExtensionAPI) => defineTool({
 	...spec("make_app_for"),
 	async execute(_toolCallId, params, signal) {
 		const url = process.env.LAMP_KIND_URL;
@@ -614,8 +678,9 @@ const makeAppFor = defineTool({
 			body: JSON.stringify(params),
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
 		});
-		const reply = (await response.json()) as { text?: string; error?: string };
+		const reply = (await response.json()) as { text?: string; error?: string; allTools?: boolean };
 		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		if (reply.allTools) pi.setActiveTools([...new Set([...pi.getActiveTools(), ...deferred])]);
 		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
 	},
 });
@@ -651,6 +716,21 @@ const renameApp = defineTool({
 		const reply = (await response.json()) as { text?: string; error?: string };
 		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
 		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
+const useIconPicture = defineTool({
+	...spec("use_icon_picture"),
+	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		const url = process.env.LAMP_ICON_URL;
+		if (!url) throw new Error("Lamp isn't available to change the icon.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+		});
+		return pictureReply(response, ctx.model, "Lamp couldn't use that picture as the icon.");
 	},
 });
 
@@ -766,7 +846,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(editWithDoing());
 	pi.registerTool(writeWithDoing());
 	keepsPicturesFew(pi);
-	compactsEarly(pi);
+	answersAsItsOwn(pi);
 	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
@@ -779,9 +859,10 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(makeArt);
 	pi.registerTool(assets);
 	pi.registerTool(offerSetup);
-	pi.registerTool(makeAppFor);
+	pi.registerTool(makeAppFor(pi));
 	pi.registerTool(removeApp);
 	pi.registerTool(renameApp);
+	pi.registerTool(useIconPicture);
 	pi.registerTool(connectors);
 	pi.registerTool(lampify);
 	pi.registerTool(networkDevices);

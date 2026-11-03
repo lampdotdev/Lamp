@@ -35,7 +35,9 @@ enum AgentEvent {
     case session(String)   // an external engine's conversation id, to resume next turn
     case step(String)      // the model has started on a tool call (its name), or on text ("")
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
+    case compacting        // pi has started summing up the conversation so far
     case compacted         // the engine summed up the conversation so far to make room
+    case compactionFailed(String)   // pi couldn't sum it up, and why: the turn carries on without
     case plan([PlanPart])  // the agent's plan, a new app's chapters in the chat
     case finished          // the engine has answered: a message written to it now would start another answer
     case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
@@ -57,9 +59,42 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,assets,offer_setup,make_app_for,remove_app,rename_app,use_icon_picture,connectors,lampify,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
+
+    /// What a first turn that doesn't yet know what it's making leaves out of pi's requests, by pi's own `deferred`
+    /// exposure, until `tool_search` loads one (`deferredRule`) or `make_app_for` makes something other than a new web
+    /// game on the Mac: what such a game never needs (a wish's versions, its name, the person's services and devices).
+    /// Claude Code and Codex are served every tool, as ever: they have no such exposure from Lamp's endpoint.
+    static let deferredTools = ["list_versions", "name_version", "restore_version", "rename_app", "remove_app", "use_icon_picture", "write_wish",
+                                "connectors", "lampify", "offer_setup", "network_devices", "device_integration", "device_permission"]
+
+    /// pi's default selection when a run names no tools, which a deferring run can't: `--tools` is an allowlist, and
+    /// `tool_search` can't find what it leaves out. Every other run names its tools, which overrides this.
+    static let deferringTools = ["read", "edit", "write", "grep", "find", "ls", "bash", "tool_search"]
+
+    /// Whether this run of pi defers them: the first run of a new wish's conversation, with no kind yet. Whether the
+    /// conversation has begun is pi's transcript's to say: Lamp keeps a conversation's id before there's one. Every run
+    /// that resumes one, a first turn's after a question included, names all its tools and sends all their schemas, since
+    /// pi 1.0.0 doesn't restore what `tool_search` loaded when a process starts with a selection of tools. So does any
+    /// run when pi's settings can't be made to say what a deferring run needs.
+    @MainActor static func defersTools(_ project: LampProject?, session: String?) -> Bool {
+        guard lampTools != nil, let project, project.undecided != nil, let session, startsConversation(session, in: project) else { return false }
+        return PiCompaction.setDefaultTools(deferringTools, in: URL(fileURLWithPath: configDir))
+    }
+
+    /// Whether a run under this id begins its conversation, which only pi's own record of it can say.
+    static func startsConversation(_ session: String, in project: LampProject) -> Bool {
+        Conversation.transcript(of: .pi, session: session, in: project) == nil
+    }
+
+    /// The rule that says what's deferred.
+    static let deferredRule = """
+
+    - These tools aren't loaded yet: \(deferredTools.joined(separator: ", ")). Call `tool_search` with a name or what you \
+    need before using one; from your next call it's there.
+    """
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` gives a new app's chapters in the chat; `delete_file`
@@ -92,6 +127,8 @@ enum Agent {
 
     private static let lookRules = """
 
+    - A web game at home on the Mac has a rule of its own on looking at it and trying it, in its rules: for that game \
+    it stands in for the rules on looking below.
     - `look_at_app` puts what you've written into the app and shows you its windows, what it printed and any \
     build errors or crash, so you can check your work instead of guessing. What you save goes into the open app \
     by itself when it can; a look shows you what the person sees. While the app is open a look is quick, since \
@@ -235,6 +272,20 @@ enum Agent {
     short sentence that shows you heard it and says what you'll do now ("Got it, the theme: I'll change the \
     colors and type across the app."), then carry on with it in mind.
     """
+
+    /// The person has heard back already (`SideAnswer`), so a reply here would say it to them twice. It says so only
+    /// when that's true of everything handed over: a message nobody has answered still reads as never heard.
+    static let midTurnAnsweredNote = """
+
+
+    Note from Lamp: the person sent this while you were working, and has already been answered, as above. Don't \
+    acknowledge or restate it: carry on with your next step with it in mind, and speak up only to correct what they \
+    were told.
+    """
+
+    static func midTurnNote(for messages: [QueuedMessage]) -> String {
+        messages.allSatisfy { $0.sideReply != nil } ? midTurnAnsweredNote : midTurnNote
+    }
 
     /// With each request to an app that's updated in place (LiveReload): which changes keep it open. Here and
     /// not in the system prompt, since it depends on the app's kind.
@@ -900,7 +951,9 @@ enum Agent {
         ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))), `tint` (hex main \
         color of the object) and, for a game, `game: true` (its icon is painted rich and in 3D instead of glass, and \
         `subject` is its hero). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
-        they ask for a different icon or the app is now about something else. Never create icon files yourself.
+        they ask for a different icon or the app is now about something else. Never create icon files yourself. When the person gives \
+        a picture to be the icon (an attachment, an .icns included), call `use_icon_picture` with its path: Lamp uses it as it is and \
+        marks icon.json `picture: true`. Leave that design as it is; to give them a newly designed icon instead, remove `picture`.
         """
 
         static let about = """
@@ -917,8 +970,8 @@ enum Agent {
         by `lampify`, which writes its entry at the commit it pinned and its license files itself, and marks the project \
         the app is made from (`"adapted": true`): Lamp brings the person its updates from there. Never take anything out of \
         \(Credits.file), never remove or change a license or a notice of someone else's, and never take an author's \
-        name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license can be used here but \
-        not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \
+        name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license may still be shared, \
+        but whether to is the person's call: say so when you bring it in, and that Lamp will remind them when they share. Lamp shows the credit in the app's About \
         window and its info.
         """
 
@@ -1054,17 +1107,19 @@ enum Agent {
 
     /// The shell command for one agent turn. Values come from LAMP_* environment variables;
     /// attached files are passed as pi `@file` arguments (images and text go straight to the model).
-    static func command(fileCount: Int) -> String {
+    /// A run that defers tools names none (`deferringTools`), and Lamp's notes stay out by name when they're off.
+    static func command(fileCount: Int, defers: Bool = false) -> String {
         let files = (0..<fileCount).map { "\"@$LAMP_FILE_\($0)\"" }.joined(separator: " ")
+        let chosen = !defers ? "--tools \(tools)" : "-e builtin:tool-search" + (Memory.isOn ? "" : " --exclude-tools read_notes,save_notes")
         return """
-        "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" --tools \(tools) \\
+        "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" \(chosen) \\
           --no-extensions\(lampTools == nil ? "" : " -e \"$LAMP_TOOLS\"") --no-skills --no-prompt-templates --no-context-files --no-approve \\
           --session-dir "$LAMP_SESSION_DIR" --session-id "$LAMP_SESSION" \\
           --append-system-prompt "$LAMP_SYSTEM" -- \(files) "$LAMP_PROMPT"
         """
     }
 
-    static func environment(prompt: String, files: [String] = [], project: LampProject? = nil, session: String, sessionDir: String) -> [String: String] {
+    static func environment(prompt: String, files: [String] = [], project: LampProject? = nil, session: String, sessionDir: String, defers: Bool = false) -> [String: String] {
         var env = [
             "LAMP_PI": executable?.path ?? "pi",
             "LAMP_PROVIDER": Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
@@ -1072,24 +1127,28 @@ enum Agent {
             "LAMP_MODEL": Builder.piModel,
             "LAMP_SESSION": session,
             "LAMP_SESSION_DIR": sessionDir,
-            "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote,
+            "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote + (defers ? deferredRule : ""),
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
             "LAMP_TOOLS_JSON": (Store.toolsFile ?? Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"))?.path ?? "",
             "PI_CODING_AGENT_DIR": configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
-            // Lamp's extension compacts pi's conversation here (lamp-tools.ts), as the other engines are told to.
-            "LAMP_COMPACT_TOKENS": String(Conversation.compactAt),
-            // And keeps its pictures few the way Lamp does for the others (`keepsPicturesFew` there).
+            // Lamp's extension keeps pi's pictures few the way Lamp does for the others (`keepsPicturesFew` in lamp-tools.ts).
             "LAMP_KEEP_PICTURES": String(Conversation.keepPictures),
             "LAMP_TRIM_PICTURES": String(Conversation.trimAbove),
         ]
+        if defers { env["LAMP_DEFER_TOOLS"] = deferredTools.joined(separator: ",") }
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
-        // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
-        // the environment every shell command would inherit. The ticket is good for one answer, and pi spends
-        // it before the model has said anything: a command the agent runs later finds it used.
-        if let provider = Provider.keyProvider(Builder.piProvider) {
+        return env.merging(keyEnvironment(for: Builder.piProvider)) { $1 }
+    }
+
+    /// pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
+    /// the environment every shell command would inherit. The ticket is good for one answer, and pi spends
+    /// it before the model has said anything: a command the agent runs later finds it used.
+    static func keyEnvironment(for piProvider: String) -> [String: String] {
+        var env: [String: String] = [:]
+        if let provider = Provider.keyProvider(piProvider) {
             syncKeyFile()
             // No ticket unless pi is sure to spend it. It wouldn't if auth.json holds something else for
             // this provider (a sign-in of pi's, or a key that couldn't be taken out yet), or if Lamp was
@@ -1163,15 +1222,20 @@ enum Agent {
         }
     }
 
+    /// For asking pi about its models: offline, from its catalog, and OpenRouter's all counted whether or not there's a key.
+    static var catalogEnvironment: [String: String] {
+        let api = Provider.openRouterProvider
+        return ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1", "PI_CODING_AGENT_DIR": configDir,
+                api.envVar: KeyStore.key(for: api.id) ?? "placeholder"]
+    }
+
     /// Models pi can use through OpenRouter, from `pi --list-models` (offline, from pi's catalog).
     static func listModels() async -> [String] {
         guard let pi = executable else { return [] }
         let api = Provider.openRouterProvider
-        let env = ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1", "PI_CODING_AGENT_DIR": configDir,
-                   api.envVar: KeyStore.key(for: api.id) ?? "placeholder"]
         var rows: [String] = []
         _ = await Shell.run("\"$LAMP_PI\" --list-models", cwd: URL(fileURLWithPath: NSTemporaryDirectory()),
-                            env: env.merging(["LAMP_PI": pi.path]) { $1 }) { line in
+                            env: catalogEnvironment.merging(["LAMP_PI": pi.path]) { $1 }) { line in
             let columns = line.split(separator: " ", omittingEmptySubsequences: true)
             guard columns.count >= 2, columns[0] == api.id else { return }
             rows.append(String(columns[1]))
@@ -1213,6 +1277,8 @@ enum Agent {
         case "message_end":
             guard let message = obj["message"] as? [String: Any] else { return [] }
             if message["role"] as? String == "user" { return [.received] }
+            // A handover with an answer in it is one custom message (`SideAnswer.record`).
+            if message["role"] as? String == "custom", message["customType"] as? String == SideAnswer.receiptType { return [.received] }
             guard message["role"] as? String == "assistant" else { return [] }
             var events: [AgentEvent] = []
             for block in message["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "text" {
@@ -1224,8 +1290,11 @@ enum Agent {
                 events.append(.failed(message["errorMessage"] as? String ?? "Unknown error"))
             }
             return events
+        case "compaction_start":
+            return [.compacting]
         case "compaction_end":
-            if obj["result"] != nil { return [.compacted] }
+            // A compaction that failed leaves the turn going: the conversation is only as long as it was.
+            return obj["result"] != nil ? [.compacted] : [.compactionFailed(obj["errorMessage"] as? String ?? "stopped")]
         case "auto_retry_end":
             if obj["success"] as? Bool == false { return [.failed(obj["finalError"] as? String ?? "Unknown error")] }
         default:
@@ -1478,6 +1547,13 @@ enum KeyTicket {
         open = open.filter { Date().timeIntervalSince($0.value.issued) < lifetime }   // runs that never asked
         open[ticket] = (provider, Date())
         return ticket
+    }
+
+    /// A run that ended without asking: its ticket opens nothing from now on.
+    static func revoke(_ ticket: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        open[ticket] = nil
     }
 
     /// The key the ticket was issued for, the first time it's asked; nil for a used, old or made-up ticket.

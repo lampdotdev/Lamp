@@ -19,7 +19,12 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
+
+    private static let useRowStatuses: [EngineUseRow.Status] = [
+        .use, .gettingReady, .downloading(0.4), .failed(ErrorMessages.noConnection),
+        .checkingSignIn, .signingIn, .failed("Signing in didn't finish."),
+    ]
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -109,6 +114,27 @@ enum Gallery {
             state.waitingForSetup = true
             state.lines = []
         },
+        screen("A message answered while building", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
+            state.busy = true
+            var answering = SidebarQueued(id: UUID(), text: "Can the title be bigger too?", attachments: [])
+            answering.sideReply = "Got it, I'll do that next."
+            var late = SidebarQueued(id: UUID(), text: "And what about the footer?", attachments: [])
+            late.sideAnswering = true
+            state.queued = [answering, late]
+        },
+        screen("A message with no answer", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
+            state.busy = true
+            var waiting = SidebarQueued(id: UUID(), text: "Can the title be bigger too?", attachments: [])
+            waiting.stillQueued = true
+            state.queued = [waiting]
+        },
+        screen("An answered message after a quit", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
+            var waiting = SidebarQueued(id: UUID(), text: "Can the title be bigger too?", attachments: [])
+            waiting.sideReply = "Got it, I'll do that next."
+            waiting.noTurn = true
+            waiting.canSendNow = true
+            state.queued = [waiting]
+        },
         screen("An iPhone app, closed", group: "Chat screen", Array(finishedChat.prefix(11))) { state in
             state.toolbar?.play = SidebarPlay(open: false, enabled: true, help: "Use Today")
             state.tryOn = phoneTryOn
@@ -131,6 +157,15 @@ enum Gallery {
         Entry(group: "Chat screen", name: "The setup sheet") {
             AnyView(SetupCard(offer: SetupOffer(capability: .pictures), reason: "Today wants to make pictures, and nothing on this Mac makes them yet.",
                               dir: wish.dir))
+        },
+        Entry(group: "Chat screen", name: "Choosing Claude or ChatGPT in the setup sheet") {
+            AnyView(VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(useRowStatuses.enumerated()), id: \.offset) { _, status in
+                    EngineUseRow(engine: .claude, status: status, use: {}, cancelSignIn: {})
+                }
+                EngineUseRow(engine: .codex, status: .failed("The download site answered 503."), use: {}, cancelSignIn: {})
+            }
+            .padding(20).frame(width: 524))
         },
         screen("Agent Details", group: "Chat screen", [
             LogLine(kind: .user, text: "add some color"),
@@ -290,7 +325,7 @@ enum Gallery {
                                  draft: "", draftVersion: 0, attachments: [])
         state.workingActivitySince = shown?.activitySince
         state.workingSteps = shown == nil ? nil : SidebarServer.liveSteps(lines, project: wish, details: details, doing: shown?.activity)
-        state.toolbar = SidebarToolbar(canUndo: !lines.isEmpty, canShare: true, hasVersions: !lines.isEmpty, details: details, usage: nil)
+        state.toolbar = SidebarToolbar(canUndo: !lines.isEmpty, canShare: true, hasVersions: !lines.isEmpty, details: details)
         state.canDictate = true
         return state
     }
@@ -700,6 +735,14 @@ enum Gallery {
                 ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Hot Shelf"), button: "Reload", prominent: true) {}
             })
         },
+        // A game that took some of a change, and one that takes it by itself at its next pause: the line says how much
+        // waits for Reload, in the same place.
+        Entry(group: "Activity", name: "Reload for the rest of a change") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Moonpool", held: .partly), button: "Reload", prominent: true) {})
+        },
+        Entry(group: "Activity", name: "Reload before the next pause") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Moonpool", held: .pause), button: "Reload", prominent: true) {})
+        },
         // A wish on several places: Reload says where it opens the app again and where it only puts the change.
         Entry(group: "Activity", name: "Reload on every place") {
             AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise",
@@ -797,6 +840,10 @@ enum Gallery {
                                                           capabilities: [], concerns: [], risk: .low,
                                                           reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
                app: "Plant Care", existing: "Plant Care", changedHere: true),
+        review("Already here, to mix", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
+                                                    capabilities: [], concerns: [], risk: .low,
+                                                    reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
+               app: "Plant Care", existing: "Plant Care", mix: true),
         review("Prepared update", ImportReview(
             summary: "A 3D game of Manhattan you can explore on foot, by car, by bike or by helicopter, with synthesized city sounds.",
             capabilities: ["Draws a 3D Manhattan you can explore", "Plays synthesized city sounds"],
@@ -817,11 +864,12 @@ enum Gallery {
     }
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
-                               existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false) -> Entry {
+                               existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
+                               mix: Bool = false) -> Entry {
         Entry(group: "Shared wish", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
                                      icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android,
-                                     prepared: prepared)
+                                     prepared: prepared, mix: mix ? {} : nil)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
@@ -847,6 +895,8 @@ enum Gallery {
         wishLink("Beside the app", link: true, copied: true, width: nil),
         wishLink("Beside the app, new link", width: nil),
         wishLink("With the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true), canIncludeFile: true),
+        wishLink("With the wish itself, no license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
+                 canIncludeFile: true, noLicense: "Found Code by Someone came with no license. Make sure you're comfortable sharing it."),
         wishLink("Beside the app, with the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
                  canIncludeFile: true, width: nil),
     ]
@@ -856,7 +906,7 @@ enum Gallery {
 
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
-                                 changed: Bool = false, canIncludeFile: Bool = false, width: CGFloat? = 480) -> Entry {
+                                 changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, width: CGFloat? = 480) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -864,51 +914,12 @@ enum Gallery {
                 picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
-                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile,
+                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)
                 .background(width == nil ? AnyShapeStyle(ChatLook.paper) : AnyShapeStyle(Color(nsColor: .windowBackgroundColor)),
                             in: RoundedRectangle(cornerRadius: 16))
-                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
-                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
-                .fixedSize(horizontal: false, vertical: true))
-        }
-    }
-
-    // MARK: Publish
-
-    /// The card that says what a game's page will put up and where, from checking it to its being up, in the chat's
-    /// place at its narrowest and widest.
-    private static let publishEntries: [Entry] = [
-        publish("Checking", stage: .preparing),
-        publish("Needs GitHub's tool", stage: .needsGitHub(.install)),
-        publish("Needs a sign-in", stage: .needsGitHub(.signIn)),
-        publish("No license", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no license. It can still be used on this Mac.")),
-        publish("Ready", stage: .ready),
-        publish("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license.",
-                                                             "2 pictures made with AI, marked as such."]),
-        publish("Publishing", stage: .publishing("Waiting for GitHub to put it up…")),
-        publish("Couldn't publish", stage: .failed("GitHub didn't take the page: the connection was lost.")),
-        publish("Up", stage: .published, page: true),
-        publish("Up and copied", stage: .published, page: true, copied: true),
-        publish("Up, changed since", stage: .ready, page: true),
-        publish("Up, wide", stage: .published, page: true, width: 480),
-    ]
-
-    private static func publish(_ name: String, stage: PublishCard.Stage, notes: [String] = [], page: Bool = false, copied: Bool = false,
-                                width: CGFloat? = nil) -> Entry {
-        Entry(group: "Publish", name: name) {
-            let folder = Starters.folder?.appendingPathComponent("newyork")
-            let ready = stage != .preparing
-            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
-                                   stage: stage, repo: ready ? "someone/new-york" : nil, page: page ? "https://someone.github.io/new-york/" : nil,
-                                   credit: "Based on Slop New York by Mr.doob",
-                                   openInLamp: page ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
-                                   copied: copied, republish: page, canPublish: stage == .ready || { if case .failed = stage { true } else { false } }(), publish: {}, fix: {}, openPage: {}, copy: {}, close: {}, width: width)
-            return AnyView(card
-                .frame(width: width == nil ? 340 : nil)
-                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .fixedSize(horizontal: false, vertical: true))
@@ -921,7 +932,8 @@ enum Gallery {
         repo("Checking", stage: .preparing),
         repo("Needs GitHub's tool", stage: .needsGitHub(.install)),
         repo("Needs a sign-in", stage: .needsGitHub(.signIn)),
-        repo("No license", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no license. It can still be used on this Mac.")),
+        repo("No license, public", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."], remix: true),
+        repo("No license, private", stage: .ready, isPrivate: true),
         repo("Ready, first time", stage: .ready),
         repo("Ready, public", stage: .ready, remix: true),
         repo("Ready, with a share link", stage: .ready, link: true),
@@ -933,6 +945,24 @@ enum Gallery {
         repo("Up, unchanged", stage: .done(unchanged: true), up: true),
         repo("Up, changed since", stage: .ready, up: true),
         repo("Up, wide", stage: .done(unchanged: false), up: true, width: 480),
+        // A web game, whose page goes up beside its code.
+        repo("Game, ready", stage: .ready, remix: true, game: true),
+        // The wish's picture, which the README shows while the box is ticked.
+        repo("Game, ready, with its picture", stage: .ready, remix: true, game: true, picture: true),
+        repo("Ready, picture left out", stage: .ready, remix: true, picture: false),
+        repo("Game, ready, no license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."],
+             remix: true, game: true),
+        repo("Game, private", stage: .ready, isPrivate: true, game: true),
+        repo("Game, putting up its page", stage: .working("Waiting for GitHub to put the page up…"), remix: true, game: true),
+        repo("Game, page didn't go up", stage: .failed("GitHub is still putting the page up. It should be at https://someone.github.io/new-york/ in a few minutes; Put on GitHub again if it isn't."),
+             remix: true, game: true),
+        repo("Game, up", stage: .done(unchanged: false), up: true, remix: true, game: true),
+        repo("Game, up and copied", stage: .done(unchanged: false), up: true, copied: true, remix: true, game: true),
+        repo("Game, up, wide", stage: .done(unchanged: false), up: true, width: 480, remix: true, game: true),
+        // A web app, whose page goes up beside its code to be used in a browser.
+        repo("Web app, ready", stage: .ready, remix: true, webApp: true),
+        repo("Web app, private", stage: .ready, isPrivate: true, webApp: true),
+        repo("Web app, up", stage: .done(unchanged: false), up: true, remix: true, webApp: true),
     ]
 
     /// The card that sends a remix's changes back to the repository it came from, from checking them to the pull
@@ -946,6 +976,7 @@ enum Gallery {
         contribute("Ready, no fork yet", stage: .ready, fork: false,
                    notes: ["You have no fork of someone/new-york yet: Lamp makes one on your account (else/new-york) first."]),
         contribute("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."]),
+        contribute("Ready, no license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."]),
         contribute("Working", stage: .working("Opening the pull request…")),
         contribute("Couldn't send", stage: .failed("GitHub didn't take it: the connection was lost.")),
         contribute("Nothing to send", stage: .failed("someone/new-york already has everything this wish has: there's nothing to send.")),
@@ -974,7 +1005,8 @@ enum Gallery {
     }
 
     private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
-                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false) -> Entry {
+                             canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false, isPrivate: Bool = false,
+                             game: Bool = false, webApp: Bool = false, picture: Bool? = nil) -> Entry {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
@@ -983,8 +1015,15 @@ enum Gallery {
                                 credit: "Based on Slop New York by Mr.doob",
                                 openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
-                                canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: false, license: canChooseLicense,
-                                canChooseLicense: canChooseLicense, put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
+                                canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: isPrivate, license: canChooseLicense,
+                                canChooseLicense: canChooseLicense, page: (game || webApp) && !isPrivate && ready ? "someone.github.io/new-york/" : nil,
+                                pageUp: (game || webApp) && up && { if case .done = stage { true } else { false } }(), privateGame: (game || webApp) && isPrivate,
+                                plays: !webApp,
+                                picture: picture == nil ? nil : folder.flatMap { folder in
+                                    ["\(Starters.listingFolder)/preview.png", "\(Starters.treeFolder)/\(Starters.picturesFolder)/preview.png"]
+                                        .lazy.compactMap { NSImage(contentsOf: folder.appendingPathComponent($0)) }.first },
+                                showsPicture: picture ?? false,
+                                put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
                                 openRepo: {}, copy: {}, close: {}, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)

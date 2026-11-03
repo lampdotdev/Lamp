@@ -17,7 +17,9 @@ A capability given to one engine must be given to all of them that can take it, 
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
   in the chat as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
-  after them. The Reload line shows while a change waits for it, whether the Mac copy's held build or a page's change
+  after them. The Reload line shows while a change waits for it, whether the Mac copy's held build, a game's step held
+  whole or in part (its line says what shows after Reload, never "Put into", `Store.stepPage`, and the Reload line
+  says how much waits: all of it, the rest, or a change that goes in by itself at the next pause, `PageLive.Hold`) or a page's change
   that a copy on another device couldn't take in place (`Transcript`, `Store.awaitsReloadElsewhere`), and pressing it
   puts the change on every place the person has the wish on (`Store.reloadEverywhere`), saying where in one line. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
   `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;
@@ -110,7 +112,8 @@ starter this Lamp ships (all in `Conversation`; "How big a conversation grows" i
 ## The chat's one screen
 
 A wish's chat is one screen, drawn the same wherever it is (`ChatScreen`, in Sources/LampSidebarKit): its bar, the chat
-or a panel in its place (Versions, Wish Info, Share Link), the message box, every card and line. It's drawn from the
+or a panel in its place (Versions, Share Link; the desk's Previous Versions… opens the chat on Versions), the
+message box, every card and line. It's drawn from the
 state Lamp makes for the wish (`SidebarState`, made by `SidebarServer.state(for:)`) and hands every click and word back
 as a command (`SidebarCommand`, done by `SidebarServer.handle`), through a `ChatLink`: the extension beside a Mac app
 talks to Lamp over its socket (`Link`), and Lamp's own panel (`ChatPanel`) calls Lamp directly (`LocalChat`). Nothing
@@ -140,12 +143,22 @@ it), the app is asked to take the chat (`ChatPanel.place`, `MagicPanel.openChat`
 Chats on their own cascade, a step down and across from one another, so none hides another. Lamp's mark at the start of the bar brings
 the desk forward (⌘[).
 
+An answer made beside a running turn ("Messages sent while the agent works" in the engines guide) is part of the message
+it answers, in the state and on the screen (`SidebarQueued.sideReply`, `SidebarLine.sideReply`, `ChatLook.SideLine`): under
+it while it waits and when it goes into the chat, "Answering…" until then, "Still queued" when none comes. Once answered,
+the message reads as any sent message, with no caption, and Unsend and Send Now come up beside it under the pointer or
+keyboard focus (`ChatLook.QueuedRow`'s `answered`). At rest they aren't drawn: the row takes keyboard focus itself so Tab
+brings them up, and VoiceOver has them as actions on the bubble. One restored after a quit has no turn to reach, so it
+reads as waiting, with Send Now, which starts one (`SidebarQueued.noTurn`).
+
 What only Lamp could hold is handed to it, as Share hands over the file it makes: a setup card's header is in the chat,
 with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a hand-drawn icon, are in Lamp's sheet
 (`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. The same goes
 for what builds, asked for when a request finds nothing does (`BuilderLine`): the line is in the chat, with a button for
 each of Claude Code and Codex that's on this Mac and signed in (`SidebarLine.choices`), which only a click takes since it
-spends the person's plan, and the key or sign-in in the sheet (`SetupView`). A device's
+spends the person's plan, and the key or sign-in in the sheet (`SetupView`). There, choosing Claude Code or Codex shows how far it has got under
+the choice (`EngineUseRow`: its download, what failed with Try Again, its sign-in), and Try Again goes the whole way
+through (`EngineUse`); the request stays waiting until that's done. A device's
 step opens its setup window, and an iPhone or Android setup line its kind's setup. A new wish's empty chat shows its
 intro (`SidebarIntro`, `ChatLook.Intro`: its icon, its name to change, what to do, and ideas that go into the message
 box), and Apple's tools installing shows above every chat (`SidebarBanner`). A sidebar built by an earlier Lamp reads

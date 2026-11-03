@@ -114,31 +114,23 @@ final class PlacesTests: XCTestCase {
         XCTAssertTrue(refusal.reason.contains("needs a native version"), refusal.reason)
     }
 
-    /// Which make a game and an app on each device get when the person names none: a game web wherever Lamp has a host
-    /// for a page, native on a Roku, an Apple TV, an Apple Watch and Vision Pro; an app native on one Mac, iPhone or
-    /// Android device, web on a TV or a console; one app across several devices web where every one takes a page. Each
-    /// default is a make its row runs, and the table the agent reads says them.
+    /// Which make a game or an app on each device gets when the person names none: web wherever Lamp has a host for a
+    /// page, native on a Roku, an Apple TV, an Apple Watch and Vision Pro; one app across several devices web where every
+    /// one takes a page. Each default is a make its row runs, and the table the agent reads says them.
     func testEachDeviceHasTheDefaultsAskedFor() throws {
         let table = try Places.builtIn + ["xbox-one", "roku"].compactMap { Places.row(for: try shipped($0).integration) }
-        let expected: [String: (game: Place.Make, app: Place.Make)] = [
-            "mac": (.web, .native), "iphone": (.web, .native), "android": (.web, .native),
-            "tv": (.web, .web), "android-tv": (.web, .web), "xbox-one": (.web, .web),
-            "apple-tv": (.native, .native), "roku": (.native, .native), "watch": (.native, .native), "vision-pro": (.native, .native),
-        ]
-        XCTAssertEqual(Set(table.map(\.id)), Set(expected.keys))
+        let web: Set<String> = ["mac", "iphone", "android", "tv", "android-tv", "xbox-one"]
+        let native: Set<String> = ["apple-tv", "roku", "watch", "vision-pro"]
+        XCTAssertEqual(Set(table.map(\.id)), web.union(native))
         for place in table {
-            let want = try XCTUnwrap(expected[place.id])
-            XCTAssertEqual(place.defaultMake(.game), want.game, "a game on \(place.name)")
-            XCTAssertEqual(place.defaultMake(.app), want.app, "an app on \(place.name)")
-            XCTAssertTrue(place.runs(place.gameDefault) && place.runs(place.appDefault), "\(place.name)'s defaults are makes it runs")
+            XCTAssertEqual(place.defaultMake, web.contains(place.id) ? .web : .native, place.name)
+            XCTAssertTrue(place.runs(place.defaultMake), "\(place.name)'s default is a make it runs")
         }
-        XCTAssertEqual(Places.defaultMake(.app, devices: ["mac", "iphone", "android"], in: table), .web, "one app across several")
-        XCTAssertEqual(Places.defaultMake(.game, devices: ["mac", "tv", "xbox-one"], in: table), .web)
-        XCTAssertEqual(Places.defaultMake(.app, devices: ["mac", "apple-tv"], in: table), .native, "native on both")
-        XCTAssertNil(Places.defaultMake(.app, devices: ["tv", "apple-tv"], in: table), "no make they share")
-        XCTAssertEqual(Places.defaultMake(.app, devices: ["iphone"], in: table), .native)
-        XCTAssertTrue(Places.forAgent.contains("This Mac [\"mac\"]: ") && Places.forAgent.contains("by default a game web, an app native"))
-        XCTAssertTrue(Places.forAgent.contains("by default a game native, an app native"))
+        XCTAssertEqual(Places.defaultMake(devices: ["mac", "iphone", "android"], in: table), .web, "one app across several")
+        XCTAssertEqual(Places.defaultMake(devices: ["mac", "apple-tv"], in: table), .native, "one Swift app for both")
+        XCTAssertNil(Places.defaultMake(devices: ["tv", "apple-tv"], in: table), "no make they share")
+        XCTAssertTrue(Places.forAgent.contains("This Mac [\"mac\"]: ") && Places.forAgent.contains("by default web"))
+        XCTAssertTrue(Places.forAgent.contains("by default native"))
     }
 
     func testAnIntegrationsRowIsWhatItSupports() throws {

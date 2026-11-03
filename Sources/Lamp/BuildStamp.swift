@@ -119,7 +119,4 @@ struct BuildStamp: Equatable {
         guard let lamp else { return "an older version of Lamp" }
         return isOutdated && lamp == Self.current.lamp ? "an earlier build of Lamp \(lamp)" : "Lamp \(lamp)"
     }
-
-    /// The same, to stand alone in the app's info panel.
-    var summary: String { builder.prefix(1).uppercased() + builder.dropFirst() }
 }

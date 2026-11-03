@@ -19,7 +19,7 @@ enum Contribute {
     /// Where the changes would go, and the commit they're on top of. Nil for a wish that didn't come from a repository
     /// on GitHub, or came from one before Lamp recorded the commit (open it from there again to get one).
     static func origin(of project: LampProject) -> (source: RepoImport.Source, commit: String)? {
-        guard let link = AppInfoView.origin(of: project), let source = link.url.flatMap(RepoImport.source(from:)),
+        guard let link = AppUpdates.origin(of: project), let source = link.url.flatMap(RepoImport.source(from:)),
               let commit = link.commit else { return nil }
         return (source, commit)
     }
@@ -308,6 +308,7 @@ enum Contribute {
         let credits = card.staged?.credits ?? Credits.load(project)
         var notes = ShareCheck.notes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
+        if let line = ShareCheck.warningLine(credits) { notes.append(line) }
         if card.stage == .ready, card.fork == nil, let login = card.login, let source = card.source {
             notes.append("You have no fork of \(source.owner)/\(source.name) yet: Lamp makes one on your account (\(login)/\(source.name)) first.")
         }

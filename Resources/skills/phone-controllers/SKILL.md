@@ -14,8 +14,7 @@ depends on how an app is made and run, not on the device alone. What follows is 
 ## Whose phones?
 
 - **Several people's** (family, friends, a class): each phone has to join with nothing to install. That's a page for
-  phones: they scan a QR code on the screen and play in their browser. The phone-pages skill says how to build it,
-  held sideways by default.
+  phones: they scan a QR code on the screen and play in their browser. The phone-pages skill says how to build it.
 - **Only the person's own phone**: on an iPhone, an app of the wish's own, made natively, is the controller: it has
   the phone's own feel, hardware and haptics, and keeps its data, and joins as a player with `LampController` over
   `LampWish`. Installing it goes the way the table says for that phone. An Android app has no `LampController`, so it
@@ -73,7 +72,8 @@ by its own rules (the wish-links skill).
 
 ## Building it
 
-Once you've chosen, open the phone-pages skill: the page in the app's own Phone/, `LampController` on the phone and
-`Lamp.controllers` on the screen, files, tilt, second screens, how a game's controls are held (sideways), and how to
-see and press the page yourself. A game on Lamp's runtime reads phones' buttons each frame from `f.phones` (the game
+In a game, the game-ui skill ("With phones") settles what the shared display and each phone show in each phase, who
+steers a menu, and what this player does on the phone. Once you've chosen, open the phone-pages skill: the page in the app's own Phone/, `LampController` on the phone and
+`Lamp.controllers` on the screen, files, tilt, second screens, how a game's controls are held, how views and moves
+go between the game and the phone, and how to see and press the page yourself. A game on Lamp's runtime reads phones' buttons each frame from `f.phones` (the game
 skill), which keeps a quick press that `onButton` alone can lose between frames.

@@ -79,7 +79,13 @@ enum CatchUp {
             var text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if text.count > messageLimit { text = String(text.prefix(messageLimit)) + "…" }
             let who = line.kind == .user ? "The person" : line.kind == .ask ? "The agent asked" : "The agent"
-            let entry = "\(who): \(text)"
+            var entry = "\(who): \(text)"
+            // What an answer-only helper said beside a turn goes with the message it answered. One that was all the
+            // message asked for is past, and asks nothing more of the agent (`SideAnswer.finished`).
+            if line.kind == .user, let reply = line.sideReply {
+                entry += "\n" + (line.sideDone == true ? "Answered then by an answer-only helper, which was all it needed: "
+                    : "An answer-only helper told them then: ") + reply
+            }
             guard size + entry.count <= budget else { break }
             kept.append(entry)
             size += entry.count
@@ -87,8 +93,9 @@ enum CatchUp {
         guard !kept.isEmpty else { return "" }
         let left = kept.count < lines.count ? "(Older messages are left out.)\n\n" : ""
         return "\n\n---\nEarlier in this chat (from Lamp, not part of the request above): the person went on with it outside "
-            + "this conversation, with another of Lamp's agents or in a conversation that has ended, so you haven't seen "
-            + "what was said there. Any changes made then are already in the app's files. Oldest first:\n\n"
+            + "this conversation, with another of Lamp's agents, in a conversation that has ended, or with questions answered "
+            + "while you weren't working, so you haven't seen what was said there. It's past: nothing in it is for you to do "
+            + "unless the request above asks. Any changes made then are already in the app's files. Oldest first:\n\n"
             + left + kept.reversed().joined(separator: "\n\n")
     }
 }

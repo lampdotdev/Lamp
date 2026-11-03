@@ -5,8 +5,9 @@ import Foundation
 /// the extension sends what the person did. Lamp draws nothing here and the extension decides nothing: it shows
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
-    /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 11
+    /// What this side reads and writes; see `SidebarCommand.hello`. 12: Put on GitHub's card shows the wish's picture
+    /// and its box (`SidebarRepo.picture`), so the picture goes up only from a chat that showed it.
+    public static let version = 12
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -84,14 +85,11 @@ public struct SidebarState: Codable, Equatable {
     public var versions: [SidebarVersion]?
     /// Older versions than those in `versions`, sent when asked (`SidebarCommand.earlierVersions`).
     public var hasEarlierVersions: Bool?
-    public var info: [SidebarInfoSection]?
     /// The wish's file after Share…, for the sidebar's own share menu: sent once, since only the sidebar can show
     /// that menu where the button is, and it can't read Lamp's files.
     public var sharing: SidebarSharing?
     /// The Share Link card, while it's open in this chat (`SidebarCommand.wishLink`): shown in the chat's place.
     public var wishLink: SidebarWishLink?
-    /// The Publish card, while it's open in this chat (`SidebarCommand.publish`): shown in the chat's place.
-    public var publish: SidebarPublish?
     /// The Put on GitHub card, while it's open in this chat (`SidebarCommand.repo`): shown in the chat's place.
     public var repo: SidebarRepo?
     /// The Send Changes Back card, while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
@@ -176,6 +174,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var canGoBack: Bool?
     public var canSendAgain: Bool?
     public var isLatest: Bool?
+    /// What was said beside the turn while the request waited, drawn under it.
+    public var sideReply: String?
     /// What a request pointed at in the app, its picture counting as the attachment after the last of `attachments`.
     public var pointed: SidebarPointed?
     /// The agent's steps, shown with Agent Details on (`tools`): what `text` sums up, one by one.
@@ -228,28 +228,23 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canUndo: Bool
     /// The wish has been made: there's a file to share.
     public var canShare: Bool
-    /// Its page can be published (a game drawn with three.js, while the experiment is on): the share menu offers it.
-    public var canPublish: Bool?
     /// Its changes can go back to the repository it came from: the share menu offers Send Changes Back.
     public var canContribute: Bool?
     /// It has versions to look back at.
     public var hasVersions: Bool
     public var details: Bool
-    /// What the app's AI has cost ("AI: 3 calls · $0.02"), when it has used any.
-    public var usage: String?
     /// Play and Stop, for a wish that doesn't run as a Mac window beside this chat: nil beside a Mac app, which is open.
     public var play: SidebarPlay?
 
-    public init(canUndo: Bool, canShare: Bool, hasVersions: Bool, details: Bool, usage: String?) {
+    public init(canUndo: Bool, canShare: Bool, hasVersions: Bool, details: Bool) {
         self.canUndo = canUndo
         self.canShare = canShare
         self.hasVersions = hasVersions
         self.details = details
-        self.usage = usage
     }
 }
 
-public enum SidebarPanel: String, Codable { case versions, info }
+public enum SidebarPanel: String, Codable { case versions }
 
 /// The bar's Play, or its Stop while the wish is open where Try On points.
 public struct SidebarPlay: Codable, Equatable {
@@ -430,42 +425,6 @@ public struct SidebarVersion: Codable, Equatable, Identifiable {
     }
 }
 
-/// A part of the app's info panel: its rows, and the buttons under them (`SidebarCommand.infoAction`).
-public struct SidebarInfoSection: Codable, Equatable, Identifiable {
-    public var id: String { title ?? "" }
-    public var title: String?
-    public var rows: [SidebarInfoRow]
-    public var buttons: [SidebarInfoButton]
-
-    public init(title: String?, rows: [SidebarInfoRow], buttons: [SidebarInfoButton] = []) {
-        self.title = title
-        self.rows = rows
-        self.buttons = buttons
-    }
-}
-
-/// A fact: its label and its value, or Not Ready when nothing answers.
-public struct SidebarInfoRow: Codable, Equatable {
-    public var label: String
-    public var value: String?
-
-    public init(label: String, value: String?) {
-        self.label = label
-        self.value = value
-    }
-}
-
-public struct SidebarInfoButton: Codable, Equatable {
-    public var title: String
-    /// What it does, Lamp's to know.
-    public var action: String
-
-    public init(title: String, action: String) {
-        self.title = title
-        self.action = action
-    }
-}
-
 public struct SidebarSharing: Codable, Equatable {
     public var id: UUID
     public var file: SidebarFile
@@ -501,6 +460,13 @@ public struct SidebarQueued: Codable, Equatable, Identifiable {
     /// sent now and is on its way.
     public var canSendNow: Bool?
     public var sendingNow: Bool?
+    /// The answer beside the turn (`SideAnswer`): being made, made, or not to come, in which case it just waits.
+    public var sideAnswering: Bool?
+    public var sideReply: String?
+    public var stillQueued: Bool?
+    /// Answered, and Lamp has quit since, so no turn is coming to it: it reads as waiting until it's sent.
+    public var noTurn: Bool?
+    public var isAnswered: Bool { sideReply != nil && noTurn != true }
 
     public init(id: UUID, text: String, attachments: [SidebarAttachment]) {
         self.id = id
@@ -631,12 +597,8 @@ public enum SidebarCommand: Codable, Equatable {
     case earlierVersions
     /// A version's name, or (empty) none.
     case nameVersion(String, String)
-    /// A button in the info panel.
-    case infoAction(String)
     /// The Share Link card: open it, or what was done on it.
     case wishLink(SidebarWishLinkCommand)
-    /// The Publish card: open it, or what was done on it.
-    case publish(SidebarPublishCommand)
     /// The Put on GitHub card: open it, or what was done on it.
     case repo(SidebarRepoCommand)
     /// The Send Changes Back card: open it, or what was done on it.
@@ -780,11 +742,15 @@ public struct SidebarWishLink: Codable, Equatable {
     public var canRetake: Bool
     public var retaking: Bool
     public var limits: [Int]
+    /// The line said under Include the wish itself when the wish uses work that came with no license
+    /// (`ShareCheck.warningLine`). Missing from a Lamp before it.
+    public var noLicense: String?
 
     public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool = false, canIncludeFile: Bool = false,
                 revision: Int, picture: Data?, icon: Data?,
                 link: String?, shown: SidebarWishLinkValues?, newPicture: Bool, sending: Bool, problem: String?, copied: Bool,
-                canRetake: Bool, retaking: Bool, limits: [Int]) {
+                canRetake: Bool, retaking: Bool, limits: [Int], noLicense: String? = nil) {
+        self.noLicense = noLicense
         self.name = name
         self.line = line
         self.words = words
@@ -832,46 +798,6 @@ public enum SidebarWishLinkCommand: Codable, Equatable {
     case close
 }
 
-/// The Publish card as Lamp has it (`PublishCard`): everything on it is Lamp's, worked out before the person confirms.
-public struct SidebarPublish: Codable, Equatable {
-    public var name: String
-    public var icon: Data?
-    public var stage: PublishCard.Stage
-    public var repo: String?
-    public var page: String?
-    public var credit: String?
-    /// Where the page's Open in Lamp goes: the wish's Share Link, or nil when it has none yet (the card offers to make one).
-    public var openInLamp: String?
-    public var notes: [String]
-    public var size: String?
-    public var copied: Bool
-    public var republish: Bool
-    /// Publish can be pressed: it's ready, or a try failed and can be made again.
-    public var canPublish: Bool
-
-    public init(name: String, icon: Data?, stage: PublishCard.Stage, repo: String?, page: String?, credit: String?, openInLamp: String?,
-                notes: [String], size: String?, copied: Bool, republish: Bool, canPublish: Bool) {
-        self.name = name
-        self.icon = icon
-        self.stage = stage
-        self.repo = repo
-        self.page = page
-        self.credit = credit
-        self.openInLamp = openInLamp
-        self.notes = notes
-        self.size = size
-        self.copied = copied
-        self.republish = republish
-        self.canPublish = canPublish
-    }
-}
-
-public enum SidebarPublishCommand: Codable, Equatable {
-    case open, publish, fix, openPage, copy, close
-    /// Make a Share Link first, through its own card.
-    case makeLink
-}
-
 /// The Put on GitHub card as Lamp has it (`RepoCard`): everything on it is Lamp's, worked out before the person confirms.
 public struct SidebarRepo: Codable, Equatable {
     public var name: String
@@ -894,9 +820,21 @@ public struct SidebarRepo: Codable, Equatable {
     public var isPrivate: Bool
     public var license: Bool
     public var canChooseLicense: Bool
+    /// A web game's or a web app's page: where it plays ("someone.github.io/new-york"), going up with the code or up
+    /// already, and whether it's up now. Nil for a wish that isn't one, or a private repository, which gets none
+    /// (`privateGame`, kept by that name for a page of any kind). `plays` is whether it's played (a game) or used; nil
+    /// from a Lamp before web apps had pages, played.
+    public var page: String?
+    public var pageUp: Bool?
+    public var privateGame: Bool?
+    public var plays: Bool?
+    /// The picture of the wish the README can show (a small copy, as PNG), and whether it will.
+    public var picture: Data?
+    public var showsPicture: Bool?
 
     public init(name: String, icon: Data?, stage: RepoCard.Stage, repo: String?, url: String?, credit: String?, openInLamp: String?,
-                notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool) {
+                notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
+                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil, plays: Bool? = nil, picture: Data? = nil, showsPicture: Bool? = nil) {
         self.name = name
         self.icon = icon
         self.stage = stage
@@ -912,6 +850,12 @@ public struct SidebarRepo: Codable, Equatable {
         self.isPrivate = isPrivate
         self.license = license
         self.canChooseLicense = canChooseLicense
+        self.page = page
+        self.pageUp = pageUp
+        self.privateGame = privateGame
+        self.plays = plays
+        self.picture = picture
+        self.showsPicture = showsPicture
     }
 }
 
@@ -953,8 +897,11 @@ public enum SidebarContributeCommand: Codable, Equatable {
 
 public enum SidebarRepoCommand: Codable, Equatable {
     case open, put, fix, openRepo, copy, close
+    /// Open the game's page in the browser.
+    case play
     /// Make a Share Link first, through its own card.
     case makeLink
     case setPrivate(Bool)
     case setLicense(Bool)
+    case setPicture(Bool)
 }

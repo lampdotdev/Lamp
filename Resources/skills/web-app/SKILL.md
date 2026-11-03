@@ -30,6 +30,15 @@ opening comment for the whole list. What it gives:
 - **Lamp.controllers** and `Lamp.phonePage`: phones on the same Wi‑Fi as controllers or a second screen; the
   phone-controllers skill first.
 
+## On the web, without Lamp
+
+Put on GitHub gives a web app a page anyone opens in a browser, with no Lamp anywhere: the page as it is, with
+lamp.js. There, `LampAI.isAvailable` answers false and its calls fail with a sentence saying the page is away from
+Lamp, `LampNative.available` is false, and `Lamp.wish` can't reach the wish's other apps; `LampStore` and `LampAssets`
+work as they do everywhere. So every feature that leans on Lamp keeps the app usable without it: the app's own buttons
+for everything AI would do, example content where the person's own things would be, and a short line where something
+needs Lamp, never an error or an empty screen.
+
 ## Doing things for the person
 
 `LampAI.act(request, { about, context, tools, history, onStep })` runs a short loop: the AI picks calls among the
@@ -85,8 +94,9 @@ turns it into text for `act`. Their comments in lamp.js have the details. The re
 A page can't read the person's mail, calendar, contacts, photos or where they are. Where Lamp's app is around the page
 (a Mac, an iPhone or iPad), that app can: register a call in Sources/Native.swift and ask for it from the page with
 `LampNative.call(name, args)`. Elsewhere `LampNative.available` is false and the calls reject, so the page shows
-example content then, never an error. When an app the defaults make web (on a TV, or across several devices) lives on
-the person's own things, say what a page can't reach there, and offer it native (the web-or-native skill).
+example content then, never an error. When a web app that's to go on a TV, Android or the Xbox lives on the person's own
+things, say what a page can't reach there; when it needs what only native code does, offer it native (the web-or-native
+skill).
 
 ## A remote: focus and keys
 

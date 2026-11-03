@@ -397,7 +397,7 @@ final class LocalModels: ObservableObject {
                 done()
             } catch is CancellationError {
             } catch {
-                errors[id] = error.localizedDescription
+                errors[id] = ErrorMessages.reason(error)
             }
         }
     }

@@ -32,7 +32,7 @@ A capability given to one engine must be given to all of them that can take it, 
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
   where it looks. Lamp's own builds run under the same profile, a game's or a screen's with Lamp's player opened for
   reading only (`Store.runBuild`), since its build copies the player rather than compile. So do a Roku app's prepare and
-  package steps and the SDK's `rk mcp` Lamp reads it with (`DeviceApps.prepare`, `RokuSDK`), with Lamp's Node and pnpm from
+  package steps (`DeviceApps.prepare`), with Lamp's Node and pnpm from
   the developer folder and their store in the caches folder, both of which the profile opens; installing packages is what
   needs the network there. Codex's commands run in Codex's own sandbox instead, which its reviewer works with and which can't
   start inside Lamp's: a permission profile (`Sandbox.codexPermissions`, `-c permissions.lamp=…`, a Beta feature of
@@ -42,7 +42,11 @@ A capability given to one engine must be given to all of them that can take it, 
   Codex makes of wherever the folder it starts in leads; a writable folder that is a link, or leads through one, Codex
   refuses at its start and before each command. Codex itself (its state, its
   hooks, Lamp's MCP endpoint) runs unconfined, and a command its reviewer lets out of the sandbox runs under the
-  controls Codex gives it, not Lamp's. SwiftPM's own sandbox can't start inside Lamp's or Codex's, so a `swift` shim first on the path
+  controls Codex gives it, not Lamp's. An answer beside a turn (`SideAnswer`, "Messages sent while the agent works" in the
+  engines guide) has no tools and runs whole under `Sandbox.sideProfile`, for every engine, Codex included: it writes only
+  its private folder, reads none of the home folder or the shared temporary folders beyond what's listed for its engine,
+  and never runs without it. The network stays open for its provider, so what it can read could still be sent; that's why
+  the list is short. SwiftPM's own sandbox can't start inside Lamp's or Codex's, so a `swift` shim first on the path
   (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`; the compiler's helper for macros is
   the same, so Lamp's Xcode projects pass it `-disable-sandbox` too. Xcode's interface and asset compilers hand their
   work to helpers that stay running and are found through shared memory named `ib…`, whoever started them, so the
@@ -125,12 +129,18 @@ A capability given to one engine must be given to all of them that can take it, 
   nothing), in its own folder by the wish's instance, never in the app's folder, which the agent can write.
   `use_app` on an app that reaches devices (`DevicePermissions.reachesDevices`: LampRoku or LampNetwork in its code, or a
   local network reason or Bonjour types in capabilities.json) is refused unless its `device` names one the person allowed.
-  A game on Lamp's web runtime is the one exception (`DevicePermissions.useStaysInPreview`): phones joining it declare the
-  local network too, and `use_app` plays it only in the hidden preview, which is held off every network for such a game
-  (`GameKit.previewPolicy`), shared or not, and whose TypeScript build runs with no network at all, since a Bun macro is
-  the game's code run at build time (`Sandbox.run`'s `offline`). A compiled game's preview, a process nothing holds, and a
-  page with its own loop aren't. All of this reads what the game declares, which the agent can change, as the gate itself
-  always has: it stops a mistaken press, not an agent set on one.
+  The agent looks at and uses an app only in a preview on this Mac (`AgentPreview`: its window here, the simulator, Lamp's
+  Android emulators, the TV preview, a device integration's own preview), never on a device of the person's, wherever Try
+  On points; that's their Play and Reload, and the turn's end delivers there as before. An app with no preview (a C++
+  game for the Xbox, a device app whose integration has none) is only built. A preview isn't held apart from the world:
+  it runs on the real network, and changes go into it as soon as they're saved, so an app's own code there can reach the
+  person's devices without a card. The card is for the agent's own press: `use_app` in a remote app's preview changes
+  the real TV, so it needs an allowed device, a game's window included. It never moves the test onto the device. A
+  game's phones aren't devices it controls: the relay they join is Lamp's own, in the game (`GamePhones`), which gives the
+  system its reason itself and declares nothing in capabilities.json; a game that declares the network anyway is taken
+  at its word. A TypeScript game's build runs with no network at all, since a Bun macro is the game's code run at build
+  time (`Sandbox.run`'s `offline`). All of this reads what the app declares, which the agent can change, as the gate
+  itself always has: it stops a mistaken press, not an agent set on one.
   Each engine's command check carries the same rule (`DevicePermissions.commandRule`): pi's `CommandRisk` counts such a
   command as reaching beyond the app, so it gets Lamp's card; Claude Code's auto mode gets it as a `soft_deny` rule after
   its own (`$defaults`, `Engines.swift`); Codex's reviewer is told to refuse it (`CodexReview`), but sees only what needs
@@ -142,7 +152,7 @@ A capability given to one engine must be given to all of them that can take it, 
   device's address in a script or file it runs, and which device a `use_app` click really reaches (the agent names it).
   Holding those too would take filtering the network itself, per address, in the sandbox and in the app.
 - **The home network** (`HomeNetwork`, the "Devices as data" guide): only where the person is looking at what's on it
-  (Your Devices, Add a New Device, `network_devices`), Lamp sends one datagram to each address of this Mac's own private
+  (More under the desk's devices, Add a New Device, `network_devices`), Lamp sends one datagram to each address of this Mac's own private
   subnet (a /24 at most), reads the Mac's neighbor table, the maker of each hardware address from the list it ships,
   and every Bonjour service's name, host and model keys; nothing more is sent to a device, and nothing needs admin.
   Bonjour names are often people's ("…'s iPhone"). They're kept in memory only, shown on this Mac, and told to the

@@ -166,9 +166,11 @@ A step's `run` and each bridge sequence are lists of these, one key each:
 
 How software goes on the device once it's set up. Each is a sequence of primitives. With `app`, this is all Lamp has
 to make apps for the device with, and the builder of each app gets it as Lamp's own: `install` then `launch` when
-the person presses Play and at every look, `look` for the picture the builder sees, `use` once for each of the
-remote's keys the builder presses (`{key}` is the device's name for it, from `keys`), `logs` read into the app's log
-while it's open. What the device answers to `install` is shown to the builder, so a device that says there what it
+the person presses Play (and at the end of a turn, or Reload, while the app is on the device), `look` for a picture of
+its screen, `use` once for each of the remote's keys pressed (`{key}` is the device's name for it, from `keys`), `logs`
+read into the app's log while it's open. The builder of an app never looks at or presses anything on the device itself,
+only in its `preview` (below), so `look` and `use` are what Lamp's own test run of the integration (from the device's
+setup window) goes through. What the device answers to `install` is shown to the builder, so a device that says there what it
 made of the package (a compile error) needs nothing more. `stop` ends the app when the person stops it (Lamp presses
 `home` when there's no `stop`, or the device refuses it), and for a wrapped package it also ends the copy on the device
 before an update goes over it, with the values of the copy that's there. `running` says whether the app `launch` opened

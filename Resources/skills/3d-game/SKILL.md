@@ -46,18 +46,21 @@ lamp-game.js once. A `WebGPURenderer` is made and given its `await r.init()` in 
 - `init` runs once, before the first frame. It may be async, to load models with
   `new GLTFLoader().loadAsync('ship.glb')` or sounds; make or load every sound here. It builds what the state says:
   the level, the player and the open menu or overlay from the registered state, which is already back after a change
-  of the code, and the title or intro only when `play.mode` says so (the game skill, "Changes while it's played"; the
-  game-ui skill says what the title and menus are). A camera's start pose goes in its `build`, never here.
+  of the code, and the opening (a title, an intro, a briefing) only when `play.mode` says so (the game skill, "Changes
+  while it's played"; the game-ui skill says how a game opens and what its menus are). A camera's start pose goes in its `build`, never here.
 - `frame(f)` runs about 60 times a second. It reads the controller as `f.pads[0]`, moves things by `f.dt` (and
   `f.time`), and ends with `renderer.render(scene, camera)`.
 - `touch` names the buttons Lamp's touch controls show on a phone or tablet.
 - game.js only puts the parts together, and keeps the scene, the lights and the world's parts with
   `hot(import.meta).keep` (the game skill, "Changes while it's played", has the recipe). The world is built in parts (the ground, the
   buildings, the trees and street details, the props, the traffic), each in a module of its own and into a group of
-  its own, so a change to one part builds only that part again; each thing that moves or changes in play (the player,
+  its own, kept with the data it's built from as its `from`, so a change to one part or its data builds only that
+  part again, and a part that's slow to build (the city, the terrain, the traffic) with `background: true`, built in
+  steps or with a worker, so the game plays on while it's built (the game skill's recipe); each thing that moves or changes in play (the player,
   a vehicle, the camera, enemies, the HUD's code) is a class in a module that ends with `hot(import.meta).accept()`,
   so a change to its methods goes into the running scene with nothing built again. A uniform's value or a material's
-  color set in an `update` swaps; a material made anew compiles its shader again as it's first drawn.
+  color set in an `update` swaps; a material made anew compiles its shader again, which Lamp does before the
+  first frame after a change while the frame before stays on screen, so a world's materials are made in its kept parts.
 
 A page laid out at the window's size whose HUD is its own HTML (a strategy game, a page made for phones as well as
 TVs) passes `fill: true` to `game()` and places and sizes its canvas itself, drawing it smaller when frames run slow;
@@ -86,7 +89,8 @@ WebGL 2 (next).
 
 The three.js Lamp ships asks the browser only for a WebGL 2 context and stops with an error when it gets none, so
 WebGL 2 comes before anything else here: check on the device that a canvas gives one (log whether
-`canvas.getContext('webgl2')` returns a context, and read the log with `look_at_app` and `on_device`). Most browsers
+`canvas.getContext('webgl2')` returns a context, and ask the person to try it there with Play, since Lamp's looks
+never reach their device). Most browsers
 have it; not every Samsung TV does. Where it's missing, make the game another way (2D with Phaser, which draws with WebGL 1 or a plain canvas, or native on that
 device) or tell the person why 3D in a page can't run there.
 
@@ -155,10 +159,9 @@ function steer() {
 ```
 
 - `await RAPIER.init()` goes inside `init` (never at the top of the module), so a failure is the game's start-up
-  error, which the preview reports.
+  error, which the game's log and the look report.
 - The world steps 1/60 s at a time (`world.timestep`, its default), the step `fixedStep` runs as often as the frame
-  needs, so the game plays the same at 30, 60 or 120 frames a second and the preview replays it exactly: the same
-  moves give the same tumble every play. Never pass `f.dt` to the world or change `timestep` per frame. Anything that
+  needs, so the game plays the same at 30, 60 or 120 frames a second. Never pass `f.dt` to the world or change `timestep` per frame. Anything that
   pushes bodies (the controls, a motor) runs inside the step, as `steer()` does above, reading the pad the frame
   kept. A press (`pressed`, `released`) belongs to a frame, not a step: gather it into `presses` in `frame` and let the
   first step that runs use it and clear it, or a jump is lost at 120 frames a second and done twice at 30. Anything
@@ -228,7 +231,7 @@ car.updateVehicle(world.timestep);
 ```
 
 Wheels are drawn from the controller (`wheelSuspensionLength(i)`, `wheelRotation(i)`, `wheelSteering(i)`), not given
-bodies of their own. Tune `setWheelFrictionSlip` and the suspension by driving it in the preview.
+bodies of their own. Tune `setWheelFrictionSlip` and the suspension by driving it in its window (`use_app`).
 
 **Joints** hold two bodies together: `RAPIER.JointData.revolute` (a hinge: a door, a wheel, a flipper),
 `prismatic` (a slider), `spherical` (a ball joint: a chain link, a pendulum), `fixed` (welded), made with
@@ -260,7 +263,9 @@ Some platforms might not be powerful enough to run three.js.
 
 ## Checking it
 
-`look_at_app` draws the preview on this Mac, which can't show a device's speed; its stats count draws and triangles a
-frame, to compare with the budget in the request's device line. `look_at_app` with `on_device` opens the game where
-Try On points and shows its log, with the real frame times.
-Play it as the game skill's "Playtesting" says before you finish.
+`look_at_app` shows the game in its window on this Mac, where the person is in it, opening it when it's closed; its
+log says every ten seconds how it kept to its frames there, which says nothing of a slower device's: keep to the budget
+in the request's device line. `use_app` plays it there with Lamp's own controller. `look_at_app` with `on_device` looks
+at the game in the preview of where Try On points (the iPhone or iPad simulator), never the person's own device, so its
+frame times there say nothing of a phone's either.
+When the person asks you to try, play or test it, play it as the game skill's "Playtesting" says.

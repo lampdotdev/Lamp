@@ -111,6 +111,95 @@ struct SetupCheck {
     }
 }
 
+/// Choosing Claude or ChatGPT for a request waiting in its chat: Lamp's copy if the Mac has none, then the sign-in, then
+/// setup looks again and the request starts. Stopped, it opens nothing more, however the download it waited on ends.
+struct EngineUse {
+    enum Stage: Equatable { case gettingCopy, checkingSignIn, signingIn, signInFailed }
+
+    var ensure: @MainActor (Engine) async -> Bool = { await EngineDownloads.shared.ensure($0) }
+    var isSignedIn: @MainActor (Engine) async -> Bool? = { await EngineSignIn.isSignedIn($0) }
+    var signIn: @MainActor (Engine) async -> Bool? = { await EngineSignIn.signIn($0) }
+    var recheck: @MainActor () async -> Void = { await Store.shared.recheckSetup() }
+
+    @MainActor
+    func run(_ engine: Engine, show: (Stage?) -> Void) async {
+        let ready = await ensure(engine)
+        guard !Task.isCancelled else { return }
+        // Why is `EngineDownloads.failure`, shown with Try Again, and the request stays waiting.
+        guard ready else { return show(nil) }
+        show(.checkingSignIn)
+        var failed = false
+        if await isSignedIn(engine) == false {
+            guard !Task.isCancelled else { return }
+            show(.signingIn)
+            failed = await signIn(engine) == false   // nil is the person cancelling it: nothing to apologize for
+        }
+        await recheck()
+        guard !Task.isCancelled else { return }
+        show(failed ? .signInFailed : nil)
+    }
+}
+
+/// What's under Claude or ChatGPT in the setup sheet, from plain values so the gallery can draw each state.
+struct EngineUseRow: View {
+    enum Status: Equatable {
+        case use, gettingReady, downloading(Double), checkingSignIn, signingIn, failed(String)
+
+        /// What's being done for it comes first, so Try Again doesn't go on showing the failure it's replacing. A
+        /// download's failure counts only while the engine is missing: a copy may have come since.
+        static func of(stage: EngineUse.Stage?, installed: Bool, downloading: Bool, progress: Double?, failure: String?) -> Status {
+            if downloading { return .downloading(progress ?? 0) }
+            switch stage {
+            case .gettingCopy: return .gettingReady
+            case .checkingSignIn: return .checkingSignIn
+            case .signingIn: return .signingIn
+            case .signInFailed: return .failed("Signing in didn't finish.")
+            case nil: break
+            }
+            if !installed, let failure { return .failed(failure) }
+            return .use
+        }
+    }
+
+    let engine: Engine
+    let status: Status
+    let use: () -> Void
+    let cancelSignIn: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            switch status {
+            case .use:
+                Button("Use \(engine.title)", action: use)
+            case .gettingReady:
+                ProgressView().controlSize(.small)
+                note("Getting \(engine.title) ready…")
+            case .downloading(let progress):
+                ProgressView(value: progress).frame(width: 120)
+                note("Getting \(engine.title) ready…")
+            case .checkingSignIn:
+                ProgressView().controlSize(.small)
+                note("Checking your \(engine.title) sign-in…")
+            case .signingIn:
+                ProgressView().controlSize(.small)
+                note("Finish signing in to \(engine.title) in your browser…")
+                Spacer()
+                Button("Cancel", action: cancelSignIn)
+            case .failed(let failure):
+                Label(failure, systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Try Again", action: use)
+            }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.callout).foregroundStyle(.secondary)
+    }
+}
+
 /// What builds, chosen for a request waiting in its chat, in Lamp's sheet (`SetupSheet`). Apple's tools aren't asked for
 /// here: only what's compiled needs them, and once this is chosen they're asked for if the request does (`recheckSetup`).
 struct SetupView: View {
@@ -121,6 +210,10 @@ struct SetupView: View {
     @State private var checkingKey = false
     @State private var keyProblem: String?
     @State private var choice = "openrouter"
+    @ObservedObject private var downloads = EngineDownloads.shared
+    /// How far choosing the engine picked in `choice` has got, while it's under way or after a sign-in that failed.
+    @State private var useStage: EngineUse.Stage?
+    @State private var using: Task<Void, Never>?
 
     /// The ways to build, in the order shown. Choosing Claude Code or Codex downloads Lamp's copy
     /// when the Mac has none.
@@ -185,7 +278,11 @@ struct SetupView: View {
                         }
                     case "claude", "codex":
                         let engine: Engine = choice == "claude" ? .claude : .codex
-                        Button("Use \(engine.title)") { use(engine) }
+                        EngineUseRow(engine: engine, status: status(of: engine)) {
+                            use(engine)
+                        } cancelSignIn: {
+                            EngineSignIn.cancelSignIn(engine)
+                        }
                     default:
                         Button("Choose a Model…") {
                             // Settings can't come in front of the sheet, which floats over the app.
@@ -205,6 +302,8 @@ struct SetupView: View {
         .frame(width: 600)
         // As tall as what's in it: a sheet would otherwise take all the height it's offered.
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: choice) { old, _ in stopUsing(old) }
+        .onDisappear { stopUsing(choice) }
     }
 
     @Environment(\.openSettings) private var openSettingsAction
@@ -217,14 +316,29 @@ struct SetupView: View {
         openSettingsAction()
     }
 
+    private func status(of engine: Engine) -> EngineUseRow.Status {
+        .of(stage: useStage, installed: EngineInstall.path(for: engine) != nil, downloading: downloads.isDownloading(engine),
+            progress: downloads.progress[engine], failure: downloads.failure[engine])
+    }
+
+    /// Use and Try Again alike: the whole way through, so a download that works this time goes on to the sign-in.
     private func use(_ engine: Engine) {
+        guard using == nil else { return }
         Builder.engine = engine
-        Task {
-            // Lamp's copy downloads first if the Mac has none, then the sign-in opens the browser.
-            await EngineDownloads.shared.ensure(engine)
-            if await EngineSignIn.isSignedIn(engine) == false { _ = await EngineSignIn.signIn(engine) }
-            await store.recheckSetup()
+        useStage = .gettingCopy
+        using = Task {
+            await EngineUse().run(engine) { useStage = $0 }
+            if !Task.isCancelled { using = nil }
         }
+    }
+
+    /// The person moved on from an engine, to another or by closing the sheet. A download goes on out of sight, for
+    /// the next time it's chosen, but no browser opens for it, and one already open for its sign-in is given up.
+    private func stopUsing(_ id: String) {
+        using?.cancel()
+        using = nil
+        if useStage == .signingIn, let engine = Engine(rawValue: id) { EngineSignIn.cancelSignIn(engine) }
+        useStage = nil
     }
 
     /// Checks the key with OpenRouter before saving it, so a typo shows up now rather than at the first build.
@@ -333,17 +447,17 @@ struct SettingsView: View {
 }
 
 /// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface. The tab is there
-/// only while there is something to show: now publishing games as web pages, which only a build from source has.
+/// only while there is something to show: now mixing copies of a wish, which only a build from source has.
 struct ExperimentalSettings: View {
     static var hasAny: Bool { Edition.isDev }
-    @AppStorage(Publish.switchKey) private var publish = false
+    @AppStorage(Mix.switchKey) private var mix = false
 
     var body: some View {
         Form {
             Section {
                 SettingsCheckboxes {
-                    Toggle("Publish games as web pages", isOn: $publish)
-                        .checkboxNote("A game's Share menu can put it on GitHub Pages, from your own GitHub account.")
+                    Toggle("Mix copies of a wish", isOn: $mix)
+                        .checkboxNote("A button at the foot of the desk opens a window to pick what to keep from someone else's copy.")
                 }
             } header: {
                 // Above the box, in a checkbox note's size and color rather than as a heading.
@@ -777,7 +891,7 @@ struct BuildingSettings: View {
             // A phone in the list needs a team before an app can go on it, so the team is chosen here even
             // before there is an iPhone app.
             PhoneSigningSection(phoneApps: hasPhoneApps || store.devices.contains { $0.kind.isPhone })
-            DevicesSection()
+            PhoneOpeningSection()
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -919,178 +1033,22 @@ struct PhoneSigningSection: View {
     }
 }
 
-/// Every device Lamp knows about, in Building: this Mac, and the iPhones, iPads and Apple Watches it can see,
-/// each by its exact model and software, with where its setup stands and the one thing that takes it further.
-/// Nothing is set up in advance: a device is set up when the person asks, here or when a wish needs it. Where
-/// an app opens is chosen per app under Try On, which lists the same phones.
-struct DevicesSection: View {
+/// Keeping apps on the person's phones opening, in Building: shown once an app is on a phone, which is when it does
+/// something, and while it's on, so it can always be turned off: Lamp keeps opening at login until it is. The phones
+/// themselves are on the desk, down its side.
+struct PhoneOpeningSection: View {
     @EnvironmentObject private var store: Store
-    @AppStorage("appleTeam") private var team = ""
     @AppStorage(PhoneRenewals.staysOpenKey) private var keepOpening = false
-    @State private var adding = false
-    @State private var forgetting: Device?
-    @State private var showingEverything = false
 
     var body: some View {
-        let list = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
-        Section("Your Devices") {
-            // The person's devices; then what's only found on the network, which may be a neighbor's: what Lamp makes apps
-            // for or controls, then what it could learn, each offering Set Up… alike; then the rest of the network, folded.
-            ForEach(list.works) { device in
-                row(device)
-            }
-            if !list.possible.isEmpty || !list.couldLearn.isEmpty {
-                Text("Found on your network, not set up").font(.caption).foregroundStyle(.secondary)
-                ForEach(list.possible + list.couldLearn) { device in
-                    row(device)
-                }
-            }
-            if !list.others.isEmpty || list.unnamed > 0 {
-                DisclosureGroup(isExpanded: $showingEverything) {
-                    ForEach(list.others) { host in hostRow(host) }
-                    if list.unnamed > 0 {
-                        Text(list.unnamed == 1 ? "1 more with a private address, most likely a phone, tablet or computer"
-                             : "\(list.unnamed) more with private addresses, most likely phones, tablets and computers")
-                            .foregroundStyle(.secondary)
-                    }
-                } label: {
-                    Text("Everything Else on Your Network (\(list.others.count + list.unnamed))")
-                }
-            }
-            if store.localNetworkRefused, !store.lookingForDevices { LocalNetworkRefused() }
-            HStack {
-                if store.lookingForDevices { LookingForDevices() }
-                Spacer()
-                Button("Add a New Device…") { adding = true }.controlSize(.small)
-            }
-            // Shown once an app is on a phone, which is when it does something, and while it's on, so it can always be
-            // turned off: Lamp keeps opening at login until it is.
-            if keepOpening || PhoneRenewals.anyOnPhones(store.projects) {
+        if keepOpening || PhoneRenewals.anyOnPhones(store.projects) {
+            Section("Your Phones") {
                 SettingsCheckboxes {
                     Toggle("Keep apps on your phones opening", isOn: Binding(get: { keepOpening }, set: { store.keepPhoneAppsOpening($0) }))
                         .checkboxNote("Lamp opens when you log in and keeps running with its window closed, to put them back before Apple stops them opening.")
                 }
             }
         }
-        .onAppear { store.refreshDevices(everything: true) }
-        .sheet(isPresented: $adding) { AddDeviceSheet() }
-        .confirmationDialog(forgetting.map { "Forget \($0.name)?" } ?? "", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
-            Button("Forget", role: .destructive) { if let device = forgetting { forget(device) } }
-        } message: {
-            Text("Lamp forgets how to reach it and what you typed for it. To use it again, set it up from the start.")
-        }
-    }
-
-    /// What a device's row shows at its end. One only found on the network shows Set Up… and nothing else, even one an
-    /// app can already control: what its setup asks first ("Turn on developer mode on it") is for the setup that button
-    /// opens, not a warning on a device the person may never set up. A device set up with Lamp shows its next step, if
-    /// it has one.
-    enum RowEnd: Equatable { case away(String), ready, setUp, step(String), words(String) }
-
-    static func end(for device: Device, setup: Device.Setup) -> RowEnd {
-        if device.isAway { return .away(device.status) }
-        guard device.isSetUp else { return .setUp }
-        switch setup {
-        case .ready: return .ready
-        case .talkOnly: return .words(setup.words)
-        case .needs(let step): return .step(step)
-        }
-    }
-
-    /// A device Lamp set up itself, on the network: the ones Reconnect and Forget are for. A phone's pairing is the
-    /// Mac's, and an Android device's is the device's own.
-    private func keptByLamp(_ device: Device) -> Bool {
-        if AndroidTVs.isRecord(device.id) { return true }
-        return device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
-    }
-
-    /// Reconnect: a TV's setup window, checked again from where it stands; another device's setup from the start, its
-    /// certificate let go, so a reset device or one whose developer mode was turned on again is trusted afresh.
-    private func reconnect(_ device: Device) {
-        if AndroidTVs.isRecord(device.id) {
-            AndroidWiFi.shared.show(host: device.address)
-        } else if device.kind.isTV {
-            TVs.reconnect(device.id)
-            store.refreshDevices()
-            TVSetup.shared.show(device.udid)
-        } else {
-            DeviceSetupModel.for(device).reconnect()
-            DeviceSetupWindow.show(device)
-        }
-    }
-
-    private func forget(_ device: Device) {
-        if AndroidTVs.isRecord(device.id) {
-            AndroidTVs.forget(device.id)
-        } else if device.kind.isTV {
-            TVs.forget(device.id)
-        } else {
-            DeviceSetupModel.discard(device.id)
-            Integrations.forget(device.id)
-        }
-        forgetting = nil
-        store.refreshDevices()
-    }
-
-    /// A host nothing of Lamp's works with: what it is, and the names it goes by on the network, on this Mac only.
-    private func hostRow(_ host: NetworkHost) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: host.isGateway ? "wifi.router" : "network").foregroundStyle(.secondary).frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(HomeNetwork.label(host))
-                Text((host.names.prefix(2) + [host.address]).joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            // The agent works out what it is and whether anything can reach it; the router and this Mac aren't for that.
-            if !host.isGateway, !host.isThisMac {
-                Button("Set Up…") { store.setUpDevice(HomeNetwork.device(for: host)) }.controlSize(.small)
-            }
-        }
-        .help(HomeNetwork.facts(host))
-    }
-
-    private func row(_ device: Device) -> some View {
-        let setup = device.setup(team: team)
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: device.symbol).foregroundStyle(.secondary).frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(device.name)
-                Text(device.line).font(.caption).foregroundStyle(.secondary)
-                let stopped = store.projects.filter { PhoneRenewals.stoppedOpening($0, on: device.udid) }.map(\.name)
-                if !stopped.isEmpty {
-                    Label("\(TeamLimits.list(stopped)) stopped opening. Open \(stopped.count == 1 ? "it" : "each") and press Play.", systemImage: "exclamationmark.circle.fill")
-                        .font(.caption).foregroundStyle(.orange)
-                }
-            }
-            Spacer()
-            switch Self.end(for: device, setup: setup) {
-            case .away(let words):
-                Text(words).foregroundStyle(.secondary)
-                    .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
-            case .ready:
-                Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
-            case .setUp:
-                DeviceNextStep(device: device)
-            case .step(let step):
-                Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
-                DeviceNextStep(device: device)
-            case .words(let words):
-                Text(words).foregroundStyle(.secondary)
-            }
-            if keptByLamp(device) {
-                Menu {
-                    Button("Reconnect…") { reconnect(device) }
-                    Button("Forget \(device.name)…") { forgetting = device }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Reconnect or forget \(device.name)")
-            }
-        }
-        .accessibilityElement(children: .contain)
     }
 }
 
@@ -1356,7 +1314,7 @@ struct ComputerUseSettings: View {
             if status != .ready { await allow() }
             enabled = status == .ready
         } catch {
-            problem = error.localizedDescription
+            problem = ErrorMessages.reason(error)
         }
         working = nil
     }
@@ -1745,7 +1703,7 @@ struct ProviderLogo: View {
         ZStack {
             shape.fill(.white)
             if id == "lamp" {
-                Image(systemName: "shuffle")
+                Image(systemName: "wand.and.sparkles")
                     .font(.system(size: size * 0.45, weight: .semibold)).foregroundStyle(.black)
             } else if id == Builder.localProvider {
                 Image(systemName: "desktopcomputer")
@@ -2103,7 +2061,7 @@ private struct LocalAISheet: View {
                 repo = ""
                 local.download(spec)
             } catch {
-                addError = error.localizedDescription
+                addError = ErrorMessages.reason(error)
             }
         }
     }

@@ -2670,14 +2670,14 @@ enum Template {
     """# + lampGlyphSwift
 
     /// Lamp's mark where an app shows the way to change it with Lamp (the wand at the top right of its windows, its
-    /// menu bar panel and menu, its widget): the system's `shuffle` symbol, the one Lamp shows for remixing, at the
+    /// menu bar panel and menu, its widget): the system's `wand.and.sparkles` symbol, the one Lamp shows for remixing, at the
     /// size and weight it's asked for. It's in LampSupport.swift and in the widget's own file, which shares nothing
     /// else with it.
     static let lampGlyphSwift = #"""
 
-    /// Lamp's mark: the system's shuffle symbol, the one Lamp shows for remixing.
+    /// Lamp's mark: the system's wand-and-sparkles symbol, the one Lamp shows for remixing.
     enum LampGlyph {
-        static let symbol = "shuffle"
+        static let symbol = "wand.and.sparkles"
 
         /// The symbol at that point size and weight: a template, which a button tints as it does any symbol, unless
         /// it's given a color of its own.
@@ -3891,6 +3891,8 @@ enum Template {
                     LampSidebar.openFromMenu()
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("Reload") { LampReload.reload() }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
             }
             CommandGroup(after: .saveItem) {
                 Button("Share…") { LampShareApp.share() }
@@ -3933,33 +3935,84 @@ enum Template {
         }
     }
 
+    /// Reload (⌥⌘R) in the app's menu, always there: for when what's on screen isn't the app as last changed (a part of
+    /// a game's world built once, which a change ran past). A change Lamp has waiting goes in as the Reload button puts
+    /// it in; otherwise, or with Lamp not running, the app starts afresh by itself: a page opens again with the player's
+    /// place kept (`page`, set by the page's host, LampPage.swift), and any other app quits and opens again.
+    @MainActor enum LampReload {
+        static var page: (() -> Void)?
+
+        static func reload() {
+            Task {
+                if await lampPutsInAChange() { return }
+                if let page { page() } else { LampWindows.relaunch() }
+            }
+        }
+
+        /// Whether Lamp had a change of this app's waiting, which it now puts in. Briefly: the command is a click.
+        private static func lampPutsInAChange() async -> Bool {
+            guard let url = URL(string: lampGateway + "/app/reload") else { return false }
+            var request = URLRequest(url: url, timeoutInterval: 2)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+            return answer["waiting"] as? Bool == true
+        }
+    }
+
     /// File ▸ Share…: the app as a file someone else opens with Lamp. Lamp makes it from the app's folder, the same
     /// file as Lamp's own Share…, and the app shows the system's share picker for it from its window, as Apple's apps
-    /// do. When Lamp isn't open it's opened, and asked again once it answers.
+    /// do. When Lamp isn't open it's opened, and asked again once it answers. What Lamp says first (work in the app that
+    /// came with no license) is asked here with Share Anyway, and what stops the share is shown as Lamp says it.
     @MainActor enum LampShareApp {
         private static var picker: NSSharingServicePicker?
 
+        /// Lamp's answer: the file, something to ask first, why it can't be shared, or nothing (Lamp isn't reachable).
+        private enum Answer {
+            case file([String: Any])
+            case ask(String, String, [String])
+            case refused(String, String)
+            case unreachable
+        }
+
         static func share() {
             Task {
-                var answer = await ask()
-                if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty,
+                var answer = await ask(anyway: nil)
+                if case .unreachable = answer, NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty,
                    let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
                     _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
-                    for _ in 0..<40 where answer == nil {
+                    for _ in 0..<40 {
+                        guard case .unreachable = answer else { break }
                         try? await Task.sleep(for: .milliseconds(500))
-                        answer = await ask()
+                        answer = await ask(anyway: nil)
                     }
                 }
-                guard let answer, let path = answer["file"] as? String else {
+                // Asked again when the app took in more such work while the question was up: Lamp holds the answer to
+                // what was shown.
+                while case .ask(let message, let detail, let sources) = answer {
                     let alert = NSAlert()
-                    alert.messageText = "This app couldn't be shared"
-                    alert.informativeText = "Lamp makes the file to share it. Open Lamp and try again."
-                    alert.runModal()
-                    return
+                    alert.messageText = message
+                    alert.informativeText = detail
+                    alert.addButton(withTitle: "Share Anyway")
+                    alert.addButton(withTitle: "Cancel")
+                    guard alert.runModal() == .alertFirstButtonReturn else { return }
+                    answer = await ask(anyway: sources)
                 }
-                let items: [Any] = [answer["note"] as? String, (answer["picture"] as? String).map(URL.init(fileURLWithPath:)),
+                let found: [String: Any]
+                switch answer {
+                case .file(let file): found = file
+                case .refused(let message, let detail): return tell(message, detail)
+                case .unreachable: return tell("This app couldn't be shared", "Lamp makes the file to share it. Open Lamp and try again.")
+                case .ask: return
+                }
+                guard let path = found["file"] as? String else { return }
+                let items: [Any] = [found["note"] as? String, (found["picture"] as? String).map(URL.init(fileURLWithPath:)),
                                     URL(fileURLWithPath: path)].compactMap { $0 }
                 let picker = NSSharingServicePicker(items: items)
                 self.picker = picker
@@ -3983,21 +4036,32 @@ enum Template {
             }
         }
 
-        /// Lamp's answer: where the file and its picture are. Nil when Lamp didn't answer or couldn't make it.
-        private static func ask() async -> [String: Any]? {
-            guard let url = URL(string: lampGateway + "/app/share") else { return nil }
+        private static func tell(_ message: String, _ detail: String) {
+            let alert = NSAlert()
+            alert.messageText = message
+            alert.informativeText = detail
+            alert.runModal()
+        }
+
+        /// Asks Lamp for the file; `anyway` once the person chose Share Anyway, with the work they were shown.
+        private static func ask(anyway sources: [String]?) async -> Answer {
+            guard let url = URL(string: lampGateway + "/app/share") else { return .unreachable }
             var request = URLRequest(url: url, timeoutInterval: 120)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = Data("{}".utf8)
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
-            let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                fputs("LampShareApp: \(answer?["error"] as? String ?? "Lamp didn't make the file")\n", stderr)
-                return nil
+            var body: [String: Any] = [:]
+            if let sources { body = ["anyway": true, "sources": sources] }
+            request.httpBody = (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return .unreachable }
+            let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            if let warning = answer["warning"] as? String {
+                return .ask(warning, answer["detail"] as? String ?? "", answer["sources"] as? [String] ?? [])
             }
-            return answer
+            guard (response as? HTTPURLResponse)?.statusCode == 200, answer["file"] is String else {
+                return .refused(answer["error"] as? String ?? "This app couldn't be shared", answer["detail"] as? String ?? "")
+            }
+            return .file(answer)
         }
     }
 
@@ -6251,7 +6315,13 @@ enum Template {
                 let identity: AppExtensionIdentity? = await withTaskGroup(of: AppExtensionIdentity?.self) { group in
                     group.addTask {
                         guard let found = try? AppExtensionIdentity.matching(appExtensionPointIDs: pointID) else { return nil }
-                        for await list in found { if let first = list.first { return first } }
+                        // The list keeps coming while the chat isn't registered, so the wait ends only by giving up:
+                        // the group can't end before this does, and a loop that never asked would hold the chat (and
+                        // a core) forever, one more for each click.
+                        for await list in found {
+                            if let first = list.first { return first }
+                            if Task.isCancelled { return nil }
+                        }
                         return nil
                     }
                     group.addTask {
@@ -7205,6 +7275,7 @@ enum Template {
             // Only on a Mac where Lamp has this app's project.
             guard fm.fileExists(atPath: folder.deletingLastPathComponent().path) else { return }
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            launched = Date()
             // Pictures: once the first window has settled, and whenever the user leaves the app
             // (often to ask Lamp for a change).
             DispatchQueue.main.async { MainActor.assumeIsolated { firstSnapshot() } }
@@ -7293,7 +7364,11 @@ enum Template {
             guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
             // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
             // the desk keeps this picture until the next launch.
-            let previewWindow = previewTaken ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
+            // A game is pictured once it's playing, not on its loading screen: its page asks for the picture then
+            // (`LampPagePlaying`). One that hasn't said so in two minutes is pictured as it is.
+            let loading = LampPageItems.playing == false && Date().timeIntervalSince(launched) < 120
+            if loading { previewAtTheLatest() }
+            let previewWindow = previewTaken || loading ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
             if previewWindow != nil { previewTaken = true }
             let front = Array(windows.prefix(3))
             let seen = capturable()
@@ -7312,11 +7387,17 @@ enum Template {
                     MainActor.assumeIsolated {
                         // The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it
                         // shows after each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
+                        // A window of one color (a game's loading screen, a page not drawn yet) is taken again a few
+                        // seconds later, for up to a minute, keeping the last picture meanwhile.
                         if let previewWindow {
-                            if let png = previewPicture ?? drawn(previewWindow) {
+                            if let png = previewPicture ?? drawn(previewWindow), !looksBlank(png) || previewRetakes >= 20 {
                                 try? png.write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
                             } else {
                                 previewTaken = false
+                                if previewRetakes < 20 {
+                                    previewRetakes += 1
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { MainActor.assumeIsolated { snapshot() } }
+                                }
                             }
                         }
                         let text = folder.appendingPathComponent("screen.txt")
@@ -7340,6 +7421,48 @@ enum Template {
         }
 
         @MainActor private static var previewTaken = false
+        @MainActor private static var previewRetakes = 0
+        @MainActor private static var previewFallback = false
+
+        /// A game's page says it's loading: a picture taken before it said so (the page can paint its loading screen
+        /// before the game's code runs) is of that screen, so it's taken again once the game plays, or at two minutes.
+        @MainActor static func gameLoading() {
+            previewTaken = false
+            previewAtTheLatest()
+        }
+
+        /// The game is playing and its loading screen gone: the picture is taken now.
+        @MainActor static func gamePlaying() {
+            previewTaken = false
+            snapshot()
+        }
+
+        @MainActor private static func previewAtTheLatest() {
+            guard !previewFallback else { return }
+            previewFallback = true
+            let waited = Date().timeIntervalSince(launched)
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, 120.5 - waited)) { MainActor.assumeIsolated { snapshot() } }
+        }
+        nonisolated(unsafe) private static var launched = Date()
+
+        /// Whether a picture is nearly all one shade: 99% of it, seen at 64 by 64, within one step of sixteen. A line of
+        /// text or a button is enough to keep a picture; the title bar's buttons on a black window aren't.
+        nonisolated static func looksBlank(_ png: Data) -> Bool {
+            guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
+            let side = 64
+            var shades = [UInt8](repeating: 0, count: side * side)
+            let drew = shades.withUnsafeMutableBytes { bytes -> Bool in
+                guard let context = CGContext(data: bytes.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side,
+                                              space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+                return true
+            }
+            guard drew else { return false }
+            var counts = [Int](repeating: 0, count: 16)
+            for shade in shades { counts[Int(shade) / 16] += 1 }
+            return (counts.max() ?? 0) * 100 >= side * side * 99
+        }
         private static let pictures = DispatchQueue(label: "lamp.pictures")
 
         /// What a picture of a window needs from it, read on the main thread; the picture is taken off it (`capture`).
@@ -8806,6 +8929,14 @@ enum Template {
         /// holding the keyboard) in the page's own script, which takes it whether or not the app is in front, where
         /// WebKit lets an event made by the app go. What it did, or nil when the action isn't the page's.
         static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
+        /// Whether the game on a page is playing (`LampPagePlaying`): nil for an app with no game, false while it loads.
+        @MainActor static var playing: Bool?
+        /// Gives a game's controller to Lamp for batch `id` (seconds it may run) or back (nil): only that batch's own
+        /// controller is given back, not a newer batch's.
+        static var own: ((Double?, String) -> Void)?
+        /// Holds a game's controller for a `stick` or `button` action of a batch: false when the app has no game;
+        /// otherwise the page's answer comes to `said`, in words for the report, and whether the page holds it.
+        static var hold: ((LampDriver.Action, NSWindow, LampDriver.Handover, @escaping @MainActor (String, Bool) -> Void) -> Bool)?
     }
 
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
@@ -8828,6 +8959,9 @@ enum Template {
             var amount: Double?         // scroll: points, positive is down; wait: seconds; key: seconds to hold it
             var to_x: Double?           // drag: where it ends, in the picture's pixels
             var to_y: Double?
+            /// A game's controller as `stick` and `button` hold it (lx, ly, rx, ry -1 to 1, lt and rt 0 to 1, `down` the
+            /// buttons' bits), for `amount` seconds; `text` says it in words. Held in the game's page (LampPage.swift).
+            var controller: [String: Double]?
         }
 
         // begin LampDriver.Handover
@@ -8872,6 +9006,17 @@ enum Template {
             /// Every action was carried out: from now on the person's clicks and keys are just theirs.
             func end() {
                 if Self.current === self { Self.current = nil }
+                giveBackAll()
+            }
+
+            /// What the batch took for itself beyond the keys it holds (a game's controller, LampPage.swift), given back
+            /// once, however the batch ends: done, stopped or replaced.
+            func whenOver(_ giveBack: @escaping @MainActor () -> Void) { finishers.append(giveBack) }
+            private var finishers: [@MainActor () -> Void] = []
+            private func giveBackAll() {
+                let all = finishers
+                finishers = []
+                for giveBack in all { giveBack() }
             }
 
             /// A key held down by the driver: pressed now through the app's own event queue (where a game's key
@@ -8911,7 +9056,16 @@ enum Template {
                 finish("Stopped after \(done) of \(count) action\(count == 1 ? "" : "s"): the person took the app over. Nothing after that was done.")
             }
 
+            /// Ends the batch where it is for a reason of Lamp's own, not the person's: nothing more is done and what it
+            /// holds is let go, and the caller says why in the report.
+            func giveUp() {
+                guard carriesOn else { return }
+                stopped = true
+                letGo()
+            }
+
             private func letGo() {
+                defer { giveBackAll() }
                 for key in held {
                     key.timer.invalidate()
                     NSApp.postEvent(key.up, atStart: true)
@@ -8981,6 +9135,15 @@ enum Template {
                 report.append(why)
                 answer(stopped: true)
             }
+            // A game's controller is Lamp's for the whole batch, its waits included, so the person's own input at any
+            // point takes it back (lamp-game.js); given back however the batch ends.
+            if actions.contains(where: { ["stick", "button"].contains($0.action) }), let own = LampPageItems.own {
+                let seconds = actions.reduce(2.0) { total, action in
+                    total + 0.6 + (["wait", "key", "stick", "button"].contains(action.action) ? min(max(action.amount ?? 1, 0), 10) : 0)
+                }
+                own(seconds, id)
+                batch.whenOver { own(nil, id) }
+            }
             // Which window the actions are in, before any of them and whenever an action changes it (a panel
             // opened, a dialog): Lamp's glow goes round it from the start.
             var told: Int?
@@ -9015,7 +9178,7 @@ enum Template {
                     return
                 }
                 let action = actions[index]
-                let held = action.action == "key" ? min(action.amount ?? 0, 10) : 0
+                let held = ["key", "stick", "button"].contains(action.action) ? min(action.amount ?? 0, 10) : 0
                 let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : held > 0 ? held + 0.2 : 0.35
                 // The cursor is on the spot already, sent there during the last pause. Where it isn't (the first
                 // action; a target that wasn't on screen yet; one that has moved since, or a window that has opened
@@ -9026,14 +9189,17 @@ enum Template {
                     lead = Self.lead
                 }
                 let due = lead + pause
+                // A game's controller held by its page goes on only once the page has answered: the hold's time runs
+                // from when the game took it, and the next action never starts while the page is still taking this one.
+                let controlled = ["stick", "button"].contains(action.action) && LampPageItems.hold != nil
                 // The next step is set up first: a click that opens a save panel or an alert doesn't return until
                 // that closes, and the steps after it are how it gets answered.
                 var next: Aim?
-                after(due) { step(index + 1, shown: next) }
+                if !controlled { after(due) { step(index + 1, shown: next) } }
                 // The next action's spot is shown while this one's pause runs, so the cursor is there when it's
                 // due and nothing waits for it: once the app has taken this action up (`settle`), and no sooner
                 // than the glide needs, so that after a long wait the screen is read late, not at its start.
-                if index + 1 < actions.count {
+                if index + 1 < actions.count, !controlled {
                     let early = max(lead + Self.settle, due - 0.95)
                     if due - early >= 0.2 {
                         after(early) {
@@ -9052,7 +9218,41 @@ enum Template {
                        !(window is NSSavePanel) {
                         last = (line, window, LampRuntime.picture(of: window))
                     }
-                    report[line] = run(action)
+                    // A game's controller is held by its page, which says whether it took the hold: the line is its answer,
+                    // in the report long before the batch's end, since the hold's own pause is longer than the page takes.
+                    if controlled {
+                        last = nil
+                        var answered = false
+                        func goOn(after seconds: Double) {
+                            guard !answered else { return }
+                            answered = true
+                            after(seconds) { step(index + 1, shown: nil) }
+                        }
+                        report[line] = "\(action.action): the game didn't answer"
+                        if let window = LampRuntime.windowsOnScreen.first, let hold = LampPageItems.hold,
+                           hold(action, window, batch, { said, held in
+                               guard !answered else { return }
+                               report[line] = said
+                               goOn(after: held ? pause : Self.settle)
+                           }) {
+                            // A page that never answers (hung, or gone) doesn't hold the batch up for good, nor is the
+                            // hold it may still take left to the batch's next moves: the batch ends there, and what the
+                            // page takes after is turned down (lamp-game.js) or let go (LampPage.swift).
+                            after(Self.unanswered) {
+                                guard !answered, batch.carriesOn else { return }
+                                answered = true
+                                batch.giveUp()
+                                report[line] = "\(action.action): the game didn't answer within \(LampScreen.number(Self.unanswered)) s"
+                                report.append("Stopped after \(index + 1) of \(actions.count) action\(actions.count == 1 ? "" : "s"): the game didn't take Lamp's controller in time. Nothing after that was done.")
+                                answer(stopped: false)
+                            }
+                        } else {
+                            report[line] = "\(action.action): this app has no game whose controller Lamp can hold"
+                            goOn(after: Self.settle)
+                        }
+                    } else {
+                        report[line] = run(action)
+                    }
                     // A page reads its things again, for the next action's target: ready well within the pause.
                     LampPageItems.refresh? {}
                     if action.action != "bar_icon" { keepBarPanel() }
@@ -9071,6 +9271,8 @@ enum Template {
         /// How long after an action the next one's spot is looked for: a press is taken up on the run loop's
         /// next turn, so what it opened or changed is on screen by then.
         static let settle = 0.1
+        /// How long a game's page has to answer a hold of its controller before the batch goes on without it.
+        static let unanswered = 3.0
 
         /// Where an action happens on screen, what it's doing in a few words, which window that's in, and
         /// whether it presses there, for the cursor Lamp shows going to each spot first.
@@ -9168,6 +9370,8 @@ enum Template {
         private static func run(_ action: Action) -> String {
             if action.action == "menu" { return menuBar(action.item) }
             if action.action == "bar_icon" { return barIcon(action.item) }
+            // A game's controller is held in the game's page (`step`): an app with none has nothing to hold.
+            if ["stick", "button"].contains(action.action) { return "\(action.action): this app has no game whose controller Lamp can hold" }
             guard let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
                 return "\(action.action): the app has no window open"
             }
@@ -20414,6 +20618,7 @@ enum Template {
                     Button { LampMenuBar.customize() } label: { Label { Text("Customize with Lamp…") } icon: { Image(nsImage: LampGlyph.image(pointSize: 13, weight: .regular)) } }
                 }
                 if settings { Button("Settings…") { LampMenuBar.openSettings() }.keyboardShortcut(",") }
+                Button("Reload") { LampReload.reload() }.keyboardShortcut("r", modifiers: [.command, .option])
                 Button("Quit \(LampMenuBar.appName)") { NSApp.terminate(nil) }.keyboardShortcut("q")
             }
         }

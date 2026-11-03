@@ -267,7 +267,7 @@ extension Store {
             if reading {
                 return (200, ["text": "Lamp's copy of \(snapshot.owner)/\(snapshot.name) at commit \(snapshot.commit), for reading: \(snapshot.folder.path)\nNothing was credited and nothing was made. To make an app from it, call lampify without read_only, with commit \(snapshot.commit)."])
             }
-            guard !RepoImport.holdsWish(snapshot.folder) else {
+            guard !RepoImport.holdsWish(snapshot.folder, sites: false) else {
                 return (400, ["error": "\(source.owner)/\(source.name) is a Lamp wish already: don't rebuild it. Tell the person to open it with File → Open from GitHub… and paste \(address)."])
             }
             let adapted = arguments["adapted"] as? Bool ?? true
@@ -294,7 +294,7 @@ extension GitHubProjects {
         if let file = credited.licenseFile {
             lines.append("Credited in credits.json with license \(credited.license ?? "?"), kept in " + ([file] + (credited.noticeFiles ?? [])).joined(separator: ", ") + ". Keep these files and the author's credit on screen; never change them.")
         } else {
-            lines.append("Credited in credits.json. It came with no license of its own: it can be used on this Mac but not shared or published. Tell the person.")
+            lines.append("Credited in credits.json. It came with no license of its own: the person decides whether to share or publish it, and Lamp reminds them when they do. Tell the person.")
         }
         if let manifest = shape.manifest { lines.append("lamp-app.json, as Lamp makes it:\n" + manifest) }
         switch shape.route {

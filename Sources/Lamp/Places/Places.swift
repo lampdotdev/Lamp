@@ -60,11 +60,6 @@ struct Place: Equatable {
     var noHostYet = false
     /// The same for its `noNative`: the device runs its own apps, but Lamp has no recipe that builds one there yet.
     var noRecipeYet = false
-    /// The make a game, and an app, on this device alone get when the person names none (`defaultMake`): a game is a
-    /// page on Lamp's game runtime wherever Lamp has a host for one; an app is the device's own code on a Mac, a phone or a
-    /// tablet, and a page on a TV or a console. Always a make the row runs (`PlacesTests`).
-    var gameDefault: Make = .web
-    var appDefault: Make = .native
     /// What a game's page on it is told about it (`GamePage`), so the game names a key or a button the way the player's
     /// own does; nil when Lamp doesn't know, which a page there can't be built without.
     let input: Input?
@@ -94,7 +89,10 @@ struct Place: Equatable {
     }
 
     func reach(_ make: Make) -> String? { make == .web ? web?.reach : native?.reach }
-    func defaultMake(_ intent: AppIntent) -> Make { intent == .game ? gameDefault : appDefault }
+    /// The make a game or an app on this device alone gets when the person names none (`defaultMake`): a page wherever
+    /// Lamp has a host for one, the device's own code where it hasn't. An app that needs what only the device's own code
+    /// has (a menu bar icon, a widget, Health) is the agent's to make native: that's judgment, the web-or-native skill's.
+    var defaultMake: Make { web != nil ? .web : .native }
     func runs(_ make: Make) -> Bool { reach(make) != nil }
 }
 
@@ -126,15 +124,15 @@ enum Places {
               wordFamilies: ["iphone": .iphone, "ipad": .ipad], input: .apple),
         Place(id: "watch", name: "Apple Watch", words: ["watch"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "Lamp doesn't build a Watch app on its own yet: its Watch build goes with an iPhone app, onto the watch paired with that iPhone"),
-              noWeb: "watchOS has no web view, so a page there needs a native version", comesWith: "iphone", gameDefault: .native, input: nil),
+              noWeb: "watchOS has no web view, so a page there needs a native version", comesWith: "iphone", input: nil),
         Place(id: "apple-tv", name: "Apple TV", words: ["apple-tv"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Apple TV simulator on this Mac; Lamp can't put it on a real Apple TV yet"),
               noWeb: "tvOS has no web view, so a page there needs a native version", wordFamilies: ["apple-tv": .appletv],
-              skills: ["tv-design"], gameDefault: .native, input: nil),
+              skills: ["tv-design"], input: nil),
         Place(id: "vision-pro", name: "Vision Pro", words: ["vision-pro"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Vision Pro simulator on this Mac; Lamp can't put it on a real Vision Pro yet"),
               noWeb: "Lamp has no host for a page on Vision Pro yet, so a page there needs a native version", wordFamilies: ["vision-pro": .vision],
-              noHostYet: true, gameDefault: .native, input: .apple),
+              noHostYet: true, input: .apple),
         Place(id: "android", name: "Android phone / tablet", words: ["android"], destination: .android,
               web: .init(host: .androidWebView, reach: "in an app of Lamp's around the page, the same way as a native app"),
               native: .init(code: .android, reach: "in the Android emulator on this Mac, or on the person's own device with USB debugging, one device at a time"),
@@ -142,11 +140,11 @@ enum Places {
         Place(id: "android-tv", name: "Android TV / Google TV / Fire TV", words: ["android-tv"], destination: .androidTV,
               web: .init(host: .androidWebView, reach: "in the same app of Lamp's around the page as on Android phones, on the TV's home screen: in the TV emulator on this Mac, or on the person's TV over Wi‑Fi"),
               native: .init(code: .androidTV, reach: "in the TV emulator on this Mac, or Lamp installs it on each of the person's TVs over Wi‑Fi"),
-              skills: ["tv-design"], appDefault: .web, input: .generic),
+              skills: ["tv-design"], input: .generic),
         Place(id: "tv", name: "Samsung / LG TV", words: ["tv"], destination: .tv,
               web: .init(host: .tvBrowser, reach: "Lamp installs it on each of the person's TVs once it's set up for apps (in the TV preview on this Mac before that)"),
               native: nil, noNative: "Lamp has no recipe for a native Samsung or LG TV app yet", skills: ["tv-design"],
-              noRecipeYet: true, appDefault: .web, input: .generic),
+              noRecipeYet: true, input: .generic),
     ]
 
     /// Where a page can open: every place one of Lamp's web hosts is, in the table's order, and last an integration's own
@@ -177,8 +175,6 @@ enum Places {
                      noWeb: integration.runs.map { $0 + ", so a page there needs a native version" } ?? "it has no web engine Lamp can reach, so a page there needs a native version", noNative: integration.runs ?? "its integration declares no native app",
                      // A device that doesn't say what it runs may well run its own apps: Lamp only has no recipe for one.
                      skills: integration.skills ?? [], noRecipeYet: integration.runs == nil,
-                     // A console or a TV's own platform: a page wherever it takes one (the Xbox's), its own code otherwise (a Roku's).
-                     gameDefault: makes.contains(.web) ? .web : .native, appDefault: makes.contains(.web) ? .web : .native,
                      input: integration.input)
     }
 
@@ -203,17 +199,14 @@ enum Places {
         return skills
     }
 
-    /// The make a game or an app on these devices gets when the person names none: one device's own default, and for
-    /// one app across several, web where every one of them takes a page. Nil where they share no default (an app on a
-    /// Mac and an Apple TV is native on both, an app on a Mac and a Samsung TV web on one and native on the other), so
-    /// it's for the agent to say, or to ask, rather than read off the table.
-    static func defaultMake(_ intent: AppIntent, devices: Set<String>, in table: [Place] = all) -> Place.Make? {
+    /// The make a game or an app on these devices gets when the person names none: web where every one of them takes a
+    /// page, else native where every one runs its own code (a Mac and an Apple TV, one Swift app). Nil where neither
+    /// make reaches them all (a Samsung TV and an Apple TV), so it's for the agent to say, or to ask, rather than read
+    /// off the table.
+    static func defaultMake(devices: Set<String>, in table: [Place] = all) -> Place.Make? {
         let rows = devices.compactMap { named($0, in: table) }
         guard !rows.isEmpty else { return nil }
-        if rows.count == 1 { return rows[0].defaultMake(intent) }
-        if rows.allSatisfy({ $0.runs(.web) }) { return .web }
-        let each = Set(rows.map { $0.defaultMake(intent) })
-        return each.count == 1 ? each.first : nil
+        return [Place.Make.web, .native].first { make in rows.allSatisfy { $0.runs(make) } }
     }
 
     static func named(_ word: String, in table: [Place] = all) -> Place? {
@@ -229,7 +222,7 @@ enum Places {
             let web = place.web.map { "web: \($0.reach)" } ?? "no web (\(place.noWeb ?? "none"))"
             let native = place.native.map { "native (\($0.code.rawValue) code): \($0.reach)" } ?? "no native (\(place.noNative ?? "none"))"
             return "\(place.name) [\(place.words.map { "\"\($0)\"" }.joined(separator: ", "))]: \(web); \(native); "
-                + "by default a game \(place.gameDefault.rawValue), an app \(place.appDefault.rawValue)"
+                + "by default \(place.defaultMake.rawValue)"
         }.joined(separator: ". ") + "."
     }
 

@@ -3,8 +3,8 @@ import Foundation
 
 /// What a game's page is told about the device it's on, so it never works out where it is: the device's row in the
 /// table of devices is resolved once for the copy of the page being made (`place`), and its input (`Place.Input`) is
-/// written beside lamp-game.js in that copy as `lamp-device.js` (`stage`). Every copy goes through here: the
-/// preview's, a build for the Mac, the simulator or Android (build.sh writes what `buildEnvironment` hands it), a real
+/// written beside lamp-game.js in that copy as `lamp-device.js` (`stage`). Every copy goes through here: a build for
+/// the Mac, the simulator or Android (build.sh writes what `buildEnvironment` hands it), a real
 /// iPhone's or iPad's (`Devices.stage`), the copy of the app an integration's package step runs on (`DeviceApps`) and a
 /// published page (`Publish`). The app's own Web/ never holds one, so a copy made some other way fails to load rather
 /// than claiming another device's facts.
@@ -24,7 +24,7 @@ enum GamePage {
     static let buildPrefix = "export default "
 
     /// The row of the device this copy of the project's page is for: where the project is built for now, or the
-    /// destination given (the preview is played on this Mac). The project's family picks out its row among those
+    /// destination given (a TV, a real iPhone or iPad). The project's family picks out its row among those
     /// sharing a destination (an iOS app built for an Apple TV is the Apple TV's), and that row must show a page;
     /// an integration's device is its own row.
     static func place(for project: LampProject, at destination: Destination? = nil) throws -> Place {

@@ -254,9 +254,6 @@ struct Integration: Codable, Hashable {
             /// What the prepare and package steps run with that Lamp fetches itself, first on their path: "node" is
             /// Node.js and pnpm (`NodeTools`).
             var tools: [String]?
-            /// A way Lamp knows to look inside the app as it runs on the device, beside the bridge's picture: "roku-sdk",
-            /// the screen's nodes and decoded crashes from Roku's SDK (`RokuSDK`).
-            var inspect: String?
             /// The folders at the top of the app's folder that its tools install or make ("node_modules", "dist-dev"):
             /// kept out of versions (.gitignore), out of what the app is built from and out of Lamp's copy for the package step.
             var ignore: [String]?
@@ -532,7 +529,7 @@ enum IntegrationCheck {
             "tool": .object(["name": .leaf, "download": .leaf, "sha256": .leaf, "arguments": .array(.leaf), "explanation": .leaf]),
             "vendorSignIn": .object(["page": .leaf]), "wait": .leaf, "bridge": .leaf,
         ])
-        static let appKind: Shape = .object(["lamp": .leaf, "purpose": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "host": .leaf, "support": .map, "icons": .map, "preview": .leaf, "prepare": .leaf, "tools": .array(.leaf), "inspect": .leaf, "ignore": .array(.leaf)])])
+        static let appKind: Shape = .object(["lamp": .leaf, "purpose": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "host": .leaf, "support": .map, "icons": .map, "preview": .leaf, "prepare": .leaf, "tools": .array(.leaf), "ignore": .array(.leaf)])])
         static let read: Shape = .object(["http": request, "description": .leaf, "json": .leaf, "xml": .leaf, "contains": .leaf])
         static let integration: Shape = .object([
             "id": .leaf, "name": .leaf, "maker": .leaf, "kind": .leaf, "sources": .array(.leaf),
@@ -738,16 +735,11 @@ enum IntegrationCheck {
                 }
                 // Tools Lamp fetches, a step before every turn and Roku's SDK reading the app run more than a package step
                 // with the system's own tools: only the kinds Lamp ships have them.
-                if submitted, declared.tools != nil || declared.prepare != nil || declared.inspect != nil {
-                    say("app.declared.tools, prepare and inspect are Lamp's own and only in the integrations Lamp ships; leave them out.")
+                if submitted, declared.tools != nil || declared.prepare != nil {
+                    say("app.declared.tools and prepare are Lamp's own and only in the integrations Lamp ships; leave them out.")
                 }
                 for tool in declared.tools ?? [] where tool != "node" {
                     say("app.declared.tools: \"\(tool)\" isn't one Lamp fetches: \"node\".")
-                }
-                if let inspect = declared.inspect, inspect != RokuSDK.inspector {
-                    say("app.declared.inspect must be one Lamp has: \"\(RokuSDK.inspector)\".")
-                } else if declared.inspect != nil, declared.tools?.contains("node") != true {
-                    say("app.declared.inspect \"\(RokuSDK.inspector)\" runs Roku's SDK from the app's packages, so app.declared.tools must have \"node\".")
                 }
                 if let prepare = declared.prepare, prepare.trimmed.isEmpty { say("app.declared.prepare is empty: leave it out instead.") }
                 if let preview = declared.preview, !isAppPath(preview) {

@@ -223,46 +223,22 @@ enum Sandbox {
         }
         // The Xcode in use, read only, wherever it is: one kept on another disk (under /Volumes, or a link from
         // /Applications into one) is closed above, and every compile would find no SDK.
+        // The folders on the way to it can be looked at (not read): a tool reached through a link from /Applications
+        // finds its own place with realpath, which stats every step (/Volumes, the disk), and the Swift driver that
+        // can't says swift-build doesn't exist.
         for folder in developerFolders() {
             lines.append("(allow file-read* (subpath \(quotedPath(folder))))")
+            var path = (folder as NSString).deletingLastPathComponent
+            while path != "/" {
+                lines.append("(allow file-read-metadata (literal \(quotedPath(path))))")
+                path = (path as NSString).deletingLastPathComponent
+            }
         }
         // Both Lamps' folders (keys, sign-ins, every other app) stay closed; the app's own folder opens.
         for name in Edition.lampFolderNames {
             lines.append("(deny file-read* file-write* (subpath \(quotedPath(support + "/" + name))))")
-            // And the apps Lamp installs are for the person to run, not the command: running one needs no
-            // read the profile closes (exec maps it), so it's refused by name. A command could otherwise
-            // start another app with a library of its own inside (DYLD_INSERT_LIBRARIES) and read that
-            // app's secrets out of Lamp through it (PeerProcess). The app's own build is unaffected: it's
-            // built in its folder, not here.
-            lines.append("(deny process-exec* (subpath \(quotedPath(real(home + "/Applications/" + name + " Apps")))))")
-            // Nor what Xcode makes there for the phone (`Devices.buildsFolder`), for the same reason: closed to
-            // reading, but a program in it could still be started.
-            lines.append("(deny process-exec* (subpath \(quotedPath(support + "/" + name + "/Phone Builds"))))")
-            // Each Lamp's adb server and emulator (`Edition.androidPorts`): through them a command could install,
-            // remove or drive apps on the emulator and on the person's phone, which only Lamp does. At any address,
-            // since the emulator's control interface listens on the network too. Nor may a command listen there in
-            // their place, for Lamp to take it for its own server or emulator.
-            if let ports = Edition.androidPorts(folder: name) {
-                let numbers = ports.all
-                lines.append("(deny network-outbound " + numbers.map { "(remote tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
-                lines.append("(deny network-bind " + numbers.map { "(local tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
-            }
-            // The caller check (PeerProcess.isApp) would also accept a whole bundle replaced at the installed
-            // path, signature valid by that copy's own requirement. That's safe only while this folder stays
-            // unwritable from the command's sandbox (the file denies above), so nothing the builder makes can
-            // be put there: keep it that way, or the check needs the replacement refused too.
         }
-        // Nor may a command run adb or the emulator from the tools Lamp downloaded, which a build never needs: an adb
-        // of its own would start a server that reaches the person's phone. One fetched from elsewhere still could,
-        // with the person's say-so on the phone, since that server would have a key the phone has never allowed.
-        lines.append("(deny process-exec* (subpath \(quotedPath(real(AndroidTools.sdkFolder.appendingPathComponent("platform-tools").path)))) "
-            + "(subpath \(quotedPath(real(AndroidTools.sdkFolder.appendingPathComponent("emulator").path)))))")
-        // Xcode's interface and asset compilers hand their work to helpers that stay running and are found through
-        // shared memory named "ib…", whoever started them. A helper started outside the sandbox (by Lamp drawing an
-        // icon, or by the person's own Xcode) would read and write for a command wherever it asked; one started in
-        // another app's sandbox would see nothing of this app. Without that memory each command starts its own,
-        // confined as it is. Other shared memory (Python's, say) stays open.
-        lines.append(#"(deny ipc-posix-shm* (ipc-posix-name-regex #"^/?ib"))"#)
+        lines += lampsOwn(home: home)
         // Lamp's shims and shell startup files may be read and run, and not changed.
         lines.append("(allow file-read* (subpath \(quotedPath(real(bin.path)))) (subpath \(quotedPath(real(zdot.path)))))")
         lines.append("(allow file-read* file-write* (subpath \(quotedPath(app))))")
@@ -301,6 +277,70 @@ enum Sandbox {
         if !Privacy.sharesPictures || !Privacy.sharesLog {
             lines.append("(deny file-read* (subpath \(quotedPath(app + "/.lamp/runtime"))))")
         }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// What no confined program may start or reach, whatever it may read: the apps Lamp installs and builds for the phone,
+    /// each Lamp's adb server and emulator, and Xcode's shared helpers.
+    private static func lampsOwn(home: String) -> [String] {
+        let support = real(home + "/Library/Application Support")
+        var lines: [String] = []
+        for name in Edition.lampFolderNames {            // And the apps Lamp installs are for the person to run, not the command: running one needs no
+            // read the profile closes (exec maps it), so it's refused by name. A command could otherwise
+            // start another app with a library of its own inside (DYLD_INSERT_LIBRARIES) and read that
+            // app's secrets out of Lamp through it (PeerProcess). The app's own build is unaffected: it's
+            // built in its folder, not here.
+            lines.append("(deny process-exec* (subpath \(quotedPath(real(home + "/Applications/" + name + " Apps")))))")
+            // Nor what Xcode makes there for the phone (`Devices.buildsFolder`), for the same reason: closed to
+            // reading, but a program in it could still be started.
+            lines.append("(deny process-exec* (subpath \(quotedPath(support + "/" + name + "/Phone Builds"))))")
+            // Each Lamp's adb server and emulator (`Edition.androidPorts`): through them a command could install,
+            // remove or drive apps on the emulator and on the person's phone, which only Lamp does. At any address,
+            // since the emulator's control interface listens on the network too. Nor may a command listen there in
+            // their place, for Lamp to take it for its own server or emulator.
+            if let ports = Edition.androidPorts(folder: name) {
+                let numbers = ports.all
+                lines.append("(deny network-outbound " + numbers.map { "(remote tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
+                lines.append("(deny network-bind " + numbers.map { "(local tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
+            }
+            // The caller check (PeerProcess.isApp) would also accept a whole bundle replaced at the installed
+            // path, signature valid by that copy's own requirement. That's safe only while this folder stays
+            // unwritable from the command's sandbox (the file denies above), so nothing the builder makes can
+            // be put there: keep it that way, or the check needs the replacement refused too.
+        }
+        // Nor may a command run adb or the emulator from the tools Lamp downloaded, which a build never needs: an adb
+        // of its own would start a server that reaches the person's phone. One fetched from elsewhere still could,
+        // with the person's say-so on the phone, since that server would have a key the phone has never allowed.
+        lines.append("(deny process-exec* (subpath \(quotedPath(real(AndroidTools.sdkFolder.appendingPathComponent("platform-tools").path)))) "
+            + "(subpath \(quotedPath(real(AndroidTools.sdkFolder.appendingPathComponent("emulator").path)))))")
+        // Xcode's interface and asset compilers hand their work to helpers that stay running and are found through
+        // shared memory named "ib…", whoever started them. A helper started outside the sandbox (by Lamp drawing an
+        // icon, or by the person's own Xcode) would read and write for a command wherever it asked; one started in
+        // another app's sandbox would see nothing of this app. Without that memory each command starts its own,
+        // confined as it is. Other shared memory (Python's, say) stays open.
+        lines.append(#"(deny ipc-posix-shm* (ipc-posix-name-regex #"^/?ib"))"#)
+        return lines
+    }
+
+    /// An answer beside a turn (`SideAnswer`) has no tools, and this holds whatever got past that: everything that
+    /// can be written is its one private folder, and nothing of the person's, of Lamp's, or of another program's in the
+    /// shared temporary folders can be read. It shares no rule with `profile`, which opens what a build needs. The network
+    /// stays open, since the engine needs its provider. Looking at a file (not reading it) stays open too: engines stat
+    /// every step of a path. `reading` are folders, and `readingFiles` and `writingFiles` single paths.
+    static func sideProfile(scratch: String, reading folders: [String], readingFiles: [String], writingFiles: [String] = []) -> String {
+        let home = kernelPath(FileManager.default.homeDirectoryForCurrentUser.path)
+        func paths(_ kind: String, _ list: [String]) -> String { list.map { "(\(kind) \(quotedPath(kernelPath($0))))" }.joined(separator: " ") }
+        let closed = ["/Users", "/Volumes", "/Network", "/private/var/root", "/private/tmp", "/private/var/tmp", "/private/var/folders",
+                      "/Library/Application Support", "/Library/Keychains", home]
+        var lines = ["(version 1)", "(allow default)", "(deny file-write*)", "(deny file-read* \(paths("subpath", closed)))"]
+        // Where output is thrown away, which programs open whatever they're doing.
+        lines.append(#"(allow file-write* (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))"#)
+        if !folders.isEmpty { lines.append("(allow file-read* \(paths("subpath", folders)))") }
+        if !readingFiles.isEmpty { lines.append("(allow file-read* \(paths("literal", readingFiles)))") }
+        if !writingFiles.isEmpty { lines.append("(allow file-write* \(paths("literal", writingFiles)))") }
+        lines.append("(allow file-read* file-write* \(paths("subpath", [scratch])))")
+        lines.append("(allow file-read-metadata)")
+        lines += lampsOwn(home: home)
         return lines.joined(separator: "\n") + "\n"
     }
 

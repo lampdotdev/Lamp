@@ -1,3 +1,5 @@
+import Foundation
+
 /// Store and Provider use these same phrases that the bug reporter recognizes, so editing the
 /// user-facing wording cannot silently disconnect it from the privacy-safe report summaries.
 enum ErrorMessages {
@@ -20,6 +22,33 @@ enum ErrorMessages {
 
     /// A turn's change that was made but couldn't be saved as a version.
     static let versionNotSaved = "Lamp couldn't save this change as a version. It's in your app, and your next change will save both."
+
+    /// A connection that didn't work, whatever Lamp was fetching: callers look things up as well as download them.
+    static let noConnection = "Lamp couldn't connect. Check your internet connection and try again."
+
+    /// What to show for an error from setting something up: the plain sentence for a connection that didn't work, the
+    /// error's own words for anything else, and nil for a request that was cancelled, where there's nothing to report.
+    static func reason(_ error: Error) -> String? {
+        if isCancelled(error) { return nil }
+        return isConnectivity(error) ? noConnection : error.localizedDescription
+    }
+
+    /// Asked to stop, by Swift's cancellation or URLSession's.
+    static func isCancelled(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let error = error as NSError
+        return error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled
+    }
+
+    /// Only the errors that mean the far end wasn't reached. A bad certificate, a refused sign-in, a bad address, a
+    /// reply that can't be read or a file that can't be written are other problems, and a connection check won't fix them.
+    static func isConnectivity(_ error: Error) -> Bool {
+        let error = error as NSError
+        guard error.domain == NSURLErrorDomain else { return false }
+        return [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut, NSURLErrorCannotFindHost,
+                NSURLErrorCannotConnectToHost, NSURLErrorDNSLookupFailed, NSURLErrorInternationalRoamingOff,
+                NSURLErrorDataNotAllowed].contains(error.code)
+    }
 
     static func openFailed(_ detail: String) -> String { openFailedPrefix + detail }
     /// A build that found the app open, where the person chose to keep it open rather than lose what it held.

@@ -51,7 +51,7 @@ final class GameRegistrationTests: XCTestCase {
         """
 
     private static func game(lens: String = "60", start: String = "{ mode: 'title', level: 1, player: { x: 0, z: 0 } }",
-                             version: Int = 1, extra: String = "", body: String = "") -> String {
+                             version: Int = 1, extra: String = "", body: String = "", options: String = "") -> String {
         """
         import * as THREE from 'three';
         import { game, hot } from './lamp-game.js';
@@ -68,6 +68,7 @@ final class GameRegistrationTests: XCTestCase {
         \(body)
         game({
             renderer,
+            \(options)
             init() {
                 // A start that sets the camera as a game's would: the player's place wins at the first frame.
                 camera.position.set(0, 2, 8);
@@ -167,6 +168,57 @@ final class GameRegistrationTests: XCTestCase {
         XCTAssertEqual(pose, "[[11,12,13],35,[4,5,6]]")
         let turnedAfter = try await number("camera.quaternion.x")
         XCTAssertEqual(turnedAfter, turned)
+    }
+
+    /// Prompts as a game draws them: `onInput` before `game()`, as a page's own HUD can.
+    private static func promptsGame(_ options: String = "") -> String {
+        game(body: """
+            import { label, glyph, onInput, BUTTON, STICK } from './lamp-game.js';
+            window.prompt = () => label(STICK.LEFT);
+            window.right = () => label(STICK.RIGHT);
+            window.jump = () => label(BUTTON.A);
+            window.badge = () => glyph(STICK.LEFT).textContent;
+            window.onPad = () => label(STICK.LEFT, { kind: 'controller', family: 'xbox' });
+            onInput(() => { window.drawnPrompt = label(STICK.LEFT); });
+            """, options: options)
+    }
+
+    func testAGameThatAsksForTheArrowsIsToldTheArrows() async throws {
+        try await open(Self.promptsGame())
+        let pad = try await text("onPad()")
+        let wasd = try await text("prompt()")
+        XCTAssertEqual(wasd, "W A S D")
+
+        try await open(Self.promptsGame("keyboardHints: { leftStick: 'arrows' },"))
+        let arrows = try await text("prompt()"), badge = try await text("badge()"), drawn = try await text("drawnPrompt")
+        XCTAssertEqual(arrows, "↑ ← ↓ →")
+        XCTAssertEqual(badge, "↑←↓→")
+        XCTAssertEqual(drawn, "↑ ← ↓ →", "a prompt drawn before game() is drawn again")
+        // Only the left stick's keys, and only the keyboard's.
+        let right = try await text("right()"), jump = try await text("jump()"), onPad = try await text("onPad()")
+        XCTAssertEqual(right, "I J K L")
+        XCTAssertEqual(jump, "Space")
+        XCTAssertEqual(onPad, pad)
+    }
+
+    func testAPageThatReadsTheKeysItselfStillHasNoStickKeys() async throws {
+        try await open(Self.promptsGame("keyboard: false, keyboardHints: { leftStick: 'arrows' },"))
+        let prompt = try await value("prompt()")
+        XCTAssertTrue(prompt == nil || prompt is NSNull, "\(prompt ?? "nil")")
+    }
+
+    func testAChangeWhileItsPlayedTakesTheHintAndGivesItBack() async throws {
+        try await open(Self.promptsGame())
+        files.text["game.js"] = Self.promptsGame("keyboardHints: { leftStick: 'arrows' },")
+        try await change("game.js")
+        let arrows = try await text("prompt()"), drawn = try await text("drawnPrompt")
+        XCTAssertEqual(arrows, "↑ ← ↓ →")
+        XCTAssertEqual(drawn, "↑ ← ↓ →")
+
+        files.text["game.js"] = Self.promptsGame()
+        try await change("game.js")
+        let wasd = try await text("prompt()")
+        XCTAssertEqual(wasd, "W A S D")
     }
 
     func testAChangedCameraBuildGivesTheNewLensAtTheOldPose() async throws {
@@ -320,7 +372,7 @@ final class GameRegistrationTests: XCTestCase {
         try write("import { phaser } from './lamp-phaser.js'; const p = hot(import.meta).state('play', {});")
         XCTAssertEqual(GameKit.unregistered(project), [], "a 2D game's renderer and cameras are Phaser's")
 
-        // What the page said came through reaches a look in the hidden copy, where the agent mostly looks.
+        // What the page said came through reaches the agent's next look at the open game.
         _ = PageLive.shared.state(["place": "mac", "state": "report", "why": "kept renderer; reset state play"], for: project)
         XCTAssertTrue(GameKit.openGameNote(project).contains("reset state play"))
         // Another copy's run is that copy's: the note is about the game open on the Mac.
@@ -389,5 +441,230 @@ final class GameRegistrationTests: XCTestCase {
         try await until("the code ran again") { try await self.number("window.drawn") == 2 }
         let level = try await number("play.level")
         XCTAssertEqual(level, 7, "what the failed swap did to it doesn't come through")
+    }
+
+    /// A part declared as built from a file is built again in place when it changes, even where the module it's read
+    /// through would take the change by a swap; and a file the game uses that nothing read again waits for Reload.
+    func testAPartBuiltFromAChangedFileIsBuiltAgainAndWhatNothingReadWaits() async throws {
+        let paint = """
+            import { LANES } from './map.js';
+            import { hot } from './lamp-game.js';
+            export class Painter { lanes() { return LANES; } }
+            hot(import.meta).accept();
+            """
+        let body = """
+            import { Painter } from './paint.js';
+            window.paint = live.keep('roadPaint', () => ({ lanes: new Painter().lanes() }), { from: ['map.js'] });
+            window.readStreets = () => fetch('streets.json');
+            window.levels = live.keep('levels', () => ({ built: (window.levelBuilds = (window.levelBuilds || 0) + 1) }), { from: ['levels/'] });
+            """
+        try await open(Self.game(body: body), also: ["paint.js": paint, "map.js": "export const LANES = 2;", "streets.json": "[1]"])
+        try await Task.sleep(nanoseconds: 300_000_000)
+        try await wander()
+        files.text["map.js"] = "export const LANES = 3;"
+        try await js("window.__lampLive({ changed: ['map.js'], gen: 1, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 2 }
+        let lanes = try await number("window.paint.lanes")
+        XCTAssertEqual(lanes, 3, "the part was built again from the new file, not swapped around")
+        let report = try XCTUnwrap(live.told.last { $0["state"] as? String == "report" })
+        XCTAssertEqual((report["built"] as? [[String: Any]])?.compactMap { $0["part"] as? String }, ["roadPaint"])
+        let level = try await number("play.level")
+        XCTAssertEqual(level, 7, "the player's place is kept")
+
+        // A folder it's built from: any file in it.
+        try await js("window.__lampLive({ changed: ['levels/one.json'], gen: 2, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 3 }
+        let levelBuilds = try await number("window.levelBuilds")
+        XCTAssertEqual(levelBuilds, 2, "built once at the start, and again for the file in its folder only")
+
+        try await js("window.readStreets()")
+        files.text["streets.json"] = "[2]"
+        try await js("window.__lampLive({ changed: ['streets.json'], gen: 3, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 4 }
+        try await until("the report came") { self.live.told.last { $0["state"] as? String == "report" }?["gen"] as? Int == 3 }
+        let waits = live.told.last { $0["state"] as? String == "report" }?["waits"] as? [String]
+        XCTAssertEqual(waits, ["streets.json"], "the game uses it, and nothing read it again")
+    }
+
+    /// A part built in the background: the code runs again at once with the part the game has, the new one is built
+    /// between frames and goes in once built, and the reports say what was still being built, then how long it took.
+    func testAPartBuiltInTheBackgroundLetsTheGamePlayOnThenGoesIn() async throws {
+        let body = """
+            import { SEED } from './map.js';
+            window.city = live.keep('city', function* () {
+                for (let i = 0; i < 40; i++) { const t = performance.now(); while (performance.now() - t < 5) {} yield; }
+                return { seed: SEED };
+            }, { from: ['map.js'], background: true });
+            """
+        try await open(Self.game(body: body), also: ["map.js": "export const SEED = 1;"])
+        let built = try await number("window.city.seed")
+        XCTAssertEqual(built, 1, "built whole as the game starts")
+        try await wander()
+        files.text["map.js"] = "export const SEED = 2;"
+        try await js("window.__lampLive({ changed: ['map.js'], gen: 1, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.drawn") == 2 }
+        let meanwhile = try await number("window.city.seed")
+        XCTAssertEqual(meanwhile, 1, "the game goes on with the part it has while the new one is built")
+        let first = try XCTUnwrap(live.told.last { $0["state"] as? String == "report" })
+        let part = try XCTUnwrap((first["built"] as? [[String: Any]])?.first)
+        XCTAssertEqual(part["background"] as? Bool, true)
+        XCTAssertNil(part["ms"], "still being built")
+        XCTAssertNotNil(first["frozen"])
+
+        try await until("the new part went in", seconds: 20) {
+            let seed = try await self.number("window.city.seed")
+            return seed == 2
+        }
+        try await until("its report came") { self.live.told.last { $0["state"] as? String == "report" }?["later"] as? Bool == true }
+        let later = try XCTUnwrap(live.told.last { $0["state"] as? String == "report" })
+        let ms = try XCTUnwrap((later["built"] as? [[String: Any]])?.first?["ms"] as? Int)
+        XCTAssertGreaterThanOrEqual(ms, 200, "it took its time between frames")
+        let level = try await number("play.level")
+        XCTAssertEqual(level, 7, "the player's place is kept through both")
+    }
+
+    // MARK: A file taken away
+
+    /// Tells the page a change that took files away, as `LampPageLive` does, and waits for its first word.
+    private func removal(_ removed: [String], changed: [String]? = nil, gen: Int) async throws -> String {
+        for path in removed { files.text[path] = nil }
+        let changes = try String(decoding: JSONSerialization.data(withJSONObject: changed ?? removed), as: UTF8.self)
+        let gone = try String(decoding: JSONSerialization.data(withJSONObject: removed), as: UTF8.self)
+        try await js("window.__lampLive({ changed: \(changes), removed: \(gone), gen: \(gen), why: 'test' })")
+        var said = ""
+        try await until("the page said what it did") {
+            said = self.live.told.last { ($0["gen"] as? Int) == gen && ["swapped", "rerun", "held", "reloading"].contains($0["state"] as? String) }?["state"] as? String ?? ""
+            return !said.isEmpty
+        }
+        return said
+    }
+
+    /// A stray file whose name is the end of a module's: nothing uses it, so taking it away goes in with nothing run.
+    func testTakingAwayAnUnusedFileNamedLikeAModuleRunsNothingAndHoldsNothing() async throws {
+        try await open(Self.game(body: "import('./world.js');"), also: ["world.js": "export const world = 1;", "orld.js": ""])
+        try await wander()
+        let run = try await number("window.run")
+        let said = try await removal(["orld.js"], gen: 1)
+        XCTAssertEqual(said, "swapped")
+        let after = try await number("window.run")
+        XCTAssertEqual(after, run, "the game's code didn't run again")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let waits = live.told.compactMap { $0["waits"] as? [String] }.flatMap { $0 }
+        XCTAssertEqual(waits, [], "world.js doesn't name orld.js")
+        XCTAssertFalse(live.told.contains { $0["state"] as? String == "report" }, "no run, so nothing to report")
+    }
+
+    /// What the run of a change said waits for Reload, once it has said.
+    private func waits(gen: Int) async throws -> [String]? {
+        try await until("the report for change \(gen) came") { self.live.told.contains { $0["state"] as? String == "report" && $0["gen"] as? Int == gen } }
+        return live.told.last { $0["state"] as? String == "report" && $0["gen"] as? Int == gen }?["waits"] as? [String]
+    }
+
+    /// A module the game imports can't go quietly: with nothing to load, its page opens again.
+    func testTakingAwayAnImportedModuleIsNoQuietSwap() async throws {
+        try await open(Self.game(body: "import { helper } from './helper.js'; window.helper = helper;"), also: ["helper.js": "export const helper = 1;"])
+        try await wander()
+        let said = try await removal(["helper.js"], gen: 1)
+        XCTAssertEqual(said, "rerun")
+        try await until("the page opened again") { self.live.told.contains { $0["state"] as? String == "reloading" } }
+    }
+
+    /// A file the game fetched once, by a name built in its code, and keeps: what it read stays in the running game, so
+    /// the run says the file waits for Reload, taken away or changed.
+    func testAFileTheGameReadOnceWaitsForReload() async throws {
+        let body = """
+            window.ready = window.ready || fetch(['lev', 'els.json'].join('')).then(r => r.text()).then(text => { window.readText = text; });
+            """
+        try await open(Self.game(body: body), also: ["levels.json": "[1]", "more.json": "[1]"])
+        try await until("the game read it") { try await self.text("window.readText || ''") == "[1]" }
+        let said = try await removal(["levels.json"], gen: 1)
+        XCTAssertEqual(said, "rerun")
+        let gone = try await waits(gen: 1)
+        XCTAssertEqual(gone, ["levels.json"])
+    }
+
+    /// A worker started by a name built in its code, once: taken away, it's a use the run says waits.
+    func testAWorkerTheGameStartedOnceWaitsForReload() async throws {
+        try await open(Self.game(body: "window.worker = window.worker || new Worker(['job', 's.js'].join(''));"), also: ["jobs.js": ""])
+        let said = try await removal(["jobs.js"], gen: 1)
+        XCTAssertEqual(said, "rerun")
+        let gone = try await waits(gen: 1)
+        XCTAssertEqual(gone, ["jobs.js"])
+    }
+
+    /// What a worker reads for itself the page never sees, so with one started no file is known to be unused.
+    func testAFileOnlyAWorkerMayReadIsNoQuietSwap() async throws {
+        try await open(Self.game(body: "window.worker = window.worker || new Worker(URL.createObjectURL(new Blob([''], { type: 'text/javascript' })));"),
+                       also: ["data.bin": "1"])
+        let said = try await removal(["data.bin"], gen: 1)
+        XCTAssertEqual(said, "rerun", "ran the code again rather than saying the file went in with nothing to do")
+        _ = try await waits(gen: 1)
+    }
+
+    /// Named only as a whole name counts: `world.js` isn't `orld.js`, and `orld.js` in a comment is.
+    func testANameInTheCodeHoldsWhenItIsTheWholeName() async throws {
+        try await open(Self.game(body: "// the old map, orld.js, went away"), also: ["orld.js": ""])
+        try await wander()
+        let said = try await removal(["orld.js"], gen: 1)
+        XCTAssertEqual(said, "rerun", "Lamp can't tell a comment from a use, so it doesn't call this one unused")
+        let gone = try await waits(gen: 1)
+        XCTAssertEqual(gone, ["orld.js"])
+    }
+
+    /// A name added by a change that ran the code again counts: the code as it's served, not as it first loaded.
+    func testANameAddedByAnEarlierChangeHolds() async throws {
+        try await open(also: ["spare.json": "[]"])
+        try await wander()
+        files.text["game.js"] = "// spare.json is spare.\n" + Self.game()
+        try await change("game.js")
+        let said = try await removal(["spare.json"], gen: 9)
+        XCTAssertEqual(said, "rerun", "the code running now names it")
+        let gone = try await waits(gen: 9)
+        XCTAssertEqual(gone, ["spare.json"])
+    }
+
+    /// An edit and an unused file taken away together: the edit goes in, and the file doesn't hold anything back.
+    func testAnEditAndAnUnusedFileTakenAwayTogether() async throws {
+        try await open(Self.game(body: "import('./world.js');"), also: ["world.js": "export const world = 1;", "orld.js": ""])
+        try await wander()
+        files.text["rocks.js"] = "export const rocks = 2;"
+        let said = try await removal(["orld.js"], changed: ["rocks.js", "orld.js"], gen: 1)
+        XCTAssertEqual(said, "rerun")
+        try await until("the new code has drawn") { try await self.number("window.rocks") == 2 }
+        try await until("the report came") { self.live.told.contains { $0["state"] as? String == "report" } }
+        let waits = live.told.last { $0["state"] as? String == "report" }?["waits"] as? [String]
+        XCTAssertEqual(waits, [])
+    }
+
+    /// A file taken away while a change waits for a pause stays out of what waits, and that change still goes in.
+    func testAFileTakenAwayJoinsAChangeThatWaits() async throws {
+        try await open(Self.game(body: "window.busy = true; import('./world.js');").replacingOccurrences(of: "frame() {", with: "busy: () => window.busy, frame() {"),
+                       also: ["world.js": "export const world = 1;", "orld.js": ""])
+        try await wander()
+        files.text["rocks.js"] = "export const rocks = 2;"
+        try await js("window.__lampLive({ changed: ['rocks.js'], gen: 1, why: 'test' })")
+        try await until("the change waits") { self.live.told.contains { $0["state"] as? String == "held" } }
+        let said = try await removal(["orld.js"], gen: 2)
+        XCTAssertEqual(said, "held", "what waited still waits")
+        try await js("window.busy = false; window.__lampLive({ changed: [], gen: 3, why: 'test' })")
+        try await until("the waiting change went in") { try await self.number("window.rocks") == 2 }
+        try await until("the report came") { self.live.told.contains { $0["state"] as? String == "report" } }
+        let waits = live.told.last { $0["state"] as? String == "report" }?["waits"] as? [String]
+        XCTAssertEqual(waits, [])
+    }
+
+    /// Taken away while a change waits, then made again: it's a changed file again, not a removal.
+    func testAFileMadeAgainWhileItsRemovalWaitsIsAChange() async throws {
+        try await open(Self.game(body: "window.busy = true;").replacingOccurrences(of: "frame() {", with: "busy: () => window.busy, frame() {"), also: ["rocks2.js": ""])
+        try await wander()
+        files.text["rocks.js"] = "export const rocks = 2;"
+        try await js("window.__lampLive({ changed: ['rocks.js'], gen: 1, why: 'test' })")
+        try await until("the change waits") { self.live.told.contains { $0["state"] as? String == "held" } }
+        _ = try await removal(["rocks2.js"], gen: 2)
+        files.text["rocks2.js"] = "export const back = 1;"
+        try await js("window.busy = false; window.__lampLive({ changed: ['rocks2.js'], gen: 3, why: 'test' })")
+        try await until("the code ran again") { try await self.number("window.rocks") == 2 }
+        try await until("the report came") { self.live.told.contains { $0["state"] as? String == "report" } }
+        XCTAssertFalse(live.told.contains { $0["state"] as? String == "swapped" }, "it went in as a change, not as nothing")
     }
 }

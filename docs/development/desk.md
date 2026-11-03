@@ -38,17 +38,17 @@ click goes the same way, `Store.openChat`); a wish that opens no Mac window is u
 panel, beside the simulator, the emulator or Lamp's preview that shows it, or on its own where nothing on this Mac does
 (`ChatPanel`, "The chat's one screen" in the chat guide); one still coming true, or waiting on an answer, opens its
 chat. With VoiceOver a row is picked as a click picks it, and opened by its Open action. A right-click has Open and then what ⋯ has
-(`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over and Send Changes Back… where they apply, Wish Info
-(its chat, on its info panel: `SidebarServer.show`), then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
+(`DeskWishMenu`): Duplicate…, New Copy of the Original, Update from the Original, Start Over, Send Changes Back… and Check for Updates…
+(Review Update… once there's one, for a wish that follows a repository on GitHub: `DeskEntry.followsRepository`) where they apply, then the wish's own menu (`AppMenu`: Rename…, Delete… and the rest).
 A row under Starter apps has no ⋯ (above), and its side panel offers Open and Remix it; the arrows move the pick through
-both sections, and File → Duplicate… acts on no wish while a starter not on the desk yet is picked.
+both sections, and File's commands act on no wish while a starter not on the desk yet is picked.
 Open isn't behind ⋯: the button beside it opens the wish, and an item first under the pointer would take a click meant
 for the menu. Dragged out
 of Lamp a row is the wish's shared file, or the app itself in the Dock or the Applications folder (`WishDrag`). A dot
 beside a name says it's ready. The one wait the list shows is a starter opened before Lamp has built it, since nothing
 else on screen says the click did anything until it opens by itself (`openWhenReady`): "Getting it ready…" takes its
 line's place, a sheen crossing it so the wait never looks frozen (`DeskStatusLine`), still where the person asked for
-less motion. A wish being made or changed shows that in its chat, never on the desk. When a wish is used where nothing
+less motion. A wish being made or changed shows that in its chat, never on the desk. Being changed doesn't stop it being used: Open, and the chat's Play, open the installed Mac copy as it is while a turn holds the wish, with no build, and the turn's changes go into it live (`Store.use`, `Store.open`); only a wish with nothing installed yet shows its chat, and a question waiting for the person does too. When a wish is used where nothing
 comes forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a large
 translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in
 front (⌘[).
@@ -64,8 +64,7 @@ or a wish opened from GitHub or a file is already the person's own copy, so the 
 
 A wish that arrived from somewhere and has been changed since (`Store.original(toStartAgain:)`: its files differ from
 the last version that arrived, "From Lamp" or what an update brought, Lamp's own files aside) says "Changed from the
-original" in the panel, with Start Over beside it, and the same in its chat's Wish Info, under Credits (`AppInfoView.
-creditsSection`, read for the chat by `SidebarServer.changedFromOriginal`); the same is Start Over in its menu
+original" in the panel, with Start Over beside it; the same is Start Over in its menu
 (`Store.startAgain`), which restores that version as a new one, so Undo brings the changes back. It starts
 the conversation again too, since one about a game that's gone would steer the next request: every engine's
 conversation is set aside (`Conversation.setAside`, "How big a conversation grows" in the engines guide), so the next
@@ -79,13 +78,22 @@ wish's chat as the chat's Share menu does. A remix link from the site lands the 
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which
-open the starter itself), and the shuffle mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
-wish's menu and File → Duplicate…, which acts on the row picked while the desk is in front and otherwise on the chat in
-front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
+open the starter itself), and the wand mark in every app, which opens its chat. **Duplicate…** (`Store.remix`, in the
+wish's menu and File → Duplicate…, which, like Copy Wish File and Name This Version…, acts on the row picked while the
+desk is in front and otherwise on the chat in front, `Store.commandTarget`) is for making something else of it while keeping it as it is. It makes a new copy, "<name> Remix", with its code, history and icon on another background, and a link back
 to the original at the end of its chain, then builds it with its chat beside it; the original stays as it was. From the
 panel's menu, what's in the box goes as the copy's first request. A remix made with no change asked opens its chat on
 the card its starter's chat opens on (the original's starter.md kept as `.lamp/starter-suggestions.md`,
 `Starters.suggestions`), never as a starter itself: its icon is painted and the desk counts it as the person's.
+
+Previous Versions… in the wish's menu brings up its chat on the Versions panel (`SidebarServer.showVersions`), the
+same panel the chat's Versions button shows, never a copy of it on the desk: the chat comes up where it is now
+(`Store.showChat`), so a wish with no app running shows it in Lamp's panel and opens nothing, and going back to a version
+there rebuilds the app as it does from the chat. It's listed only for a wish with versions to look back on
+(`DeskEntry.hasVersions`, as the chat's Versions button reads it): that button is the panel's only way back to the chat.
+
+Name This Version… can be chosen once that wish has a version. Knowing takes git, which doesn't run while a menu is
+drawn: `MenuVersions` reads it as the commands' wish or its versions change, and the menu reads the answer.
 
 **Making a new wish.** It's typed in the bar over the list, or said with the talk button beside it (`TalkButton`, moving
 with `Dictation.level`); either way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so
@@ -101,10 +109,12 @@ is for and Settings is no place to find that out. Until Lamp has looked on the n
 invitation to, whose Find My Devices is the look macOS asks about; from then on the desk looks each time it's shown or
 Lamp comes to the front, at most once a minute (`lookForDevices`), and the list is this Mac, then the person's own, then
 what was only found that Lamp makes apps for or controls, each kind in the order people make most for
-(`DeskDevices.ranked`), then "N More" for what Lamp could only learn (a server, an appliance; it opens Settings → Your
-Devices, where the whole network is) and Add a Device (`AddDeviceSheet`). A green dot is ready, and a click puts "for my
-<device>" in the bar; "Set up" and an amber dot is a step to take, and a click takes it (`DeviceNextStep.takeFurther`,
-Settings where Lamp can't from here). A device's name is short and plain (`DeskDevices.label`: a found one by its model,
+(`DeskDevices.ranked`), then "N More", which opens in place the rest of the network: what Lamp could only learn (a
+server, an appliance), then every other host, a click setting one up, opened with a look over the whole network
+(`refreshDevices(everything:)`); then Add a Device (`AddDeviceSheet`). Settings has no list of devices: this is the one.
+A green dot is ready, and a click puts "for my <device>" in the bar; "Set up" and an amber dot is a step to take, and a
+click takes it (`DeviceNextStep.takeFurther`, Settings → Building where Lamp can't from here: a phone's Apple team). A right-click
+has Set Up… (`DeskDevices.offersSetUp`), and Reconnect… and Forget… for a device Lamp set up itself. A device's name is short and plain (`DeskDevices.label`: a found one by its model,
 never an address or a serial); what else is known is in its tip a moment after the pointer comes onto it (`DeviceTip`),
 never its address. macOS refusing the network is `LocalNetworkRefused` under the list.
 
@@ -152,7 +162,8 @@ desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
 (its design), the icon drawn from it in icon/ with its artwork, drawn once the way an app's is: layers of glass
 (icon/art.json, `GlassIcons`) or, for a game, a painting (icon/art.png). The artwork goes where an app keeps its icon's,
-since Lamp draws none for a starter on the person's Mac, which would offer to set up pictures in its chat;
+since Lamp draws none for a starter's own design on the person's Mac, which would offer to set up pictures in its
+chat (one whose icon.json changes, as a remix's does, gets its artwork drawn like any app's: `Starters.keepsShippedDesign`);
 `StarterIconsTests` draws the icons again, with Xcode set up for the Liquid Glass one, and the artwork again with
 `LAMP_PAINT_STARTER_ART=1` and a key), so the desk
 shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`),
@@ -186,7 +197,7 @@ What a starter's repository shows is the starter's own: the GitHub description i
 (`GitHubRepo.readme` with a `Showcase`) opens with the icon from `.github/`, the description, the buttons (Play in your browser for a game, Open
 in Lamp, "Generated apps"), its reel's loop where it has one and its preview otherwise, and "Ideas to try" titled with starter.md's `offer` and listing its tweaks, each a link
 that opens Lamp on a copy with that request. A game whose page is the whole game also gets a page
-anyone plays in a browser (`StarterRepos.stagePage`: Publish's page with the credit bar and the tweaks in its Remix
+anyone plays in a browser (`StarterRepos.stagePage`: the page Put on GitHub puts up for a game, `Publish.copyPage`, with the credit bar and the tweaks in its Remix
 panel, which names the starter so a remix starts from a fresh copy of it, "Remixing a published page" in the
 wishes guide, on the repository's `gh-pages` branch for GitHub Pages, at lampdotdev.github.io/<folder>), which the README
 links and the repository's website points to; any other starter's website is its remix link on lamp.dev. `scripts/publish-starters.sh` refreshes all of that: it clones each
@@ -201,9 +212,10 @@ can't fetch stops it, so nothing older is ever pushed over a repository's latest
 the starter.md files it moved.
 A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame
 given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's three.js with its node materials), so
-the agent looks at it and plays it in the game preview like any game, and it can be played on an iPhone, an iPad,
-Android or the Xbox too. It builds its whole city before the first frame, about half a minute out of sight, which is
-why the preview waits up to two minutes and keeps a page in no window running (`WebGamePreview`). Its credits.json
+the agent looks at it and plays it in its window like any game, and it can be played on an iPhone, an iPad,
+Android or the Xbox too. It builds its whole city before the first frame, half a minute to a minute and a half, so a
+look that has to open it waits for that, and a change to it goes in where the player is rather than starting it
+again. Its credits.json
 names Slop New York at the commit the starter is on, with its license file, and the map, terrain and city data it uses;
 a starter built on someone else's work ships one, and bringing in a newer upstream updates its commit in the same
 change. Every starter's copy starts its wish's chain with the starter itself (`Starters.copy`, "Credit" in the wishes
@@ -232,11 +244,13 @@ credits and starter.md move to the pin, and it's built again out of sight with t
 prebuilt copy when it's the starter's (`PrebuiltStarters`), so a release costs no build for an unchanged copy. One open
 or busy then, or one whose starter couldn't be fetched, waits for the next launch. A changed copy isn't touched: its chat gets a card, once for each newer
 starter (`NewerOriginalLine`, "A newer original is available" with Update), the panel says the same with Update beside
-it, and its menu has Update from the Original (`Store.updateFromOriginal`), which merges the starter this Lamp pins (fetched first)
+it, and its menu has Update from the Original (`Store.updateFromOriginal`; asked for while the wish is busy, it waits for
+it and the chat says so, never an alert), which merges the starter this Lamp pins (fetched first)
 into the person's changes as an update from GitHub merges (`Store.mergeUpdate`, `Upstream`: three ways, against the
 commit the copy has, fetched when it can be and else the version it began with), the agent settling only what both
-sides changed. Wish Info's Check for Updates… compares a starter's copy with the pin, never GitHub's latest
-(`Store.followsShippedStarter`). Start Over on a starter's copy goes back to the version it arrived as and then on to
+sides changed. A starter's copy is compared with the pin, never GitHub's latest (`Store.followsShippedStarter`), so it has
+no Check for Updates…: a wish from GitHub has it, and the side panel says what was last heard of its updates with the
+button that checks or reviews them. Start Over on a starter's copy goes back to the version it arrived as and then on to
 the starter as this Lamp ships it (`Starters.original`), behind or merged up to it since, in the same hold and as one
 version (`Store.startOverBegun`), so it lands on the current starter with the chat started over ("Started over from the latest original"), one Undo away; a wish from
 GitHub or a shared file still goes back to what arrived.
@@ -250,7 +264,8 @@ fetched or built says "Getting it ready…" (`fetchingStarters`, `openWhenReady`
 **A starter added or changed in how it looks gets a new preview in the same change** (`StartersTests` fails
 without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,
 and once its window has settled its `.lamp/runtime/preview.png` is the picture (the app writes it at each launch,
-without Lamp's chat). Shrink it to at most 800 px on the long side (`sips -Z 800`) and put it at `.github/preview.png`
+without Lamp's chat, and takes it again every few seconds for up to a minute while the window is all one color; a game
+waits until its page says it's playing, past its loading screen, or two minutes). Shrink it to at most 800 px on the long side (`sips -Z 800`) and put it at `.github/preview.png`
 in the starter's repository, then move the pin (below). Look at it before committing: example content only, nothing
 from the Mac it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured
 with its panel open.
@@ -315,3 +330,50 @@ Support/Lamp Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp); its rep
 5. Run `scripts/check-starters.sh <folder>` and `swift test --filter StartersTests`, update the count of wishes above,
    and commit starter.md with the change; look at the repository's README on GitHub.
 
+## Mixing copies
+
+An experiment, only in Lamp Dev (Settings → Experimental, `Mix.switchKey`): a button beside Settings at the desk's foot
+opens a window of its own (`MixWindow.swift`, the one window besides the desk while it's an experiment) where someone
+else's copy of a wish is dropped. Lamp finds your copy by the file's identity, whatever its layout (an import, which
+would replace the app at its root, passes over a wish whose apps are in folders of their own); a remix has an identity of its own, so
+its file finds the wish it was remixed from by its chain, and the original's file a remix of it made here
+(`Mix.copy(of:among:)`). Then it saves what's
+unsaved, and lines up every change either of you made since the copies last met on one timeline by date, each a switch: lit when it's kept, dimmed when it's left out, across the window's width. A thumb on
+its owner's side (yours left, theirs right) does what a click does: up to keep it, turned over to leave it out. A
+change's time shows while Option is held.
+Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`), as opening it would. The window's head
+names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
+
+A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
+that carries its versions and finds a wish here it met at a version both have (`Mix.copy`, `Mix.meeting`) gets Mix…
+in place of Update on its review, waiting while another mix is saved
+(`PendingImport.mixFile`), beside Keep Both: Mix… closes the review and opens the window on that file
+(`MixModel.shared`).
+
+- **What travels.** With the switch on, a shared file carries History/ (`MixHistory`): the sender's versions since
+  the copies met (a copy's since it arrived, naming the version it was given; an original's since it was first
+  shared or first remixed, `.lamp/mix-start`; a remix made on this Mac's since it was remixed, its "Remix of …" version sent to
+  rebuild the rest on but never offered, so the original isn't renamed), each with its title, time and the files it
+  changed as they were after it. A run
+  longer than `MixHistory.limit` keeps its latest versions and carries the rest as one ("Earlier changes"), so it
+  always starts where the copies met. Only what a
+  shared file carries (`Upstream.isLeftOut`), through the same check for keys; a key in an old version or a history
+  too big to send drops History/, never the share.
+- **Where they met.** The run's base when it's in this copy's history (the file came back), else this copy's
+  arrival when the run starts at, or passes, the version it was given (`Mix.lineUp`). Copies with no such version
+  aren't mixed.
+- **Playing back.** What's in is replayed in date order from where they met with `git merge-tree -X theirs`: the
+  later change wins wherever two touch the same lines (`Mix.replay`), and the window marks an earlier change a later
+  one replaces in part. Lamp's own files stay as this copy has them.
+- **Saving.** On top of this copy's history, never rewriting it: one version leaving out what of yours was taken
+  out, tagged `Lamp-Left-Out: <commits>` and saved even when it changes no file, then one per change of theirs taken
+  in, under its title, with `Lamp-Mixed: <their commit>` so neither copy offers it again. The next lineup reads both:
+  a change left out shows out (and taking it back brings it in once), the version that left it out isn't a row, and a
+  change of theirs taken earlier sits at the time they made it, so it plays back in its place. Their credits join this copy's when anything of theirs is taken, as an update's do. The agent is
+  told (`Versions.rememberMixed`) and the app is built (`Store.mix`). A starter's offer of first changes leaves the chat
+  then, and isn't made again (`Mix.mixedMark`). Every git it runs works on commits, so a git
+  without `merge-tree -X` still mixes, a later change then winning whole files.
+
+Not yet: a review of the code in History/ beyond what the file's own review read (an early change of theirs taken
+without a later one brings code no review saw), Android's package rename, a wish of several apps (untried), and
+running their copy beside yours.

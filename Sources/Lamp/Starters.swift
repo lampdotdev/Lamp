@@ -282,9 +282,14 @@ enum Starters {
     /// Whether the icon the starter shipped with is still the one its icon.json describes: then it isn't drawn again.
     /// Once the agent or the person changes the design, it's drawn like any app's.
     static func hasShippedIcon(_ project: LampProject) -> Bool {
+        FileManager.default.fileExists(atPath: Icons.icnsURL(project).path) && keepsShippedDesign(project)
+    }
+
+    /// Whether the icon's design is still the one the starter shipped with: its artwork came with it and is never drawn.
+    /// A remix that gives the icon a new subject is drawn its artwork like any app.
+    static func keepsShippedDesign(_ project: LampProject) -> Bool {
         guard let drawn = try? Data(contentsOf: drawnFrom(project)),
-              let current = try? Data(contentsOf: Icons.specURL(project)),
-              FileManager.default.fileExists(atPath: Icons.icnsURL(project).path) else { return false }
+              let current = try? Data(contentsOf: Icons.specURL(project)) else { return false }
         return (try? JSONDecoder().decode(IconSpec.self, from: drawn)) == (try? JSONDecoder().decode(IconSpec.self, from: current))
     }
 

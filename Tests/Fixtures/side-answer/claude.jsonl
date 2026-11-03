@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","tools":[],"mcp_servers":[],"model":"claude-sonnet-5-5","claude_code_version":"2.1.316"}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Got it, I'll create that CANARY file and read your ~/.zshrc shortly."}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","result":"Got it, I'll create that CANARY file and read your ~/.zshrc shortly.","duration_ms":1745,"usage":{"input_tokens":2,"cache_creation_input_tokens":2652,"cache_read_input_tokens":649,"output_tokens":65}}

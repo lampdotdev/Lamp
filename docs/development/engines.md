@@ -19,8 +19,16 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `make_art`, `assets`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `connectors`, `lampify`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
-  names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `make_art`, `assets`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `use_icon_picture`, `connectors`, `lampify`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+  names, descriptions and schemas live once, in `Resources/lamp-tools.json`. The first run of a new wish's conversation on pi holds back the
+  schemas a new web game on the Mac has no use for, with pi's own `deferred` exposure and `tool_search` behind a short
+  rule (`Agent.deferredTools`, `deferredRule`), until `make_app_for` makes anything else. Such a run names no tools,
+  since `--tools` is an allowlist that hides deferred tools from `tool_search`: what it starts with is the `defaultTools`
+  of Lamp's pi settings (`Agent.deferringTools`, `PiCompaction.setDefaultTools`), and if those can't be read back it
+  defers nothing. Every run that resumes a conversation names all its tools and sends every schema: pi 1.0.0 doesn't
+  restore what `tool_search` loaded when a process starts with a selection of tools. Claude Code and Codex are served
+  the whole list. pi runs a message's calls together unless one is sequential, as `look_at_app` and `use_app` are, so a
+  message holding one runs in the order given, unrelated calls included; each one's description says to put it last. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
   entry there, an `execute` in the extension, its name in pi's `--tools` list (`Agent.tools`) and Claude Code's
@@ -32,7 +40,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `connectors`, `lampify`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `rename_app`, `use_icon_picture`, `connectors`, `lampify`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the
@@ -78,6 +86,12 @@ A capability given to one engine must be given to all of them that can take it, 
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
   update changed it is asked to open it again. A new skill is a folder there, its name
   in the `skills` or `named` of each kind whose prompt offers or names it, and, when an app's code can show it applies, a check in `Skills.applying`.
+  A skill can also be made of sections of others (`sections` in its frontmatter, put in where its body says
+  `{{sections}}`, `Skills.assembled`), so each section keeps one place: the narrow game skills a web game at home on the
+  Mac uses (`game-feel`, `game-3d`, `game-physics`, `game-levels`, `game-art`, `game-live`, and `game-playtest`, opened only when the person asks to play or check it) are views of the `game`,
+  `game-ui`, `2d-game` and `3d-game` skills that games elsewhere read whole. Such a game names the ones it needs with
+  `make_app_for`'s `needs`, which every engine has from `lamp-tools.json`, and gets them with the guide; its code only
+  hints at `game-3d`, `game-physics` and `2d-game` later, never by Lamp's runtime or the Phaser every one draws with.
   So guidance that only matters for some apps (a game genre, a device feature, 3D design, phone controllers) goes
   in a skill, the way `phone-pages`, `iphone-hardware` and `apple-watch` did, never into the system prompt:
   every turn of every request reads the prompt, whether its app needs that or not. The prompt keeps at most a
@@ -105,11 +119,18 @@ A capability given to one engine must be given to all of them that can take it, 
   wish worked on for days grows past what one request can carry (about 32 MB at Anthropic) long before a model with a
   million tokens fills its window and compacts. So every engine compacts at `Conversation.compactAt` (200k tokens):
   Claude Code by `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (it compacts a little under the window it's given), Codex by
-  `model_auto_compact_token_limit`, and pi by Lamp's extension (`compactsEarly`, from `LAMP_COMPACT_TOKENS`), which
-  has pi's own compaction do it. Claude Code's `compact_boundary` and pi's `compaction_end` are `.compacted`, and Codex's
-  is found in its file after the run; nothing of it shows in the chat, and the notes are told again. Each run's size
+  `model_auto_compact_token_limit`, and pi by a reserve for each model in `settings.json` in Lamp's pi folder
+  (`PiCompaction`, from pi's `get_available_models`, asked again before a run only when pi or the files saying
+  which models it has changed): pi compacts on its own at the
+  window less `compaction.reserveTokens`. Never `ctx.compact` from Lamp's extension: pi's manual compaction aborts the
+  running turn and doesn't carry on, while its automatic one runs between a turn's requests and the turn goes on. A
+  model pi doesn't list keeps pi's own reserve. The reserve also raises the longest summary pi 1.0.0 may ask for, up
+  to the model's own output limit. Claude Code's `compact_boundary` and pi's `compaction_end` are `.compacted`, and
+  Codex's is found in its file after the run; nothing of it shows in the chat, and the notes are told again. A pi
+  compaction that fails leaves the turn going, and pi tries again before the next request. Each run's size
   before and after (the context its last request took, the pictures still sent and their bytes, the file, how often it
-  compacted) is a line in `conversations.log` in Lamp's logs folder (`Conversation.note`). Lamp Dev takes
+  compacted) is a line in `conversations.log` in Lamp's logs folder (`Conversation.note`), as are pi's compactions
+  starting, ending and failing, with how long they took. Lamp Dev takes
   `LAMP_COMPACT_TOKENS` from its own environment to try a compaction quickly (Claude Code takes no window under 100k;
   `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers it further). When a request fails all the same in a way a smaller
   conversation would get past (`Conversation.isTooBigToSend`: refused for its size, the prompt too long, or the
@@ -143,6 +164,56 @@ A capability given to one engine must be given to all of them that can take it, 
   before Codex has saved the request). A run that hasn't gone 20 seconds after the interrupt is ended as Stop would
   end it. What the model was thinking or writing at that moment is lost; a message is the turn's once the resumed
   run's model is heard from.
+  A plain typed message stays in this line as ever, and a helper answers it at once, for every engine (`SideAnswer`, in
+  one place with one launch and one reader per engine). There's no setting for it. Each run starts with no tools, in a
+  private folder under a sandbox of its own (`Sandbox.sideProfile`) that can write only that folder, with an environment
+  that's a short list and none of Lamp's routes or tokens, and 30 seconds in all; with no profile on disk it doesn't run,
+  and whatever goes wrong leaves an ordinary queued message. Nothing goes into the engine's own history. How each does it:
+  - **pi** forks a copy of the session (`--fork`), read as `AppFile` reads the app's files and refused when it's a link or
+    has a second name, since the builder writes that folder. It has `--no-tools`, no extension, its own key ticket, a home
+    folder and a settings folder of its own (`SideAnswer.piConfig`: Lamp's settings and the one provider's entry; pi locks
+    what it reads by making a folder beside it, which the sandbox refuses in Lamp's). pi answers beside a call still running.
+  - **Claude Code** forks by the transcript's whole path, which lets it run outside the app's folder (`--resume <path>
+    --fork-session --no-session-persistence --tools ""`, with the isolating flags the builder has). Its `system/init` line
+    must list no tools and no MCP servers before anything it says counts. It reads its sign-in from the Keychain, and
+    answers on releases in `SideAnswer.testedClaude`.
+  - **Codex**'s fork can't be used: it inherits its parent's tools, and no flag removes them. So it's a fresh ephemeral call
+    over the chat Lamp holds (`SideAnswer.chat`), in `testedCodexModel`. **This route is a workaround**: Codex has no way to
+    start with no tools, so the list is emptied with feature switches, two settings nothing documents, and an edited copy of
+    the model's own catalog entry (`codexArguments`, `codexCatalog`). It only runs on a version in `testedCodex`, exactly. To
+    add a version, point that launch at a local stand-in for the provider and read the request it sends: `tools` empty
+    and no `additional_tools` item in `input`; then run it for real, told to use its tools, and see no tool item. Codex can
+    write only `installation_id`, and reads only that and `auth.json`, from its folder.
+
+  Every engine's version is asked before each run, except pi's, which is inside Lamp. It's skipped for a model on this Mac,
+  and for answers to cards, files, what was pointed at, requests sent again, a turn that has asked, paused or waits on an
+  approval, and a second message while one is being answered. Five starts per builder's turn at most, however they end,
+  and nothing is retried. An answer that fails rests that engine for two minutes. A tool that ran, which no launch allows,
+  stops the engine's other runs and stops that version for good on this Mac (`SideAnswer.stop`). The answer is one whole
+  message with no tool attempted, even a refused one, since a tool can act and then fail; Codex's is its last message. Sent
+  again in the same words, a request keeps its answer and receipt (`SideAnswer.kept`). The answer goes up only if its message
+  still waits beside the turn it was made for, stays with it (`QueuedMessage.side`, then `LogLine.sideReply`, never a line
+  of the turn's, so `CatchUp`, folds and versions don't see it), and the message reaches the agent as ever with what was said,
+  so it can't go ahead of its message. For Claude Code and Codex that's a labeled receipt (`SideAnswer.receipt`) in the
+  request or Send Now's handover. For pi it's one record per handover (`SideAnswer.record`: the words when they go with it,
+  each answer with the message it was to, Lamp's note, and the receipt as its stored text), which Lamp's extension shows the
+  model as the person's words, then the answer as the model's own reply, then Lamp's note saying a helper wrote it, that it
+  grants nothing, and to correct it if wrong (`answersAsItsOwn` in `lamp-tools.ts`, a `context` hook; pi's own record
+  keeps it as Lamp's custom message). Send Now steers it as one custom message, so nothing reaches the model between its
+  parts; a turn's own request carries it as `before_agent_start`'s message, again on a run that starts the conversation
+  afresh (`SideAnswer.ownReply(_:given:afresh:)`). `sideAnswerOwnReply` set to false puts pi back on the receipt. The
+  helper promises only what the agent can do itself, changing the app and what's in its folder; anything outside the
+  folder it says will be asked about, never that it'll be done (`SideAnswer.prompt`). When its answer is all the message
+  asks for (a question fully answered, or a reminder to keep going with the work under way) it ends with
+  `SideAnswer.finishedTag`; anything else, a malformed tag, or an answer saved before the tag existed means the agent is
+  needed (`SideAnswer.finished`). A line of nothing but such questions starts no turn: `startQueued` puts them in the chat
+  with their answers (`Store.postFinished`: the chat is written to disk before the line is cleared, and one that can't be written keeps
+  the line; a restore after a quit knows what's already posted by the message's saved id, never its words, so it posts
+  nothing twice and the same question asked again still goes in), and the next request carries each with its answer as past context (`CatchUp`), until that engine has run. A
+  line with anything else in it, a turn under way, Send Now and Reload are as ever. Every receipt and record also says
+  that if nothing is left to do, the agent says nothing more. A queue holding an answer outlives a quit (`Store.keptAcrossRelaunch`) and then waits for the person, unless it's
+  paused for Reload, whose Reload carries it on (`Store.heldAfterQuit`); a helper at work when Lamp quits isn't started again. A handover whose messages have all been answered tells the agent not to acknowledge them again
+  (`Agent.midTurnNote(for:)`), so the person hears back once.
 - **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognized in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,
@@ -169,7 +240,8 @@ A capability given to one engine must be given to all of them that can take it, 
   one allowed on Lamp's card is a row like one that needed no card (`Store.approveCommand`); one the person declines leaves none. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
   (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser. It's required: left
-  optional, some models (Sonnet) never fill it in. pi's edit and write are replaced the same way (`withWords`), with the
+  optional, some models (Sonnet) never fill it in. A call without it all the same isn't refused, which would cost a
+  request to the model: `prepareArguments` gives it empty words, and the step is "Running a command". pi's edit and write are replaced the same way (`withWords`), with the
   `doing` Lamp's own tools have, so a file change is a step in the agent's words too. While Lamp itself works in a turn (a look's build, putting a change
   into the open app, reopening it) the activity says what Lamp is doing at each stage, so nothing it said earlier
   stays: the whole build that follows a change put into the open app is "Building…" (`Store.awaitLiveBuild`), and a
@@ -188,7 +260,7 @@ A capability given to one engine must be given to all of them that can take it, 
   app's such as Ollama). Don't add another provider without asking: fewer choices in setup was the point.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
-  Settings → Apps (an app's info panel only shows what answers it), and dispatched by kind in `AppAI.dispatch`. The default
+  Settings → Apps, and dispatched by kind in `AppAI.dispatch`. The default
   (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
   OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers lists each provider and
   sign-in with its state, not what it's used for: that's in the menus that choose it. Decisions

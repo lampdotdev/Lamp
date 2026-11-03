@@ -1,6 +1,6 @@
 ---
 name: 2d-game
-description: 2D games - choosing 2D or 3D, and Phaser (a game of Lamp's game kind, played on the Mac, iPhone and iPad, Android, TVs and the Xbox) or SpriteKit (a Mac or iPhone app); scenes, the frame step, cameras, tilemaps, sprite sheets, physics, controls on every input, pixel art, TV safe areas, sound, saves, drawing the art, and keeping it smooth on the slowest place. Read before writing or changing a 2D game.
+description: 2D games - choosing 2D or 3D, and Phaser (a game of Lamp's game kind, played on the Mac, iPhone and iPad, Android, TVs and the Xbox) or SpriteKit (a Mac or iPhone app); scenes, the frame step, cameras, tilemaps, sprite sheets, physics, controls on every input, pixel art, TV safe areas, sound, saves, drawing the art, and keeping it smooth on the slowest place. Read before writing or changing a 2D game; a new web game on the Mac starts from the web-game guide instead, which says when to open this.
 ---
 
 # 2D games
@@ -34,7 +34,8 @@ app that should be playable on the person's Xbox), say why in a sentence and cha
 ## Phaser on Lamp's runtime
 
 Lamp's game kind runs Phaser 3 (3.90) through `Web/lamp-phaser.js`, over the runtime in `Web/lamp-game.js`. Read both,
-all of them, before writing the game: their comments are the interface. Lamp puts Phaser in `Web/phaser` once the page
+all of them, before writing the game: their comments are the interface (a new game at home on the Mac has the
+web-game guide instead). Lamp puts Phaser in `Web/phaser` once the page
 imports it.
 
 index.html keeps the scaffold's head (lamp.js, then the import map, whose `phaser` entry is
@@ -57,7 +58,7 @@ class Play extends Phaser.Scene {
     }
 }
 
-phaser({ scenes: [Boot, Title, Play], physics: { default: 'arcade', arcade: { gravity: { y: 2400 } } }, touch: BUTTON.A | BUTTON.B | BUTTON.MENU });
+phaser({ scenes: [Boot, Play], physics: { default: 'arcade', arcade: { gravity: { y: 2400 } } }, touch: BUTTON.A | BUTTON.B | BUTTON.MENU });
 ```
 
 As the game grows, each scene goes in a module of its own (`play.js` exporting `Play`, imported by game.js) that ends
@@ -70,8 +71,7 @@ in place from the snapshot, with a new Phaser game that loads its pictures again
 What Lamp has changed in Phaser, so its usual code works here:
 
 - **One frame loop, Lamp's.** Phaser's own loop is asleep; each of the runtime's frames steps Phaser once. Use a
-  scene's `update(time, delta)` (ms) and Phaser's timers and tweens freely: they all run on that one clock, which in
-  the preview is exactly 1/60 s a frame. Never requestAnimationFrame, setTimeout, Date or Math.random of your own:
+  scene's `update(time, delta)` (ms) and Phaser's timers and tweens freely: they all run on that one clock. Never requestAnimationFrame, setTimeout, Date or Math.random of your own:
   `random()` from lamp-game.js, or `Phaser.Math.RND`, which Lamp seeds from it.
 - **Input is the runtime's pad.** `pad()` is the first controller with the keyboard and the touch controls merged in
   (lx, ly, rx, ry with up positive; buttons as BUTTON bits in down, pressed and released). Phaser's keyboard and
@@ -84,18 +84,17 @@ What Lamp has changed in Phaser, so its usual code works here:
 - **The stage is 1920x1080**, fitted to the window or screen with black around it. Lay everything out in those units.
   The page is never resized to the window: don't listen for resize.
 - **Loading.** Load each scene's files in its `preload`, best all in a first Boot scene, and start play from `create`.
-  The preview waits for loading to finish, so a play is the same frames every time; on a device it takes what it takes,
-  so a scene that loads mid-game shows a loading line rather than nothing.
+  A scene that loads mid-game takes what it takes while the game goes on, so it shows a loading line rather than nothing.
 
 ### Structure
 
-- **Scenes**: one for each screen (Boot, which loads; Title; Play; GameOver); the game-ui skill says which screens a
-  game needs and how they look. A pause menu is a scene launched over
+- **Scenes**: Boot, which loads, then one for each screen of the flow the game picked (the game-ui skill), which is Play
+  alone for a game that opens on play. A pause menu is a scene launched over
   play (`this.scene.launch('pause'); this.scene.pause()`), which reads the pad itself and resumes play
   (`this.scene.resume('play'); this.scene.stop()`). Keep the game's state (score, lives, level) in a plain object
   passed in `this.scene.start('play', state)`, not spread over scenes.
 - **A map as a menu**, where the game-ui skill's example suits: the stops in an array, one sprite tweened between them
-  with `this.tweens.add` as the choice changes, `this.cameras.main.pan` or `zoomTo` from the title's view, and input
+  with `this.tweens.add` as the choice changes, `this.cameras.main.pan` or `zoomTo` from the view before it, and input
   ignored only for the tween's few frames so a fast press can go on to the next stop. The registered state keeps the stop and the
   camera's position, and `create` sets them directly from it.
 - **The step**: move by `delta`, and give Arcade physics the work of falling, sliding and colliding. Arcade steps its
@@ -133,7 +132,8 @@ Write the controls once as actions on the pad (CONTROLS above) and read the pad 
 controller, the keyboard and the touch controls as that one pad, so the game needs nothing else. Show how to play, and
 every prompt, from the actions: as HTML over the canvas inside `onInput(draw)`, with `glyph(CONTROLS.jump)` in the
 text ("Press [A] to jump", a badge as the player's input draws it), or in a Phaser Text with `label(CONTROLS.jump)`
-("A", "✕", "Space"), redrawn from `onInput`. Leave a line out where `label` is null. On a phone the touch controls show
+("A", "✕", "Space"), redrawn from `onInput`. Leave a line out where `label` is null. When the person asked for the arrow
+keys, `phaser({ keyboardHints: { leftStick: 'arrows' }, … })` makes the hints name them (the game skill, "Controls"). On a phone the touch controls show
 a left stick and the buttons `touch` names: give a platformer jump on A and perhaps one more, and keep the game whole
 with those few. Menus move with the stick or the d-pad, choose with A and go back with B; Menu pauses.
 
@@ -192,7 +192,7 @@ so a fresh start and a change's start are one path:
 ```js
 const play = hot(import.meta).state('play', {
     version: 1,
-    start: () => ({ scene: 'title', mode: 'ready', level: 1, score: 0, paused: false, player: { x: 120, y: 400 } }),
+    start: () => ({ scene: 'play', mode: 'ready', level: 1, score: 0, paused: false, player: { x: 120, y: 400 } }),
 });
 class Boot extends Phaser.Scene {
     constructor() { super('boot'); }
@@ -217,8 +217,7 @@ swap the texture), or the game's code runs again in place from the state.
 ### Keeping it smooth on the slowest place
 
 The slowest places are an Xbox One in Developer Mode, a cheap Android phone or TV stick and a Samsung or LG TV's
-browser; the request's device line names the slowest this game is played on and its budget, and the preview's stats
-count draws a frame (`look_at_app`). In 2D what costs is draws and filling the screen, rarely shapes:
+browser; the request's device line names the slowest this game is played on and its budget. In 2D what costs is draws and filling the screen, rarely shapes:
 
 - few textures: sprites that share one texture (an atlas, or the shapes made into one canvas texture) are drawn in
   one batch, and every change of texture starts another;
@@ -234,15 +233,17 @@ The log on a device says every ten seconds how many frames a second it gets ther
 
 ### Checking it
 
-`look_at_app` plays the game in the preview from its start and shows its last frame; `use_app` plays on with the
-controller (`stick`, `button`, `wait`), a picture after each, and every look plays the whole thing again with the same
-moves. Play it as the person would: start it, jump, die, win, pause, change a setting and come back to find it kept.
-Once it plays right, `look_at_app` with `on_device` where Try On points.
+`look_at_app` shows the game in its window on this Mac, where the person is in it, opening it when it's closed;
+`use_app` plays it there with Lamp's own controller (`stick`, `button`, `wait`), from wherever it is, a picture at the
+end (the game skill, "Playtesting"). When the person asks you to try, play or test it, play it as they would: start
+it, jump, die, win, pause, change a setting and come back to find it kept. Once it looks or plays right there,
+`look_at_app` with `on_device` looks at it in the preview of where Try On points (the iPhone or iPad simulator); the
+person's own iPhone, iPad or Xbox is only for their Play.
 
 ## SpriteKit in a Mac or iPhone app
 
 The game is an `SKScene` subclass for each screen, shown in SwiftUI with `SpriteView`, with SwiftUI over it for the
-score, menus and prompts (the game-ui skill says which screens a game needs and how they look):
+score, menus and prompts (the game-ui skill says how to choose a game's screens and how they look):
 
 ```swift
 import SwiftUI
@@ -294,5 +295,6 @@ the scene as `@Observable` (Observation), which `@State` holds as above; a scene
 - **Art**: as above: shapes in code (`SKShapeNode` drawn once into a texture with `view.texture(from:)`, since a shape
   node is costly to draw), pictures from `make_art` in Assets/ loaded once with `LampAssets.image("hero.png").map(SKTexture.init(image:))`.
 
-Look with `look_at_app` (with `motion` for what moves) and use it with `use_app` as the person would, keys and clicks;
-the game skill's "Keeping every frame smooth" holds here too.
+Look with `look_at_app` (with `motion` for what moves), and use it with `use_app`, keys and clicks, when the person
+asks you to try it: the game skill's "Playtesting" says what to say otherwise. Its "Keeping every frame smooth" holds
+here too.
