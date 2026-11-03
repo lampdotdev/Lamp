@@ -89,7 +89,8 @@ the card its starter's chat opens on (the original's starter.md kept as `.lamp/s
 Previous Versions… in the wish's menu brings up its chat on the Versions panel (`SidebarServer.showVersions`), the
 same panel the chat's Versions button shows, never a copy of it on the desk: the chat comes up where it is now
 (`Store.showChat`), so a wish with no app running shows it in Lamp's panel and opens nothing, and going back to a version
-there rebuilds the app as it does from the chat.
+there rebuilds the app as it does from the chat. It's listed only for a wish with versions to look back on
+(`DeskEntry.hasVersions`, as the chat's Versions button reads it): that button is the panel's only way back to the chat.
 
 Name This Version… can be chosen once that wish has a version. Knowing takes git, which doesn't run while a menu is
 drawn: `MenuVersions` reads it as the commands' wish or its versions change, and the menu reads the answer.
