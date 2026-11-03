@@ -973,6 +973,8 @@ final class Store: ObservableObject {
         // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
         guard begin(owner) != nil else { reloadWhenFree.insert(id); return }
         reloadWhenFree.remove(id)
+        // Pressed by Lamp while the person was away, or by them: recorded as Lamp presses it (`AwayReloads.toPress`).
+        let by: InstallFor = away.pressing.contains(id) ? .background : .person
         away.installs(id)
         Task {
             // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since); a
@@ -985,12 +987,12 @@ final class Store: ObservableObject {
                 } else {
                     var mac = project
                     mac.chosen = .mac
-                    _ = await install(mac, inFront: true, fresh: true, reload: true)
+                    _ = await install(mac, inFront: true, fresh: true, reload: true, for: by)
                     done = [project.id + "/mac"]
                 }
             }
             // Reload is the person's go-ahead: every other place they have the wish on gets the change too.
-            await reloadEverywhere(owner, done: done)
+            await reloadEverywhere(owner, done: done, for: by)
             // Lamp pressed it while the person was away, and the turn that left it is over (it ended asking for Reload,
             // paused, or the Reload was put off until its end): the agent goes on, as after a pause.
             if away.landed(id, stillWaits: waitingForReload(in: owner) != nil), away.carriesOn(id) { queueCarryOn(owner) }
@@ -1011,7 +1013,8 @@ final class Store: ObservableObject {
     /// when the change is in (`reloadWaiting`, `finish`), never after the person pressed Stop (`AwayReloads`).
     private func reloadIfAway() {
         // By the wish: a Stop or a question waiting in its chat holds its parts' Reloads too.
-        let waiting = Array(Set(projects.filter(Runtime.waitsForReload).map { Self.requestOwner(of: $0, among: projects).id }))
+        // Nor for a game that reaches devices none of which is allowed now: its Reload runs the game's new code.
+        let waiting = Array(Set(projects.filter { Runtime.waitsForReload($0) && mayRunChange(in: $0) }.map { Self.requestOwner(of: $0, among: projects).id }))
         for id in away.toPress(waiting: waiting, idle: AwayReloads.secondsSinceInput) {
             guard let project = projects.first(where: { $0.id == id }) else { continue }
             log(project, .status, "Reloaded \(project.name) while you were away")
@@ -8259,7 +8262,7 @@ final class Store: ObservableObject {
         var built = true
         if await build(there, inPlace: false) == nil {
             placesFailed[app.id + "/" + place.rawValue] = nil
-            let problem = turn.stopped ? nil : await install(there, inFront: false, saysReady: false, quiet: true)
+            let problem = turn.stopped ? nil : await install(there, inFront: false, saysReady: false, quiet: true, for: .background)
             // The record says what the place has, not what was built for it: a build that didn't reach it, a request having
             // stopped it before or during the install included, is taken back.
             if turn.stopped || problem != nil || turn.didNotOpen {
@@ -8344,7 +8347,7 @@ final class Store: ObservableObject {
     /// person's Lamp put it on (a TV, the Xbox, an iPhone or iPad, an Android device: `Runtime.placed`) is built for and
     /// given the change, an open copy opening again with it. `done` are the places already given it, as app/place. One
     /// line says where it went and which places couldn't be reached.
-    private func reloadEverywhere(_ wish: LampProject, done: Set<String>) async {
+    private func reloadEverywhere(_ wish: LampProject, done: Set<String>, for by: InstallFor) async {
         var reached: [String] = [], unreached: [String] = []
         if done.contains(where: { $0.hasSuffix("/mac") }) { reached.append("this Mac") }
         for app in apps(of: wish) {
@@ -8388,7 +8391,7 @@ final class Store: ObservableObject {
                 // what it shows; one the app is open on opens again with it, as Play would.
                 if !mine, !open { installsOnly.insert(app.id) }
                 let installed = problem == nil
-                    ? await install(there, inFront: !mine, fresh: true, reload: true, saysReady: false, quiet: mine && !open) : problem
+                    ? await install(there, inFront: !mine, fresh: true, reload: true, saysReady: false, quiet: mine && !open, for: by) : problem
                 installsOnly.remove(app.id)
                 if installed == nil {
                     reached.append(!mine && !open ? name + " (for next time)" : name)
@@ -9381,6 +9384,7 @@ final class Store: ObservableObject {
         reloadWhenFree.remove(project.id)
         // The wish's own app, or the part of it whose change waits.
         guard let current = waitingForReload(in: wish) else { away.dropped(project.id); return }   // a live change put it in
+        let by: InstallFor = away.pressing.contains(project.id) ? .background : .person
         away.installs(project.id)
         turn.reloading = true
         turn.applying = Task { [weak self] in
@@ -9389,8 +9393,8 @@ final class Store: ObservableObject {
             // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
             var mac = current
             mac.chosen = .mac
-            _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false)
-            await reloadEverywhere(wish, done: [current.id + "/mac"])
+            _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false, for: by)
+            await reloadEverywhere(wish, done: [current.id + "/mac"], for: by)
             // Lamp's, while the person was away, with the turn over meanwhile: the agent never heard the change is in.
             let lamps = away.landed(project.id, stillWaits: Runtime.waitsForReload(current))
             if lamps, turns[project.id] !== turn, away.carriesOn(project.id) { queueCarryOn(wish) }
@@ -9804,9 +9808,12 @@ final class Store: ObservableObject {
     /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
     /// `quiet` is a place Try On doesn't point at, kept current in the background (`updatePlaces`): nothing is opened
     /// that wasn't open, and a copy that is open takes the change as a request's would.
+    /// `by` is who it's for: the person's own Open App, Undo, restore or Reload, a request's agent (the default), or work
+    /// of Lamp's in the background (a place kept current, a Reload Lamp pressed while the person was away).
     private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
-                         early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
-        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
+                         early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false,
+                         for by: InstallFor = .request) async -> String? {
+        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet, for: by)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
         // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`). A game's
         // page still putting the change in keeps it until it's on screen (`pageShown`).
@@ -9850,20 +9857,24 @@ final class Store: ObservableObject {
         AppTransition.land(project)
     }
 
-    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {
+    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool, for by: InstallFor) async -> String? {
         guard exists(project), project.holdsApp else { return nil }
         // An update being prepared is built, never installed or opened, until the person has reviewed it.
         guard AppUpdates.mayOpen(wish(of: project)) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
-        // A request's install runs a game that reaches the person's devices, wherever it goes and whether it opens the
-        // game or opens it again (a look, a step, the turn's end): only with a device of theirs allowed, else it waits
-        // for their own Reload. Their Open App, Undo and Reload are theirs to do, and a quiet install that opens nothing
-        // runs nothing.
-        if !reload, owner?.request != nil, !(quiet && !isRunning(project)), !mayRunChange(in: project) {
+        // An install that isn't the person's own runs a game that reaches their devices, wherever it goes and whether it
+        // opens the game or opens it again (a look, a step, the turn's end, a place kept current, a Reload Lamp pressed
+        // while they were away), only with a device of theirs allowed; else it waits for their own Reload. A background
+        // install that puts the build in place for a copy closed on this Mac runs nothing (`DevicePermissions.installWaits`).
+        let onMac = !(project.onDevice || project.onTV || project.onAndroid || project.onIOS)
+        if DevicePermissions.installWaits(for: by, quiet: quiet, onMac: onMac, macRunning: isRunning(project),
+                                          needsDevice: DevicePermissions.openNeedsDevice(project),
+                                          allowed: !DevicePermissions.allowed(wish(of: project)).isEmpty) {
             holdForDevices(project, owner: owner)
-            return nil
+            // Work that records where the change went (a place kept current, Reload on every place) hears it didn't go.
+            return by == .request ? nil : DevicePermissions.heldForDevicesProblem
         }
         if project.onDevice {
             await prepareIcon(project)
@@ -11437,7 +11448,7 @@ final class Store: ObservableObject {
     /// app while it installs, so the fix waits for it to let go (`fixHeldCrash`, from `finish`).
     private func installReportingCrash(_ project: LampProject) async {
         let owner = turns[project.id]
-        guard let crash = await install(project), owner?.stopped != true else { return }
+        guard let crash = await install(project, for: .person), owner?.stopped != true else { return }
         // Only an app that opened and died is worth a fix; one that never opened says why in the chat already.
         if owner?.diedOnLaunch == true { crashesAfterRelease[project.id] = crash }
         // A TV, an Android device or another device that didn't take the app has said why already: it never opened, so

@@ -346,6 +346,29 @@ final class GameInWindowTests: XCTestCase {
         XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(reason: "Other Game lets phones on your Wi-Fi join as controllers, and talks to Lamp on your Mac.")))
     }
 
+    /// Which installs of a game that reaches the person's devices, with none allowed, wait for the person's own Reload.
+    /// Background work isn't the person's: a place kept current on Android with the Mac copy closed opens the copy
+    /// running there again, so it waits, as does a Reload Lamp pressed while they were away. Only a background install
+    /// that puts the build in place for a copy closed on this Mac runs nothing. Their own Open App, Undo or Reload never
+    /// waits, and nothing waits once a device is allowed or for a game that reaches none.
+    func testOnlyThePersonOrAClosedMacCopyRunsADeviceGameWithNoDeviceAllowed() {
+        func waits(_ by: InstallFor, quiet: Bool = false, onMac: Bool = true, macRunning: Bool = false,
+                   needsDevice: Bool = true, allowed: Bool = false) -> Bool {
+            DevicePermissions.installWaits(for: by, quiet: quiet, onMac: onMac, macRunning: macRunning, needsDevice: needsDevice, allowed: allowed)
+        }
+        XCTAssertTrue(waits(.background, quiet: true, onMac: false), "a place kept current on Android, its Mac copy closed")
+        XCTAssertTrue(waits(.background, quiet: true, onMac: false, macRunning: true))
+        XCTAssertTrue(waits(.background, quiet: true, macRunning: true), "a copy open on this Mac opens again")
+        XCTAssertTrue(waits(.background), "a Reload Lamp pressed while the person was away")
+        XCTAssertTrue(waits(.request), "the turn's end opening a closed game")
+        XCTAssertTrue(waits(.request, onMac: false))
+        XCTAssertFalse(waits(.background, quiet: true), "the build put in place for a closed Mac copy runs nothing")
+        XCTAssertFalse(waits(.person))
+        XCTAssertFalse(waits(.person, quiet: true, onMac: false))
+        XCTAssertFalse(waits(.background, quiet: true, onMac: false, allowed: true))
+        XCTAssertFalse(waits(.request, needsDevice: false))
+    }
+
     // MARK: Stopping a batch
 
     /// A turn's Stop reaches the `use_app` batch it has running: what the app is pressing is let go.

@@ -209,8 +209,30 @@ enum DevicePermissions {
     /// Why a change waits for Reload in a game that reaches devices with none allowed (`Store.mayRunChange`).
     static let heldForDevices = "the game controls the person's devices, and its new code runs only with a device they've allowed"
 
+    /// What background work (a place kept current, Reload on every place) hears of an install held that way.
+    static let heldForDevicesProblem = "It waits for your Reload: the game controls your devices, and none is allowed for it now."
+
+    /// Whether an install of an app has to wait for the person's own Reload: it would run a game that reaches their
+    /// devices with none allowed, and it isn't the person's own doing. Only a background install that puts the build in
+    /// place for a copy closed on this Mac runs nothing and needn't wait: on every other place a quiet install opens a
+    /// copy that's running there again, and Lamp can't tell from here whether one is.
+    static func installWaits(for by: InstallFor, quiet: Bool, onMac: Bool, macRunning: Bool, needsDevice: Bool, allowed: Bool) -> Bool {
+        guard needsDevice, !allowed, by != .person else { return false }
+        return !(quiet && onMac && !macRunning)
+    }
+
     /// What the agent hears of such a change.
     static let heldRefusal = "it controls the person's devices, and its new code runs only with a device they've allowed on Lamp's card, so it waits for the person's Reload, which puts it in: don't say it's in. Once they've allowed a device (ask with `device_permission`, naming it and that the game's changes go in) and that Reload is done, your changes go in as you save them."
 
     static let useRefusal = "This app controls the person's devices: use it only on a device they've allowed, named in `device` as on Lamp's card. Ask with `device_permission` first for a device they haven't allowed, naming it and what you'd press."
+}
+
+/// Whose an install is, for what it may run (`DevicePermissions.installWaits`).
+enum InstallFor {
+    /// The person's own: Open App, Undo, a restore, their Reload.
+    case person
+    /// A request's agent at work: its looks, its steps and the turn's end.
+    case request
+    /// Lamp's own in the background: a place kept current, a Reload pressed while the person was away.
+    case background
 }

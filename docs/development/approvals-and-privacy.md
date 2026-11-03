@@ -127,9 +127,11 @@ A capability given to one engine must be given to all of them that can take it, 
   `on_device`, or a game looked at only where Try On points) is refused the same way unless its `device` names an allowed
   one (`DevicePermissions.openNeedsDevice`). A look at it open in its window needs none. Its new code runs only while
   the person has a device allowed: that's asked each time a change is about to go into the open game, wherever it
-  comes from (a step as the agent saves, a look, the turn's end, all through `Store.pageInPlace`), and before a
-  request's install opens the game or opens it again, on any device (`Store.installNow`, `Store.mayRunChange`); the
-  person's own Open App, Undo and Reload aren't held. Without one the change waits for a Reload only the person presses:
+  comes from (a step as the agent saves, a look, the turn's end, all through `Store.pageInPlace`), and before any
+  install that isn't the person's own opens the game or opens it again, on any device: a request's, or Lamp's in the
+  background, a place kept current or a Reload Lamp pressed while they were away (`Store.installNow`, `InstallFor`,
+  `DevicePermissions.installWaits`). Only the person's own Open App, Undo, restore and Reload, and a background install
+  that puts the build in place for a copy closed on this Mac, aren't held. Without one the change waits for a Reload only the person presses:
   Lamp never presses it for them while they're away (`AwayReloads.devices`), and the agent hears why. A game's phones aren't devices it controls: the relay they join is Lamp's own, in the game (`GamePhones`), which
   gives the system its reason itself, and needs nothing in capabilities.json. So a game's own local network
   declaration counts as reaching devices, whatever its words, since they can't be told apart from a device
