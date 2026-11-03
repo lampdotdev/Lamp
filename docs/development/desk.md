@@ -344,7 +344,8 @@ Nothing of theirs starts in; Mix waits for the file's review (`Sharing.review`),
 names the wish being mixed into and how a click works, and Choose Another… starts over with another file.
 
 A wish file dropped on the desk opens as one opened from the Finder (`Store.importApp`). With the switch on, a file
-that carries its versions and finds a wish here (`Mix.copy`) gets Mix… in place of Update on its review
+that carries its versions and finds a wish here it met at a version both have (`Mix.copy`, `Mix.meeting`) gets Mix…
+in place of Update on its review, waiting while another mix is saved
 (`PendingImport.mixFile`), beside Keep Both: Mix… closes the review and opens the window on that file
 (`MixModel.shared`).
 

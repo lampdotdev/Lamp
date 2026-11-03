@@ -325,6 +325,7 @@ private struct WindowFinder: NSViewRepresentable {
 struct ImportReviewView: View {
     @EnvironmentObject private var store: Store
     @Environment(\.openWindow) private var openWindow
+    @ObservedObject private var mixing = MixModel.shared
     let pending: Store.PendingImport
 
     /// The app's own icon, once drawn from the file; the plain app icon until then, and for a file without one.
@@ -339,6 +340,7 @@ struct ImportReviewView: View {
                          review: pending.review, existing: pending.existing?.name, changedHere: pending.changedHere, room: room,
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
                          android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil,
+                         mixWaits: mixing.stage == .mixing,
                          mix: pending.mixFile.map { file in { store.cancelImport(); openWindow(id: "mix"); MixModel.shared.open(file, store: store) } })
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
@@ -382,6 +384,8 @@ struct ImportReviewCard: View {
     var prepared = false
     /// With mixing on (`Mix`), a file that can be mixed into `existing`: Mix… opens the mix window on it, in place of
     /// Update. The window checks their code itself, so it waits for nothing here.
+    /// Another mix is being saved, which the window finishes first: Mix… waits for it.
+    var mixWaits = false
     var mix: (() -> Void)? = nil
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
@@ -548,6 +552,7 @@ struct ImportReviewCard: View {
                 }
                 Button("Mix…", action: mix)
                     .keyboardShortcut(.defaultAction)
+                    .disabled(mixWaits)
             } else if existing != nil {
                 // The app is already here: the file either becomes its next version or a second app.
                 // Either way its code runs, so both follow the same rule as opening does. Return is

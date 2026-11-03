@@ -78,25 +78,24 @@ enum Mix {
         return candidates.first { Credits.load($0).remixOf.last?.wish == identity }
     }
 
+    /// Where they met, and their versions since: the version their run starts after, when it's one of this copy's (the
+    /// file came back from a copy of this one); else this copy's arrival, when the run starts at the version it was
+    /// given or passes it. Nil for copies with no such version, which can't be mixed.
+    static func meeting(_ package: Sharing.Package, history: MixHistory, with project: LampProject) async -> (base: String, theirs: [MixHistory.Version])? {
+        if await isAncestor(history.base, in: project) { return (history.base, history.versions) }
+        guard let identity = package.identity,
+              let given = Credits.load(project).remixOf.last(where: { $0.sameWish(as: Credits.Remix(name: project.name, wish: identity)) })?.commit,
+              let arrival = MixHistory.arrival(in: project) else { return nil }
+        if history.base == given { return (arrival, history.versions) }
+        guard let index = history.versions.firstIndex(where: { $0.id == given }) else { return nil }
+        return (arrival, Array(history.versions[(index + 1)...]))
+    }
+
     static func lineUp(_ package: Sharing.Package, history: MixHistory, with project: LampProject) async throws -> Lineup {
         guard let head = await Versions.head(project) else { throw Failure(message: "Your copy has no versions to mix yet.") }
-        // Where they met: the version their run starts after, when it's one of this copy's (the file came back from a
-        // copy of this one); else this copy's arrival, when the run starts at the version it was given or passes it.
-        var base: String? = nil
-        var theirs = history.versions
-        if await isAncestor(history.base, in: project) {
-            base = history.base
-        } else if let identity = package.identity,
-                  let given = Credits.load(project).remixOf.last(where: { $0.sameWish(as: Credits.Remix(name: project.name, wish: identity)) })?.commit,
-                  let arrival = MixHistory.arrival(in: project) {
-            if history.base == given {
-                base = arrival
-            } else if let index = history.versions.firstIndex(where: { $0.id == given }) {
-                base = arrival
-                theirs = Array(history.versions[(index + 1)...])
-            }
+        guard let (base, theirs) = await meeting(package, history: history, with: project) else {
+            throw Failure(message: "These two copies don't share a version Lamp can find.")
         }
-        guard let base else { throw Failure(message: "These two copies don't share a version Lamp can find.") }
 
         // Yours: each version since, with what it touched and the change of theirs it brought in, if any.
         struct Yours { var id: String; var date: Date; var mixed: String?; var title: String; var files: [String] }

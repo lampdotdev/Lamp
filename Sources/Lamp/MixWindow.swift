@@ -30,7 +30,9 @@ final class MixModel: ObservableObject {
     private var previewing: Task<Void, Never>?
     private var folder: URL?
 
+    /// Nothing while a mix is being saved: that one finishes first.
     func open(_ file: URL, store: Store) {
+        guard stage != .mixing else { return }
         reset()
         stage = .reading
         Task {
@@ -96,6 +98,7 @@ final class MixModel: ObservableObject {
         Task {
             do {
                 try await store.mix(picked, in: lineup)
+                guard self.lineup?.package.folder == lineup.package.folder else { return }
                 reset()
                 done()
             } catch {

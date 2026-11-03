@@ -3580,7 +3580,9 @@ final class Store: ObservableObject {
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
-            if Mix.isOn, target == nil, fetched == nil, MixHistory.read(in: package.folder) != nil, let into = Mix.copy(of: package, among: projects) {
+            // Only where the two met: a wish that can't be lined up keeps Update.
+            if Mix.isOn, target == nil, fetched == nil, let history = MixHistory.read(in: package.folder),
+               let into = Mix.copy(of: package, among: projects), await Mix.meeting(package, history: history, with: into) != nil {
                 pending.existing = into
                 pending.mixFile = file
             }

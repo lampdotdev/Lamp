@@ -200,6 +200,16 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(Mix.copy(of: package, among: [yours.project])?.dir, yours.project.dir)
     }
 
+    /// Copies that never met at a version both have aren't offered for mixing: an import keeps Update for them.
+    func testCopiesThatNeverMetDontLineUp() async throws {
+        let (yours, _, package, history) = try await copies()
+        let met = await Mix.meeting(package, history: history, with: yours.project)
+        XCTAssertNotNil(met)
+        let elsewhere = MixHistory(base: String(repeating: "f", count: 40), versions: history.versions)
+        let none = await Mix.meeting(package, history: elsewhere, with: yours.project)
+        XCTAssertNil(none)
+    }
+
     /// The other way round: an original first shared after it was remixed still starts where the remix was made.
     func testAnOriginalSharedAfterItsRemixMixesIntoTheRemix() async throws {
         let (yours, theirs, _, _) = try await copies()
