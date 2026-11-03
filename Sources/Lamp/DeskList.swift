@@ -691,6 +691,9 @@ struct DeskWishMenu: View {
             Button("Start Over") { Task { await store.startAgain(project) } }
                 .disabled(busy)
         }
+        // The chat's own Versions panel, in Lamp's panel unless the app is open with its chat beside it: going back to
+        // one from here is the chat's, and rebuilds the app as it does there.
+        Button("Previous Versions…") { SidebarServer.shared.showVersions(of: project) }
         // Only once there's something of the person's to send.
         if entry?.sendsBack == true, entry?.changedFromOriginal == true {
             Button("Send Changes Back…") { store.sendChangesBack(project) }

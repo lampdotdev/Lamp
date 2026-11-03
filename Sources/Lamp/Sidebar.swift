@@ -593,6 +593,15 @@ final class SidebarServer {
 
     /// The panel each app's sidebar shows in place of the chat.
     private var panels: [String: SidebarPanel] = [:]
+
+    /// A wish's chat brought up on its Versions panel, as its toolbar's Versions button shows it: asked from the desk,
+    /// so going back to a version needs no app open. The chat comes up where it is now (`Store.showChat`), so a wish
+    /// with no app running shows it in Lamp's panel and opens nothing.
+    func showVersions(of project: LampProject) {
+        panels[project.id] = .versions
+        scheduleUpdate()
+        Store.shared.showChat(project.id)
+    }
     /// The wish's file after Share…, until it's been sent.
     private var sharing: [String: SidebarSharing] = [:]
 
