@@ -68,6 +68,21 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertFalse(AppFile.copy(named, in: project, to: root.appendingPathComponent("2")), "a second name")
     }
 
+    /// The run's pi has the one provider's entry, not every sign-in pi keeps.
+    func testPiGetsItsSettingsAndOneSignIn() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("side-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("pi"), config = root.appendingPathComponent("config")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try #"{"openrouter":{"type":"api_key","key":"!cmd"},"anthropic":{"type":"oauth"}}"#.write(to: source.appendingPathComponent("auth.json"), atomically: true, encoding: .utf8)
+        try "{}".write(to: source.appendingPathComponent("settings.json"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(SideAnswer.piConfig(from: source, provider: "openrouter", to: config))
+        let auth = try JSONSerialization.jsonObject(with: Data(contentsOf: config.appendingPathComponent("auth.json"))) as? [String: Any]
+        XCTAssertEqual(auth?.keys.sorted(), ["openrouter"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: config.appendingPathComponent("settings.json").path))
+    }
+
     /// pi 1.0.0's own output, recorded on 2026-11-02 from a fork through OpenRouter (anthropic/claude-sonnet-5.5) told to
     /// write a line and call bash in one reply, with its thinking taken out.
     func testWordsBesideAToolCallAreNoAnswer() throws {
@@ -274,6 +289,8 @@ final class SideAnswerTests: XCTestCase {
         XCTAssertFalse(pi.arguments.contains("lamp-1"), "the fork has a session of its own")
         XCTAssertEqual(pi.environment["HOME"], "/private/side/home")
         XCTAssertFalse(pi.profile.contains("main.jsonl"), "pi forks its own copy, in its folder")
+        XCTAssertFalse(pi.profile.contains("/config\""), "nor reads pi's own settings")
+        XCTAssertEqual(pi.environment["PI_CODING_AGENT_DIR"], "/private/side/config")
         let claude = try XCTUnwrap(SideAnswer.launch(route(.claude), prompt: "p", transcript: transcript, folder: folder))
         XCTAssertEqual(claude.arguments[claude.arguments.firstIndex(of: "--tools")! + 1], "")
         XCTAssertTrue(claude.arguments.contains("--no-session-persistence"))

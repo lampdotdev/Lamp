@@ -335,13 +335,13 @@ enum SideAnswer {
         case .pi:
             guard let transcript else { return nil }
             env.merge(keys) { $1 }
-            env.merge(["HOME": folder.appendingPathComponent("home").path, "PI_CODING_AGENT_DIR": route.configFolder,
+            env.merge(["HOME": folder.appendingPathComponent("home").path, "PI_CODING_AGENT_DIR": folder.appendingPathComponent("config").path,
                        "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0"]) { $1 }
             if let provider = Provider.keyProvider(route.keyProvider) { env[provider.envVar] = own[provider.envVar] }
             let command = try? JSONSerialization.data(withJSONObject: ["id": "ask", "type": "prompt", "message": prompt])
             return Launch(arguments: piArguments(transcript: transcript, sessions: folder.appendingPathComponent("sessions"), route: route),
                           environment: env, input: String(decoding: command ?? Data(), as: UTF8.self) + "\n", keepsInput: true,
-                          profile: Sandbox.sideProfile(scratch: folder.path, reading: [Bundle.main.bundlePath, route.configFolder], readingFiles: []))
+                          profile: Sandbox.sideProfile(scratch: folder.path, reading: [Bundle.main.bundlePath], readingFiles: []))
         case .claude:
             guard let transcript, let program = programFolder(route.executable) else { return nil }
             let config = URL(fileURLWithPath: route.configFolder)
@@ -371,6 +371,21 @@ enum SideAnswer {
         free(resolved)
         let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
         return (home + "/").hasPrefix(folder + "/") ? nil : folder
+    }
+
+    /// pi's settings for one run, in its own folder: pi locks a file it reads by making a folder beside it, which the
+    /// sandbox won't allow in Lamp's, and that folder holds every provider's sign-in where this run needs one. So the run
+    /// gets the settings and models Lamp wrote and the one provider's entry, and pi's real folder stays closed to it.
+    static func piConfig(from source: URL, provider: String, to config: URL) -> Bool {
+        let fm = FileManager.default
+        for name in ["settings.json", "models.json"] where fm.fileExists(atPath: source.appendingPathComponent(name).path) {
+            guard (try? fm.copyItem(at: source.appendingPathComponent(name), to: config.appendingPathComponent(name))) != nil else { return false }
+        }
+        let all = (try? Data(contentsOf: source.appendingPathComponent("auth.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let mine = all[provider].map { [provider: $0] } ?? [:]
+        guard let data = try? JSONSerialization.data(withJSONObject: mine) else { return false }
+        return fm.createFile(atPath: config.appendingPathComponent("auth.json").path, contents: data, attributes: [.posixPermissions: 0o600])
     }
 
     /// pi forks the session into the private folder, with no tools and none of Lamp's extension: nothing in it could
@@ -474,7 +489,7 @@ enum SideAnswer {
             var outcome = Outcome(usage: Reader(route.engine))
             let folder = SideAnswer.folder.appendingPathComponent(UUID().uuidString)
             let fm = FileManager.default
-            for name in ["sessions", "home", "tmp", "state", "log"] {
+            for name in ["sessions", "home", "tmp", "state", "log", "config"] {
                 try? fm.createDirectory(at: folder.appendingPathComponent(name), withIntermediateDirectories: true,
                                         attributes: [.posixPermissions: 0o700])
             }
@@ -489,6 +504,11 @@ enum SideAnswer {
                     return outcome
                 }
                 transcript = copy
+                guard SideAnswer.piConfig(from: URL(fileURLWithPath: route.configFolder), provider: route.keyProvider,
+                                          to: folder.appendingPathComponent("config")) else {
+                    outcome.failure = "couldn't start"
+                    return outcome
+                }
             }
             if route.engine == .codex {
                 let list = URL(fileURLWithPath: route.configFolder).appendingPathComponent("models_cache.json")

@@ -155,8 +155,10 @@ A capability given to one engine must be given to all of them that can take it, 
   private folder under a sandbox of its own (`Sandbox.sideProfile`) that can write only that folder, with an environment
   that's a short list and none of Lamp's routes or tokens, and 30 seconds in all; with no profile on disk it doesn't run,
   and whatever goes wrong leaves an ordinary queued message. Nothing goes into the engine's own history. How each does it:
-  - **pi** forks the session (`--fork`) with `--no-tools`, no extension, its own key ticket and a home folder thrown away
-    with it. pi closes a call still running with its own "No result provided".
+  - **pi** forks a copy of the session (`--fork`), read as `AppFile` reads the app's files and refused when it's a link or
+    has a second name, since the builder writes that folder. It has `--no-tools`, no extension, its own key ticket, a home
+    folder and a settings folder of its own (`SideAnswer.piConfig`: Lamp's settings and the one provider's entry; pi locks
+    what it reads by making a folder beside it, which the sandbox refuses in Lamp's). pi answers beside a call still running.
   - **Claude Code** forks by the transcript's whole path, which lets it run outside the app's folder (`--resume <path>
     --fork-session --no-session-persistence --tools ""`, with the isolating flags the builder has). Its `system/init` line
     must list no tools and no MCP servers before anything it says counts. It reads its sign-in from the Keychain, and
