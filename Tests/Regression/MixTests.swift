@@ -244,6 +244,13 @@ final class MixTests: XCTestCase {
         XCTAssertEqual(text(yours, "Notes.txt"), "x\n")
         let fourth = try await Mix.lineUp(package, history: history, with: yours.project)
         XCTAssertEqual(fourth.changes.filter { $0.title == "Whisper the first line" }.map(\.here), [true])
+
+        // Left out once more, it stays out: the latest word wins.
+        let back = try XCTUnwrap(fourth.changes.first { $0.title == "Whisper the first line" })
+        _ = try await Mix.apply(Set(fourth.changes.filter(\.here).map(\.id)).subtracting([back.id]), in: fourth)
+        XCTAssertNil(text(yours, "Notes.txt"))
+        let fifth = try await Mix.lineUp(package, history: history, with: yours.project)
+        XCTAssertEqual(fifth.changes.filter { $0.title == "Whisper the first line" }.map(\.here), [false])
     }
 
     /// Leaving out a change a later one had already replaced changes no file, but it's still saved, so it stays out.

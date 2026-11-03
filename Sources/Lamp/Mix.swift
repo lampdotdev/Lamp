@@ -146,7 +146,12 @@ enum Mix {
         // Your changes, by the trees around each; a version that touched nothing a mix carries isn't one. A version a
         // mix saved to leave changes out isn't one either: those changes are shown out instead, until one is taken back.
         // A change of theirs taken earlier sits where they made it.
-        let leftOut = Set(yours.flatMap(\.leftOut)).subtracting(mixedHere)
+        // Each version's word in order, oldest first, so the latest leaving out or taking back of a change wins.
+        var leftOut: Set<String> = []
+        for version in yours {
+            leftOut.formUnion(version.leftOut)
+            if let mixed = version.mixed, yourIDs.contains(mixed) { leftOut.remove(mixed) }
+        }
         let made = Dictionary(history.versions.map { ($0.id, $0.date) }, uniquingKeysWith: { first, _ in first })
         var changes: [Change] = []
         var previous = base
