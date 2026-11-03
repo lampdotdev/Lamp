@@ -501,17 +501,22 @@ app, and that Reload's launch is the fresh start. An ordinary Reload keeps the p
 `use_app` on a game in its window holds Lamp's own controller in the game's page, carried out by the app's own driver
 under the same signed batch, Stop and report as any Mac app's use (`LampDriver`, `LampDriver.Handover`): Lamp turns
 `stick`, `button` and `wait` into the driver's actions (`GameKit.controls`, each held at most 10 s), the driver hands each
-hold to the page (`LampPageReader`'s `stick` and `button` in LampPage.swift, `window.__lampDrive`), and lets it go when
-it's due, when the batch stops or a newer one begins (`Handover.hold(for:release:)`). In the page (lamp-game.js, "Lamp's
-hands on the controller") Lamp's controller is the first player while it holds anything, in place of that player's
-controller, keyboard and touch, never mixed with them; the person's own press (a controller, a key, the touch screen or a
-phone's button) lets go of everything Lamp holds and tells the app (`lampDriveTakenOver`), which stops the batch as the
-person's click does, so the game is theirs at once and use_app is off until their next message. What Lamp holds also goes
-when the game's code runs again or its page opens again, and by itself a second after the hold was due to end, should the
-app never say. Moves play from wherever the game is; nothing replays them from the start, and the game's random numbers
+hold to the page (`LampPageItems.hold`, LampPage.swift, `window.__lampDrive`) and reports the page's answer, held or
+why not (no Lamp runtime running in it, the page failing), never "held" before the page took it; it lets the hold go when
+it's due, when the batch stops or a newer one begins (`Handover.hold(for:release:)`). A batch with controller moves has
+the controller from its start to its end, waits and gaps included (`LampPageItems.own`, `__lampOwn`, given back by
+`Handover.whenOver` however the batch ends). In the page (lamp-game.js, "Lamp's hands on the controller") Lamp's
+controller is the first player while it holds anything, in place of that player's controller, keyboard and touch, never
+mixed with them; any of the person's input while the batch has the controller (a controller, a key, the touch screen, a
+phone's button, stick or tilt moved, anything a phone sends) lets go of everything and tells the app
+(`lampDriveTakenOver`), which stops the batch as the person's click does, so the game is theirs at once and use_app is
+off until their next message. What Lamp holds also goes when the game's code runs again or its page opens again, and by
+itself a second after the hold was due to end; the batch's hold on the controller ends by itself two seconds after the
+time it was given. Lamp's side ends the batch with the same signed stop (`Store.stopUse`) when the turn stops
+(`Turn.stopUse`, from `cancel`), when the wait for its answer runs out, and when another turn takes the app's place. Moves play from wherever the game is; nothing replays them from the start, and the game's random numbers
 differ each play. After a look with `on_device` (`Turn.gameOnDevice`) `use_app` takes only what that place takes, and a
 controller move is refused with why; a game's phone page is never pressed (`Store.noPhoneUse`): only the person's
-phones join. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
+phones join. The agent plays a game only when the person asks it to try, play or test it (`use_app`'s description, `Rules.gameTry`, the game skill's "Playtesting"), as with any app it uses in front of them: a request to change a game is built and looked at. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
 checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the
@@ -848,7 +853,7 @@ such build).
 
 A request for a wish's game to be more fun as a whole ("Make it a lot more fun", one of New York's first changes, or the
 person's own words for it; not one that scopes or refuses it) carries a note naming what it asks for (a better loop and
-difficulty curve, juice, surprises, playtesting in its window), sent with it to every engine, whether it starts a turn
+difficulty curve, juice, surprises, a look again and the person asked to play it), sent with it to every engine, whether it starts a turn
 or is handed to one with Send Now (`GameFun`, `Store.turn`, `Store.handOver`); what makes a game fun is said once, in the
 game skill's "Fun" and "Playtesting".
 

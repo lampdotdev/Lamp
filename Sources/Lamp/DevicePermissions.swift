@@ -82,11 +82,43 @@ enum DevicePermissions {
 
     /// Whether an app reaches the person's devices: its code uses Lamp's blocks for them, or it declares the local
     /// network for them in capabilities.json. A game's phones aren't devices it controls: the relay they join is Lamp's
-    /// own, in the game (`GamePhones`), and declares nothing here.
+    /// own, in the game (`GamePhones`), and declares nothing here; a game that declared the network for its phones before
+    /// that (`declaresNetworkOnlyForPhones`) doesn't reach devices by that alone.
     static func reachesDevices(_ app: LampProject) -> Bool {
         let capabilities = Template.Capabilities.load(app).checked
-        return capabilities.localNetwork != nil || !(capabilities.bonjourServices ?? []).isEmpty
-            || Skills.appSwift(of: app, matches: #"\b(LampRoku|LampNetwork)\b"#)
+        let declared = capabilities.localNetwork != nil || !(capabilities.bonjourServices ?? []).isEmpty
+        return (declared && !declaresNetworkOnlyForPhones(app)) || Skills.appSwift(of: app, matches: #"\b(LampRoku|LampNetwork)\b"#)
+    }
+
+    /// Whether a game's local network declaration is for its phones and nothing else: a game made while its phones joined
+    /// through a relay the game had to declare the network for. Told apart from a game that controls devices by what
+    /// such a game has and a phone host doesn't, all of which counts against it: Bonjour types to look for (Lamp's own
+    /// wish service aside), Lamp's blocks for devices in Swift of its own, or an address on the home network or a
+    /// `.local` name in its own page's code. And it has a phone page. The declaration itself stays as the game wrote it.
+    static func declaresNetworkOnlyForPhones(_ app: LampProject) -> Bool {
+        guard GameKit.isGame(app), GameKit.engine(app) == .web, !GameKit.ownsLoop(app) else { return false }
+        let capabilities = Template.Capabilities.load(app).checked
+        guard capabilities.localNetwork != nil, (capabilities.bonjourServices ?? []).allSatisfy({ $0 == Template.wishServiceType }),
+              FileManager.default.fileExists(atPath: app.dir.appendingPathComponent(TVTemplate.phoneFolder).appendingPathComponent("index.html").path),
+              !Skills.appSwift(of: app, matches: #"\b(LampRoku|LampNetwork)\b"#) else { return false }
+        return !pageNamesHomeNetwork(app)
+    }
+
+    /// Whether the game's own page code (Web/ and src/, Lamp's files and libraries aside) names an address on the home
+    /// network or a `.local` name: what a page that talks to a device has, and a phone host doesn't.
+    private static func pageNamesHomeNetwork(_ app: LampProject) -> Bool {
+        let home = #"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b|\b[A-Za-z0-9][A-Za-z0-9-]*\.local\b"#
+        let lamps: Set<String> = ["three", "rapier", "phaser"]
+        for folder in [GameKit.webFolder, "src"] {
+            guard let walk = FileManager.default.enumerator(at: app.dir.appendingPathComponent(folder), includingPropertiesForKeys: nil) else { continue }
+            for case let url as URL in walk {
+                if url.hasDirectoryPath, lamps.contains(url.lastPathComponent) { walk.skipDescendants(); continue }
+                guard ["js", "mjs", "ts", "html", "json"].contains(url.pathExtension.lowercased()), !url.lastPathComponent.hasPrefix("lamp"),
+                      let text = AppFile.text(url, in: app) else { continue }
+                if text.range(of: home, options: .regularExpression) != nil { return true }
+            }
+        }
+        return false
     }
 
     /// Whether a `use_app` call on the app has to name a device the person allowed: whenever it reaches devices. A game

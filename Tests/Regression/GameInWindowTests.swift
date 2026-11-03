@@ -33,7 +33,9 @@ final class GameInWindowTests: XCTestCase {
             var performance = { now: function () { return testNow; } };
             navigator.getGamepads = function () { return testPad ? [testPad] : []; };
             window.webkit = { messageHandlers: { lampDriveTakenOver: { postMessage: function (why) { testTaken.push(why); } } } };
-            window.Lamp = { controllers: { onButton: function (fn) { testPhone = fn; }, onLeave: function () {}, players: function () { return []; } } };
+            var testAxis = null, testMessage = null;
+            window.Lamp = { controllers: { onButton: function (fn) { testPhone = fn; }, onLeave: function () {}, players: function () { return []; },
+                                           onAxis: function (fn) { testAxis = fn; }, onMessage: function (fn) { testMessage = fn; } } };
             var seen = { pad: null };
             """) { failed = failed ?? $0 }
         context.evaluateScript("game({ renderer: testRenderer, frame: function (f) { seen.pad = Object.assign({}, f.pads[0]); } });")
@@ -96,6 +98,48 @@ final class GameInWindowTests: XCTestCase {
         context.evaluateScript("testPhone(1, 'a', true)")
         XCTAssertEqual(step()["down"] as? Int, 0)
         XCTAssertEqual(taken(context), ["a phone played"])
+    }
+
+    /// The controller is Lamp's for the whole batch, not only while a move is held: the person's controller during a
+    /// `wait`, or between two presses, takes the game back and ends the rest of the batch. Once the batch is over it's
+    /// theirs, and their play says nothing to the app.
+    func testThePersonsInputDuringAWaitTakesTheGameBack() throws {
+        let (context, step) = try playing()
+        context.evaluateScript("__lampOwn(20)")
+        XCTAssertEqual(step()["lx"] as? Double, 0, "nothing held: a wait")
+        context.evaluateScript("""
+            testPad = { id: 'Xbox Wireless Controller', connected: true, axes: [0, 0, 0, 0],
+                        buttons: Array.from({ length: 16 }, function (_, i) { return { pressed: i === 0, value: i === 0 ? 1 : 0 }; }) };
+            """)
+        XCTAssertEqual(step()["down"] as? Int, 1, "the person's press is what the game reads")
+        XCTAssertEqual(taken(context), ["the person played"])
+        // A later hold of the same batch, had the app not stopped it, would be refused by nothing here: the app's stop
+        // is what ends it. With the batch over, the person's play is just theirs.
+        context.evaluateScript("__lampOwn(null); testTaken = [];")
+        _ = step()
+        XCTAssertEqual(taken(context), [])
+    }
+
+    /// A phone's stick moved, or anything a phone sends, takes the game back as its buttons do; a phone held still at an
+    /// angle, saying the same tilt again and again, doesn't.
+    func testAPhonesStickOrMessageTakesTheGameBack() throws {
+        let (context, _) = try playing()
+        context.evaluateScript("testAxis(1, 'tilt', 0.5, 0); __lampOwn(20); testAxis(1, 'tilt', 0.5, 0); testAxis(1, 'tilt', 0.52, 0.01);")
+        XCTAssertEqual(taken(context), [], "a phone lying tilted isn't someone playing")
+        context.evaluateScript("testAxis(1, 'stick', 0, -0.9)")
+        XCTAssertEqual(taken(context), ["a phone played"])
+        context.evaluateScript("testTaken = []; __lampOwn(20); testMessage(1, { pick: 'red' });")
+        XCTAssertEqual(taken(context), ["a phone sent something"])
+    }
+
+    /// The batch's own hold on the controller ends by itself, a while after the time it was given, should the app never
+    /// say: the person's later play is then theirs and stops nothing.
+    func testABatchsHoldOnTheControllerEndsByItself() throws {
+        let (context, step) = try playing()
+        context.evaluateScript("__lampOwn(1); testNow += 3100;")
+        _ = step()
+        context.evaluateScript("testPhone(1, 'a', true)")
+        XCTAssertEqual(taken(context), [])
     }
 
     /// Should the app never say (it quit, or hung), a hold ends by itself a second after it was due.
@@ -205,6 +249,78 @@ final class GameInWindowTests: XCTestCase {
         XCTAssertFalse(DevicePermissions.reachesDevices(game))
         XCTAssertFalse(DevicePermissions.useNeedsDevice(game))
         XCTAssertFalse(DevicePermissions.openNeedsDevice(game))
+    }
+
+    /// A game made while its phones joined through a relay it declared the local network for: the declaration is for its
+    /// phones, and pressing or opening the game needs no allowed device. Anything a device controller has and a phone host
+    /// doesn't (an address on the home network in its page, Bonjour types to look for, Lamp's device blocks in its Swift,
+    /// or no phone page at all) and it reaches devices again. The declaration itself is left as it is.
+    func testAGameThatDeclaredTheNetworkForItsPhonesNeedsNoDevice() throws {
+        func game(page code: String = "game({ renderer });", bonjour: Bool = false, phonePage: Bool = true, swift: String? = nil) throws -> LampProject {
+            let dir = try folder()
+            let capabilities = bonjour ? #"{"localNetwork":"Phones on your Wi-Fi join the game as controllers.","bonjourServices":["_sonos._tcp"]}"#
+                : #"{"localNetwork":"Phones on your Wi-Fi join the game as controllers."}"#
+            try capabilities.write(to: dir.appendingPathComponent(Template.Capabilities.file), atomically: true, encoding: .utf8)
+            try "A game made with Lamp.\nengine: web\n".write(to: dir.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8)
+            let web = dir.appendingPathComponent(GameKit.webFolder)
+            try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
+            try "<script type=\"module\" src=\"game.js\"></script>".write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+            try ("import { game } from './lamp-game.js';\n" + code).write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
+            if phonePage {
+                let phone = dir.appendingPathComponent(TVTemplate.phoneFolder)
+                try FileManager.default.createDirectory(at: phone, withIntermediateDirectories: true)
+                try "<!doctype html><button>Go</button>".write(to: phone.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+            }
+            if let swift {
+                let sources = dir.appendingPathComponent("Sources")
+                try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+                try swift.write(to: sources.appendingPathComponent("Native.swift"), atomically: true, encoding: .utf8)
+            }
+            return LampProject(id: "pad", name: "Pad", exe: "Pad", dir: dir, platform: .game)
+        }
+        let phones = try game()
+        XCTAssertTrue(DevicePermissions.declaresNetworkOnlyForPhones(phones))
+        XCTAssertFalse(DevicePermissions.reachesDevices(phones))
+        XCTAssertFalse(DevicePermissions.useNeedsDevice(phones))
+        XCTAssertFalse(DevicePermissions.openNeedsDevice(phones))
+        XCTAssertNotNil(Template.Capabilities.load(phones).checked.localNetwork, "the declaration stays")
+
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(page: "fetch('http://192.168.1.20:1400/MediaRenderer/AVTransport/Control');")))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(page: "const tv = 'http://living-room.local:8001';")))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(bonjour: true)))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(phonePage: false)))
+        XCTAssertTrue(DevicePermissions.useNeedsDevice(try game(swift: "import Foundation\nlet tv = LampRoku.self")))
+    }
+
+    // MARK: Stopping a batch
+
+    /// A turn's Stop reaches the `use_app` batch it has running: what the app is pressing is let go.
+    func testStoppingTheTurnStopsItsBatch() {
+        let turn = Store.Turn()
+        var stopped = 0
+        turn.stopUse = { stopped += 1 }
+        turn.cancel()
+        XCTAssertEqual(stopped, 1)
+    }
+
+    /// The stop sent to the app is the one its driver accepts: signed with the app's token over the batch it names.
+    func testTheStopSentIsSignedForTheBatch() throws {
+        let dir = try folder()
+        let project = LampProject(id: "stop-" + UUID().uuidString, name: "Pad", exe: "Pad", dir: dir, platform: .game)
+        let heard = expectation(description: "the stop")
+        var info: [AnyHashable: Any] = [:]
+        let watch = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "useAppStop.\(project.id)"), object: nil, queue: .main) { note in
+            info = note.userInfo ?? [:]
+            heard.fulfill()
+        }
+        defer { DistributedNotificationCenter.default().removeObserver(watch) }
+        Store.stopUse("batch-1", in: project)
+        wait(for: [heard], timeout: 5)
+        let expected = Store.signature(over: "stop\nbatch-1", token: Template.token(for: project))
+        XCTAssertEqual(info["id"] as? String, "batch-1")
+        XCTAssertEqual(info["lampUseAppStopSignature"] as? String, expected)
+        XCTAssertEqual(info["lampUseAppStop"] as? String, expected)
     }
 
     // MARK: A TypeScript game's build

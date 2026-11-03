@@ -71,7 +71,7 @@ textures, sound effects and music, fetched and credited by the `assets` tool (th
 how to keep one style). Sound looks in those assets first ("Sound", below). Either way it's the person's to share. Any other file only when the person gives it or names where it comes from and its license allows sharing; it goes into the game's own
 folder, credited as the rules say. The game never loads anything from the network while it's played.
 
-When asked to make a game more fun, play it first and find what's flat (a loop that doesn't pull, a curve that's
+When asked to make a game more fun, look at it first and find what's flat (a loop that doesn't pull, a curve that's
 too easy or too hard, an action that answers with nothing), then work on those four: the loop and the curve, the
 juice, the surprises, and the variety. Keep what the person likes about it, and its controls.
 
@@ -374,8 +374,9 @@ single picture hides.
 
 ## Playtesting
 
-Play it the way the person would before you finish: a game that only looks right isn't done. On Lamp's game runtime,
-`use_app` plays the game in its window on this Mac, the one the person has open, with Lamp's own controller (`stick`,
+`use_app` plays the game in front of the person, so play it only when they ask you to try, play or test it; then play it
+the way they would, since a game that only looks right isn't done. For a request to change it, build and look, and say
+in your report what you didn't play rather than calling it checked. On Lamp's game runtime, `use_app` plays the game in its window on this Mac, the one the person has open, with Lamp's own controller (`stick`,
 `button` and `wait`), in plain sight and from wherever the game is: a menu, a pause screen, the middle of a level. Read
 the last picture first and get to what you mean to check; to begin again, look with `reopen` (which asks the person
 first while they play). Play a whole round: start, learn the controls, score, get hit, lose, win, pause. Ask of each

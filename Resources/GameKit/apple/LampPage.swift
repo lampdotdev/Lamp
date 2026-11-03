@@ -1081,6 +1081,46 @@ final class LampPageBlockedHost: NSObject {
         LampPageItems.refresh = refresh
         LampPageItems.items = { read[$0.windowNumber] ?? [] }
         LampPageItems.act = act
+        LampPageItems.own = own
+        LampPageItems.hold = hold
+    }
+
+    /// A game's controller given to Lamp for a batch of `use_app` moves (`seconds` it may run), or back (nil), in every
+    /// page shown (lamp-game.js, "Lamp's hands on the controller"): for the whole batch the person's input takes it back.
+    private static func own(_ seconds: Double?) {
+        let call = seconds.map { "window.__lampOwn && window.__lampOwn(\($0))" } ?? "window.__lampOwn && window.__lampOwn(null)"
+        for page in pages.allObjects where page.window != nil { page.evaluateJavaScript(call) }
+    }
+
+    /// A game's controller held for a `stick` or `button` action, in the game's own script, for `amount` seconds and let
+    /// go after, or at once if the batch stops or a newer one takes its place. What the report says is the page's answer:
+    /// held, or why not (no Lamp runtime in the page yet, or the page failing). False when the app has no game.
+    private static func hold(_ action: LampDriver.Action, in window: NSWindow, said: @escaping @MainActor (String) -> Void) -> Bool {
+        let shown = pages.allObjects.filter { $0.window === window }
+        guard LampPageItems.playing != nil, let held = action.controller, let page = shown.first ?? pages.allObjects.first(where: { $0.window != nil })
+        else { return false }
+        let seconds = min(max(action.amount ?? 0, 1.0 / 60), 10)
+        guard let json = try? JSONSerialization.data(withJSONObject: held.merging(["seconds": seconds]) { $1 }) else { return false }
+        let batch = LampDriver.Handover.current
+        let release = { page.evaluateJavaScript("window.__lampDrive && window.__lampDrive(null)") }
+        page.evaluateJavaScript("window.__lampDrive ? window.__lampDrive(\(String(decoding: json, as: UTF8.self))) : 'missing'") { answer, error in
+            MainActor.assumeIsolated {
+                if let error {
+                    return said("\(action.action): the game's page couldn't take it (\(error.localizedDescription))")
+                }
+                guard answer as? Bool == true else {
+                    return said("\(action.action): the game didn't take Lamp's controller: its page has no Lamp game runtime running (still loading, or built by an older Lamp)")
+                }
+                // Stopped or replaced while the page answered: nothing more is Lamp's.
+                guard let batch, batch.carriesOn else {
+                    release()
+                    return said("\(action.action): stopped before the game took it")
+                }
+                batch.hold(for: seconds, release: release)
+                said(action.text ?? "held the game's controller for \(LampScreen.number(seconds)) s")
+            }
+        }
+        return true
     }
 
     /// The keys an action names, as the page reads them (`e.key`, and the code lamp.js and older pages read).
@@ -1167,19 +1207,6 @@ final class LampPageBlockedHost: NSObject {
                 else { run(fire + "fire('keyup');") }
             }
             return hold > 0 ? "held \(name) for \(LampScreen.number(hold)) s in the page" : "pressed \(name) in the page"
-        case "stick", "button":
-            // A game's controller, held in the game's own script (lamp-game.js, "Lamp's hands on the controller") for
-            // `amount` seconds and let go after, or at once if the batch stops or a newer one takes its place.
-            // Only a game's page holds a controller (`LampPagePlaying` says a game is there).
-            guard let held = action.controller, LampPageItems.playing != nil else { return nil }
-            let seconds = min(max(action.amount ?? 0, 1.0 / 60), 10)
-            let hold = held.merging(["seconds": seconds]) { $1 }
-            guard let json = try? JSONSerialization.data(withJSONObject: hold) else { return nil }
-            page.evaluateJavaScript("window.__lampDrive ? window.__lampDrive(\(String(decoding: json, as: UTF8.self))) : false")
-            let release = { page.evaluateJavaScript("window.__lampDrive && window.__lampDrive(null)") }
-            if let batch = LampDriver.Handover.current { batch.hold(for: seconds, release: release) }
-            else { DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { MainActor.assumeIsolated { release() } } }
-            return action.text ?? "held the game's controller for \(LampScreen.number(seconds)) s"
         default:
             return nil
         }

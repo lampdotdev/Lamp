@@ -625,7 +625,8 @@ let renderer = null, frameFunction = null, before = [0, 0, 0, 0], seenController
 const inUse = g => g.buttons.some(b => b && b.pressed) || g.axes.some(a => Math.abs(a) > 0.3);
 
 function readPads() {
-    if (driven && clockNow() > drivenUntil) letGoOfLamp(null);
+    if (driven && clockNow() > drivenUntil) driven = null;
+    if (lampHas && clockNow() > lampHasUntil) letGoOfLamp(null);
     const found = Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(g => g && g.connected);
     // The touch controls are there from the start, step aside once a controller is played with (a connected one alone
     // may only be the simulator passing the Mac's through), and come back when the screen is touched.
@@ -646,8 +647,8 @@ function readPads() {
             if (readsKeyboard) merge(pad, keyboardPad());
             merge(pad, Object.assign({}, touch, { down: touch.down | tapped }));
             tapped = 0;
-            // The person's own press while Lamp holds the controller takes the game back (`__lampDrive`).
-            if (driven && (played || nativeInUse || pressing(pad))) letGoOfLamp('the person played');
+            // The person's own input while Lamp has the controller, holding something or not, takes the game back.
+            if (lampHas && (played || nativeInUse || pressing(pad))) letGoOfLamp('the person played');
             if (driven) pad = Object.assign({}, driven);
             pad.connected = true;
         }
@@ -665,7 +666,7 @@ function readPads() {
 // code that was playing: what arrives while the code runs again changes what's held and is never replayed as a press.
 const phoneButtons = new Map();
 function phoneButton(player, name, down) {
-    if (down && driven) letGoOfLamp('a phone played');
+    if (down && lampHas) letGoOfLamp('a phone played');
     let buttons = phoneButtons.get(player);
     if (!buttons) phoneButtons.set(player, buttons = newPhoneButtons());
     if (!!buttons.down[name] === down) return;
@@ -2382,8 +2383,8 @@ async function runAgain(change, state, roster) {
     }
     // The frame on screen now, held there until the new code draws its first.
     const still = await new Promise(done => { shooting = done; after(250, () => { if (shooting === done) { shooting = null; done(null); } }); });
-    // Lamp's controller is let go: the code it was pressing for is going.
-    letGoOfLamp(null);
+    // What Lamp holds is let go: the code it was pressing for is going. Its batch still has the controller.
+    driven = null;
     const again = runningAgain = { change, state, began, called: false, done: null, named };
     readSince = new Set();
     const done = new Promise(resolve => { again.done = resolve; });
@@ -2864,33 +2865,55 @@ function hidePill() { if (pill) pill.style.display = 'none'; }
 //
 // Lamp's agent plays the game in its window, the one the person sees, with a controller of its own: `use_app`'s stick and
 // button moves, which the app around the page hands here (LampPageReader in LampPage.swift) as part of the same batch
-// as any of its clicks and keys (`LampDriver.Handover`). While Lamp holds anything it is the first player, in place of
-// that player's own controller, keyboard and touch, never mixed with them: a press of the person's (a controller, a key,
-// the touch screen or a phone) lets go of all Lamp holds and tells the app, which ends the batch, so the game is theirs
-// again at once. What Lamp holds is also let go when its batch moves on, stops or is replaced (the app hands null), when
-// the game's code runs again or its page opens again, and by itself a second after the hold was due to end, should the
-// app never say.
-let driven = null, drivenUntil = 0;
+// as any of its clicks and keys (`LampDriver.Handover`). The app says when a batch with them begins (`__lampOwn`, with
+// how long it may run) and when it ends; for all that time, its waits and the gaps between presses too, Lamp has the
+// first player. While it holds something it is that player, in place of the player's own controller, keyboard and
+// touch, never mixed with them. Any input of the person's while Lamp has the controller (a controller, a key, the touch
+// screen, a phone's button, stick or tilt moved, or anything a phone sends) lets go of all of it and tells the app, which
+// ends the batch, so the game is theirs again at once. What Lamp holds also goes when its batch moves on, stops or is
+// replaced (the app hands null), when the game's code runs again or its page opens again, and by itself a second after
+// the hold was due to end; the batch's own hold on the controller ends with the time it was given and two seconds more,
+// should the app never say.
+let driven = null, drivenUntil = 0, lampHas = false, lampHasUntil = 0;
+window.__lampOwn = seconds => {
+    if (!seconds) { lampHas = false; driven = null; return true; }
+    lampHas = true;
+    lampHasUntil = clockNow() + Math.min(Math.max(Number(seconds) || 0, 0), 600) * 1000 + 2000;
+    return true;
+};
 window.__lampDrive = hold => {
     if (!hold) { driven = null; return true; }
     const axis = v => Math.max(-1, Math.min(1, Number(v) || 0)), trigger = v => Math.max(0, Math.min(1, Number(v) || 0));
     driven = { lx: axis(hold.lx), ly: axis(hold.ly), rx: axis(hold.rx), ry: axis(hold.ry), lt: trigger(hold.lt), rt: trigger(hold.rt), down: hold.down | 0 };
     drivenUntil = clockNow() + Math.min(Math.max(Number(hold.seconds) || 0, 0), 60) * 1000 + 1000;
+    // A hold is Lamp's, whether or not the app said its batch began.
+    if (!lampHas || lampHasUntil < drivenUntil) { lampHas = true; lampHasUntil = drivenUntil; }
     return true;
 };
 const pressing = pad => !!pad.down || ['lx', 'ly', 'rx', 'ry', 'lt', 'rt'].some(axis => Math.abs(pad[axis]) > 0.3);
 function letGoOfLamp(why) {
-    if (!driven) return;
+    if (!lampHas && !driven) return;
+    lampHas = false;
     driven = null;
     if (!why) return;
     log(`Lamp: let go of the controller (${why}).`);
     try { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampDriveTakenOver; h && h.postMessage(why); } catch (e) {}
 }
+// A phone's stick or tilt is a person's when it moves: one held still at an angle (a phone lying tilted) says the same
+// value over and over, and isn't someone playing.
+const phoneAxes = new Map();
+function phoneAxis(player, name, x, y) {
+    const key = `${player} ${name}`, last = phoneAxes.get(key);
+    phoneAxes.set(key, [Number(x) || 0, Number(y) || 0]);
+    if (lampHas && (!last ? Math.abs(x) > 0.3 || Math.abs(y) > 0.3 : Math.abs(x - last[0]) > 0.3 || Math.abs(y - last[1]) > 0.3)) letGoOfLamp('a phone played');
+}
 
 // Heard for as long as the page lasts, under what `watchPhones` wraps, so it belongs to no run of the game's code.
 if (window.Lamp && window.Lamp.controllers) {
     window.Lamp.controllers.onButton(phoneButton);
-    window.Lamp.controllers.onLeave(player => phoneButtons.delete(player));
+    window.Lamp.controllers.onLeave(player => { phoneButtons.delete(player); for (const key of phoneAxes.keys()) if (key.startsWith(`${player} `)) phoneAxes.delete(key); });
+    if (window.Lamp.controllers.onAxis) window.Lamp.controllers.onAxis(phoneAxis);
+    if (window.Lamp.controllers.onMessage) window.Lamp.controllers.onMessage(() => { if (lampHas) letGoOfLamp('a phone sent something'); });
 }
 
 // Watched from here, after the runtime's own listeners: only where Lamp puts changes into the open game.

@@ -28,9 +28,10 @@ enum GameFun {
         return """
         \n\n---
         What this request asks for (from Lamp): make the game a lot more fun, as the game skill's "Fun" says (open it if \
-        you haven't). Play it first and find what's flat. Then give it a better core loop and difficulty curve; juice \
+        you haven't). Look at it first and find what's flat. Then give it a better core loop and difficulty curve; juice \
         (quick feedback, sound, particles, and a little screen shake on the big moments); and surprises and small \
-        delights, often. Playtest it in its window on this Mac before you finish, and fix what still isn't fun.
+        delights, often. Look at it again before you finish, and ask the person to play it: play it yourself only if \
+        they asked you to.
         """
     }
 }

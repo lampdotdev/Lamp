@@ -1454,8 +1454,10 @@ extension Agent.Rules {
     b, x, y, lb, rb, lt, rt, menu, view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and \
     `wait`, each at most 10 seconds, with a picture at the end. It plays from wherever the game is (a menu, a pause \
     screen, the middle of a level), not its start: read the picture first and get to what you mean to check. The \
-    person's own press takes the game back at once, and use_app is off until their next message. Play it as the person \
-    would before you finish: a game that only looks right isn't done. Read how the game takes the controller first \
+    person's own press takes the game back at once, and use_app is off until their next message. It's their game in \
+    front of them, so play it only when they ask you to try, play or test it, and then as they would: a game that only \
+    looks right isn't done. For a request to change it, build and look, and say what you didn't play rather than calling \
+    it checked. Read how the game takes the controller first \
     (APP.md, its controls code): a vehicle's gas is often a trigger, held as `key` rt alongside the stick that steers, \
     and a game that barely moves under your moves is one you're driving with the wrong control, not one that can't be \
     tried. `look_at_app` with `on_device` builds the game for where Try On points, opens it there and shows its own \

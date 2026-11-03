@@ -8931,6 +8931,11 @@ enum Template {
         static var act: ((LampDriver.Action, NSPoint?, NSWindow) -> String?)?
         /// Whether the game on a page is playing (`LampPagePlaying`): nil for an app with no game, false while it loads.
         @MainActor static var playing: Bool?
+        /// Gives a game's controller to Lamp for a batch (seconds it may run) or back (nil).
+        static var own: ((Double?) -> Void)?
+        /// Holds a game's controller for a `stick` or `button` action: false when the app has no game; otherwise the
+        /// page's answer comes to `said`, in words for the report (held, or why not).
+        static var hold: ((LampDriver.Action, NSWindow, @escaping @MainActor (String) -> Void) -> Bool)?
     }
 
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
@@ -9000,6 +9005,17 @@ enum Template {
             /// Every action was carried out: from now on the person's clicks and keys are just theirs.
             func end() {
                 if Self.current === self { Self.current = nil }
+                giveBackAll()
+            }
+
+            /// What the batch took for itself beyond the keys it holds (a game's controller, LampPage.swift), given back
+            /// once, however the batch ends: done, stopped or replaced.
+            func whenOver(_ giveBack: @escaping @MainActor () -> Void) { finishers.append(giveBack) }
+            private var finishers: [@MainActor () -> Void] = []
+            private func giveBackAll() {
+                let all = finishers
+                finishers = []
+                for giveBack in all { giveBack() }
             }
 
             /// A key held down by the driver: pressed now through the app's own event queue (where a game's key
@@ -9040,6 +9056,7 @@ enum Template {
             }
 
             private func letGo() {
+                defer { giveBackAll() }
                 for key in held {
                     key.timer.invalidate()
                     NSApp.postEvent(key.up, atStart: true)
@@ -9108,6 +9125,15 @@ enum Template {
                 if holdsBarPanel { forgetBarPanel() }
                 report.append(why)
                 answer(stopped: true)
+            }
+            // A game's controller is Lamp's for the whole batch, its waits included, so the person's own input at any
+            // point takes it back (lamp-game.js); given back however the batch ends.
+            if actions.contains(where: { ["stick", "button"].contains($0.action) }), let own = LampPageItems.own {
+                let seconds = actions.reduce(2.0) { total, action in
+                    total + 0.6 + (["wait", "key", "stick", "button"].contains(action.action) ? min(max(action.amount ?? 1, 0), 10) : 0)
+                }
+                own(seconds)
+                batch.whenOver { own(nil) }
             }
             // Which window the actions are in, before any of them and whenever an action changes it (a panel
             // opened, a dialog): Lamp's glow goes round it from the start.
@@ -9180,7 +9206,17 @@ enum Template {
                        !(window is NSSavePanel) {
                         last = (line, window, LampRuntime.picture(of: window))
                     }
-                    report[line] = run(action)
+                    // A game's controller is held by its page, which says whether it took the hold: the line is its answer,
+                    // in the report long before the batch's end, since the hold's own pause is longer than the page takes.
+                    if ["stick", "button"].contains(action.action), let window = LampRuntime.windowsOnScreen.first, let hold = LampPageItems.hold {
+                        report[line] = "\(action.action): the game didn't answer"
+                        last = nil
+                        if !hold(action, window, { said in report[line] = said }) {
+                            report[line] = "\(action.action): this app has no game whose controller Lamp can hold"
+                        }
+                    } else {
+                        report[line] = run(action)
+                    }
                     // A page reads its things again, for the next action's target: ready well within the pause.
                     LampPageItems.refresh? {}
                     if action.action != "bar_icon" { keepBarPanel() }
@@ -9296,13 +9332,8 @@ enum Template {
         private static func run(_ action: Action) -> String {
             if action.action == "menu" { return menuBar(action.item) }
             if action.action == "bar_icon" { return barIcon(action.item) }
-            // A game's controller is held in the game's page, aimed at nothing on screen.
-            if ["stick", "button"].contains(action.action) {
-                guard let window = LampRuntime.windowsOnScreen.first, let did = LampPageItems.act?(action, nil, window) else {
-                    return "\(action.action): this app has no game whose controller Lamp can hold"
-                }
-                return did
-            }
+            // A game's controller is held in the game's page (`step`): an app with none has nothing to hold.
+            if ["stick", "button"].contains(action.action) { return "\(action.action): this app has no game whose controller Lamp can hold" }
             guard let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
                 return "\(action.action): the app has no window open"
             }

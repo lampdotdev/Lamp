@@ -266,4 +266,4 @@ Some platforms might not be powerful enough to run three.js.
 log says every ten seconds how it kept to its frames there, which says nothing of a slower device's: keep to the budget
 in the request's device line. `use_app` plays it there with Lamp's own controller. `look_at_app` with `on_device` opens
 the game where Try On points and shows its log, with that place's frame times.
-Play it as the game skill's "Playtesting" says before you finish.
+When the person asks you to try, play or test it, play it as the game skill's "Playtesting" says.

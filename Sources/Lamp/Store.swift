@@ -791,6 +791,9 @@ final class Store: ObservableObject {
         /// When the agent last looked at the game open on this Mac (`lookAtOpenGame`): what went in since is what its next
         /// look says.
         var lookedAtOpenGame: Date?
+        /// Stops the `use_app` batch the app is carrying out for this turn, set while one runs: `cancel` sends it, so a
+        /// stopped turn never leaves a game's controller held.
+        var stopUse: (@MainActor () -> Void)?
         /// The games whose last look was where Try On points (`on_device`, away from this Mac), by app: `use_app` goes
         /// where the last look went, so it never presses in a copy the agent hasn't seen.
         var gameOnDevice: Set<String> = []
@@ -891,6 +894,7 @@ final class Store: ObservableObject {
             // it finishes without a word (the app has the change, and nothing is said of it after Stop).
             autoApply?.cancel()
             applying?.cancel()
+            stopUse?()
             return pids
         }
     }
@@ -6385,12 +6389,12 @@ final class Store: ObservableObject {
         var stoppedAt: Date?
         let trial = Handover(label: "\(Self.lampName) is trying \(project.name)") {
             stoppedAt = Date()
-            // Under both keys: an app built before the longer one reads the first.
-            let stop = Self.signature(over: "stop\n\(id)", token: Template.token(for: project))
-            DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name(Edition.notificationPrefix + "useAppStop.\(project.id)"), object: nil,
-                userInfo: ["id": id, "lampUseAppStop": stop, "lampUseAppStopSignature": stop], deliverImmediately: true)
+            Self.stopUse(id, in: project)
         }
+        // The turn's Stop, its end and its place taken by another reach the batch too, as the same signed stop: what
+        // the app is pressing (a game's controller above all) is let go, not left to the actions still to come.
+        var answered = false
+        turn.stopUse = { Self.stopUse(id, in: project) }
         if let window = Handover.frontWindow(of: app.processIdentifier) { trial.show(window: window) }
         // Where each action is about to happen and how long until it does, from the app (`LampDriver.aimed`), for
         // Lamp's cursor to be there first: sent during the pause before the action, so nothing waits for the cursor.
@@ -6409,6 +6413,9 @@ final class Store: ObservableObject {
         }
         defer {
             DistributedNotificationCenter.default().removeObserver(steps)
+            // No answer (the wait ran out, or the turn stopped or was replaced): the batch may still be running.
+            if !answered { Self.stopUse(id, in: project) }
+            if turn.stopUse != nil { turn.stopUse = nil }
             trial.end()
         }
         // SwiftUI takes a click for a tap gesture only in the active app's key window (macOS 27), so a batch that
@@ -6440,9 +6447,11 @@ final class Store: ObservableObject {
         }
         let wait = Double(actions.count) * (0.4 + 0.45) + waits + 5
         // Once stopped, the app answers at once; one inside a dialog of its own can't until that closes, and isn't waited for.
-        let answer = await Runtime.useReport(of: project, id: id, waiting: wait) {
+        let answer = await Runtime.useReport(of: project, id: id, waiting: wait) { [weak self] in
             !app.isTerminated && (stoppedAt.map { Date().timeIntervalSince($0) < 2 } ?? true)
+                && self?.turns[project.id] === turn && !turn.stopped
         }
+        answered = answer != nil
         // Their own click or key in the app stopped it there: the pill says the app is theirs, as for Stop.
         if answer?.stopped == true { trial.take() }
         // Asked again after the reads below: they take a moment, and Stop may come during them.
@@ -6487,6 +6496,15 @@ final class Store: ObservableObject {
             text += "\n\nThis was the game the person has open, from where they were in it, not a play from the start."
         }
         return (200, ["text": text, "screenshots": Self.agentPictures(pictures, in: project)])
+    }
+
+    /// Stops the app's `use_app` batch `id` where it is, signed with the app's token as the request was (`LampDriver.Handover`):
+    /// what it holds is let go and nothing more is done. Under both keys: an app built before the longer one reads the first.
+    static func stopUse(_ id: String, in project: LampProject) {
+        let stop = signature(over: "stop\n\(id)", token: Template.token(for: project))
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "useAppStop.\(project.id)"), object: nil,
+            userInfo: ["id": id, "lampUseAppStop": stop, "lampUseAppStopSignature": stop], deliverImmediately: true)
     }
 
     /// What the agent hears once the person has taken the app back, and from then on when it calls use_app.
@@ -10500,14 +10518,16 @@ final class Store: ObservableObject {
     /// window isn't brought forward or touched, and nothing is pressed: it shows where the person is, as they left it.
     /// What the window can't show is said, never shown some other way: a change that waits for Reload or didn't go in,
     /// a picture that looks blank. Nil only when the game isn't open on this Mac, for the look to open it.
-    private func lookAtOpenGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any])? {
+    /// `mayRun` false (a game that reaches devices, with no allowed device): what the agent saved isn't put in, since
+    /// that runs the game's new code; the look says so.
+    private func lookAtOpenGame(_ project: LampProject, turn: Turn, motion: Bool, mayRun: Bool = true) async -> (Int, [String: Any])? {
         guard playsInWindow(project), stepsPage(project.at(.mac)) else { return nil }
         let began = Date()
         await turn.applying?.value
         var mac = current(project) ?? project
         mac.chosen = .mac
         // What the agent has saved since the last step goes in now: a look says the state is whole.
-        if Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage, !Runtime.waitsForReload(mac), !turn.building,
+        if mayRun, Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage, !Runtime.waitsForReload(mac), !turn.building,
            turn.agent != nil, turns[project.id] === turn || turns[wish(of: project).id] === turn {
             turn.applyingSources = Runtime.fingerprint(mac)
             turn.applying = Task { [weak self] in
@@ -10523,6 +10543,10 @@ final class Store: ObservableObject {
         var without = ""
         if Runtime.waitsForReload(mac) || PageLive.shared.holds(mac) {
             without = " This is the game without your latest change: it waits for the person's Reload, so don't say it's in."
+        } else if !mayRun, Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage {
+            without = " Your latest change isn't in it: putting it in runs the game's new code, which reaches the person's devices, "
+                + "so it goes in only with a device they allowed, named in `device` (ask with `device_permission` first). "
+                + "This is the game without it."
         } else {
             let shown = !turn.shownSources.isEmpty && turn.shownSources == Runtime.fingerprint(mac)
             if !shown, Runtime.sourcesChanged(mac), pageSignature(mac) != turn.shownPage {
@@ -13821,7 +13845,8 @@ final class Store: ObservableObject {
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
         // A game that controls the person's devices runs that code as it opens: a look that opens it, or starts it again,
         // is one on a device they allowed, as a use is. Looking at it open in its window starts nothing.
-        // The look is told whether it may open the game, for one that closes while it looks (`mayOpen`).
+        // The look is told whether it may open the game, for one that closes while it looks (`mayOpen`), and whether it
+        // may put the agent's saved change into the open game, which runs the new code (the same answer).
         let reopen = arguments["reopen"] as? Bool ?? false, onDevice = arguments["on_device"] as? Bool ?? false
         let device = (arguments["device"] as? String)?.trimmed ?? ""
         let mayOpen = !DevicePermissions.openNeedsDevice(app) || (!device.isEmpty && DevicePermissions.allowed(wish(of: project)).contains(device))
@@ -13894,7 +13919,8 @@ final class Store: ObservableObject {
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
     /// `onDevice`: for a game, where Try On points (its window, the simulator or the Xbox) rather than its window on this Mac.
-    /// `mayOpen` false: a game that reaches devices, looked at with no allowed device, is only looked at open, never opened.
+    /// `mayOpen` false: a game that reaches devices, looked at with no allowed device, is only looked at open, never opened,
+    /// and nothing the agent saved is put into it, since that runs the game's new code.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
                       shape: String? = nil, mayOpen: Bool = true) async -> (Int, [String: Any]) {
         withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape, mayOpen: mayOpen), of: project)
@@ -13953,7 +13979,7 @@ final class Store: ObservableObject {
             return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen)
         }
         // A game open in its window is looked at there as it is; closed, or asked to start again, it's opened as a Mac app is.
-        if inWindow, !wantsFresh, let answer = await lookAtOpenGame(project, turn: turn, motion: motion) { return answer }
+        if inWindow, !wantsFresh, let answer = await lookAtOpenGame(project, turn: turn, motion: motion, mayRun: mayOpen) { return answer }
         // Closed while it was looked at, or not ready to be looked at in place: opening it again runs its device code.
         if GameKit.isGame(project), !mayOpen { return (400, ["error": DevicePermissions.openRefusal]) }
         // A page looked at at another shape, or where nothing on this Mac shows it, is looked at in the preview, with no
