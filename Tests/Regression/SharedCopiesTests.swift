@@ -56,6 +56,9 @@ final class SharedCopiesTests: XCTestCase {
             XCTAssertEqual(Privacy.verdict(tool: tool, path: file, project: mine), .deny(SharedCopies.readOnly), tool)
         }
         guard case .deny = Privacy.verdict(tool: "read", path: file, project: other) else { return XCTFail("another wish read the copy") }
+        // Nor by a search that starts above every wish's copies and walks into another's.
+        XCTAssertTrue(Privacy.wouldUncover(root: scratch.path, project: other))
+        XCTAssertFalse(Privacy.wouldUncover(root: laid.folder.path, project: mine))
         // A command under Lamp's sandbox, and Codex's, reads there and writes nothing.
         XCTAssertTrue(Sandbox.profile(for: mine).contains("(deny file-write* (subpath \"\(SharedCopies.root.path)\"))"))
         XCTAssertTrue(Sandbox.codexPermissions(for: mine).contains("\(Agent.tomlString(SharedCopies.root.path))=\"read\""))

@@ -98,11 +98,13 @@ enum Privacy {
     }
 
     /// Whether a search of everything under `root` would pass over something the rule above never opens:
-    /// Lamp's own folder. Lamp's file tools skip such places as they go (`hides`); a search the agent's own
+    /// Lamp's own folder, or the shared copies Lamp fetched for every wish (`SharedCopies.root`, where only this
+    /// wish's own may be read). Lamp's file tools skip such places as they go (`hides`); a search the agent's own
     /// tool runs can't, so it isn't allowed to start above them.
     static func wouldUncover(root raw: String, project: LampProject) -> Bool {
         let root = resolved(raw, in: project.dir)
-        return lampFolders.contains { $0 == root || $0.hasPrefix(root.hasSuffix("/") ? root : root + "/") }
+        let closed = lampFolders + [resolved(SharedCopies.root.path, in: SharedCopies.root)]
+        return closed.contains { $0 == root || $0.hasPrefix(root.hasSuffix("/") ? root : root + "/") }
     }
 
     /// The support folders of every Lamp on this Mac, the installed one's, the development build's and each

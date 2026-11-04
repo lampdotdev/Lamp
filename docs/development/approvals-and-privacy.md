@@ -116,7 +116,7 @@ A capability given to one engine must be given to all of them that can take it, 
   opening lists (each app's code, data, notes and the licenses its credits name, as plain files inside the file) is laid
   out, in a folder of the wish's own in Lamp's temporary folder (`SharedCopies.folder(for:)`), never anything else the
   file holds. Nothing there is run or built. The agent's file tools read it without asking and can't change it, and
-  another wish's copies are refused, whatever the settings say (`Privacy.verdict`); commands may read it and not write it
+  another wish's copies are refused, whatever the settings say (`Privacy.verdict`), as is a search that starts above them (`Privacy.wouldUncover`, for Claude Code's and pi's own find and grep); commands may read it and not write it
   (`(deny file-write*)` for it in Lamp's profile, a `read` entry for it in Codex's). It's cleared a day on.
 - **What Lamp fetches for itself** (`StarterDownloads`, `LlamaInstall`, `Downloads`): llama.cpp's server and libraries
   come from Lamp's own release at the size and SHA-256 the bundle pins, and each program and library is checked for the

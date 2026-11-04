@@ -161,21 +161,25 @@ enum PulledIn {
     }
 
     /// A copy was fetched for this turn: its credit waits for the version the turn saves, in place of one waiting for
-    /// the same link.
-    static func expect(_ credit: Credit, in project: LampProject) {
+    /// the same link. One waiting more than a day goes.
+    static func expect(_ credit: Credit, in project: LampProject, now: Date = Date()) {
         var credit = credit
         credit.version = nil
-        keep(load(project).filter { $0.version != nil || $0.link != credit.link } + [credit], in: project)
+        let kept = load(project).filter { $0.version != nil || ($0.link != credit.link && now.timeIntervalSince($0.date) <= SharedCopies.keptFor) }
+        keep(kept + [credit], in: project)
     }
 
-    /// The turn saved `version`: what it fetched is credited there. Nil leaves them waiting, a day at most.
-    static func settle(_ project: LampProject, version: String?, now: Date = Date()) {
+    /// The turn saved `version`: what it fetched is credited there. A credit waiting more than a day was for a pull-in
+    /// that never came, and goes first, so a later change isn't credited with it.
+    static func settle(_ project: LampProject, version: String, now: Date = Date()) {
         let all = load(project)
         guard all.contains(where: { $0.version == nil }) else { return }
         keep(all.compactMap { credit in
             guard credit.version == nil else { return credit }
-            if let version { var credit = credit; credit.version = version; return credit }
-            return now.timeIntervalSince(credit.date) > SharedCopies.keptFor ? nil : credit
+            guard now.timeIntervalSince(credit.date) <= SharedCopies.keptFor else { return nil }
+            var credit = credit
+            credit.version = version
+            return credit
         }, in: project)
     }
 

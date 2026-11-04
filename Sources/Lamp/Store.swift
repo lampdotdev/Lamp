@@ -13941,6 +13941,10 @@ final class Store: ObservableObject {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             // One of the agent's file tools, about to touch something outside the app's folder or in its runtime folder.
             if let tool = body["file_tool"] as? String, let path = body["path"] as? String {
+                // pi's own find and grep walk all that's under where they start, as Claude Code's do.
+                if tool == "find" || tool == "grep", Privacy.wouldUncover(root: path, project: project) {
+                    return (200, ["allow": false, "reason": "That search would pass over Lamp's own files, which aren't yours to open. Search a narrower folder."])
+                }
                 let (allowed, reason) = await fileAccess(tool: tool, path: path, for: project)
                 return (200, reason.map { ["allow": allowed, "reason": $0] } ?? ["allow": allowed])
             }
