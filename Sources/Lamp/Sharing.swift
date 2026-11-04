@@ -282,7 +282,9 @@ enum Sharing {
     /// where it lives and what commit it's at. A wish that lives nowhere names the version of its own history the
     /// file is made from, so a file that comes back from whoever it was sent to can be merged against that version
     /// (`Upstream.ownVersion`); a copy sharing on keeps the version it was given, which is the sender's and not its own.
-    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil) throws -> URL {
+    /// `releasing` is what's new in a release the file goes out with, which isn't kept until it has (`WishReleases`).
+    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil,
+                       releasing: WishReleases.Entry? = nil) throws -> URL {
         // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
         // other apps are read off its folder, as Lamp lists them.
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
@@ -348,7 +350,7 @@ enum Sharing {
         }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
         // What's new in each release, for the app's What's New… in the copies made from it (`WishReleases`).
-        try WishReleases.carry(project, into: stage)
+        try WishReleases.carry(project, releasing: releasing, into: stage)
         // Each license and notice the credits name goes with the work it covers, wherever the kind's own files left it.
         for source in credits.upstream {
             for path in source.termsFiles where Credits.isLicenceFile(path) {

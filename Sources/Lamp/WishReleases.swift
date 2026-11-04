@@ -57,8 +57,9 @@ enum WishReleases {
 
     /// What the app shows under What's New… and its shared file carries: the wish's own releases and those it arrived
     /// with, newest first.
-    static func forApp(_ project: LampProject) -> [Entry] {
-        let own = load(project).filter { !$0.lines.isEmpty }.map { Entry(date: $0.date, lines: $0.lines) }
+    /// `releasing` is a release on its way out with this file, not kept yet (`WishLinkCards.share`).
+    static func forApp(_ project: LampProject, releasing: Entry? = nil) -> [Entry] {
+        let own = ([releasing].compactMap { $0 } + load(project).map { Entry(date: $0.date, lines: $0.lines) }).filter { !$0.lines.isEmpty }
         var seen: Set<String> = []
         return (own + received(project)).sorted { $0.date > $1.date }
             .filter { seen.insert("\($0.date.timeIntervalSince1970) \($0.lines)").inserted }
@@ -87,8 +88,8 @@ enum WishReleases {
     }
 
     /// Into a shared file being made: what the app shows, for the copies made from it.
-    static func carry(_ project: LampProject, into folder: URL) throws {
-        let entries = forApp(project)
+    static func carry(_ project: LampProject, releasing: Entry? = nil, into folder: URL) throws {
+        let entries = forApp(project, releasing: releasing)
         guard !entries.isEmpty else { return }
         try encoder.encode(entries).write(to: folder.appendingPathComponent(fileEntry))
     }

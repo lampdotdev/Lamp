@@ -483,7 +483,8 @@ enum WishLink {
                 Store.shared.refreshInstalled(project)
                     cards[project.id]?.shared = shared
                     let data = try await Task.detached(priority: .userInitiated) { () throws -> Data in
-                        let file = try Sharing.export(project)
+                        // With this release's lines, which are kept only once the file is up.
+                        let file = try Sharing.export(project, releasing: WishReleases.Entry(date: release.date, lines: release.lines))
                         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
                         return try Data(contentsOf: file)
                     }.value
