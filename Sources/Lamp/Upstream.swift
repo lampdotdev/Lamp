@@ -23,6 +23,12 @@ enum Upstream {
     static let ref = "refs/lamp/upstream"
     static let remote = "upstream"
 
+    /// What an update from where the wish came from brought in (the staged tree `ref` named then), kept by the commit
+    /// of it the wish's credits moved on to with it. A version's credits.json names that commit only while the version
+    /// has what the update brought, so a contribution measures the wish's own changes against the snapshot its credits
+    /// name (`Contribute.base`), and an update taken back with Undo is no longer counted.
+    static func snapshot(_ commit: String) -> String { "refs/lamp/snapshot/" + commit }
+
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
@@ -176,6 +182,9 @@ enum Upstream {
             throw Failure(message: "Lamp couldn't put the merged files in place.")
         }
         if keptMark != theirsMark { _ = await run("git update-ref \(ref) \(keptMark)", in: project) }
+        if ref == Upstream.ref, let commit = Credits.validCommit(package.credits?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit) {
+            _ = await run("git update-ref \(snapshot(commit)) \(keptMark)", in: project)
+        }
         // The icon's pictures live outside the versions: the package's go in when its icon changed upstream, for the
         // design as git merged it (icon.json is in the files), never in place of a design changed here. The
         // description the same way, from the shared file's manifest.
@@ -379,7 +388,7 @@ enum Upstream {
     }
 
     /// A git command in the wish's folder, as Lamp's git runs (`Versions.git`), with what it printed.
-    private static func run(_ command: String, in project: LampProject) async -> (status: Int32, output: String) {
+    static func run(_ command: String, in project: LampProject) async -> (status: Int32, output: String) {
         let said = Said()
         let status = await Versions.git(command, cwd: project.dir) { said.add($0) }
         return (status, said.lines.joined(separator: "\n"))

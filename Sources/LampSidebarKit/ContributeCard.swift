@@ -3,7 +3,7 @@ import AppKit
 
 /// Send Changes Back: a wish's changes offered to the repository it came from, as a pull request from the person's
 /// own fork. Laid out as Put on GitHub's card is (`RepoCard`), to be read before anything leaves the Mac: where it
-/// goes, through which fork, the credit it carries, what its licenses ask and how much; then the pull request and
+/// goes, through which fork, the credit it carries, what its licenses ask and how many files it changes; then the pull request and
 /// what can be done with it. Drawn from plain values, so the chat (in its place) and the gallery show the same card.
 public struct ContributeCard: View {
     public enum Stage: Codable, Equatable {
