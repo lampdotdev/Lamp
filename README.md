@@ -81,7 +81,7 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
   it. **Your Devices** down the side lists what Lamp can make things for (this Mac, your phones, TVs, Xbox, speakers)
   and finds them on your Wi‑Fi when you ask it to.
 - **Make a wish** in the box at the top, by typing or with the microphone. **Not sure?** asks a few questions about
-  your days and writes a wish with you. Lamp asks a question first only when the answer would change what it makes;
+  your days and writes it with you. Lamp asks a question first only when the answer would change what it makes;
   otherwise it fills in the rest, names it, designs its icon, makes it and opens it.
 - **Change an app while you use it.** The chat sits beside the app (click the wand at its top right, or **Customize
   with Lamp (⇧⌘E)** in the app's menu). A change goes into the open app without restarting it where it can: games

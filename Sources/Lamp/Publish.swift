@@ -86,7 +86,7 @@ enum Publish {
 
     /// Where the page's Open in Lamp goes. Its Share Link first (`WishLink`), once the person has made one (the card offers
     /// to, through Share Link's own card, where they see and change what it shows): that page works for someone without
-    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"). Else `file`, the wish
+    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open Lamp with it"). Else `file`, the wish
     /// as a shared file beside the page, when there is one. `origin` is what the page is a copy of, when that's somewhere
     /// Lamp can copy it from again: the starter a starter's own page is (`StarterRepos.stagePage`), or the repository the
     /// page was put up with, at the commit pushed with it (`GitHubRepo.upload`). The Remix panel's request goes with it

@@ -23,7 +23,7 @@ public enum Activity {
               "Getting the details right"]),
         (60, ["The genie is squinting", "Deep in thought", "The genie is concentrating", "Worth getting right",
               "Untangling the tricky part"]),
-        (180, ["Still on it, nothing's stuck", "Big wishes take a few minutes", "The genie hasn't wandered off"]),
+        (180, ["Still on it, nothing's stuck", "Big ones take a few minutes", "The genie hasn't wandered off"]),
     ]
 
     /// What a build says once it has run a while.
