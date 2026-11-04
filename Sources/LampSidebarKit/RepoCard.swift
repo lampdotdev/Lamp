@@ -37,6 +37,8 @@ public struct RepoCard: View {
     /// Where the README's Remix it with Lamp goes.
     let openInLamp: String?
     let notes: [String]
+    /// Lines of sources only credited under their own terms, folded (`TermsFold`).
+    let terms: [String]
     let size: String?
     let copied: Bool
     /// The repository is made already (a first try that failed after making it): its one-time choices are settled. Once
@@ -71,12 +73,16 @@ public struct RepoCard: View {
     let copy: () -> Void
     let close: () -> Void
     let width: CGFloat?
+    /// Drawn in the chat's place: its words scroll when they don't fit, its buttons stay (`GitHubCardLayout`).
+    let scrolls: Bool
+    @State private var termsOpen = false
 
-    public init(icon: NSImage?, name: String, stage: Stage, repo: String?, url: String?, credit: String?, openInLamp: String?, notes: [String], size: String?,
+    public init(icon: NSImage?, name: String, stage: Stage, repo: String?, url: String?, credit: String?, openInLamp: String?, notes: [String], terms: [String] = [], size: String?,
                 copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
                 page: String? = nil, pageUp: Bool = false, privateGame: Bool = false, plays: Bool = true, picture: NSImage? = nil, showsPicture: Bool = false,
                 put: @escaping () -> Void, fix: @escaping () -> Void, makeLink: @escaping () -> Void = {}, setPrivate: @escaping (Bool) -> Void, setLicense: @escaping (Bool) -> Void,
-                setPicture: @escaping (Bool) -> Void = { _ in }, openRepo: @escaping () -> Void, play: @escaping () -> Void = {}, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
+                setPicture: @escaping (Bool) -> Void = { _ in }, openRepo: @escaping () -> Void, play: @escaping () -> Void = {}, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480,
+                scrolls: Bool = false) {
         self.icon = icon
         self.name = name
         self.stage = stage
@@ -85,6 +91,7 @@ public struct RepoCard: View {
         self.credit = credit
         self.openInLamp = openInLamp
         self.notes = notes
+        self.terms = terms
         self.size = size
         self.copied = copied
         self.update = update
@@ -109,6 +116,7 @@ public struct RepoCard: View {
         self.copy = copy
         self.close = close
         self.width = width
+        self.scrolls = scrolls
     }
 
     private var busy: Bool {
@@ -130,7 +138,7 @@ public struct RepoCard: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        GitHubCardLayout(scrolls: scrolls, width: width) {
             HStack(alignment: .top, spacing: 12) {
                 Image(nsImage: icon ?? NSWorkspace.shared.icon(for: .applicationBundle)).resizable()
                     .frame(width: 56, height: 56)
@@ -180,6 +188,7 @@ public struct RepoCard: View {
                     }
                     .disabled(busy)
                 }
+                TermsFold(terms: terms, open: $termsOpen)
                 ForEach(notes, id: \.self) { note in
                     Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -201,11 +210,9 @@ public struct RepoCard: View {
                 }
             }
             status
+        } buttons: {
             buttons.cardButtons()
         }
-        .padding(24)
-        .frame(width: width)
-        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
     }
 
     private func row(_ label: String, _ value: String) -> some View {

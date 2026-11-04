@@ -168,24 +168,21 @@ private struct Chat: View {
     var body: some View {
         VStack(spacing: 0) {
             if let card = state.repo {
-                ScrollView {
-                    RepoCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo, url: card.url,
-                             credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, size: card.size, copied: card.copied, update: card.update,
-                             canPut: card.canPut, isPrivate: card.isPrivate, license: card.license, canChooseLicense: card.canChooseLicense,
-                             page: card.page, pageUp: card.pageUp ?? false, privateGame: card.privateGame ?? false, plays: card.plays ?? true,
-                             picture: card.picture.flatMap(NSImage.init(data:)), showsPicture: card.showsPicture ?? false,
-                             put: { link.send(.repo(.put)) }, fix: { link.send(.repo(.fix)) }, makeLink: { link.send(.repo(.makeLink)) },
-                             setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },
-                             setPicture: { link.send(.repo(.setPicture($0))) }, openRepo: { link.send(.repo(.openRepo)) }, play: { link.send(.repo(.play)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil)
-                }
+                RepoCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo, url: card.url,
+                         credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, terms: card.terms ?? [], size: card.size, copied: card.copied, update: card.update,
+                         canPut: card.canPut, isPrivate: card.isPrivate, license: card.license, canChooseLicense: card.canChooseLicense,
+                         page: card.page, pageUp: card.pageUp ?? false, privateGame: card.privateGame ?? false, plays: card.plays ?? true,
+                         picture: card.picture.flatMap(NSImage.init(data:)), showsPicture: card.showsPicture ?? false,
+                         put: { link.send(.repo(.put)) }, fix: { link.send(.repo(.fix)) }, makeLink: { link.send(.repo(.makeLink)) },
+                         setPrivate: { link.send(.repo(.setPrivate($0))) }, setLicense: { link.send(.repo(.setLicense($0))) },
+                         setPicture: { link.send(.repo(.setPicture($0))) }, openRepo: { link.send(.repo(.openRepo)) }, play: { link.send(.repo(.play)) }, copy: { link.send(.repo(.copy)) }, close: { link.send(.repo(.close)) }, width: nil,
+                         scrolls: true)
             } else if let card = state.contribute {
-                ScrollView {
-                    ContributeCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, upstream: card.upstream, fork: card.fork,
-                                   credit: card.credit, notes: card.notes, size: card.size, copied: card.copied, canSend: card.canSend,
-                                   send: { link.send(.contribute(.send)) }, fix: { link.send(.contribute(.fix)) },
-                                   openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
-                                   close: { link.send(.contribute(.close)) }, width: nil)
-                }
+                ContributeCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, upstream: card.upstream, fork: card.fork,
+                               credit: card.credit, notes: card.notes, terms: card.terms ?? [], size: card.size, copied: card.copied, canSend: card.canSend,
+                               send: { link.send(.contribute(.send)) }, fix: { link.send(.contribute(.fix)) },
+                               openRequest: { link.send(.contribute(.openRequest)) }, copy: { link.send(.contribute(.copy)) },
+                               close: { link.send(.contribute(.close)) }, width: nil, scrolls: true)
             } else {
                 switch state.panel {
                 case .versions: VersionsPanel(state: state)

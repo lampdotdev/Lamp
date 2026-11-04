@@ -343,11 +343,11 @@ enum Gallery {
     /// A whole chat as people see it, beside an app or in Lamp's panel: the shared screen (`ChatScreen`), its bar and
     /// message box included, at the width picked and a chat's height.
     static func screen(_ name: String, group: String = "Chat", _ lines: [LogLine], progress: TurnProgress? = nil, details: Bool = false,
-                       _ change: @escaping (inout SidebarState) -> Void = { _ in }) -> Entry {
+                       height: CGFloat = 640, _ change: @escaping (inout SidebarState) -> Void = { _ in }) -> Entry {
         Entry(group: group, name: name) {
             var made = state(lines, progress: progress, details: details)
             change(&made)
-            return AnyView(ChatScreen().environmentObject(GalleryChat(made) as ChatLink).frame(height: 640))
+            return AnyView(ChatScreen().environmentObject(GalleryChat(made) as ChatLink).frame(height: height))
         }
     }
 
@@ -1015,6 +1015,8 @@ enum Gallery {
         repo("Web app, ready", stage: .ready, remix: true, webApp: true),
         repo("Web app, private", stage: .ready, isPrivate: true, webApp: true),
         repo("Web app, up", stage: .done(unchanged: false), up: true, remix: true, webApp: true),
+        repo("Ready, many sources", stage: .ready, notes: [unlicensedData], terms: manySources, remix: true),
+        repoScreen("Ready, many sources, in the chat"),
     ]
 
     /// The card that sends a remix's changes back to the repository it came from, from checking them to the pull
@@ -1030,6 +1032,9 @@ enum Gallery {
         contribute("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."]),
         contribute("Ready, no license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."]),
         contribute("Ready, signed by you", stage: .ready, notes: ["Your git signs your commits, so they go as you sign them, showing you@example.com on GitHub."]),
+        contribute("Ready, many sources", stage: .ready, notes: [unlicensedData], terms: manySources),
+        contributeScreen("Ready, many sources, in the chat", stage: .ready),
+        contributeScreen("Couldn't send, many sources, in the chat", stage: .failed(longFailure)),
         contribute("Working", stage: .working("Opening the pull request…")),
         contribute("Couldn't send", stage: .failed("GitHub didn't take it: the connection was lost.")),
         contribute("Nothing to send", stage: .failed("someone/new-york already has everything this app has: there's nothing to send.")),
@@ -1038,14 +1043,14 @@ enum Gallery {
         contribute("Sent, wide", stage: .done("https://github.com/someone/new-york/pull/4"), width: 480),
     ]
 
-    private static func contribute(_ name: String, stage: ContributeCard.Stage, fork: Bool = true, notes: [String] = [], copied: Bool = false,
-                                   width: CGFloat? = nil) -> Entry {
+    private static func contribute(_ name: String, stage: ContributeCard.Stage, fork: Bool = true, notes: [String] = [], terms: [String] = [],
+                                   copied: Bool = false, width: CGFloat? = nil) -> Entry {
         Entry(group: "GitHub", name: "Send back: " + name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
             let card = ContributeCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                       stage: stage, upstream: ready ? "someone/new-york" : nil, fork: ready && fork ? "else/new-york" : nil,
-                                      credit: "Based on Slop New York by Mr.doob", notes: notes, size: ready ? "38 files · 1.2 MB" : nil, copied: copied,
+                                      credit: "Based on Slop New York by Mr.doob", notes: notes, terms: terms, size: ready ? "38 files · 1.2 MB" : nil, copied: copied,
                                       canSend: stage == .ready || { if case .failed = stage { true } else { false } }(),
                                       send: {}, fix: {}, openRequest: {}, copy: {}, close: {}, width: width)
             return AnyView(card
@@ -1057,7 +1062,33 @@ enum Gallery {
         }
     }
 
-    private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
+    /// A wish built on many data sets, each credited under its own terms: the card folds their lines.
+    private static let manySources = [
+        "Street Trees", "Bike Lanes", "Address Points", "Land Use", "Historic Districts", "Bus Stops", "Parcels", "City Boundary",
+        "Park Benches", "River Gauge", "Snow Routes",
+    ].map { "\($0) is used under its own terms (LicenseRef-City-Open-Data)." }
+    private static let unlicensedData = "River Sampling by the State, Live Bus Positions by the Transit Authority, and Road Closures by the City came with no license. Make sure you're comfortable sharing them."
+    private static let longFailure = "GitHub didn't take it: the branch couldn't be pushed to else/new-york because the fork is behind someone/new-york and was changed since it was checked. Check for Updates… brings their changes in first, then Send Changes Back tries again."
+
+    /// The card in the chat's place, in a chat too short for all of it: its words scroll and its buttons stay.
+    private static func contributeScreen(_ name: String, stage: ContributeCard.Stage) -> Entry {
+        screen("Send back: " + name, group: "GitHub", [], height: 520) { state in
+            state.contribute = SidebarContribute(name: "New York", icon: nil, stage: stage, upstream: "someone/new-york", fork: "else/new-york",
+                                                 credit: "Based on Slop New York by Mr.doob",
+                                                 notes: [unlicensedData, "Your git signs your commits, so they go as you sign them, showing you@example.com on GitHub."],
+                                                 terms: manySources, size: "3 files changed", copied: false, canSend: true)
+        }
+    }
+
+    private static func repoScreen(_ name: String) -> Entry {
+        screen(name, group: "GitHub", [], height: 520) { state in
+            state.repo = SidebarRepo(name: "New York", icon: nil, stage: .ready, repo: "someone/new-york", url: nil, credit: "Based on Slop New York by Mr.doob",
+                                     openInLamp: "lamp.dev, from github.com/someone/new-york", notes: [unlicensedData], size: "38 files · 1.2 MB",
+                                     copied: false, update: false, canPut: true, isPrivate: false, license: true, canChooseLicense: true, terms: manySources)
+        }
+    }
+
+    private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], terms: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
                              canChooseLicense: Bool = true, width: CGFloat? = nil, remix: Bool = false, isPrivate: Bool = false,
                              game: Bool = false, webApp: Bool = false, picture: Bool? = nil) -> Entry {
         Entry(group: "GitHub", name: name) {
@@ -1066,7 +1097,7 @@ enum Gallery {
             let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                 stage: stage, repo: ready ? "someone/new-york" : nil, url: up ? "https://github.com/someone/new-york" : nil,
                                 credit: "Based on Slop New York by Mr.doob",
-                                openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
+                                openInLamp: remix ? "lamp.dev, from github.com/someone/new-york" : link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, terms: terms,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
                                 canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: isPrivate, license: canChooseLicense,
                                 canChooseLicense: canChooseLicense, page: (game || webApp) && !isPrivate && ready ? "someone.github.io/new-york/" : nil,
