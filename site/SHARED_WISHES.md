@@ -24,7 +24,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   it away. Parts go once they're together; everything goes with the link, and with `scripts/take-down-wish.js`.
 - Following (`GET /api/wishes?id=`, `latest` in `lib/shared-wishes.js`): public, with no quota, for the Lamps that
   follow a link: `{format: 1, id, name, version, file}`, the file's version counting up each time it's sent again
-  (Update Link), 0 with no file. The page's "Or open this exact one in Lamp" is `lamp://wish?shared=<id>`
+  (Update Link), 0 with no file. The count is the link's (`fileVersion`), so a file taken away and sent again later is
+  still newer than any before. The page's "Or open this exact one in Lamp" is `lamp://wish?shared=<id>`
   (`sharedWishLink` in `lib/wish.js`): Lamp asks this for the file, and the copy it makes follows the link
   (`Following` in Lamp).
 - The API Lamp talks to (`api/wishes.js`, `lib/shared-wishes.js`): `POST` shares and answers `{id, url, secret}`;

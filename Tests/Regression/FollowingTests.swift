@@ -29,19 +29,21 @@ final class FollowingTests: XCTestCase {
 
     func testPullInBase() {
         let origin = Credits.Remix(name: "Tally", wish: "w", url: "https://github.com/ann/tally", commit: a)
-        let ours = Credits(remixOf: [origin, Credits.Remix(name: "Tally", wish: "w", url: "https://github.com/me/tally", commit: c)])
+        // As Lamp keeps them: the wish's own repository isn't on its own chain (Put on GitHub keeps it apart).
+        let ours = Credits(remixOf: [origin])
         var spider = Following.Followed(place: Following.Place(kind: "github", url: "https://github.com/sam/tally-spider"))
         // A sibling made from the same copy: measured against where this wish has that copy.
         let theirs = Credits(remixOf: [Credits.Remix(name: "Tally", wish: "w", url: "https://github.com/ann/tally", commit: b),
                                        Credits.Remix(name: "Tally", wish: "w", url: "https://github.com/sam/tally-spider", commit: b)])
         XCTAssertEqual(Following.base(for: spider, ours: ours, theirs: theirs, own: "https://github.com/me/tally")?.commit, a)
-        // A copy made from this one: measured against the version of this one it was made from.
+        // A copy made from this one: measured against the version of this one it was made from, which only their chain names.
         let fromMe = Credits(remixOf: [origin, Credits.Remix(name: "Tally", wish: "w", url: "https://github.com/me/tally", commit: b)])
         XCTAssertEqual(Following.base(for: spider, ours: ours, theirs: fromMe, own: "https://github.com/me/tally")?.commit, b)
         // Once something was pulled in, the next pull-in starts from it; a link's version is no commit, and its base is
         // kept at its own ref instead.
         spider.brought = c
         XCTAssertEqual(Following.base(for: spider, ours: ours, theirs: theirs, own: nil)?.commit, c)
-        XCTAssertNil(Following.base(for: Following.Followed(place: .lamp("abcd2345XY"), brought: "3"), ours: ours, theirs: nil, own: nil))
+        XCTAssertNil(Following.base(for: Following.Followed(place: .lamp("abcd2345XY"), brought: "3"), ours: ours, theirs: theirs, own: nil),
+                     "once pulled in, a link's copy goes by its own ref, never the repository both came from")
     }
 }

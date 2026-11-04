@@ -184,6 +184,12 @@ test("the wish itself goes with its link in parts, only as a file Lamp made, and
   assert.equal((await part(0, 1, file)).status, 204);
   assert.equal((await finish()).status, 200);
   assert.equal((await latest()).version, 2);
+  // Taken away and sent again, it's still newer than any before.
+  assert.equal((await files(new Request(`https://lamp.dev/api/wish-file?id=${id}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).status, 204);
+  assert.equal((await latest()).version, 0);
+  assert.equal((await part(0, 1, file)).status, 204);
+  assert.equal((await finish()).status, 200);
+  assert.equal((await latest()).version, 3);
 
   // A word-only update keeps the file; taking the link down takes it too.
   assert.equal((await send(handler, "PUT", { ...share, name: "Plant Friend" }, { id, secret })).status, 200);

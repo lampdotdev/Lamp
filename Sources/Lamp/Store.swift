@@ -3658,7 +3658,7 @@ final class Store: ObservableObject {
             // the same file on the same Mac always goes the same way.
             await setupLook.wait()
             guard reviewsCanOpen else {
-                if waitingImport.keep(file, updating: target, fetched: fetched) {
+                if waitingImport.keep(file, updating: target, fetched: fetched, following: following) {
                     arrivedImport += 1
                 } else {
                     let alert = NSAlert()
@@ -3730,7 +3730,10 @@ final class Store: ObservableObject {
     @discardableResult func openWaitingImport() -> Bool {
         guard pendingImport == nil, importRequest == nil else { return true }
         let file = waitingImport.take(after: setupLook.isDone ? setup : nil, welcomeOver: Onboarding.isDone || welcomeFinished)
-        if let file { review(file, updating: WaitingImport.target(beside: file), fetched: WaitingImport.fetched(beside: file)) }
+        if let file {
+            review(file, updating: WaitingImport.target(beside: file), fetched: WaitingImport.fetched(beside: file),
+                   following: WaitingImport.following(beside: file))
+        }
         return file != nil
     }
 
@@ -3980,10 +3983,7 @@ final class Store: ObservableObject {
             }
             if let credits = package.credits { try Credits.add(following == nil ? credits : Mix.creditsTaken(credits), to: project) }
             if let original { try Starters.keepFile(of: original, in: project) }
-            if let following, let pulled {
-                Following.brought(pulled, from: following, into: project)
-                followingRevision += 1
-            }
+
         } catch {
             _ = await Versions.git("git read-tree --reset -u HEAD && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
             print("Merging \(project.name) from \(place) failed: \(error)")
@@ -4001,12 +4001,16 @@ final class Store: ObservableObject {
         }
         guard merged.conflicts.isEmpty else {
             Versions.rememberConflicts(project, files: merged.conflicts, from: place, ref: ref)
+            let request = "Bring in what's new in \(place), keeping my changes."
+            // A followed copy's pull-in counts once the agent has settled it (`settlePull`).
+            if let following, let pulled { Following.setPending(Following.Pending(followed: following, version: pulled, request: request), for: project) }
             finish(project)
-            send("Bring in what's new in \(place), keeping my changes.", to: project)
+            send(request, to: project)
             return
         }
         defer { finish(project) }
-        if following != nil, await !Versions.hasUnsavedChanges(project) {
+        if let following, await !Versions.hasUnsavedChanges(project) {
+            if let pulled { Following.brought(pulled, from: following, into: project); followingRevision += 1 }
             log(project, .status, "You already have everything from \(place).")
             return
         }
@@ -4019,6 +4023,8 @@ final class Store: ObservableObject {
             }
             Versions.rememberMerged(project, from: place)
             versionsRevision += 1
+            // What a followed copy brought counts only once it's saved.
+            if let following, let pulled { Following.brought(pulled, from: following, into: project); followingRevision += 1 }
         }
         log(project, .status, "Brought in what's new from \(place), keeping your changes. Building it now…")
         if await build(project) == nil {
@@ -4732,6 +4738,7 @@ final class Store: ObservableObject {
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             await settleUpdate(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
+            settlePull(current(project) ?? project, messages: messages, end: result.end, asked: owner.asked)
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value

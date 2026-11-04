@@ -104,6 +104,45 @@ enum Following {
     private struct Kept: Codable {
         var format: Int
         var wishes: [String: [Followed]]
+        /// A pull-in left to the agent to settle, by wish: what it brings in counts once its turn finished well.
+        var pending: [String: Pending]? = nil
+        /// The newest version of the repository a wish came from that the person was told about, by wish.
+        var told: [String: String]? = nil
+    }
+
+    /// A pull-in whose conflicts went to the agent as `request`, bringing `version` of `followed`.
+    struct Pending: Codable, Equatable {
+        var followed: Followed
+        var version: String
+        var request: String
+    }
+
+    static func pending(for project: LampProject) -> Pending? { read().pending?[key(project)] }
+
+    static func setPending(_ pending: Pending?, for project: LampProject) {
+        var kept = read()
+        var all = kept.pending ?? [:]
+        all[key(project)] = pending
+        kept.pending = all.isEmpty ? nil : all
+        write(kept)
+    }
+
+    static func originTold(_ project: LampProject) -> String? { read().told?[key(project)] }
+
+    static func setOriginTold(_ tip: String, for project: LampProject) {
+        var kept = read()
+        var all = kept.told ?? [:]
+        all[key(project)] = tip
+        kept.told = all
+        write(kept)
+    }
+
+    private static func write(_ kept: Kept) {
+        var kept = kept
+        kept.format = format
+        guard let data = try? JSONEncoder().encode(kept) else { return }
+        try? FileManager.default.createDirectory(at: keptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: keptURL, options: .atomic)
     }
 
     private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
@@ -114,10 +153,7 @@ enum Following {
     static func keep(_ followed: [Followed], for project: LampProject) {
         var kept = read()
         kept.wishes[key(project)] = followed.isEmpty ? nil : followed
-        kept.format = format
-        guard let data = try? JSONEncoder().encode(kept) else { return }
-        try? FileManager.default.createDirectory(at: keptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: keptURL, options: .atomic)
+        write(kept)
     }
 
     static func update(_ id: String, for project: LampProject, _ change: (inout Followed) -> Void) {
@@ -141,7 +177,13 @@ enum Following {
     }
 
     /// The wish is gone: what it followed goes with it.
-    static func forget(_ project: LampProject) { keep([], for: project) }
+    static func forget(_ project: LampProject) {
+        var kept = read()
+        kept.wishes[key(project)] = nil
+        kept.pending?[key(project)] = nil
+        kept.told?[key(project)] = nil
+        write(kept)
+    }
 
     // MARK: What the desk shows
 
@@ -228,13 +270,18 @@ enum Following {
     /// when the chains share nothing, and the merge goes by this wish's own history (`Upstream.merge`).
     /// A link's copy has no repository: what was last pulled from it is kept at its ref (`ref`), which the merge reads
     /// as its base, and before the first pull-in, the version this wish arrived as.
+    /// This wish's own repository is on their chain only: Put on GitHub keeps it apart from the wish's credits.
     static func base(for followed: Followed, ours: Credits, theirs: Credits?, own: String?) -> (url: String, commit: String)? {
-        if followed.place.repository != nil, let brought = followed.brought { return (followed.place.url, brought) }
+        if let brought = followed.brought { return followed.place.repository != nil ? (followed.place.url, brought) : nil }
         guard let theirs else { return nil }
         for link in theirs.remixOf.reversed() {
-            guard let url = link.url, let mine = ours.remixOf.last(where: { $0.url.map(Credits.Source.plain) == Credits.Source.plain(url) }) else { continue }
-            let isOwn = own.map { Credits.Source.plain($0) == Credits.Source.plain(url) } ?? false
-            if let commit = Credits.validCommit(isOwn ? link.commit : mine.commit) { return (url, commit) }
+            guard let url = link.url else { continue }
+            if let own, Credits.Source.plain(own) == Credits.Source.plain(url) {
+                if let commit = Credits.validCommit(link.commit) { return (url, commit) }
+                continue
+            }
+            if let mine = ours.remixOf.last(where: { $0.url.map(Credits.Source.plain) == Credits.Source.plain(url) }),
+               let commit = Credits.validCommit(mine.commit) { return (url, commit) }
         }
         return nil
     }
@@ -303,10 +350,16 @@ extension Store {
         checkForUpdates(project)
     }
 
-    /// Every copy any wish follows, checked: once a launch, and a day after the last check.
+    /// Every copy any wish follows, checked: once a launch, and a day after the last check. The repository a wish came
+    /// from too, as Check for Updates asks it (`checkForUpdates`), so its new versions are told as well (`tellNew`).
     func checkAllFollowed() {
         var seen: Set<String> = []
         for project in projects where !project.isPart {
+            if !Self.followsShippedStarter(project), case .wish(let origin)? = AppUpdates.route(of: project),
+               let url = origin.url, seen.insert(AppUpdates.key(url)).inserted,
+               updateChecks[AppUpdates.key(url)].map({ Date().timeIntervalSince($0.at) >= AppUpdates.checkEvery }) ?? true {
+                checkForUpdates(project)
+            }
             for followed in Following.followed(by: project) where seen.insert(followed.id).inserted {
                 if let check = updateChecks[followed.id], Date().timeIntervalSince(check.at) < AppUpdates.checkEvery { continue }
                 checkFollowed(followed)
@@ -314,16 +367,39 @@ extension Store {
         }
     }
 
-    /// One notification for each newer version of a followed copy, for each wish that follows it.
-    private func tellNew(from id: String, tip: String?) {
+    /// One notification for each newer version of a followed copy, or of the repository a wish came from, for each
+    /// wish that follows it.
+    func tellNew(from id: String, tip: String?) {
         guard let tip else { return }
         for project in projects where !project.isPart {
-            guard let followed = Following.followed(by: project).first(where: { $0.id == id }), followed.told != tip,
-                  Following.state(of: followed, check: updateChecks[id]) == .new else { continue }
-            Following.update(id, for: project) { $0.told = tip }
-            Notifier.shared.post(for: project, subtitle: "\(Following.title(of: followed)) has something new",
-                                 body: "Pull it in from \(project.name) on Lamp's desk.")
+            if let followed = Following.followed(by: project).first(where: { $0.id == id }) {
+                guard followed.told != tip, Following.state(of: followed, check: updateChecks[id]) == .new else { continue }
+                Following.update(id, for: project) { $0.told = tip }
+                Notifier.shared.post(for: project, subtitle: "\(Following.title(of: followed)) has something new",
+                                     body: "Pull it in from \(project.name) on Lamp's desk.")
+            } else if !Self.followsShippedStarter(project), let route = AppUpdates.route(of: project), case .wish(let origin) = route,
+                      let url = origin.url, let source = RepoImport.source(from: url), AppUpdates.key(url) == id,
+                      AppUpdates.availability(of: route, check: updateChecks[id]) == .available, Following.originTold(project) != tip {
+                Following.setOriginTold(tip, for: project)
+                Notifier.shared.post(for: project, subtitle: "\(Following.title(of: Following.Followed(place: .github(source)))) has something new",
+                                     body: "Pull it in from \(project.name) on Lamp's desk.")
+            }
         }
+    }
+
+    /// After a turn: a pull-in left to the agent (`Following.Pending`) counts once the turn that settled it finished
+    /// well, and is dropped if it didn't, so Pull In offers it again.
+    func settlePull(_ project: LampProject, messages: [QueuedMessage], end: TurnEnd, asked: Bool) {
+        guard let pending = Following.pending(for: project), messages.contains(where: { $0.text == pending.request }) else { return }
+        let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
+        let asking = asked || Talk.open(in: logs[project.id] ?? []) != nil || (queued[project.id] ?? []).contains { $0.card != nil }
+        switch AppUpdates.settle(end: end, errors: turnLines.contains { $0.kind == .error }, asking: asking) {
+        case .waiting: return
+        case .ready: Following.brought(pending.version, from: pending.followed, into: project)
+        case .failed: break
+        }
+        Following.setPending(nil, for: project)
+        followingRevision += 1
     }
 
     /// Follow a Copy…: asks for the copy's link, then follows it. Its latest is asked for at once.

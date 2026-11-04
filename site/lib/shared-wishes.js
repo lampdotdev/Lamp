@@ -444,7 +444,8 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       if (method === "DELETE") {
         const gone = [record.file?.url, ...Object.values(record.parts?.urls ?? {})].filter(Boolean);
         const { file: _file, parts: _parts, ...rest } = record;
-        await kept.replace({ ...rest, file: null, updated: now().toISOString() });
+        // The count stays with the link, so a file sent again later is newer to its followers than any before.
+        await kept.replace({ ...rest, file: null, fileVersion: record.file?.version ?? record.fileVersion, updated: now().toISOString() });
         await kept.removeImages(gone);
         await kept.forget(id);
         return reply(204);
@@ -460,8 +461,8 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       uploaded.push(at);
       const { parts: _parts, ...rest } = record;
       // Each file sent counts up, so the Lamps that follow the link can tell a newer one (`latest`).
-      const version = (record.file?.version ?? (record.file ? 1 : 0)) + 1;
-      if (!(await kept.replace({ ...rest, file: { url: at, size: bytes.length, version }, updated: now().toISOString() }))) {
+      const version = (record.file?.version ?? (record.file ? 1 : record.fileVersion ?? 0)) + 1;
+      if (!(await kept.replace({ ...rest, file: { url: at, size: bytes.length, version }, fileVersion: version, updated: now().toISOString() }))) {
         // Taken down meanwhile: the file and its parts go with it.
         await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
         uploaded = [];
