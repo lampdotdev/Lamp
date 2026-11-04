@@ -259,7 +259,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       const sparkle = $<SVGElement>("[data-news-new]");
       const newest = releases[0].date;
       $<HTMLElement>("[data-news-label]").textContent =
-        `Updated ${new Intl.DateTimeFormat(undefined, { month: "numeric", day: "numeric", year: "2-digit" }).format(new Date(newest))}`;
+        `updated ${new Intl.DateTimeFormat(undefined, { month: "numeric", day: "numeric", year: "2-digit" }).format(new Date(newest))}`;
       const SEEN = `lamp.shared.seen.${wish.id}`;
       let seen: string | null = null;
       try { seen = localStorage.getItem(SEEN); } catch {}

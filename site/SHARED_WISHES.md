@@ -38,7 +38,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   dev` gives it its own server's. On its own, `/w/` goes to the ideas page.
 - What's new (`releases` on the record): each version the sharer released (Release Update, `WishReleases` in Lamp),
   newest first, with when it went out and the plain lines Lamp wrote for it and the sharer kept. The page's header says
-  "Updated <date of the newest>" after the name and who it's by, when there are any, and opens the list under it (a
+  "updated <date of the newest>" after the name and who it's by, when there are any, and opens the list under it (a
   popover). Until this browser has opened it since the newest release (`lamp.shared.seen.<id>` in localStorage), it's
   darker with a sparkle; after, gray like the byline. A change from a Lamp that doesn't send `releases` keeps the ones
   the link has.
