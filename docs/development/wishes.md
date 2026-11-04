@@ -391,7 +391,7 @@ shows (`releases.json` at its root, dates and lines only), and a copy opened or 
 (`.lamp/releases-received.json`), so the copy's What's New… shows the original's releases beside its own, while its own
 link shows only its own. The releases that say something go with every share (`releases`, at most
 30, `WishLink.Limit`), and show on the link's page under What's new (SHARED_WISHES.md) and in the app's menu under
-What's New… ("Generated apps"). Not yet: lines that credit what was pulled in from someone else's copy.
+What's New… ("Generated apps"). What the agent pulled in from someone else's copy is kept with the version that brought it in (`PulledIn`, below), for a release to credit; the release doesn't say it yet.
 
 A wish opened from GitHub follows its repository as before (the chain's last link, `AppUpdates`, Update from GitHub…), so
 that commit moves with each update and goes back with Undo. Any other copy is followed by its link (Follow a Copy… in
@@ -423,6 +423,21 @@ pull-in that failed is offered again and measured as before. Only the credit for
 brings joins the wish's credits (`Mix.creditsTaken`), so where the wish came from stays as it was. A view that makes
 someone's changes understandable and lets the person take part of them takes the same `Following.Offer` in
 `ReviewThenMerge`'s place.
+
+Pulling in from a link: the person can also just ask ("pull in the water from lamp.dev/w/…", "from the one I shared"),
+with no dragging or following first. The agent's one rule for it (`Agent.sharedLinkRules`) sends it to `shared_copy`
+(`SharedCopies`, every engine), which reads the link as Follow a Copy… does (`Following.copy(fromLink:)`: every Lamp's
+scheme, the link written without `https://`, and a Lamp Dev's own dev server's links), fetches that copy's latest file
+as following does, opens it with a shared file's checks, and lays out what those let through for the agent to read only
+("Someone's shared copy, fetched for the agent" in the approvals guide). With no link it lists the ones this Mac knows:
+the copies the wish follows and the person's own shared wishes. When the file carries its history and it meets this
+wish's (`MixHistory`, `Mix.meeting`), the answer lists their changes since, so the agent finds what was asked for; it
+brings that in by writing it into the app itself, as any change, never the whole copy, and says in its last message what
+it took from whose copy. Nothing is followed by it. The credit (`PulledIn`, `.lamp/pulled-in.json`, not versioned): the
+link, its name and who it's by as the site says (`WishLink.Latest.by`), their file's version, and what was asked for,
+waiting for the version the turn saves (`PulledIn.settle`, after the turn's commit), so a turn that asked first credits
+the turn after; one never saved goes after a day. A release reads it by version (`PulledIn.credits(for:in:)`,
+`Credit.line`: "The water from Sam's version").
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between

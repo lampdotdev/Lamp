@@ -75,28 +75,41 @@ enum Following {
 
     // MARK: The link
 
-    /// The copy a link names: a wish's Share Link (`lamp.dev/w/<id>`, with `-<name>` after it or not, or Lamp's own `wish?shared=<id>`), lamp.dev's
-    /// remix of a repository (`?repo=`), or a repository's address. Nil for anything else.
-    static func copy(fromLink text: String, scheme: String = Edition.urlScheme) -> Place? {
-        let line = text.trimmed
+    /// The copy a link names: a wish's Share Link (`lamp.dev/w/<id>`, with `-<name>` after it or not, or written without
+    /// `https://`), Lamp's own `wish?shared=<id>` (any Lamp's: `lamp://`, `lamp-nightly://`, `lamp-dev…://`, since a link
+    /// made by one is pasted into another), lamp.dev's remix of a repository (`?repo=`), or a repository's address. A
+    /// development build sharing to the site's dev server (`WishLink.endpoint`) takes that server's links too. Nil for
+    /// anything else.
+    static func copy(fromLink text: String, scheme: String = Edition.urlScheme, site: URL = WishLink.endpoint) -> Place? {
+        var line = text.trimmed
+        if ["lamp.dev/", "www.lamp.dev/"].contains(where: { line.lowercased().hasPrefix($0) }) { line = "https://" + line }
         if let url = URL(string: line), let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             let host = url.host?.lowercased() ?? ""
             let value = { (name: String) in parts.queryItems?.first { $0.name == name }?.value }
-            let onSite = url.scheme == "https" && ["lamp.dev", "www.lamp.dev"].contains(host)
+            let devSite = site.host != "lamp.dev" && url.scheme == site.scheme && url.host == site.host && url.port == site.port
+            let onSite = (url.scheme == "https" && ["lamp.dev", "www.lamp.dev"].contains(host)) || devSite
             // The link carries the wish's name after its id and a dash (`lamp.dev/w/<id>-<name>`), only for reading.
             if onSite, url.pathComponents.count == 3, url.pathComponents[1] == "w" {
                 let part = url.pathComponents[2], id = String(part.prefix(10))
                 let named = part.count == 10 || part.dropFirst(10).first == "-"
                 return Wish.isSharedID(id) && named ? .lamp(id) : nil
             }
-            if url.scheme == scheme, host == "wish", let id = value("shared") { return Wish.isSharedID(id) ? .lamp(id) : nil }
-            if onSite || (url.scheme == scheme && host == "wish") {
+            let lampScheme = url.scheme.map { isLampScheme($0, own: scheme) } ?? false
+            if lampScheme, host == "wish", let id = value("shared") { return Wish.isSharedID(id) ? .lamp(id) : nil }
+            if onSite || (lampScheme && host == "wish") {
                 guard let repo = value("repo"), let source = RepoImport.source(from: repo), source.ref == nil else { return nil }
                 return .github(source)
             }
         }
         guard let source = RepoImport.source(from: line) else { return nil }
         return .github(RepoImport.Source(owner: source.owner, name: source.name))
+    }
+
+    /// Whether a link's scheme is a Lamp's: this one's, or the installed Lamp's, the nightly's or a development build's.
+    static func isLampScheme(_ scheme: String, own: String = Edition.urlScheme) -> Bool {
+        let scheme = scheme.lowercased()
+        return scheme == own || ["lamp", "lamp-nightly", "lamp-dev"].contains(scheme)
+            || (scheme.hasPrefix("lamp-dev-") && scheme.dropFirst(9).allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") })
     }
 
     // MARK: What Lamp keeps

@@ -239,7 +239,7 @@ test("the wish itself goes with its link in parts, only as a file Lamp made, and
 
   // Lamps that follow the link see the file's version, and each file sent again counts up; never the secret.
   const latest = async () => (await handler(new Request(`https://lamp.dev/api/wishes?id=${id}`))).json();
-  assert.deepEqual(Object.keys(await latest()).sort(), ["file", "format", "id", "name", "version"]);
+  assert.deepEqual(Object.keys(await latest()).sort(), ["by", "file", "format", "id", "name", "version"]);
   assert.equal((await latest()).version, 1);
   assert.equal((await part(0, 1, file)).status, 204);
   assert.equal((await finish()).status, 200);

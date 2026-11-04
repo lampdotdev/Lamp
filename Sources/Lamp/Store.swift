@@ -2402,7 +2402,7 @@ final class Store: ObservableObject {
         let refusal = (400, ["error": "This conversation sets up a device; no app is made here. Write or fix the device's integration with device_integration, and tell the person to ask for it on Lamp's desk for anything to put on it."] as [String: Any])
         switch route {
         case "/agent/look", "/agent/use", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/art", "/agent/assets", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
-             "/agent/setup", "/agent/connectors", "/agent/lampify":
+             "/agent/setup", "/agent/connectors", "/agent/lampify", "/agent/shared":
             return refusal
         case "/agent/talk":
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]
@@ -5438,6 +5438,7 @@ final class Store: ObservableObject {
                 await Versions.name(project, head, name)
             }
             if committed {
+                PulledIn.settle(project, version: head)
                 link(asked + owner.midTurn, to: head, in: project)
                 // Not of a copy the person kept open: it's the version before this one.
                 if crashes[project.id] == nil, !owner.keptOpen { keepPicture(of: project, version: head) }
@@ -7234,6 +7235,7 @@ final class Store: ObservableObject {
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "lampify": (status, answer) = await lampify(arguments, for: project)
+            case "shared_copy": (status, answer) = await sharedCopyCall(arguments, for: project)
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
             case "ask", "progress", "write_wish", "device_permission":
                 (status, answer) = talk(name, arguments, for: project)
@@ -13542,7 +13544,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/ai/setup", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/connectors", "/agent/lampify", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/releases", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/rename", "/agent/icon", "/agent/connectors", "/agent/lampify", "/agent/shared", "/agent/network", "/agent/integration", "/agent/art", "/agent/assets", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/reload", "/app/credits", "/app/releases", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state", "/app/page/saved"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -13932,10 +13934,17 @@ final class Store: ObservableObject {
         if route == "/agent/lampify" {
             return await lampify((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
+        if route == "/agent/shared" {
+            return await sharedCopyCall((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             // One of the agent's file tools, about to touch something outside the app's folder or in its runtime folder.
             if let tool = body["file_tool"] as? String, let path = body["path"] as? String {
+                // pi's own find and grep walk all that's under where they start, as Claude Code's do.
+                if tool == "find" || tool == "grep", Privacy.wouldUncover(root: path, project: project) {
+                    return (200, ["allow": false, "reason": "That search would pass over Lamp's own files, which aren't yours to open. Search a narrower folder."])
+                }
                 let (allowed, reason) = await fileAccess(tool: tool, path: path, for: project)
                 return (200, reason.map { ["allow": allowed, "reason": $0] } ?? ["allow": allowed])
             }

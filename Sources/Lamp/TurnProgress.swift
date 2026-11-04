@@ -208,6 +208,7 @@ struct TurnProgress {
         case .rename: return "Renaming it"
         case .icon: return "Changing the icon"
         case .connectors: return "Looking up a connector"
+        case .shared: return "Getting a shared copy"
         case .network: return "Looking around your network"
         case .ask: return "Asking you"
         // What it's doing goes on being what it was: the line it wrote says the rest.

@@ -171,11 +171,12 @@ const pageBlobs = (record) => Object.values(record?.page?.files ?? {});
 /**
  * What anyone's Lamp asks of a link it follows (`GET /api/wishes?id=`): the format of the answer, and the version of
  * the wish's file, which goes up each time the sharer sends it again (Release Update), with the file's address. Version 0
- * and no file for a link that carries none. Never the secret or anything a follower doesn't need.
+ * and no file for a link that carries none, and who it's by as the page names them (empty for nobody), which Lamp keeps
+ * with what it pulls in from the copy so the change can credit them. Never the secret or anything a follower doesn't need.
  */
 export const FOLLOW_FORMAT = 1;
 export const latest = (record) => ({
-  format: FOLLOW_FORMAT, id: record.id, name: record.name,
+  format: FOLLOW_FORMAT, id: record.id, name: record.name, by: record.by ?? "",
   version: record.file ? (record.file.version ?? 1) : 0, file: record.file?.url ?? null,
 });
 

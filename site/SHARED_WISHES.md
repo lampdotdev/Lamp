@@ -52,7 +52,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   and gives it to the link in place of any it had (in Blob, public at an address with a random part); `DELETE ?id=` takes
   it away. Parts go once they're together; everything goes with the link, and with `scripts/take-down-wish.js`.
 - Following (`GET /api/wishes?id=`, `latest` in `lib/shared-wishes.js`): public, with no quota, for the Lamps that
-  follow a link: `{format: 1, id, name, version, file}`, the file's version counting up each time it's sent again
+  follow a link: `{format: 1, id, name, by, version, file}` (`by` as the page names who it's by, empty for nobody, which Lamp keeps with what it pulls in from the copy), the file's version counting up each time it's sent again
   (Release Update), 0 with no file. The count is the link's (`fileVersion`), so a file taken away and sent again later is
   still newer than any before. The page's Open is `lamp://wish?shared=<id>`
   (`sharedWishLink` in `lib/wish.js`): Lamp asks this for the file, and the copy it makes follows the link
