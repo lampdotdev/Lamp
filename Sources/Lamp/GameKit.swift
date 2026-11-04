@@ -741,8 +741,11 @@ enum GameKit {
     /// open yet, and its first requested edit is when it adopts this.
     static func unregistered(_ project: LampProject) -> [String] {
         guard isGame(project), engine(project) == .web, !ownsLoop(project) else { return [] }
-        let code = sourceText(project)
-        func has(_ pattern: String) -> Bool { code.range(of: pattern, options: .regularExpression) != nil }
+        let files = sourceFiles(project)
+        // Each pattern is looked for file by file, which finds what it would in the files joined: none spans two.
+        func has(_ pattern: String) -> Bool {
+            PageScan.any(files, in: project, asking: pattern) { $0.range(of: pattern, options: .regularExpression) != nil }
+        }
         let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]")
         var left: [String] = []
         if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])") && !has("\\.keep\\(\\s*['\"]renderer['\"]") { left.append("its renderer (live.renderer)") }
@@ -752,19 +755,18 @@ enum GameKit {
     }
 
     /// The game's own code: its modules in Web/ or its TypeScript in src/, without Lamp's files or what's bundled.
-    private static func sourceText(_ project: LampProject) -> String {
-        var text = ""
+    private static func sourceFiles(_ project: LampProject) -> [URL] {
+        var files: [URL] = []
         for folder in [webFolder, "src"] {
             let root = project.dir.appendingPathComponent(folder)
             for name in ((try? FileManager.default.subpathsOfDirectory(atPath: root.path)) ?? []).sorted()
             where name.hasSuffix(".js") || name.hasSuffix(".mjs") || name.hasSuffix(".ts") {
                 let first = name.split(separator: "/").first.map(String.init) ?? name
                 if ["three", "rapier", "phaser", "app"].contains(first) || first.hasPrefix("lamp") { continue }
-                text += AppFile.text(root.appendingPathComponent(name), in: project) ?? ""
-                text += "\n"
+                files.append(root.appendingPathComponent(name))
             }
         }
-        return text
+        return files
     }
 
     /// Goes with a request: what isn't registered yet, before the agent changes the game, which may be a part of the wish.

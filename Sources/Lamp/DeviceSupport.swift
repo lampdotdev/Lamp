@@ -93,13 +93,12 @@ enum DeviceSupport {
     static func pageNames(_ words: [String], _ project: LampProject, page: String) -> Bool {
         let folder = project.dir.appendingPathComponent(page)
         guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        var files: [URL] = []
         for case let url as URL in walk {
             if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
-            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()),
-                  let text = AppFile.text(url, in: project) else { continue }
-            if words.contains(where: text.contains) { return true }
+            if ["js", "mjs", "html"].contains(url.pathExtension.lowercased()) { files.append(url) }
         }
-        return false
+        return PageScan.any(files, in: project, asking: "names " + words.joined(separator: "\n")) { text in words.contains(where: text.contains) }
     }
 
     /// Phaser, the 2D library a 2D game draws with (MIT, `WebLibraries/phaser`, put there by scripts/update-phaser.sh):
@@ -117,13 +116,12 @@ enum DeviceSupport {
     static func usesPhaser(_ project: LampProject, page: String) -> Bool {
         let folder = project.dir.appendingPathComponent(page)
         guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        var files: [URL] = []
         for case let url as URL in walk {
             if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
-            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lampsPageFiles.contains(url.lastPathComponent),
-                  let text = AppFile.text(url, in: project) else { continue }
-            if text.range(of: phaserUse, options: .regularExpression) != nil { return true }
+            if ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lampsPageFiles.contains(url.lastPathComponent) { files.append(url) }
         }
-        return false
+        return PageScan.any(files, in: project, asking: phaserUse) { $0.range(of: phaserUse, options: .regularExpression) != nil }
     }
 
     /// Lamp's own files beside a game's page, which name everything they serve and so never show what the game uses.
@@ -2000,4 +1998,36 @@ enum DeviceSupport {
     end function
 
     """#
+}
+
+/// What a page's own files answer to a question about their code (does any import Rapier, draw with Phaser, register its
+/// state), each file's answer remembered by its size and date and read again only once it changed. A game's page can hold
+/// data files tens of megabytes big (a city's map as a module), and reading and searching them all again at every look,
+/// step and build held each of those up by seconds.
+enum PageScan {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var known: [String: (stamp: String, found: Bool)] = [:]
+
+    /// Whether `test` holds for the text of any of `files`, in order, stopping at the first that does.
+    static func any(_ files: [URL], in project: LampProject, asking question: String, _ test: (String) -> Bool) -> Bool {
+        for file in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            guard let size = values?.fileSize, let date = values?.contentModificationDate else { continue }
+            let stamp = "\(size) \(date.timeIntervalSince1970)", key = question + "\n" + file.path
+            lock.lock()
+            let seen = known[key]
+            lock.unlock()
+            if let seen, seen.stamp == stamp {
+                if seen.found { return true }
+                continue
+            }
+            guard let text = AppFile.text(file, in: project) else { continue }
+            let found = test(text)
+            lock.lock()
+            known[key] = (stamp, found)
+            lock.unlock()
+            if found { return true }
+        }
+        return false
+    }
 }
