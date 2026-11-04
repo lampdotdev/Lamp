@@ -231,7 +231,8 @@ export function cloudStore(env, fetcher = fetch) {
     async putPageFile(id, token, path, bytes) {
       const { put } = await import("@vercel/blob");
       const blob = await put(`${scope}/w/${id}/page/${token}/${path}`, bytes, {
-        access: "public", contentType: "application/octet-stream", addRandomSuffix: false, cacheControlMaxAge: 300, ...auth,
+        // Kept as what it is, so a browser sent straight to a big one (`DIRECT_FILE`) runs or reads it.
+        access: "public", contentType: pageType(path), addRandomSuffix: false, cacheControlMaxAge: 300, ...auth,
       });
       return blob.url;
     },
@@ -498,7 +499,15 @@ export function playOrigin(base, id) {
  * (`playOrigin`), only into a frame on the site's own pages, and only the version the link has now. Each version's
  * files never change, so the CDN keeps them.
  */
-export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false } = {}) {
+/**
+ * A page's file this big or bigger is played straight from the store instead of through the play host: the CDN keeps
+ * nothing over 20 MB from a function, so every visit would pass it through again. Only for a page kept with each
+ * file's own type (`page.sizes`), since a browser won't run a script the store calls anything else. Never a page's
+ * HTML, which the store hands out as a download.
+ */
+export const DIRECT_FILE = 16_000_000;
+
+export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE } = {}) {
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
@@ -520,6 +529,10 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     const rebased = name === `${folder}/index.html` && !path.endsWith("/");
     const at = name ? files[name] : null;
     if (!at) return missing();
+    // A big file: the browser goes to it in the store, which serves it to any page. Each version's files never change.
+    if (!rebased && !/\.html?$/i.test(name) && (record.page.sizes?.[name] ?? 0) >= direct) {
+      return new Response(null, { status: 302, headers: { Location: at, "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
+    }
     // Passed on as it comes from the store; only a folder's index.html given its base is read whole, to change it.
     const kept = store ?? cloudStore(env, fetcher);
     let bytes, length;
@@ -654,18 +667,19 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
         if (!files) return reply(400, { error: "invalid_page" });
         // Each version in a folder of its own, under a random part, so an old one never mixes with a new one.
         const token = randomBytes(12).toString("base64url");
-        const urls = {};
+        const urls = {}, sizes = {};
         // A few at a time: a page can be hundreds of files.
         for (let n = 0; n < files.length; n += 8) {
           await Promise.all(files.slice(n, n + 8).map(async (file) => {
             urls[file.path] = await kept.putPageFile(id, token, file.path, file.bytes);
+            sizes[file.path] = file.bytes.length;
             uploaded.push(urls[file.path]);
           }));
         }
         // The count is the link's (`pageVersion`), so a page taken away and sent again never reuses a play address.
         const version = (record.page?.version ?? record.pageVersion ?? 0) + 1;
         const { pageParts: _pageParts, ...rest } = record;
-        if (!(await kept.replace({ ...rest, page: { version, files: urls }, pageVersion: version, updated: now().toISOString() }))) {
+        if (!(await kept.replace({ ...rest, page: { version, files: urls, sizes }, pageVersion: version, updated: now().toISOString() }))) {
           await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
           uploaded = [];
           return reply(404, { error: "not_found" });

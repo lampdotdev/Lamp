@@ -294,6 +294,10 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   const folder = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir`));
   assert.match(await folder.text(), new RegExp(`<base href="/w/${id}/play/1/dir/">`), "a folder without its slash keeps its own files in place");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir/`))).status, 200);
+  // A big file is played straight from the store, where it's kept as what it is.
+  const big = await createPlayHandler({ store, env, direct: html.length })(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index.html`));
+  assert.equal(big.status, 302);
+  assert.equal(big.headers.get("location"), store.records.get(id).page.files["index.html"]);
   const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.doesNotMatch(without, /"play"/, "with no play host, nothing plays");
 
