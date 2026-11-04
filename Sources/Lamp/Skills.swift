@@ -208,7 +208,7 @@ enum Skills {
         } else {
             if offered.contains("game"), let why = gameUse(project) { found.append(("game", why)) }
             if offered.contains("game-ui"), let why = gameUse(project) { found.append(("game-ui", why)) }
-            if offered.contains("3d-game"), pageCode(of: project, matches: threeImport) { found.append(("3d-game", "its page draws with three.js")) }
+            if offered.contains("3d-game"), pageCode(of: project, matches: threeImport, needing: ["three"]) { found.append(("3d-game", "its page draws with three.js")) }
             if offered.contains("2d-game"), let why = twoDimensionalUse(project) { found.append(("2d-game", why)) }
         }
         if offered.contains("icloud-sync"), appSwift(of: project, matches: #"\bLampSync\b"#) { found.append(("icloud-sync", "its code uses LampSync")) }
@@ -251,11 +251,10 @@ enum Skills {
         if let page = try? fm.contentsOfDirectory(atPath: project.dir.appendingPathComponent(TVTemplate.phoneFolder).path),
            !page.isEmpty { return "it has a page for phones in Phone/" }
         let web = project.dir.appendingPathComponent(TVTemplate.webFolder)
-        let files = fm.enumerator(at: web, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
-        let uses = files.contains { file in
-            ["js", "html"].contains(file.pathExtension) && file.lastPathComponent != "lamp.js"
-                && ((try? String(contentsOf: file, encoding: .utf8))?.range(of: #"Lamp\.(controllers|phonePage|onPhonePage)"#, options: .regularExpression) != nil)
-        }
+        let files = (fm.enumerator(at: web, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
+            .filter { ["js", "html"].contains($0.pathExtension) && $0.lastPathComponent != "lamp.js" }
+        let pattern = #"Lamp\.(controllers|phonePage|onPhonePage)"#
+        let uses = PageScan.any(files, in: project, asking: pattern, needing: ["Lamp."]) { $0.range(of: pattern, options: .regularExpression) != nil }
         return uses ? "its TV page uses phones as controllers or a second screen" : nil
     }
 
@@ -265,7 +264,7 @@ enum Skills {
 
     /// What shows an app is a game: a page on Lamp's game runtime, or Swift on SpriteKit.
     static func gameUse(_ project: LampProject) -> String? {
-        if pageCode(of: project, matches: #"lamp-(game|phaser)\.js"#) { return "its page runs on Lamp's game runtime" }
+        if pageCode(of: project, matches: #"lamp-(game|phaser)\.js"#, needing: ["lamp-game.js", "lamp-phaser.js"]) { return "its page runs on Lamp's game runtime" }
         if appSwift(of: project, matches: #"\bimport SpriteKit\b"#) { return "it's a SpriteKit game" }
         return nil
     }
@@ -278,9 +277,9 @@ enum Skills {
     static func macWebGameSkills(_ project: LampProject) -> [(name: String, because: String)] {
         guard let why = gameUse(project) else { return [] }
         var found = [("game-feel", why)]
-        if pageCode(of: project, matches: threeImport) { found.append(("game-3d", "its page draws with three.js")) }
-        if pageCode(of: project, matches: GameKit.rapierImport) { found.append(("game-physics", "its page uses Rapier")) }
-        if pageCode(of: project, matches: #"\.tilemap\(|addTilesetImage\("#) { found.append(("2d-game", "its page builds a tilemap")) }
+        if pageCode(of: project, matches: threeImport, needing: ["three"]) { found.append(("game-3d", "its page draws with three.js")) }
+        if pageCode(of: project, matches: GameKit.rapierImport, needing: [GameKit.rapierImport]) { found.append(("game-physics", "its page uses Rapier")) }
+        if pageCode(of: project, matches: #"\.tilemap\(|addTilesetImage\("#, needing: [".tilemap(", "addTilesetImage("]) { found.append(("2d-game", "its page builds a tilemap")) }
         return found
     }
 
@@ -304,21 +303,22 @@ enum Skills {
 
     /// What shows a game is 2D: a page drawn with Phaser, or Swift on SpriteKit.
     static func twoDimensionalUse(_ project: LampProject) -> String? {
-        if pageCode(of: project, matches: DeviceSupport.phaserUse) { return "its page draws with Phaser" }
+        if pageCode(of: project, matches: DeviceSupport.phaserUse, needing: ["phaser"]) { return "its page draws with Phaser" }
         if appSwift(of: project, matches: #"\bimport SpriteKit\b"#) { return "it's a SpriteKit game" }
         return nil
     }
 
     /// Whether the app's own page code, in Web/, matches a pattern: Lamp's own files there (lamp.js, the game runtime,
     /// three.js, Phaser, Rapier) name anything, so they don't count.
-    static func pageCode(of project: LampProject, matches pattern: String) -> Bool {
-        guard let files = FileManager.default.enumerator(at: project.dir.appendingPathComponent(TVTemplate.webFolder), includingPropertiesForKeys: nil) else { return false }
-        for case let file as URL in files {
-            if ["three", "phaser", "rapier"].contains(file.lastPathComponent) { files.skipDescendants(); continue }
-            guard ["js", "mjs", "html"].contains(file.pathExtension), !DeviceSupport.lampsPageFiles.contains(file.lastPathComponent) else { continue }
-            if (try? String(contentsOf: file, encoding: .utf8))?.range(of: pattern, options: .regularExpression) != nil { return true }
+    /// `needing`: plain text the pattern can't match without, at least one of them (`PageScan`).
+    static func pageCode(of project: LampProject, matches pattern: String, needing words: [String] = []) -> Bool {
+        guard let walk = FileManager.default.enumerator(at: project.dir.appendingPathComponent(TVTemplate.webFolder), includingPropertiesForKeys: nil) else { return false }
+        var files: [URL] = []
+        for case let file as URL in walk {
+            if ["three", "phaser", "rapier"].contains(file.lastPathComponent) { walk.skipDescendants(); continue }
+            if ["js", "mjs", "html"].contains(file.pathExtension), !DeviceSupport.lampsPageFiles.contains(file.lastPathComponent) { files.append(file) }
         }
-        return false
+        return PageScan.any(files, in: project, asking: pattern, needing: words) { $0.range(of: pattern, options: .regularExpression) != nil }
     }
 
     /// Which version of a skill this is: a change to its instructions in a Lamp update changes it.

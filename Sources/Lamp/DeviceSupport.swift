@@ -98,7 +98,7 @@ enum DeviceSupport {
             if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
             if ["js", "mjs", "html"].contains(url.pathExtension.lowercased()) { files.append(url) }
         }
-        return PageScan.any(files, in: project, asking: "names " + words.joined(separator: "\n")) { text in words.contains(where: text.contains) }
+        return PageScan.any(files, in: project, asking: "names " + words.joined(separator: "\n"), needing: words) { _ in true }
     }
 
     /// Phaser, the 2D library a 2D game draws with (MIT, `WebLibraries/phaser`, put there by scripts/update-phaser.sh):
@@ -121,7 +121,7 @@ enum DeviceSupport {
             if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
             if ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lampsPageFiles.contains(url.lastPathComponent) { files.append(url) }
         }
-        return PageScan.any(files, in: project, asking: phaserUse) { $0.range(of: phaserUse, options: .regularExpression) != nil }
+        return PageScan.any(files, in: project, asking: phaserUse, needing: ["phaser"]) { $0.range(of: phaserUse, options: .regularExpression) != nil }
     }
 
     /// Lamp's own files beside a game's page, which name everything they serve and so never show what the game uses.
@@ -2003,13 +2003,16 @@ enum DeviceSupport {
 /// What a page's own files answer to a question about their code (does any import Rapier, draw with Phaser, register its
 /// state), each file's answer remembered by its size and date and read again only once it changed. A game's page can hold
 /// data files tens of megabytes big (a city's map as a module), and reading and searching them all again at every look,
-/// step and build held each of those up by seconds.
+/// step, build and request held each of those up by seconds.
 enum PageScan {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var known: [String: (stamp: String, found: Bool)] = [:]
 
-    /// Whether `test` holds for the text of any of `files`, in order, stopping at the first that does.
-    static func any(_ files: [URL], in project: LampProject, asking question: String, _ test: (String) -> Bool) -> Bool {
+    /// Whether `test` holds for the text of any of `files`, in order, stopping at the first that does. `needing`: text the
+    /// question can't be true without, at least one of them; a file holding none is answered from its bytes, without
+    /// being decoded or searched with a pattern, which is what took the time in a big file.
+    static func any(_ files: [URL], in project: LampProject, asking question: String, needing words: [String] = [],
+                    _ test: (String) -> Bool) -> Bool {
         for file in files {
             let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             guard let size = values?.fileSize, let date = values?.contentModificationDate else { continue }
@@ -2021,13 +2024,22 @@ enum PageScan {
                 if seen.found { return true }
                 continue
             }
-            guard let text = AppFile.text(file, in: project) else { continue }
-            let found = test(text)
+            guard let data = AppFile.read(file, in: project) else { continue }
+            let found = (words.isEmpty || words.contains { contains(data, $0) }) && test(String(decoding: data, as: UTF8.self))
             lock.lock()
             known[key] = (stamp, found)
             lock.unlock()
             if found { return true }
         }
         return false
+    }
+
+    /// Whether the bytes hold the word, by memmem: Swift's own search of a string that size took seconds.
+    static func contains(_ data: Data, _ word: String) -> Bool {
+        let needle = Array(word.utf8)
+        guard !needle.isEmpty else { return true }
+        return data.withUnsafeBytes { bytes in
+            needle.withUnsafeBytes { memmem(bytes.baseAddress, bytes.count, $0.baseAddress, $0.count) != nil }
+        }
     }
 }
