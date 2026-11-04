@@ -74,7 +74,7 @@ the code, the old chat and the old conversations together. For a starter there's
 also New Copy of the Original (`Store.duplicateOriginal`), on every copy of one this Lamp ships, changed or not: a fresh
 copy of the starter as this Lamp ships it, put on the desk as a remix link puts one, beside the copy. Send Changes Back… is
 in the menu only for such a wish that came from a repository (`Contribute.canContribute`), and opens its card in the
-wish's chat as the chat's Share menu does. A remix link from the site lands the same way: it opens the person's own
+wish's chat as the chat's Share popover does. A remix link from the site lands the same way: it opens the person's own
 untouched copy of the starter with the request written into its box (`openCopy`), to be sent in place.
 
 Remix means changing the wish itself, everywhere Lamp says it: the desk, the site's and a README's remix links (which

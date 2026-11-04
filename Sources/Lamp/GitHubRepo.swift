@@ -866,11 +866,11 @@ enum GitHubRepo {
         }, signedIn: { [weak self] in self?.prepare(project) })
     }
 
-    /// Share Link's card in this card's place, for the person to see and change what the link shows before it's made:
+    /// Share Link's card, in its own window, for the person to see and change what the link shows before it's made:
     /// Put on GitHub never sends the wish's words or picture itself. This card is opened again once the link is out.
     func makeLink(_ project: LampProject) {
         close(project)
-        WishLinkCards.shared.open(project, inSidebar: true)
+        WishLinkCards.shared.open(project)
     }
 
     func openRepo(_ project: LampProject) {

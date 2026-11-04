@@ -204,7 +204,9 @@ window's, which asks the app to close the chat (`closeChat`), "Customize" and th
 Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
 once, so the extension keeps it as it's read, `Link.sharing`, as one lasting file per wish in a folder of its own under
 its caches folder, since Lamp's process draws every wish's chat and one wish's share mustn't remove another's; each share
-replaces it in one step, `SharedCopy`, as Lamp's own Share… does), Agent Details and Delete, then Undo Last Change and Versions.
+replaces it in one step, `SharedCopy`, as Lamp's own Share… does; its popover, `SharePopover`, leads with the wish's link
+(`SidebarToolbar.shareLink`) and sends the link with AirDrop, Messages, Mail or More, or the file when there's no link),
+Agent Details and Delete, then Undo Last Change and Versions.
 A wish that opens anywhere but this Mac alone (a game, a screen, an app for both) has Try On's device button before
 Undo, which stays with it: where it opens, a tick on where Play puts it, and for a game or a screen "… Too" for each
 place it hasn't got. Its choices are one list, `TryOnMenu`, which the desk's menu draws as well (`SidebarState.tryOn`, a
@@ -253,7 +255,7 @@ goes in only while Try On points at this Mac. Don't add a time limit after which
 is what lost people's work.
 
 A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`, its card `GitHubRepoCards` and
-`RepoCard`, from the chat's Share menu): the shared file's contents (`Sharing.export`, so the same checks and the same
+`RepoCard`, from the chat's Share popover): the shared file's contents (`Sharing.export`, so the same checks and the same
 credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
 the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`; for a page, the app around it,
 `ScreenKit.paths`), the shared file itself, a
@@ -441,7 +443,7 @@ carries it, `Upstream.filteredTree`); else nothing. A part the package brings th
 kept tree (staged as the app it will be) but not in what's merged. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
 changed here" in the gallery).
 
-A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share menu
+A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share popover
 (`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
 GitHub's). It stages the wish as Put on GitHub does (`GitHubRepo.stage`: the same checks for licenses and keys), forks
 the repository to the person's account with `gh` when they have no fork (`Contribute.fork`), fetches the recorded

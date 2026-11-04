@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + shareEntries + wishLinkEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
 
     private static let useRowStatuses: [EngineUseRow.Status] = [
         .use, .gettingReady, .downloading(0.4), .failed(ErrorMessages.noConnection),
@@ -877,10 +877,28 @@ enum Gallery {
         }
     }
 
+    // MARK: Share
+
+    /// What the chat's Share button opens, before the wish has a link and after.
+    private static let shareEntries: [Entry] = [
+        share("With a link", link: true),
+        share("No link yet"),
+        share("From a repository", link: true, canContribute: true),
+    ]
+
+    private static func share(_ name: String, link: Bool = false, canContribute: Bool = false) -> Entry {
+        Entry(group: "Share", name: name) {
+            AnyView(SharePopover(link: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, canContribute: canContribute) { _ in }
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize())
+        }
+    }
+
     // MARK: Share Link
 
-    /// The card that says what a wish's link will show, before and after it's shared, in Lamp's sheet and at the
-    /// narrow width of the chat beside the app.
+    /// The card that says what a wish's link will show, before and after it's shared, as its window shows it.
     private static let wishLinkEntries: [Entry] = [
         wishLink("New link"),
         wishLink("New link, picture left out", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: false)),
@@ -892,13 +910,9 @@ enum Gallery {
                  stage: .failed("Disk Map can't be shared. The license of Engine is missing from it. Ask Lamp to put LICENSE-engine back."), canIncludeFile: true),
         wishLink("Shared and copied", link: true, copied: true),
         wishLink("Shared, changed since", link: true, changed: true),
-        wishLink("Beside the app", link: true, copied: true, width: nil),
-        wishLink("Beside the app, new link", width: nil),
-        wishLink("With the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true), canIncludeFile: true),
-        wishLink("With the wish itself, no license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
+        wishLink("Carrying the wish", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true), canIncludeFile: true),
+        wishLink("No license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
                  canIncludeFile: true, noLicense: "Found Code by Someone came with no license. Make sure you're comfortable sharing it."),
-        wishLink("Beside the app, with the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
-                 canIncludeFile: true, width: nil),
     ]
 
     private static let diskMapLine = "Shows where your disk space goes, as rings that fill in while it measures."
@@ -906,7 +920,7 @@ enum Gallery {
 
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
-                                 changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, width: CGFloat? = 480) -> Entry {
+                                 changed: Bool = false, canIncludeFile: Bool = false, noLicense: String? = nil, width: CGFloat? = 440) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -917,9 +931,7 @@ enum Gallery {
                 stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile, noLicense: noLicense,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
-                .frame(width: width == nil ? 340 : nil)
-                .background(width == nil ? AnyShapeStyle(ChatLook.paper) : AnyShapeStyle(Color(nsColor: .windowBackgroundColor)),
-                            in: RoundedRectangle(cornerRadius: 16))
+                .background(Paper.page, in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .fixedSize(horizontal: false, vertical: true))

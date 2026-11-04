@@ -366,7 +366,7 @@ links are read as a browser's form writes them too (`Wish.items`: "+" is a space
 
 Nobody's copy of a wish is the main one: everyone has their own, and nothing is upstream of anything (`Following`). A
 copy is shared as its Share Link with the wish itself included (`WishLink`, SHARED_WISHES.md in site/: `lamp.dev/w/<id>`,
-the file kept in lamp.dev's Blob store; the card ticks Include the wish itself whenever the wish can go as a file), and
+the file kept in lamp.dev's Blob store; the file always goes when the wish can go as one), and
 each Update Link sends the file again, which counts the link's version up. A wish with a page (a web app, a web
 game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page Put on GitHub builds, which
 stays as it is), and its link opens on it, playing, with Remix… in a bar under it: whoever has the link tries the
