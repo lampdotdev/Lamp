@@ -294,12 +294,20 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   const folder = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir`));
   assert.match(await folder.text(), new RegExp(`<base href="/w/${id}/play/1/dir/">`), "a folder without its slash keeps its own files in place");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir/`))).status, 200);
-  // A big file is played straight from the store, where it's kept as what it is.
+  // A big file is played straight from the store, where it's kept as what it is: not a page's HTML, not a worker's own
+  // script, and not from a store a browser can't reach.
   const direct = createPlayHandler({ store, env, direct: 5 });
-  const big = await direct(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=lamp.js`));
+  const ask = (path, dest) => direct(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=${path}`, dest ? { headers: { "sec-fetch-dest": dest } } : {}));
+  assert.equal((await ask("lamp.js")).status, 200, "the dev server's memory isn't a browser's to reach");
+  const stored = store.records.get(id).page.files, kept = stored["lamp.js"];
+  stored["lamp.js"] = "https://store.example/lamp.js";
+  const big = await ask("lamp.js", "script");
   assert.equal(big.status, 302);
-  assert.equal(big.headers.get("location"), store.records.get(id).page.files["lamp.js"]);
-  assert.equal((await direct(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index.html`))).status, 200, "never a page's HTML");
+  assert.equal(big.headers.get("location"), "https://store.example/lamp.js");
+  assert.equal(big.headers.get("vary"), "Sec-Fetch-Dest");
+  assert.notEqual((await ask("lamp.js", "worker")).status, 302, "a worker's script stays on the page's origin");
+  assert.equal((await ask("index.html")).status, 200, "never a page's HTML");
+  stored["lamp.js"] = kept;
   const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.doesNotMatch(without, /"play"/, "with no play host, nothing plays");
 

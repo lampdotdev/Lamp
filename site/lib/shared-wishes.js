@@ -530,8 +530,11 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     const at = name ? files[name] : null;
     if (!at) return missing();
     // A big file: the browser goes to it in the store, which serves it to any page. Each version's files never change.
-    if (!rebased && !/\.html?$/i.test(name) && (record.page.sizes?.[name] ?? 0) >= direct) {
-      return new Response(null, { status: 302, headers: { Location: at, "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
+    // Not for a worker's own script, which a browser only takes from the page's own origin, nor from a store a browser
+    // can't reach (the dev server's memory). Kept apart by what asked (`Vary`), so a worker never gets the redirect.
+    const worker = /worker$/i.test(request.headers.get("sec-fetch-dest") ?? "");
+    if (!rebased && !worker && at.startsWith("https://") && !/\.html?$/i.test(name) && (record.page.sizes?.[name] ?? 0) >= direct) {
+      return new Response(null, { status: 302, headers: { Location: at, Vary: "Sec-Fetch-Dest", "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id) } });
     }
     // Passed on as it comes from the store; only a folder's index.html given its base is read whole, to change it.
     const kept = store ?? cloudStore(env, fetcher);
