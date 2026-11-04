@@ -271,7 +271,7 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await send_("&what=page", "PUT", zip("other.html", Buffer.from("x")), "&part=0&of=1")).status, 204);
   assert.equal((await send_("&what=page", "POST")).status, 400, "a page has index.html at its root");
   const html = Buffer.from("<!doctype html><title>Plant Pal</title><script src=lamp.js></script>");
-  assert.equal((await send_("&what=page", "PUT", zipOf([["index.html", html], ["dir/index.html", html]]), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "PUT", zipOf([["index.html", html], ["dir/index.html", html], ["lamp.js", Buffer.from("// the kit")]]), "&part=0&of=1")).status, 204);
   assert.equal((await send_("&what=page", "POST")).status, 200);
 
   const env = { LAMP_PLAY_ORIGIN: "https://play.lamp.dev", LAMP_SITE_ORIGIN: "https://lamp.dev" };
@@ -294,6 +294,20 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   const folder = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir`));
   assert.match(await folder.text(), new RegExp(`<base href="/w/${id}/play/1/dir/">`), "a folder without its slash keeps its own files in place");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir/`))).status, 200);
+  // A big file is played straight from the store, where it's kept as what it is: not a page's HTML, not a worker's own
+  // script, and not from a store a browser can't reach.
+  const direct = createPlayHandler({ store, env, direct: 5 });
+  const ask = (path, dest) => direct(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=${path}`, dest ? { headers: { "sec-fetch-dest": dest } } : {}));
+  assert.equal((await ask("lamp.js")).status, 200, "the dev server's memory isn't a browser's to reach");
+  const stored = store.records.get(id).page.files, kept = stored["lamp.js"];
+  stored["lamp.js"] = "https://store.example/lamp.js";
+  const big = await ask("lamp.js", "script");
+  assert.equal(big.status, 302);
+  assert.equal(big.headers.get("location"), "https://store.example/lamp.js");
+  assert.equal(big.headers.get("vary"), "Sec-Fetch-Dest");
+  assert.notEqual((await ask("lamp.js", "worker")).status, 302, "a worker's script stays on the page's origin");
+  assert.equal((await ask("index.html")).status, 200, "never a page's HTML");
+  stored["lamp.js"] = kept;
   const without = await (await createPageHandler({ store, env: {}, template: async () => built })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
   assert.doesNotMatch(without, /"play"/, "with no play host, nothing plays");
 
