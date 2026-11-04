@@ -1693,6 +1693,9 @@ final class Store: ObservableObject {
     /// once while the queue's word of the one before is still on its way), says nothing of the chat as it is now.
     private var chatWritesMade: [String: Int] = [:]
     private var chatWritesLanded: [String: Int] = [:]
+    /// The first write that holds a change made to a chat after its last write was handed over (a file recovered into
+    /// one of its lines): an earlier write's success, landing meanwhile, doesn't save that change.
+    private var chatWriteNeeded: [String: Int] = [:]
 
     private func nextChatWrite(_ id: String) -> Int {
         chatWritesMade[id, default: 0] += 1
@@ -1721,6 +1724,7 @@ final class Store: ObservableObject {
         }
         if let made = chatWritesMade.removeValue(forKey: old) { chatWritesMade[new] = made }
         if let landed = chatWritesLanded.removeValue(forKey: old) { chatWritesLanded[new] = landed }
+        if let needed = chatWriteNeeded.removeValue(forKey: old) { chatWriteNeeded[new] = needed }
     }
 
     /// A write of the person's work has landed, or failed with `error`. `write` is a chat's count of it, for a chat.
@@ -1734,6 +1738,8 @@ final class Store: ObservableObject {
             Self.saveLog.error("couldn't save \(String(describing: work), privacy: .public): \(String(describing: error), privacy: .public)")
             unsaved.insert(work)
             troubled(by: error)
+        } else if let id = work.chat, let write, write < chatWriteNeeded[id, default: 0] {
+            return
         } else if unsaved.remove(work) != nil {
             settleSaveTrouble()
         }
@@ -1805,6 +1811,7 @@ final class Store: ObservableObject {
             if let line = pending.line, let index = logs[project.id]?.firstIndex(where: { $0.id == line }) {
                 logs[project.id]?[index].attachments = (logs[project.id]?[index].attachments ?? []) + [name]
                 unsaved.insert(.chat(project.id))
+                chatWriteNeeded[project.id] = chatWritesMade[project.id, default: 0] + 1
             }
         }
         unsavedAttachments = still

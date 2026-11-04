@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 @testable import Lamp
 
 /// The person's chat, what's typed in its box and the files sent with it, when their files can't be written: each is
@@ -135,6 +136,40 @@ final class UnsavedWorkTests: XCTestCase {
         XCTAssertNil(store.saveTrouble)
         let saved = try JSONDecoder().decode([LogLine].self, from: Data(contentsOf: lamp.appendingPathComponent("chat.json")))
         XCTAssertEqual(saved.last?.attachments, ["mockup.png"])
+    }
+
+    /// The chat's write from before the file was recovered lands after Try Again: it doesn't hold the file, so the
+    /// notice stays until the write that does has landed, and stays if that one fails.
+    func testAnEarlierChatWriteDoesNotClearARecoveredFile() async throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.current(wish))
+        let lamp = project.dir.appendingPathComponent(".lamp")
+        let attachments = project.dir.appendingPathComponent(Attachments.folder)
+        try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("mockup.png")
+        try Data([1, 2, 3]).write(to: file)
+        try setWritable(attachments, false)
+        defer { try? setWritable(attachments, true); try? setWritable(lamp, true) }
+        _ = store.post([QueuedMessage(text: "Like this", attachments: [file])], to: project)
+        // The chat's write lands on its queue; its word is still on the way to the main thread.
+        store.flushChats()
+
+        try setWritable(attachments, true)
+        try setWritable(lamp, false)
+        // Every value the notice takes from here on: it mustn't go, even for a moment.
+        var shown: [Store.SaveTrouble?] = []
+        let watching = store.$saveTrouble.dropFirst().sink { shown.append($0) }
+        defer { watching.cancel() }
+        store.retrySaving()
+        await settle(store)
+        XCTAssertFalse(shown.contains { $0 == nil }, "the write that landed was from before the file was in the chat")
+        XCTAssertNotNil(store.saveTrouble, "the chat naming the file couldn't be written")
+
+        try setWritable(lamp, true)
+        store.retrySaving()
+        await settle(store)
+        XCTAssertNil(store.saveTrouble)
     }
 
     /// A wish not built yet is renamed by moving its folder to a new id: what it couldn't save goes with it.
