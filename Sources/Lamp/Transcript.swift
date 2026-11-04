@@ -102,7 +102,7 @@ struct ToolCall {
         case .ask: "Asked you"
         case .progress: "Said how it's going"
         case .result: "Summed it up"
-        case .wish: "Wrote your wish"
+        case .wish: "Wrote it down"
         case .other: name
         }
     }
@@ -138,7 +138,7 @@ struct ToolCall {
         case .ask: "asked you"
         case .progress: "said how it's going"
         case .result: "summed it up"
-        case .wish: "wrote your wish"
+        case .wish: "wrote it down"
         case .other: n("step", "steps")
         }
     }

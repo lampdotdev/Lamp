@@ -14,7 +14,7 @@ tell whether Lamp is installed:
   request in its box. The first time Lamp opens it looks at the clipboard once and, if
   the mark is there, puts the wish in the first-app box. Anything else on the clipboard is left alone, and
   where macOS would ask before letting an app read it, Lamp doesn't read: the box offers "Paste my wish".
-- **Already have Lamp? Open it with this wish** opens `lamp://wish?text=…`: the card sinks back into the
+- **Already have Lamp? Open Lamp with it** opens `lamp://wish?text=…`: the card sinks back into the
   lamp's light and Lamp comes to the front with the wish in a new app's message box (or the welcome's box,
   if it's still there), waiting for the person to send it. The page is never told whether Lamp opened, so
   it says "Off it goes." and offers to try again.

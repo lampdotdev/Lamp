@@ -236,17 +236,17 @@ enum Agent {
     """
 
     /// "Help me find one" on Lamp's desk starts a wish with this request (`LampProject.finding`).
-    static let findingRequest = "Help me find something to wish for."
+    static let findingRequest = "Help me find something to make."
 
     private static let findRules = """
 
-    - When the person asks you to help them find something to wish for, nothing is built yet: change no files. \
+    - When the person asks you to help them find something to make, nothing is built yet: change no files. \
     Find it with them like a short wizard, in `ask` cards: first which of four everyday moments sounds like them, \
     each a situation from a different part of life (home, family, health, money, work, play) in plain words, such \
     as "Checking if a delivery is close"; then one or two questions about the one they pick: who it's for, when it \
     comes up, and where help would suit them (their Mac, iPhone or watch, the menu bar, a widget, or quietly in \
-    the background). Ask about their days, never about apps. Then call `write_wish` with the wish in their words, \
-    as a request to Lamp, and end. They send it, changed or not: that message is the wish. Build it then, \
+    the background). Ask about their days, never about apps. Then call `write_wish` with the idea in their words, \
+    as a request to Lamp, and end. They send it, changed or not: that message is the request. Build it then, \
     without asking again.
     """
 

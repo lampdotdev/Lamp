@@ -29,7 +29,7 @@ const iconURL = Object.fromEntries(await Promise.all(IDEAS.map(async (idea) => {
 
 // In the categories' order, so "All" reads as the categories one after another.
 const ideas = CATEGORIES.flatMap((category) => IDEAS.filter((idea) => idea.category === category.id));
-const description = "Wishes for software nobody else would make: for the office, your Mac, your family and your weekends. Find one that's nearly yours, and Lamp makes it yours.";
+const description = "Software nobody else would make: for the office, your Mac, your family and your weekends. Find one that's nearly yours, and Lamp makes it yours.";
 ---
 
 <Base title="Ideas · Lamp" description={description} image="/og.jpg">
@@ -47,7 +47,7 @@ const description = "Wishes for software nobody else would make: for the office,
       like an icon's, off its tile, and All is four of them together; each rises into place in turn as the page
       opens (global.css). The one chosen is kept in the address (#office), so a link can open on it.
     -->
-    <nav aria-label="Kinds of wish" class="mt-10 pb-12 sm:mt-14 sm:pb-14">
+    <nav aria-label="Kinds of idea" class="mt-10 pb-12 sm:mt-14 sm:pb-14">
       <div class="mx-auto grid max-w-md grid-cols-5 gap-y-5 px-3 sm:max-w-xl lg:flex lg:w-max lg:max-w-none lg:gap-3">
         {
           [{ id: "", title: "All" }, ...CATEGORIES].map((category, index) => (
@@ -219,7 +219,7 @@ const description = "Wishes for software nobody else would make: for the office,
       if (filter.getAttribute("aria-pressed") === "true") return;
       // The row of categories goes to just under the menu bar, so it's clear what changed and the wishes have
       // the rest of the window.
-      const row = document.querySelector<HTMLElement>('[aria-label="Kinds of wish"]')!;
+      const row = document.querySelector<HTMLElement>('[aria-label="Kinds of idea"]')!;
       const bar = document.querySelector<HTMLElement>("header nav")!.getBoundingClientRect().bottom;
       scrollTo({ top: row.getBoundingClientRect().top + scrollY - bar - 12, behavior: still ? "auto" : "smooth" });
       show(id);

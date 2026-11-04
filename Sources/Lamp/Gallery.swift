@@ -97,7 +97,7 @@ enum Gallery {
         },
         screen("A wish from the site", group: "Chat screen", []) { state in
             state.toolbar = nil
-            state.intro = SidebarIntro(icon: nil, name: "", namePrompt: "A shelf for my hot sauces", line: "Here's your wish. Change anything you like.",
+            state.intro = SidebarIntro(icon: nil, name: "", namePrompt: "A shelf for my hot sauces", line: "Here it is. Change anything you like.",
                                        ideas: [], canRename: true)
             state.draft = "A shelf for my hot sauces, with how hot each one is and where I bought it."
             state.draftVersion = 1

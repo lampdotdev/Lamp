@@ -61,7 +61,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
           class="wish-beckon relative z-10 inline-flex overflow-hidden h-[52px] items-center gap-2 rounded-full bg-linear-to-b from-[#ffe2a3] to-[#ffb45c] px-8 text-[17px] font-semibold text-[#3a2600] ring-1 ring-white/40 ring-inset transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.04] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#ffcf7a] active:scale-[0.98]"
         >
           <span aria-hidden="true" class="wish-glint"></span>
-          <span aria-hidden="true" class="relative">✦</span> <span class="relative">Discover my wish</span>
+          <span aria-hidden="true" class="relative">✦</span> <span class="relative">Find it with me</span>
         </button>
         </div>
         {explore && <a
@@ -90,7 +90,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
           />
           <button type="submit" class="rounded-full bg-white/10 px-4 py-2 text-[15px] font-medium text-white ring-1 ring-white/20 transition hover:bg-white/20">Send</button>
         </form>
-        <p class="mt-6 text-center text-xs text-white/45">What you type goes to an AI model to help write your wish. It's anonymous.</p>
+        <p class="mt-6 text-center text-xs text-white/45">What you type goes to an AI model to help write it. It's anonymous.</p>
         </div>
       </div>
     </div>
@@ -399,7 +399,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
     glow(1);
     dawn.classList.add("on");
     setTimeout(() => glow(0.8), 1800);
-    const opening = lead || "Here's your wish. Change anything you like.";
+    const opening = lead || "Here it is. Change anything you like.";
     const line = await lamp(opening);
 
     // The card waits (wish-rise holds its first frame through the delay) while the smoke reaches it.
@@ -425,7 +425,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
       fit();
       if (!edited) { edited = true; count("edit"); }
     });
-    const label = el("label", "mb-2.5 block text-[15px] font-semibold text-ink", "Here's your wish to give Lamp:");
+    const label = el("label", "mb-2.5 block text-[15px] font-semibold text-ink", "Here's what to ask Lamp:");
     label.htmlFor = area.id;
     card.append(label, area);
     requestAnimationFrame(fit);
@@ -445,7 +445,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
     finish.append(row);
     // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
     const mac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
-    const send = el("button", "mt-3.5 text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]", "Already have Lamp? Open it with this wish");
+    const send = el("button", "mt-3.5 text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]", "Already have Lamp? Open Lamp with it");
     send.type = "button";
     if (mac) finish.append(send);
     if (requirement) finish.append(requirement);
@@ -458,9 +458,9 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
       // The download leaves this page where it is, so the copy finishes and the card can say what happens next.
       copyWish(area.value).then((copied) => {
         go.textContent = "Downloading…";
-        if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. Your wish will be there."
-          : copied === "plain" ? "Your wish is copied. Paste it into Lamp when it's ready."
-          : "Copy your wish, and paste it into Lamp when it's ready.";
+        if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. It'll be there."
+          : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
+          : "Copy it, and paste it into Lamp when it's ready.";
         if (copied !== "none") lamp("Lamp is downloading.", line);
       });
     });
@@ -494,7 +494,7 @@ const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 s
       const again = el("button", "underline underline-offset-4 transition hover:text-white", "Didn't open? Try again");
       again.type = "button";
       again.onclick = () => { const next = wishLink(area.value); if (next) location.href = next; };
-      const back = el("button", "underline underline-offset-4 transition hover:text-white", "Back to my wish");
+      const back = el("button", "underline underline-offset-4 transition hover:text-white", "Back to it");
       back.type = "button";
       back.onclick = () => {
         after?.remove(); after = null;

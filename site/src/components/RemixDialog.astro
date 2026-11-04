@@ -109,7 +109,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     openLink.textContent = "Open in Lamp";
     dialog.removeAttribute("data-missing");
     dialog.setAttribute("aria-describedby", "remix-from");
-    const idea = starter?.name ?? origin?.name ?? "your wish";
+    const idea = starter?.name ?? origin?.name ?? "your idea";
 
     // "Remix" or "Try", written in by hand, before the name printed on the original and who made it.
     const remixOf = (name: string, maker: string) => {
@@ -149,11 +149,11 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       shot.addEventListener("error", next, { signal });
       next();
     } else {
-      title.textContent = "Your wish";
+      title.textContent = "Your idea";
       by.textContent = "From an app made with Lamp";
       from.textContent = "Lamp makes it for you, starting with these words.";
       written.textContent = "your idea here…";
-      ask.textContent = "YOUR WISH";
+      ask.textContent = "YOUR IDEA";
       written.hidden = false;
     }
     text.value = asked ?? "";
@@ -251,7 +251,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
           status.textContent = copied === "marked" ? `Open Lamp when it's ready, and ${idea} will be there.` : "When Lamp's ready, come back and click Open in Lamp.";
           return;
         }
-        const ready = starter ? `${starter.name} and your change will be there.` : origin ? "Your remix will be there." : "Your wish will be there.";
+        const ready = starter ? `${starter.name} and your change will be there.` : origin ? "Your remix will be there." : "It'll be there.";
         status.textContent = copied === "marked" ? `Open Lamp when it's ready. ${ready}`
           : copied === "plain" ? "Your change is copied. Paste it into Lamp when it's ready."
           : text.value.trim() ? "Copy your change, and paste it into Lamp when it's ready." : "Open Lamp when it's ready.";

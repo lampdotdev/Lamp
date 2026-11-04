@@ -33,7 +33,7 @@ final class ActivityTests: XCTestCase {
         XCTAssertEqual(Activity.words("Thinking", waited: 182), "Still on it, nothing's stuck")
         // Past the last tier it keeps turning over within it.
         let late = Set((0..<12).map { Activity.words("Thinking", waited: 600 + Double($0) * 3.5) })
-        XCTAssertEqual(late, ["Still on it, nothing's stuck", "Big wishes take a few minutes", "The genie hasn't wandered off"])
+        XCTAssertEqual(late, ["Still on it, nothing's stuck", "Big ones take a few minutes", "The genie hasn't wandered off"])
     }
 
     func testBuildingSaysWhenItRunsLong() {
