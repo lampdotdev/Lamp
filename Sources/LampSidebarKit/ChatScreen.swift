@@ -196,6 +196,8 @@ private struct Chat: View {
         .chatGround()
     }
 
+    private var activity: LiveActivity? { LiveActivity(state) }
+
     private var chat: some View {
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
@@ -214,7 +216,8 @@ private struct Chat: View {
                                            more: { link.send(.moreIdeas) })
                         }
                         ForEach(state.lines) { line in
-                            LineView(line: line, busy: state.busy, state: state).padding(.top, line.gap).id(line.id)
+                            LineView(line: line, busy: state.busy, activity: line.kind == .build ? activity : nil)
+                                .padding(.top, line.gap).id(line.id)
                         }
                         // A first build has its live line in the part being built.
                         if let working = state.working, let since = state.workingSince,
@@ -351,12 +354,28 @@ public struct ChatLines: View {
     }
 }
 
+/// The turn's live line: what it's doing, and since when.
+struct LiveActivity: Equatable {
+    var working: String
+    var since: Date
+    var activitySince: Date?
+
+    init?(_ state: SidebarState) {
+        guard let working = state.working, let since = state.workingSince else { return nil }
+        self.working = working
+        self.since = since
+        activitySince = state.workingActivitySince
+    }
+}
+
 private struct LineView: View {
     @EnvironmentObject private var link: ChatLink
     let line: SidebarLine
     let busy: Bool
-    /// The whole chat, for a first build's live line.
-    var state: SidebarState?
+    /// What the turn is doing, for a first build's live line. Only that, never the whole chat: a row compares what it's
+    /// given each time the chat changes, and with the whole chat that was every row against every line, which in a long
+    /// chat held up a message sent while the agent worked by seconds.
+    var activity: LiveActivity?
 
     var body: some View {
         switch line.kind {
@@ -412,9 +431,9 @@ private struct LineView: View {
             if let build = line.build {
                 ChatLook.BuildChapters(build: build) { part in
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(part.lines) { line in LineView(line: line, busy: busy, state: state).padding(.top, line.gap) }
-                        if part.live, let state, let working = state.working, let since = state.workingSince {
-                            ChatLook.ActivityLine(working, started: since, since: state.workingActivitySince,
+                        ForEach(part.lines) { line in LineView(line: line, busy: busy).padding(.top, line.gap) }
+                        if part.live, let activity {
+                            ChatLook.ActivityLine(activity.working, started: activity.since, since: activity.activitySince,
                                                   hasSteps: !(part.steps ?? []).isEmpty) {
                                 ForEach(part.steps ?? []) { step in LineView(line: step, busy: false) }
                             }
