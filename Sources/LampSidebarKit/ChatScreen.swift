@@ -714,7 +714,6 @@ struct ChatBar: View {
     @State private var sharingOpen = false
     /// The Mac's way to send that was chosen while Lamp makes the wish's file, for a wish with no link.
     @State private var waitingWay: SharePopover.Way?
-    @State private var waitingSince: Date?
 
     var body: some View {
         Group {
@@ -775,6 +774,8 @@ struct ChatBar: View {
             if let sharing = link.sharing { share(sharing) }
             link.sharing = nil
         }
+        // The file couldn't be made: nothing comes, so the next choice asks for it again.
+        .onChange(of: state?.shareFailures) { waitingWay = nil }
     }
 
     /// Lamp's icon and name before the app's: the chat sits beside someone else's window, so it says whose it is.
@@ -886,17 +887,14 @@ struct ChatBar: View {
         case .export: link.send(.export)
         case .send(let way):
             // The link goes when there is one. Without it the wish's file does, which Lamp makes first and hands over.
-            // One file at a time: a way chosen while Lamp makes it is the one it goes by. A request that never came back
-            // (it failed, and the chat says why) stops waiting after a while.
+            // One file at a time, until Lamp answers with it or says it failed (`SidebarState.shareFailures`): a way
+            // chosen meanwhile is the one it goes by.
             if let url {
                 send(way, items: [url])
             } else {
-                let waiting = waitingSince.map { Date().timeIntervalSince($0) < 60 } ?? false
+                let waiting = waitingWay != nil
                 waitingWay = way
-                if !waiting {
-                    waitingSince = Date()
-                    link.send(.share)
-                }
+                if !waiting { link.send(.share) }
             }
         }
         sharingOpen = false
@@ -920,7 +918,6 @@ struct ChatBar: View {
         SharedCopy.removeEarlierFolders()
         let way = waitingWay ?? .more
         waitingWay = nil
-        waitingSince = nil
         guard let url = try? SharedCopy.keep(sharing) else { return }
         send(way, items: [url])
     }

@@ -88,6 +88,9 @@ public struct SidebarState: Codable, Equatable {
     /// The wish's file after Share…, for the sidebar's own share menu: sent once, since only the sidebar can show
     /// that menu where the button is, and it can't read Lamp's files.
     public var sharing: SidebarSharing?
+    /// How many times making the wish's file for Share… failed (the chat says why): each one ends a wait for it, as the
+    /// file arriving does. Missing from a Lamp before it.
+    public var shareFailures: Int?
     /// The Put on GitHub card, while it's open in this chat (`SidebarCommand.repo`): shown in the chat's place.
     public var repo: SidebarRepo?
     /// The Send Changes Back card, while it's open in this chat (`SidebarCommand.contribute`): shown in the chat's place.
