@@ -30,6 +30,8 @@ public struct ContributeCard: View {
     let fork: String?
     let credit: String?
     let notes: [String]
+    /// Lines of sources only credited under their own terms, folded (`TermsFold`).
+    let terms: [String]
     let size: String?
     let copied: Bool
     /// Send Changes Back can be pressed now (ready, or after a failed try).
@@ -40,10 +42,13 @@ public struct ContributeCard: View {
     let copy: () -> Void
     let close: () -> Void
     let width: CGFloat?
+    /// Drawn in the chat's place: its words scroll when they don't fit, its buttons stay (`GitHubCardLayout`).
+    let scrolls: Bool
+    @State private var termsOpen = false
 
-    public init(icon: NSImage?, name: String, stage: Stage, upstream: String?, fork: String?, credit: String?, notes: [String], size: String?,
-                copied: Bool, canSend: Bool, send: @escaping () -> Void, fix: @escaping () -> Void, openRequest: @escaping () -> Void,
-                copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
+    public init(icon: NSImage?, name: String, stage: Stage, upstream: String?, fork: String?, credit: String?, notes: [String], terms: [String] = [],
+                size: String?, copied: Bool, canSend: Bool, send: @escaping () -> Void, fix: @escaping () -> Void, openRequest: @escaping () -> Void,
+                copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480, scrolls: Bool = false) {
         self.icon = icon
         self.name = name
         self.stage = stage
@@ -51,6 +56,7 @@ public struct ContributeCard: View {
         self.fork = fork
         self.credit = credit
         self.notes = notes
+        self.terms = terms
         self.size = size
         self.copied = copied
         self.canSend = canSend
@@ -60,6 +66,7 @@ public struct ContributeCard: View {
         self.copy = copy
         self.close = close
         self.width = width
+        self.scrolls = scrolls
     }
 
     private var busy: Bool {
@@ -77,7 +84,7 @@ public struct ContributeCard: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        GitHubCardLayout(scrolls: scrolls, width: width) {
             HStack(alignment: .top, spacing: 12) {
                 Image(nsImage: icon ?? NSWorkspace.shared.icon(for: .applicationBundle)).resizable()
                     .frame(width: 56, height: 56)
@@ -98,16 +105,15 @@ public struct ContributeCard: View {
                     if let credit { row("Credit", credit) }
                     if let size { row("Files", size) }
                 }
+                TermsFold(terms: terms, open: $termsOpen)
                 ForEach(notes, id: \.self) { note in
                     Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             status
+        } buttons: {
             buttons.cardButtons()
         }
-        .padding(24)
-        .frame(width: width)
-        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
     }
 
     private func row(_ label: String, _ value: String) -> some View {

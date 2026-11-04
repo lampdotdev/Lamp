@@ -78,10 +78,14 @@ enum ShareCheck {
     }
 
     /// Share-alike licenses for data rather than code (OpenStreetMap's ODbL, CDLA-Sharing): the data stays under them,
-    /// not the remix as a whole.
+    /// not the remix as a whole. An expression is one only when each share-alike license in it is for data, in any
+    /// order: "ODbL-1.0 AND GPL-3.0-only" still makes the remix GPL.
     static func isDataLicence(_ id: String?) -> Bool {
-        guard let id = id?.uppercased() else { return false }
-        return id.hasPrefix("ODBL-") || id.hasPrefix("CDLA-SHARING-")
+        let ids = (id ?? "").split(whereSeparator: { " ()".contains($0) }).map(String.init)
+            .filter { !["AND", "OR", "WITH"].contains($0.uppercased()) }
+        func isData(_ id: String) -> Bool { id.uppercased().hasPrefix("ODBL-") || id.uppercased().hasPrefix("CDLA-SHARING-") }
+        let shareAlike = ids.filter { single($0) == .shareAlike }
+        return !shareAlike.isEmpty && shareAlike.allSatisfy(isData)
     }
 
     private static func single(_ id: String) -> Licence {
@@ -161,17 +165,42 @@ enum ShareCheck {
     /// What a published page says of the licenses of what it's based on: one line for each share-alike licence, and one
     /// for work under its own terms.
     static func notes(for credits: Credits) -> [String] {
-        var notes: [String] = []
-        for source in credits.upstream {
-            switch licence(source.license) {
-            case .shareAlike where isDataLicence(source.license):
-                notes.append("\(source.name) is \(source.license ?? ""): it stays under that license, credited, in this remix.")
-            case .shareAlike: notes.append("\(source.name) is \(source.license ?? ""), so this remix is too: anyone may share it on under the same license.")
-            case .ownTerms: notes.append("\(source.name) is used under its own terms (\(source.license ?? "")).")
-            case .open, .none: break
-            }
+        credits.upstream.compactMap(note(for:))
+    }
+
+    private static func note(for source: Credits.Source) -> String? {
+        switch licence(source.license) {
+        case .shareAlike where isDataLicence(source.license):
+            "\(source.name) is \(source.license ?? ""): it stays under that license, credited, in this remix."
+        case .shareAlike: "\(source.name) is \(source.license ?? ""), so this remix is too: anyone may share it on under the same license."
+        case .ownTerms: "\(source.name) is used under its own terms (\(source.license ?? ""))."
+        case .open, .none: nil
         }
-        return notes
+    }
+
+    /// The same lines for a card the person reads before sending, in two parts: `shown`, what changes what they may do
+    /// (a remix that becomes share-alike, work that forbids commercial use or changes), and `terms`, one line for each
+    /// source that's only credited under its own terms, which the card folds. A wish built on many data sets has a
+    /// line for each, and unfolded they push the card's buttons out of sight.
+    static func cardNotes(for credits: Credits) -> (shown: [String], terms: [String]) {
+        var shown: [String] = [], terms: [String] = []
+        for source in credits.upstream {
+            guard let line = note(for: source) else { continue }
+            if isCreditOnly(source.license) { terms.append(line) } else { shown.append(line) }
+        }
+        return (shown, terms)
+    }
+
+    /// Whether a license asks nothing of a remix beyond its credit: its own terms, or share-alike data that stays under
+    /// its license. Not one that forbids commercial use or changes, anywhere in an expression.
+    static func isCreditOnly(_ expression: String?) -> Bool {
+        let restrictive = (expression ?? "").uppercased().split(whereSeparator: { " ()".contains($0) })
+            .contains { $0.hasPrefix("CC-BY-NC") || $0.hasPrefix("CC-BY-ND") }
+        switch licence(expression) {
+        case .ownTerms: return !restrictive
+        case .shareAlike: return isDataLicence(expression) && !restrictive
+        case .open, .none: return false
+        }
     }
 
     // MARK: Secrets

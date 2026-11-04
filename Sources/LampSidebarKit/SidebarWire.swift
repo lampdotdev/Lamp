@@ -6,8 +6,9 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`. 12: Put on GitHub's card shows the wish's picture
-    /// and its box (`SidebarRepo.picture`), so the picture goes up only from a chat that showed it.
-    public static let version = 12
+    /// and its box (`SidebarRepo.picture`), so the picture goes up only from a chat that showed it. 13: the GitHub cards
+    /// fold the lines of sources only credited under their own terms (`SidebarRepo.terms`, `SidebarContribute.terms`).
+    public static let version = 13
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -744,6 +745,9 @@ public struct SidebarRepo: Codable, Equatable {
     /// Where the README's Remix it with Lamp goes: the wish's Share Link, or nil when it has none yet (the card offers to make one).
     public var openInLamp: String?
     public var notes: [String]
+    /// The lines of sources only credited under their own terms, folded on the card (`ShareCheck.cardNotes`); nil
+    /// from a Lamp before they were, which has them in `notes`.
+    public var terms: [String]?
     public var size: String?
     public var copied: Bool
     /// The repository is made already: its one-time choices aren't asked again.
@@ -768,7 +772,8 @@ public struct SidebarRepo: Codable, Equatable {
 
     public init(name: String, icon: Data?, stage: RepoCard.Stage, repo: String?, url: String?, credit: String?, openInLamp: String?,
                 notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool,
-                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil, plays: Bool? = nil, picture: Data? = nil, showsPicture: Bool? = nil) {
+                page: String? = nil, pageUp: Bool? = nil, privateGame: Bool? = nil, plays: Bool? = nil, picture: Data? = nil, showsPicture: Bool? = nil,
+                terms: [String]? = nil) {
         self.name = name
         self.icon = icon
         self.stage = stage
@@ -790,6 +795,7 @@ public struct SidebarRepo: Codable, Equatable {
         self.plays = plays
         self.picture = picture
         self.showsPicture = showsPicture
+        self.terms = terms
     }
 }
 
@@ -805,13 +811,15 @@ public struct SidebarContribute: Codable, Equatable {
     public var fork: String?
     public var credit: String?
     public var notes: [String]
+    /// The lines of sources only credited under their own terms, folded on the card; nil from a Lamp before they were.
+    public var terms: [String]?
     public var size: String?
     public var copied: Bool
     /// Send Changes Back can be pressed: it's ready, or a try failed and can be made again.
     public var canSend: Bool
 
     public init(name: String, icon: Data?, stage: ContributeCard.Stage, upstream: String?, fork: String?, credit: String?,
-                notes: [String], size: String?, copied: Bool, canSend: Bool) {
+                notes: [String], terms: [String]? = nil, size: String?, copied: Bool, canSend: Bool) {
         self.name = name
         self.icon = icon
         self.stage = stage
@@ -819,6 +827,7 @@ public struct SidebarContribute: Codable, Equatable {
         self.fork = fork
         self.credit = credit
         self.notes = notes
+        self.terms = terms
         self.size = size
         self.copied = copied
         self.canSend = canSend

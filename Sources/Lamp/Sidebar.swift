@@ -1540,6 +1540,12 @@ final class SidebarServer {
                     return steps
                 }
             }
+            // A sidebar from before the GitHub cards folded their sources' own terms would leave those lines out: it
+            // gets them among the notes, where it showed them.
+            if version < 13 {
+                if var card = state.repo, let terms = card.terms { card.notes = terms + card.notes; card.terms = nil; state.repo = card }
+                if var card = state.contribute, let terms = card.terms { card.notes = terms + card.notes; card.terms = nil; state.contribute = card }
+            }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             // Nor one from before the notes receipt a receipt.

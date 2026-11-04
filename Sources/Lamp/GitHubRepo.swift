@@ -1057,7 +1057,7 @@ enum GitHubRepo {
     /// The card as the chat draws it.
     func wire(_ card: Card, of project: LampProject) -> SidebarRepo {
         let credits = card.staged?.credits ?? Credits.load(project)
-        var notes = ShareCheck.notes(for: credits)
+        var (notes, terms) = ShareCheck.cardNotes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
         // A private repository passes nothing on, so only a public one says what came with no license.
         if card.isPublic ?? !card.isPrivate, let line = ShareCheck.warningLine(credits) { notes.append(line) }
@@ -1082,6 +1082,6 @@ enum GitHubRepo {
                            canChooseLicense: card.staged.map { GitHubRepo.canOfferLicense($0.credits) } ?? true,
                            page: page, pageUp: pageUp, privateGame: !isPublic && Publish.hasPage(project),
                            plays: Publish.pageUse(project).map { $0 == .play },
-                           picture: card.thumbnail, showsPicture: card.showsPicture)
+                           picture: card.thumbnail, showsPicture: card.showsPicture, terms: terms)
     }
 }

@@ -732,7 +732,7 @@ enum Contribute {
     /// The card as the chat draws it.
     func wire(_ card: Card, of project: LampProject) -> SidebarContribute {
         let credits = Credits.load(project)
-        var notes = ShareCheck.notes(for: credits)
+        var (notes, terms) = ShareCheck.cardNotes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
         if let line = ShareCheck.warningLine(credits) { notes.append(line) }
         if card.stage == .ready, card.fork == nil, let login = card.login, let source = card.source {
@@ -742,6 +742,6 @@ enum Contribute {
         let size = card.prepared.map { $0.changed.count == 1 ? "1 file changed" : "\($0.changed.count) files changed" }
         return SidebarContribute(name: project.name, icon: card.icon, stage: card.stage,
                                  upstream: card.source.map { "\($0.owner)/\($0.name)" }, fork: card.fork ?? card.request?.fork,
-                                 credit: credits.basedOn, notes: notes, size: size, copied: card.copied, canSend: card.canSend)
+                                 credit: credits.basedOn, notes: notes, terms: terms, size: size, copied: card.copied, canSend: card.canSend)
     }
 }
