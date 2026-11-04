@@ -469,7 +469,8 @@ enum WishLink {
                 try await WishLink.remove(shared)
                 WishLink.keep(nil, for: project)
                 Store.shared.refreshInstalled(project)
-                cards[project.id] = nil
+                // Its window goes with it, as Cancel takes it.
+                close(project)
             } catch {
                 cards[project.id]?.stage = .failed(error.localizedDescription)
             }

@@ -47,37 +47,38 @@ public struct SharePopover: View {
             .padding(.horizontal, -6)
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 330)
         .foregroundStyle(Paper.ink)
         .background(Paper.page)
     }
 
     @ViewBuilder private var linkRow: some View {
         if let link {
-            VStack(alignment: .trailing, spacing: 6) {
-                HStack(spacing: 8) {
-                    // The address as people read it, without the scheme; the whole of it is what's copied.
-                    Text((link.host ?? "") + link.path)
-                        .font(.system(size: 13))
-                        .lineLimit(1).truncationMode(.middle)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 10)
-                        .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-                        .background(Paper.card, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Paper.rule))
-                        .help(link.absoluteString)
-                    Button(copied ? "Copied" : "Copy") {
-                        act(.copyLink)
-                        copied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-                    }
-                    .buttonStyle(PaperButtonStyle(.ink))
-                    .frame(minWidth: 70)
+            HStack(spacing: 8) {
+                // The address as people read it, without the scheme; the whole of it is what's copied.
+                Text((link.host ?? "") + link.path)
+                    .font(.system(size: 13))
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                    .background(Paper.card, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Paper.rule))
+                    .help(link.absoluteString)
+                Button(copied ? "Copied" : "Copy") {
+                    act(.copyLink)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                 }
-                Button("Edit Link…") { act(.editLink) }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Paper.muted)
+                .buttonStyle(PaperButtonStyle(.ink))
+                .frame(minWidth: 66)
+                // What the link shows, changed or taken down, in its own window.
+                Button { act(.editLink) } label: {
+                    Image(systemName: "gearshape").font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(PaperButtonStyle(.outline, square: true))
+                .help("Change what the link shows, or stop sharing it")
+                .accessibilityLabel("Edit Link")
             }
         } else {
             Button { act(.makeLink) } label: {

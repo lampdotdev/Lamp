@@ -1,6 +1,6 @@
 # Wishes shared as links
 
-The chat's Share Wish popover has **Make a Link…** (**Edit Link…** under the link once it has one): the person reviews what the link will show (the wish's name, what it
+The chat's Share Wish popover has **Make a Link…** (a gear beside the link, to change it, once it has one): the person reviews what the link will show (the wish's name, what it
 does and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
 on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words, which Lamp sends as what the wish does (its first request when that's empty). The
 wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
