@@ -1,0 +1,57 @@
+name: Website tests
+
+on:
+  pull_request:
+    paths:
+      - "site/**"
+      - "Sources/Lamp/WishLink.swift"
+      - "Sources/Lamp/Wish.swift"
+      - "Sources/LampSidebarKit/RemixPanel.swift"
+      - ".github/workflows/site-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "Sources/Lamp/WishLink.swift"
+      - "Sources/Lamp/Wish.swift"
+      - "Sources/LampSidebarKit/RemixPanel.swift"
+      - ".github/workflows/site-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: site/package.json
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install Redis for the quota checks
+        # The test starts its own temporary server and skips itself if either binary is missing.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          redis-server --version
+          redis-cli --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Website tests
+        run: npm test
