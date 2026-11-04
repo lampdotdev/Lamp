@@ -310,7 +310,7 @@ extension Store {
         guard let copy = Following.copy(fromLink: field.stringValue) else {
             let refusal = NSAlert()
             refusal.messageText = "That isn't a link to a copy"
-            refusal.informativeText = "Ask for the link Lamp's Copy Link makes, or the copy's address on GitHub."
+            refusal.informativeText = "Ask for the link Copy Link to This Version makes, or the copy's address on GitHub."
             refusal.runModal()
             return
         }
@@ -346,7 +346,7 @@ extension Store {
         Following.pullIn.offer(Following.Offer(wish: project, followed: followed, tip: updateChecks[id]?.tip), in: self)
     }
 
-    /// Copy Link: the wish's link as it is now on the clipboard (`Following.shareLink`).
+    /// Copy Link to This Version: the wish's link as it is now on the clipboard (`Following.shareLink`).
     func copyShareLink(_ project: LampProject) {
         guard let link = Following.shareLink(for: project), Sharing.askToShare(project) else { return }
         NSPasteboard.general.clearContents()

@@ -725,7 +725,7 @@ struct DeskWishMenu: View {
         // Its link, once it's on GitHub as it is now (Put on GitHub… puts it there), and following someone's copy of it.
         if project.scaffolded {
             Divider()
-            if Following.shareLink(for: project) != nil { Button("Copy Link") { store.copyShareLink(project) } }
+            if Following.shareLink(for: project) != nil { Button("Copy Link to This Version") { store.copyShareLink(project) } }
             Button("Follow a Copy…") { store.askToFollow(for: project) }
         }
         Divider()

@@ -362,6 +362,41 @@ like the welcome's wish) and opens as the welcome gives way to the desk, with no
 before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
 links are read as a browser's form writes them too (`Wish.items`: "+" is a space).
 
+#### Sharing a copy and following others
+
+Nobody's copy of a wish is the main one: everyone has their own, with the history it was made from, and nothing is
+upstream of anything (`Following`). A copy is shared as a link to it as it is now (`Following.shareLink`): lamp.dev's
+page for its repository at the commit that holds this version (`?repo=…&commit=…`), with `page=` its GitHub Pages
+page when it has one on its owner's own `<owner>.github.io`, which the site offers as Try it in your browser beside
+Open in Lamp (`remixFrom` in lib/wish.js holds the page to the same). So a link works only once the wish is in a public
+repository as it is now (`GitHubRepo.remixOrigin`); until then Copy Link to This Version isn't offered, and Put on GitHub… is the way
+there. Copy Link to This Version is in the chat's Share menu (`SidebarToolbar.canCopyLink`, `SidebarCommand.copyLink`) and in the
+desk's menu for the wish, and it asks Share Anyway as any share does (`Sharing.askToShare`).
+
+Opening the link is a remix of the repository at that commit (above): the person gets a copy of their own, with the
+copy it came from as the last link of its chain, which is the copy it follows from then on. Its updates are the wish's
+own (`AppUpdates`, Update from GitHub…), so that commit moves with each and goes back with Undo. Any other copy is
+followed by its link (Follow a Copy… in the desk's menu, which takes a wish's link, Lamp's own `wish?repo=` or a
+repository's address, `Following.copy(fromLink:)`), and kept in Lamp's own folder by the wish's instance
+(`Following.json`, never the wish's folder, which the agent writes and versions carry), in a format that says its
+number (`Following.format`), each copy with its place's kind (`Following.Place`: `github` today, so a relay Lamp hosts
+itself can be another kind beside it without a new format) and the commit of theirs last pulled in (`brought`).
+
+The desk's side panel lists what a wish follows (`FollowingList`, `Store.followingRows`): the copy it started from
+first, then the others, each with what was last heard of it and one button, Pull In once it has something new, else
+Check Again. Each is asked about at most daily, as updates are (`AppUpdates.tip`: `git ls-remote`, nothing fetched),
+once a launch for every followed copy (`Store.checkAllFollowed`), and a newer version of one is a notification, once for
+each (`told`). Pull In on the copy a wish started from is Review Update. On any other it goes through `Following.pullIn`,
+the one place the merge experience plugs in: today `ReviewThenMerge`, which fetches the copy, shows the review a shared
+wish gets, and on Update always merges it (`PendingImport.following`, `Store.mergeUpdate(…following:)`), never puts it in
+place, since it's someone else's copy rather than a newer one of where the wish came from. The merge measures both
+sides against what was last pulled in from that copy, else what the two last shared (`Following.base`: the latest place
+both chains name, at the commit this wish has of it, or at theirs when that place is this wish's own), each copy kept
+at a ref of its own (`Following.ref`, passed to `Upstream.merge` and to the agent's note on conflicts), and only the
+credit for work it brings joins the wish's credits (`Mix.creditsTaken`), so where the wish came from stays as it was.
+A view that makes someone's changes understandable and lets the person take part of them takes the same
+`Following.Offer` in `ReviewThenMerge`'s place.
+
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp
