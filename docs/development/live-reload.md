@@ -208,6 +208,8 @@ Stop ends one the same way (`Turn.cancel`). The
 open app's layout is worked out as soon as the app is open (`LiveReload.warm`, `Store.warmLive`), so the compiler's slow first
 read of a session is over before the agent's first save rather than in front of it.
 
+Every way a change goes in notes where the app's log was first (`Store.markLog`), so errors the change brings go back to the agent in the same turn: "Errors a change brought" in the engines guide.
+
 New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.livePerl`) gives
 each type of the app's spare room the open app's values already have: every class a few places,
 `__lampSpare_<Class>_0`… of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits;

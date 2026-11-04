@@ -97,7 +97,8 @@ public struct WishLinkCard: View {
     /// The app's repository ("owner/name") when it's on GitHub and can be updated from here: the card offers to release
     /// there too. Nil otherwise.
     let gitHub: String?
-    /// Why the app's repository can't be updated from here (no sign-in to GitHub), in place of the box.
+    /// Why the app's repository can't be updated from here (no sign-in to GitHub), in place of the box; or, beside the
+    /// box, what the commits show on GitHub (an address the person's git signs with).
     let gitHubNote: String?
     let gitHubStage: GitHubStage?
     /// Tries the GitHub half of the last release again, after it failed; nil when it can't be (the app changed since).
@@ -190,6 +191,9 @@ public struct WishLinkCard: View {
                         .toggleStyle(.checkbox)
                         .font(.callout)
                         .help("Puts this version on GitHub too, as a commit and a release with what's new")
+                    if values.alsoGitHub, let gitHubNote {
+                        Text(gitHubNote).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 } else if let gitHubNote {
                     Text(gitHubNote).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }

@@ -433,7 +433,9 @@ enum WishLink {
         }
         cards[project.id]?.gitHubFinding = Task {
             switch await GitHubRelease.find(project) {
-            case .ready(let target): cards[project.id]?.gitHub = target
+            case .ready(let target):
+                cards[project.id]?.gitHub = target
+                cards[project.id]?.gitHubNote = GitHubRepo.note(for: target.authors)
             case .note(let note): cards[project.id]?.gitHubNote = note
             case nil: break
             }
@@ -479,6 +481,8 @@ enum WishLink {
         // GitHub follows the link, with the same version and what's new, while its box is ticked.
         let wantsGitHub = card.values.alsoGitHub
         let finding = card.gitHubFinding
+        // An earlier release still waiting for its page no longer speaks on the card, from now on.
+        cards[project.id]?.gitHubOperation = nil
         cards[project.id]?.gitHubStage = nil
         cards[project.id]?.gitHubRetry = nil
         // A link's first share is where the first release's changes start, and says nothing itself.
@@ -617,6 +621,7 @@ enum WishLink {
             return
         }
         cards[project.id]?.stage = .sending
+        cards[project.id]?.gitHubOperation = nil
         let linkProblem: String? = if case .failed(let problem) = card.stage { problem } else { nil }
         Task { await releaseOnGitHub(project, to: target, version: retry.version, source: retry.source, picture: card.picture, then: linkProblem) }
     }

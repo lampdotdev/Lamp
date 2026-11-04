@@ -398,7 +398,10 @@ release's lines as the commit's message, then a GitHub release tagged `v<n>`, n 
 `.lamp/releases.json` (`Release.number`, one more than the latest's, so it keeps counting past the 200 releases the
 history keeps; the first share is v1), with the lines as its notes (`GitHubRelease.tag`: one already there on the same
 commit, peeled when it's annotated, is the one made by a try that failed later; one on another commit is refused, never
-moved). A press waits for the repository to be found (`gitHubFinding`) before it decides where the release goes. The
+moved). A press waits for the repository to be found (`gitHubFinding`) before it decides where the release goes. Finding it
+also finds who the commits are made as (`GitHubRepo.authors(releasingTo:)`), and when the person's git signs them with
+an address that shows on GitHub, the card says so under the box, as Put on GitHub's does; the upload holds the commits
+to what was said (`GitHubRepo.commit`'s `shown`). The
 card stays busy until everything is pushed, then only GitHub Pages' build is waited for with the card free; a release
 that's still waiting then neither speaks on the card once a newer one started (`gitHubOperation`) nor writes its record
 over a newer push's. GitHub says how it went in a line of its own (`WishLinkCard.GitHubStage`), so a failure there never

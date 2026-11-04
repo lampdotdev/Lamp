@@ -40,6 +40,9 @@ enum GitHubRelease {
         /// putting up: the commit the wish has of it, and why it can't go up yet, when it can't.
         var openedAt: String? = nil
         var behind: String? = nil
+        /// Who its commits are made as, which the card says when it shows an address (`GitHubRepo.note(for:)`): a
+        /// commit that would show another is refused (`GitHubRepo.commit`).
+        var authors: [GitHubRepo.Author] = []
     }
 
     enum Found: Equatable {
@@ -66,9 +69,19 @@ enum GitHubRelease {
         let signIn = kept.map { Found.note("To update \($0.repo) on GitHub too, sign in to GitHub with gh.") }
         guard let gh = await Publish.gh() else { return signIn }
         guard let login = await Publish.login(gh: gh) else { return signIn }
-        if let kept { return .ready(Target(repo: kept.repo, gh: gh, login: login)) }
-        guard let own = await GitHubRepo.ownOrigin(of: project, login: login, gh: gh) else { return nil }
-        return .ready(Target(repo: own.repo, gh: gh, login: login, openedAt: own.commit, behind: own.behind))
+        var target: Target
+        if let kept {
+            target = Target(repo: kept.repo, gh: gh, login: login)
+        } else {
+            guard let own = await GitHubRepo.ownOrigin(of: project, login: login, gh: gh) else { return nil }
+            target = Target(repo: own.repo, gh: gh, login: login, openedAt: own.commit, behind: own.behind)
+        }
+        do {
+            target.authors = try await GitHubRepo.authors(releasingTo: target.repo, withPage: Publish.hasPage(project), gh: gh, login: login)
+        } catch {
+            return .note(error.localizedDescription)
+        }
+        return .ready(target)
     }
 
     /// Releases the wish as it is now on GitHub, with `picture` for the README when the person chose to show one when
@@ -91,7 +104,7 @@ enum GitHubRelease {
         let uploaded = try await GitHubRepo.upload(staged, of: project, to: target.repo, gh: target.gh, login: target.login, isNew: false,
                                                    expected: before?.commit ?? target.openedAt, isPrivate: !isPublic,
                                                    license: before?.license ?? false, picture: before?.picture,
-                                                   release: version, pushed: pushed, step: step)
+                                                   authors: target.authors, release: version, pushed: pushed, step: step)
         // A newer release may have pushed while this one waited for its page (the card is free by then): its record
         // stands, and this older one's is left out.
         guard GitHubRepo.kept(for: project)?.commit == uploaded.repo.commit else { return }
