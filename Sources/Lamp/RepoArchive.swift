@@ -108,7 +108,7 @@ enum RepoArchive {
     }
 
     private static let tooLarge = Sharing.ImportError("This repository holds more than a Lamp app would.",
-                                                      detail: "A wish has at most \(maxFiles) files and 256 MB.")
+                                                      detail: "An app has at most \(maxFiles) files and 256 MB.")
     private static func refused(_ why: String) -> Sharing.ImportError {
         Sharing.ImportError("Lamp can't open this repository without Apple's tools.", detail: why)
     }

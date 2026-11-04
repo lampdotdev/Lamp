@@ -41,7 +41,7 @@ public struct SharePopover: View {
             VStack(alignment: .leading, spacing: 0) {
                 Row("Put on GitHub…", "chevron.left.forwardslash.chevron.right") { act(.github) }
                 if canContribute { Row("Send Changes Back…", "arrow.triangle.branch") { act(.contribute) } }
-                Row("Copy Wish File", "doc.on.doc") { act(.copyFile) }
+                Row("Copy App File", "doc.on.doc") { act(.copyFile) }
                 Row("Export…", "square.and.arrow.down") { act(.export) }
             }
             .padding(.horizontal, -6)
@@ -85,7 +85,7 @@ public struct SharePopover: View {
                 Label("Make a Link…", systemImage: "link").frame(maxWidth: .infinity)
             }
             .buttonStyle(PaperButtonStyle(.ink))
-            .help("A page on lamp.dev anyone can open to try this wish and make their own")
+            .help("A page on lamp.dev anyone can open to try this app and make their own")
         }
     }
 
@@ -96,7 +96,7 @@ public struct SharePopover: View {
                     .frame(maxWidth: .infinity)
             }
         }
-        .help(link == nil ? "Send the wish's file" : "Send the link")
+        .help(link == nil ? "Send the app's file" : "Send the link")
     }
 }
 

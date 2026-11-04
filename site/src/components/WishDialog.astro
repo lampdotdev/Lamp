@@ -60,7 +60,7 @@ const { place } = Astro.props;
         hidden
         class="mt-3.5 cursor-pointer text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
       >
-        Already have Lamp? Open it with this wish
+        Already have Lamp? Open Lamp with it
       </button>
     </div>
   </div>
@@ -120,7 +120,7 @@ const { place } = Astro.props;
     name.textContent = current.name;
     about.textContent = current.about;
     device.hidden = !current.platform || current.platform === "Mac";
-    device.textContent = `In Lamp, choose ${current.platform} before you send this wish.`;
+    device.textContent = `In Lamp, choose ${current.platform} before you send it.`;
     text.value = current.wish;
     go.textContent = "Download Lamp";
     if (requirement) requirement.hidden = true;
@@ -141,7 +141,7 @@ const { place } = Astro.props;
   // A request brought by a link (an app's remix panel) opens the card on it: the request is the wish itself. A wish
   // shared as a link has a page of its own (src/pages/w/index.astro).
   if (asked) {
-    open({ name: "Your wish", about: "From an app made with Lamp", wish: withAsk("", asked), picture: "", icon: "" }, "", "remix");
+    open({ name: "Your idea", about: "From an app made with Lamp", wish: withAsk("", asked), picture: "", icon: "" }, "", "remix");
     // Opened while the page is still loading, the box is sized again once it has its width.
     requestAnimationFrame(fit);
     addEventListener("load", fit, { once: true });
@@ -157,9 +157,9 @@ const { place } = Astro.props;
     copyWish(text.value).then((copied) => {
       go.textContent = "Downloading…";
       if (requirement) requirement.hidden = false;
-      if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. Your wish will be there."
-        : copied === "plain" ? "Your wish is copied. Paste it into Lamp when it's ready."
-        : "Copy your wish, and paste it into Lamp when it's ready.";
+      if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. It'll be there."
+        : copied === "plain" ? "It's copied. Paste it into Lamp when it's ready."
+        : "Copy it, and paste it into Lamp when it's ready.";
     });
   });
 

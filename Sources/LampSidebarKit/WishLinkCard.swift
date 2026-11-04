@@ -151,7 +151,7 @@ public struct WishLinkCard: View {
                         .padding(.horizontal, 8).padding(.vertical, 6)
                         .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
                         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
-                        .help("Shown under the wish's name on its page")
+                        .help("Shown under the app's name on its page")
                 }
                 // The wish always goes with its link when it can: what the person must know before it does.
                 if canIncludeFile, let noLicense {
@@ -193,7 +193,7 @@ public struct WishLinkCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
                 .overlay { if retaking { ProgressView().controlSize(.small) } }
-                .accessibilityLabel("Picture of the wish")
+                .accessibilityLabel("Picture of the app")
         }
     }
 
@@ -231,7 +231,7 @@ public struct WishLinkCard: View {
     @ViewBuilder private var buttonRow: some View {
         if link != nil {
             Button("Stop Sharing", role: .destructive, action: stop)
-                .help("Take the link down: it stops showing this wish")
+                .help("Take the link down: it stops showing this app")
         }
         Spacer(minLength: 0)
         if sending { ProgressView().controlSize(.small) }

@@ -772,7 +772,7 @@ enum IntegrationCheck {
             say("bridge.stop ends the app when the person presses Stop (an exit request, or the device's own way to close it). Write it, or put \"stop\" in bridge.lacks if the device has none; Lamp then presses home.")
         }
         if has["remove"] == false, !lacks.contains("remove") {
-            say("bridge.remove takes the app off the device when its wish is deleted. Write it, or put \"remove\" in bridge.lacks if the device has no way.")
+            say("bridge.remove takes the app off the device when its project is deleted. Write it, or put \"remove\" in bridge.lacks if the device has no way.")
         }
         if has["type"] == false, !lacks.contains("type"), !(bridge?.keys ?? [:]).isEmpty {
             say("bridge.type types into the device's on-screen keyboard, a character at a time with {text}. Write it, or put \"type\" in bridge.lacks if the device can't take typed text.")

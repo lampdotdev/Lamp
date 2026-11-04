@@ -30,7 +30,7 @@ export function builtWishPage() {
 function previewTags(wish, origin) {
   const link = linkFor(origin, wish.id, wish.name);
   const card = `${origin}/w/${wish.id}/card.png?v=${encodeURIComponent(wish.updated ?? "")}`;
-  const title = `${wish.name} · A wish for Lamp`;
+  const title = `${wish.name} · Made with Lamp`;
   const description = summary(wish);
   return [
     `<title>${escape(title)}</title>`,
@@ -104,9 +104,9 @@ a:hover { text-decoration-color: rgb(0 0 0 / 0.6); }
 <body>
 <main>
   <img src="/apple-touch-icon.png" alt="" width="96" height="96">
-  <h1>${unavailable ? "This wish can't be shown right now." : "This wish isn't shared any more."}</h1>
+  <h1>${unavailable ? "This app can't be shown right now." : "This app isn't shared any more."}</h1>
   <p>${unavailable ? "Try again in a moment." : "The link may be mistyped, or whoever shared it took it down."}</p>
-  <a href="/ideas">See ideas for wishes</a>
+  <a href="/ideas">See ideas</a>
 </main>
 </body>
 </html>

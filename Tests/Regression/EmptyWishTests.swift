@@ -56,7 +56,7 @@ final class EmptyWishTests: XCTestCase {
         XCTAssertEqual(NewerWish.savedLayout(at: empty.dir) ?? Template.layout(of: empty), NewerWish.layout)
         XCTAssertEqual(Template.layout(of: empty), 3, "a Lamp that reads 2 would take it for a draft")
         XCTAssertEqual(Agent.wishPrompt(for: empty, parts: []), Agent.emptyWishPrompt)
-        XCTAssertFalse(Agent.emptyWishPrompt.contains("This wish is "), "nothing of the app that went")
+        XCTAssertFalse(Agent.emptyWishPrompt.contains("This project is "), "nothing of the app that went")
         XCTAssertEqual(WishPlace.of(empty).caption, "No apps")
         XCTAssertNil(TryOnMenu.make(for: empty, store: store))
 

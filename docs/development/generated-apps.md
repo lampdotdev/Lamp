@@ -280,7 +280,7 @@ name the repository on the chain's last link (`Credits.Remix.url`, `Sharing.expo
 from there links where it came from.
 
 A repository opens in Lamp as a shared file does (`RepoImport`): File → Open from GitHub… takes its address (owner and
-name, with a branch, tag or commit after `/tree/` or `/commit/`; `RepoImport.source`), Import Shared Wish… takes a
+name, with a branch, tag or commit after `/tree/` or `/commit/`; `RepoImport.source`), Import Shared App… takes a
 folder it was cloned into, and a wish's link may name it (`lamp://wish?file=https://github.com/…`, `Store.take(exact:)`).
 The tree is fetched one commit deep with Lamp's own git, confined as every git command of Lamp's is (`Versions.git`, in
 a folder of Lamp's with the network open, never asking for a sign-in), or with no git on the Mac from GitHub's archive

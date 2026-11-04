@@ -94,7 +94,7 @@ enum GameAndroid {
 
     /// The game's activity for a game on its own: without the lines that answer the page's `Lamp.wish`, each marked so.
     static func withoutWish(activity: String) -> String {
-        activity.components(separatedBy: "\n").filter { !$0.hasSuffix("// the wish's other apps") }.joined(separator: "\n")
+        activity.components(separatedBy: "\n").filter { !$0.hasSuffix("// the project's other apps") }.joined(separator: "\n")
     }
 
     /// build.sh's Android part: the page into the game's build/ (which no version keeps), its files only, the icon,
@@ -676,7 +676,7 @@ enum GameAndroid {
             setContentView(web)
             LampPageGateway.attach(web, "https://$HOST")
             LampPageVoice.attach(this, web, "https://$HOST") // a screen
-            LampPageWish.attach(web, "https://$HOST") // the wish's other apps
+            LampPageWish.attach(web, "https://$HOST") // the project's other apps
             (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
             immerse()
             web.loadUrl("https://$HOST/index.html")
@@ -720,7 +720,7 @@ enum GameAndroid {
         override fun onInputDeviceChanged(id: Int) {}
         override fun onDestroy() {
             (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
-            LampPageWish.detach(web) // the wish's other apps
+            LampPageWish.detach(web) // the project's other apps
             super.onDestroy()
         }
         override fun onResume() { super.onResume(); web.onResume() }
@@ -823,7 +823,7 @@ enum GameAndroid {
     /// heard (AndroidX WebKit's message listener, by origin), and what the app hears goes to the page's `window.__lampWish`.
     static let pageWish = #"""
     // Written by Lamp before every build; don't edit. The page's Lamp.wish (Web/lamp.js), answered by this app's own
-    // LampWish (LampSupport.kt): the app is the wish's peer, and the page mirrors it.
+    // LampWish (LampSupport.kt): the app is the project's peer, and the page mirrors it.
     package {{PACKAGE}}
 
     import android.util.Base64
@@ -849,7 +849,7 @@ enum GameAndroid {
         private val scope = MainScope()
         private val transfers = mutableMapOf<Int, LampTransfer>()
         private val watching = mutableMapOf<Int, Job>()
-        // LampWish's flows, taken once: their getters join the wish, so reading them to report a stop would undo it.
+        // LampWish's flows, taken once: their getters join the project, so reading them to report a stop would undo it.
         private var apps: StateFlow<List<LampWish.Peer>>? = null
         private var status: StateFlow<LampWish.Status>? = null
         private var values: StateFlow<Map<String, Any>>? = null
@@ -1004,7 +1004,7 @@ enum GameAndroid {
                 LampWish.onItems(name) { changed, from -> current?.get()?.tellItems(name, changed, false, from) }
             }
 
-            /** Answers the page at `origin`, the game's own, in its main frame: no other page or frame reaches the wish. */
+            /** Answers the page at `origin`, the game's own, in its main frame: no other page or frame reaches the project. */
             fun attach(web: WebView, origin: String) {
                 if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
                 val bridge = LampPageWish(web)

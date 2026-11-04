@@ -91,13 +91,13 @@ enum Gallery {
             chat.stuck = true
             return AnyView(ChatScreen().environmentObject(chat as ChatLink).frame(height: 640))
         },
-        screen("A new wish", group: "Chat screen", []) { state in
+        screen("A new app", group: "Chat screen", []) { state in
             state.toolbar = nil
             state.intro = SidebarIntro(icon: nil, name: nil, namePrompt: "", line: introLine, ideas: ideas, canRename: true)
         },
         screen("A wish from the site", group: "Chat screen", []) { state in
             state.toolbar = nil
-            state.intro = SidebarIntro(icon: nil, name: "", namePrompt: "A shelf for my hot sauces", line: "Here's your wish. Change anything you like.",
+            state.intro = SidebarIntro(icon: nil, name: "", namePrompt: "A shelf for my hot sauces", line: "Here it is. Change anything you like.",
                                        ideas: [], canRename: true)
             state.draft = "A shelf for my hot sauces, with how hot each one is and where I bought it."
             state.draftVersion = 1
@@ -876,7 +876,7 @@ enum Gallery {
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
                                existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false,
                                mix: Bool = false) -> Entry {
-        Entry(group: "Shared wish", name: name) {
+        Entry(group: "Shared app", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
                                      icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android,
                                      prepared: prepared, mix: mix ? {} : nil)
@@ -915,7 +915,7 @@ enum Gallery {
         wishLink("New link, nothing to take again", retake: false),
         wishLink("Sharing", stage: .sending),
         wishLink("Couldn't share", stage: .failed("Lamp couldn't reach lamp.dev. Try again in a moment.")),
-        wishLink("Wish itself can't go", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
+        wishLink("App itself can't go", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
                  stage: .failed("Disk Map can't be shared. The license of Engine is missing from it. Ask Lamp to put LICENSE-engine back."), canIncludeFile: true),
         wishLink("Shared and copied", link: true, copied: true),
         wishLink("Shared, changed since", link: true, changed: true),
@@ -923,7 +923,7 @@ enum Gallery {
         wishLink("Release, with what's new", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish,
                                                          notes: "Rings show how much each folder grew this week\nClick a ring's middle to go back up"),
                  link: true, changed: true),
-        wishLink("Carrying the wish", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true), canIncludeFile: true),
+        wishLink("Carrying the app", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true), canIncludeFile: true),
         wishLink("No license", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includeFile: true),
                  canIncludeFile: true, noLicense: "Found Code by Someone came with no license. Make sure you're comfortable sharing it."),
     ]
@@ -1005,7 +1005,7 @@ enum Gallery {
         contribute("Ready, no license", stage: .ready, notes: ["Found Code by Someone came with no license. Make sure you're comfortable sharing it."]),
         contribute("Working", stage: .working("Opening the pull request…")),
         contribute("Couldn't send", stage: .failed("GitHub didn't take it: the connection was lost.")),
-        contribute("Nothing to send", stage: .failed("someone/new-york already has everything this wish has: there's nothing to send.")),
+        contribute("Nothing to send", stage: .failed("someone/new-york already has everything this app has: there's nothing to send.")),
         contribute("Sent", stage: .done("https://github.com/someone/new-york/pull/4")),
         contribute("Sent and copied", stage: .done("https://github.com/someone/new-york/pull/4"), copied: true),
         contribute("Sent, wide", stage: .done("https://github.com/someone/new-york/pull/4"), width: 480),

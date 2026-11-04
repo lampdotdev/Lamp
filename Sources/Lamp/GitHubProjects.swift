@@ -73,7 +73,7 @@ enum GitHubProjects {
                 throw Failure(message: "commit is the full hash of a commit (40 characters), as `git rev-parse HEAD` prints it in your clone.")
             }
             if let credited, credited != commit {
-                throw Failure(message: "This wish is made from \(source.owner)/\(source.name) at \(credited). Work from that commit (check it out in your clone); a newer one comes in as the app's update.")
+                throw Failure(message: "This project is made from \(source.owner)/\(source.name) at \(credited). Work from that commit (check it out in your clone); a newer one comes in as the app's update.")
             }
             return commit
         }
@@ -175,7 +175,7 @@ enum GitHubProjects {
         let credits = Credits.load(wish)
         if adapted, let basis = credits.upstream.first(where: { $0.adapted == true }),
            Credits.Source.plain(basis.url ?? "") != Credits.Source.plain(snapshot.url) {
-            throw Failure(message: "This wish is already made from \(basis.name) (\(basis.url ?? "")). Lampify \(snapshot.owner)/\(snapshot.name) with adapted false for something it uses, or make a new wish from it.")
+            throw Failure(message: "This project is already made from \(basis.name) (\(basis.url ?? "")). Lampify \(snapshot.owner)/\(snapshot.name) with adapted false for something it uses, or make a new project from it.")
         }
         // The owner and the name are folders of their own: "foo-bar/baz" and "foo/bar-baz" never share one.
         let place = "\(RepoLicenses.folder)/\(snapshot.owner)/\(snapshot.name)"
@@ -203,7 +203,7 @@ enum GitHubProjects {
         var shape = Shape(manifest: nil, missing: [], route: AppUpdates.route(for: Credits.load(wish), own: nil))
         let (root, parts) = Sharing.layout(of: wish)
         guard root.hasScaffold || !parts.isEmpty else {
-            shape.missing.append("Its structure: give the wish its app with make_app_for (a game or an app, web or native), then bring the project's code and assets into it.")
+            shape.missing.append("Its structure: give the project its app with make_app_for (a game or an app, web or native), then bring the repository's code and assets into it.")
             return shape
         }
         let folder = root.dir.standardizedFileURL == wish.dir.standardizedFileURL ? "" : root.dir.lastPathComponent + "/"
@@ -268,7 +268,7 @@ extension Store {
                 return (200, ["text": "Lamp's copy of \(snapshot.owner)/\(snapshot.name) at commit \(snapshot.commit), for reading: \(snapshot.folder.path)\nNothing was credited and nothing was made. To make an app from it, call lampify without read_only, with commit \(snapshot.commit)."])
             }
             guard !RepoImport.holdsWish(snapshot.folder, sites: false) else {
-                return (400, ["error": "\(source.owner)/\(source.name) is a Lamp wish already: don't rebuild it. Tell the person to open it with File → Open from GitHub… and paste \(address)."])
+                return (400, ["error": "\(source.owner)/\(source.name) is made with Lamp already: don't rebuild it. Tell the person to open it with File → Open from GitHub… and paste \(address)."])
             }
             let adapted = arguments["adapted"] as? Bool ?? true
             let credited = try GitHubProjects.credit(snapshot, adapted: adapted, in: wish)
@@ -286,7 +286,7 @@ extension Store {
 
 extension GitHubProjects {
     static func answer(_ snapshot: Snapshot, credited: Credits.Source, adapted: Bool, pinnedNow: Bool, shape: Shape) -> String {
-        var lines = ["\(snapshot.owner)/\(snapshot.name) at commit \(snapshot.commit)" + (adapted ? ", the project this wish is made from (its updates come from there)." : ", something the app uses.")]
+        var lines = ["\(snapshot.owner)/\(snapshot.name) at commit \(snapshot.commit)" + (adapted ? ", the repository this project is made from (its updates come from there)." : ", something the app uses.")]
         if pinnedNow {
             lines.append("Lamp pinned that commit: check it out in your clone (`git -C <clone> checkout \(snapshot.commit)`) so you copy from what's credited, and pass commit \(snapshot.commit) when you call lampify again.")
         }
@@ -299,7 +299,7 @@ extension GitHubProjects {
         if let manifest = shape.manifest { lines.append("lamp-app.json, as Lamp makes it:\n" + manifest) }
         switch shape.route {
         case .adapted(let source)?: lines.append("Updates follow \(source.url ?? "") from \(source.commit ?? "its commit") (its default branch).")
-        case .wish(let remix)?: lines.append("Updates follow the wish it was remixed from, \(remix.url ?? remix.name).")
+        case .wish(let remix)?: lines.append("Updates follow the project it was remixed from, \(remix.url ?? remix.name).")
         case nil: break
         }
         if shape.missing.isEmpty {

@@ -120,7 +120,7 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         window.collectionBehavior = [.fullScreenAuxiliary, .managed]
         window.minSize = NSSize(width: Self.narrowest, height: 360)
         window.maxSize = NSSize(width: Self.aloneWidest, height: .greatestFiniteMagnitude)
-        window.title = Store.shared.projects.first { $0.id == id }?.title ?? "Wish"
+        window.title = Store.shared.projects.first { $0.id == id }?.title ?? "App"
         // AppKit lists its windows in the Window menu and the Dock icon's menu, but never a panel on its own: the chat
         // is put there, so one behind other windows can be found again. Closing it takes it out.
         NSApp.addWindowsItem(window, title: window.title, filename: false)

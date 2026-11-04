@@ -619,7 +619,7 @@ export function isWishFile(bytes) {
 }
 
 /** The file's name where it's downloaded: the wish's name, made safe for an address. */
-export const fileName = (name) => `${(name.normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "wish").slice(0, 60)}.lampapp`;
+export const fileName = (name) => `${(name.normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "app").slice(0, 60)}.lampapp`;
 
 /**
  * The wish's own file, for a link that has one, only with the link's secret. PUT ?id=&part=<n>&of=<count> sends one part

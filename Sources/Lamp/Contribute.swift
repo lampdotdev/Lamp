@@ -79,7 +79,7 @@ enum Contribute {
         }
         let fetched = await Subprocess.run(git, signedIn + ["fetch", "-q", "--depth", "1", "upstream", parent], cwd: work, timeout: 600)
         guard fetched.ok else {
-            throw Failure(message: "GitHub didn't give back the version of \(upstream) this wish came from: \(fetched.output.trimmed.suffix(200))")
+            throw Failure(message: "GitHub didn't give back the version of \(upstream) this app came from: \(fetched.output.trimmed.suffix(200))")
         }
         let checkedOut = await Subprocess.run(git, ["checkout", "-q", "-b", branch, "FETCH_HEAD"], cwd: work, timeout: 60)
         guard checkedOut.ok else { throw Failure(message: "Couldn't prepare the pull request: \(checkedOut.output.trimmed.suffix(200))") }
@@ -119,7 +119,7 @@ enum Contribute {
             let before = await Subprocess.run(git, ["show", "HEAD:lamp-app.json"], cwd: work, mergeErrors: false, timeout: 30)
             if before.ok, let after = try? Data(contentsOf: work.appendingPathComponent("lamp-app.json")),
                GitHubRepo.manifestsMatch(Data(before.output.utf8), after) {
-                throw Failure(message: "\(upstream) already has everything this wish has: there's nothing to send.")
+                throw Failure(message: "\(upstream) already has everything this app has: there's nothing to send.")
             }
         }
         var changed: [String] = []
@@ -228,7 +228,7 @@ enum Contribute {
         if let old = cards[project.id]?.staged { try? FileManager.default.removeItem(at: old.folder.deletingLastPathComponent()) }
         cards[project.id]?.staged = nil
         Task {
-            guard let origin = Contribute.origin(of: project) else { return set(project, .refused("This wish didn't come from a repository on GitHub.")) }
+            guard let origin = Contribute.origin(of: project) else { return set(project, .refused("This app didn't come from a repository on GitHub.")) }
             guard let gh = await Publish.gh() else { return set(project, .needsGitHub(.install)) }
             guard let login = await Publish.login(gh: gh) else { return set(project, .needsGitHub(.signIn)) }
             guard login.lowercased() != origin.source.owner.lowercased() else {

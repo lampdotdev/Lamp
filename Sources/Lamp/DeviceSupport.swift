@@ -1300,7 +1300,7 @@ enum DeviceSupport {
 
       // Lamp's own route for a TV app's phone controllers (Lamp.controllers), the way LampAI's calls go.
       Object.defineProperty(LampAI, '_post', { value: post });
-      // One call to one way to Lamp, as LampAI makes it (through the Xbox's host where there is one), for a wish's key claim.
+      // One call to one way to Lamp, as LampAI makes it (through the Xbox's host where there is one), for a project's key claim.
       Object.defineProperty(LampAI, '_exchange', { value: exchange });
 
       /**
@@ -1494,20 +1494,20 @@ enum DeviceSupport {
     /// words every library uses, and its calls are the shape the link will have: an app written against it now keeps
     /// working when the link comes. `wishes.md` says what that link needs.
     static let brightScriptWish = #"""
-    ' LampWish: this app and the wish's other apps. Written by Lamp before every build; don't edit.
+    ' LampWish: this app and the project's other apps. Written by Lamp before every build; don't edit.
     ' Use it from a component by adding this to its XML:
     '     <script type="text/brightscript" uri="pkg:/components/Lamp/LampWish.brs" />
     '
-    ' A Roku app can't reach the wish's other apps yet, and they can't reach it: LampWish_status() is always "away",
+    ' A Roku app can't reach the project's other apps yet, and they can't reach it: LampWish_status() is always "away",
     ' with a reason to show as it is, LampWish_peers() is empty, and LampWish_send() and LampWish_set() send nothing.
     ' Keep what the app shows its own (LampStore, the web, LampAI) rather than waiting on the others.
     '     status = LampWish_status()     ' { state: "away", reason: "..." }
 
     function LampWish_status() as Object
-        return { state: "away", reason: "This app can't reach the wish's other apps yet." }
+        return { state: "away", reason: "This app can't reach the apps that go with it yet." }
     end function
 
-    ' The wish's other apps open now: none can be reached from a Roku yet.
+    ' The project's other apps open now: none can be reached from a Roku yet.
     function LampWish_peers() as Object
         return []
     end function
@@ -1518,7 +1518,7 @@ enum DeviceSupport {
         return false
     end function
 
-    ' The values the wish's apps share: none reach a Roku yet, so this is empty and LampWish_set() keeps nothing.
+    ' The values the project's apps share: none reach a Roku yet, so this is empty and LampWish_set() keeps nothing.
     function LampWish_values() as Object
         return {}
     end function
@@ -1668,7 +1668,7 @@ enum DeviceSupport {
     ' LampStore
 
     ' Every app Lamp puts on a Roku is its one developer channel, which keeps one registry, so each app's data is under
-    ' its own id there: a wish put on the Roku after another doesn't read or overwrite the other's.
+    ' its own id there: a project put on the Roku after another doesn't read or overwrite the other's.
     function LampStore_section() as Object
         installed = lampInstall()
         if installed = invalid then return CreateObject("roRegistrySection", "lamp-store")

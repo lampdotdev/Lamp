@@ -623,11 +623,11 @@ extension Agent.Rules {
     /// and what does work today.
     static let deviceAmongApps = """
 
-    - The {{DEVICE}} app is one of this wish's apps, in its own folder, but it can't reach the wish's other apps yet and \
-    they can't reach it: the link between a wish's apps doesn't run on {{A_DEVICE}} yet. Its `LampWish` (in its building \
+    - The {{DEVICE}} app is one of this project's apps, in its own folder, but it can't reach the project's other apps yet and \
+    they can't reach it: the link between a project's apps doesn't run on {{A_DEVICE}} yet. Its `LampWish` (in its building \
     blocks, beside LampAI) always says it's away, with that reason. So write each app to stand on its own: the \
     {{DEVICE}} app keeps its own data with LampStore and gets what's new from the web or with LampAI, not from the other \
-    apps. Another app of the wish on the Mac or an iPhone can still drive it as a remote from the same network where Lamp \
+    apps. Another app of the project on the Mac or an iPhone can still drive it as a remote from the same network where Lamp \
     has a block for the device (`LampRoku` for a Roku: its keys, and opening the app by launching "dev"), which needs no \
     link. Tell the person in a sentence, once, that the two don't share data yet, and what each does meanwhile.
     """
@@ -681,7 +681,7 @@ extension Agent.Rules {
                     + "with Lamp open. Text from outside the app goes in `options.data`, never into the prompt. Keep the package step zipping that folder. "
                     + "Read Lamp.brs's opening comment before using it; never call an AI service yourself. "
                 if let wish = DeviceSupport.wishFile(for: project) {
-                    rule += "\(wish) is `LampWish`, the wish's other apps: on this device it always says it's away, so show its reason "
+                    rule += "\(wish) is `LampWish`, the project's other apps: on this device it always says it's away, so show its reason "
                         + "where the app would show them, and keep the app whole without them. "
                 }
             case .three:

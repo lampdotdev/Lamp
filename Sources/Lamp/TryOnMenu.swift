@@ -169,7 +169,7 @@ extension TryOnMenu {
     /// (`Store.tryOn`), and the agent asks which device and whether it's a second app or this one changed.
     static let another = Item(id: "another", title: "Add an App for Another Device…", symbol: "plus")
     /// What choosing it says in the wish's chat, as the person's request.
-    static let anotherRequest = "Add an app for another device to this wish."
+    static let anotherRequest = "Add an app for another device to this one."
 
     /// The places of a kind given its places by what it is, not one at a time: nil for a Mac app, which has only this Mac.
     @MainActor static func choices(for project: LampProject, store: Store) -> TryOnMenu? {

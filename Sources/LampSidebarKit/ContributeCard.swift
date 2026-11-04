@@ -86,7 +86,7 @@ public struct ContributeCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Send \(name)'s changes back").font(.title3.bold())
                     // What the person accepts: what goes, and where.
-                    Text("Your changes go to the repository this wish came from, as a pull request its owner can take: what a shared wish file holds, on your own GitHub account first. Never your chat or the app's data.")
+                    Text("Your changes go to the repository this app came from, as a pull request its owner can take: what a shared app file holds, on your own GitHub account first. Never your chat or the app's data.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

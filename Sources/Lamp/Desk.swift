@@ -123,7 +123,7 @@ struct WishDesk: View {
                 Button { withAnimation(Self.slide) { panelShown.toggle() } } label: {
                     Label(panelShown ? "Hide Details" : "Show Details", systemImage: "sidebar.right")
                 }
-                .help(panelShown ? "Hide what the picked wish is" : "Show what the picked wish is")
+                .help(panelShown ? "Hide what the picked app is" : "Show what the picked app is")
             } }
         }
         .modifier(ClearToolbar())
@@ -329,7 +329,7 @@ struct WishDesk: View {
                 Label("Not sure?", systemImage: "lightbulb")
             }
             .buttonStyle(PaperButtonStyle(.outline, height: 40))
-            .help("Show some ideas, or have Lamp help you find your wish")
+            .help("Show some ideas, or have Lamp help you find one")
             .popover(isPresented: $showingIdeas, arrowEdge: .bottom) {
                 DeskIdeas(ideas: ideas, choose: choose, find: { showingIdeas = false; store.findWish() })
                     .padding(20)
@@ -398,8 +398,8 @@ struct WishDesk: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help("Make this wish (Return)")
-                .accessibilityLabel("Make this wish")
+                .help("Make it (Return)")
+                .accessibilityLabel("Make it")
                 .transition(.scale.combined(with: .opacity))
             }
         }
@@ -558,14 +558,14 @@ struct DeskIdeas: View {
                             .font(.system(size: 24, weight: .medium))
                             .foregroundStyle(Color.accentColor)
                             .frame(width: 32, height: 32)
-                        Text("Help me find my wish")
+                        Text("Help me find one")
                             .font(.title3.weight(.semibold))
                             .lineLimit(4, reservesSpace: true)
                     }
                 }
                 .buttonStyle(.plain)
                 .onHover { hovered = $0 ? Self.finder : (hovered == Self.finder ? nil : hovered) }
-                .help("Lamp asks a few questions about your days and writes a wish with you")
+                .help("Lamp asks a few questions about your days and writes it with you")
             }
         }
         .frame(maxWidth: 760)
@@ -627,8 +627,8 @@ struct TalkButton: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovered)
-        .help(listening ? "Stop listening" : "Say your wish")
-        .accessibilityLabel(listening ? "Stop listening" : "Say your wish")
+        .help(listening ? "Stop listening" : "Say it")
+        .accessibilityLabel(listening ? "Stop listening" : "Say it")
     }
 
     /// The colors of the wish icon's dusk, going round.
@@ -934,7 +934,7 @@ struct WishDrag: NSViewRepresentable {
     }
 
     /// What a drag hands over: the wish's shared file, or the app itself where an app belongs. The file is made again
-    /// as the drag starts, in the background, and is the one Share… and Copy Wish File hand on: it takes the old one's
+    /// as the drag starts, in the background, and is the one Share… and Copy App File hand on: it takes the old one's
     /// place whole, in one step, so an app given it by this drag or an earlier one finds a file there whenever it
     /// reads it, and dragging again and again leaves one file per wish.
     final class Payload: @unchecked Sendable {

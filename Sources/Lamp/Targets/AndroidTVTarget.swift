@@ -22,7 +22,7 @@ extension Target {
                            changeRules: { _ in Agent.Rules.androidEdit + Agent.Rules.androidFrameworks + Agent.Rules.androidAI + Agent.Rules.androidData
                                + Agent.Rules.androidTVDesign + Agent.Rules.androidTry + Agent.Rules.androidTVTry },
                            skills: { [] },
-                           elsewhere: { _ in "- On the person's TV: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI and no LampWish link to the wish's other apps" }),
+                           elsewhere: { _ in "- On the person's TV: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI and no LampWish link to the project's other apps" }),
         // An Android app's files, with a mark of its own and the TV's banner, which Lamp draws from the app's icon.
         recipe: Recipe(language: .kotlin, fill: Template.fillAndroidTV,
                        ownedFiles: Template.writeAndroidTVOwnedFiles, support: Template.writeAndroidSupport,
