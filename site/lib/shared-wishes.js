@@ -39,7 +39,16 @@ export const QUOTAS = [
   { name: "share-day", limit: 1000, seconds: 86400 },
 ];
 export const DELETE_QUOTAS = [{ name: "unshare-ip", perIP: true, limit: 60, seconds: 3600 }];
-/** A file's parts: a few files' worth an hour from one address. Putting the parts together counts as a share. */
+/**
+ * Changing a link that's out (its secret shown to the site) and putting its file and page together: kept apart from
+ * new links, so someone working on a wish can update it again and again without running out of shares. An update
+ * counts up to three here (the link, its file, its page). Overall, a ceiling on what a flood could rewrite in a day.
+ */
+export const UPDATE_QUOTAS = [
+  { name: "update-ip", perIP: true, limit: 90, seconds: 3600 },
+  { name: "update-day", limit: 5000, seconds: 86400 },
+];
+/** A file's parts: a few files' worth an hour from one address. Putting the parts together counts as an update. */
 export const PART_QUOTAS = [
   // A share sends the file and its page, each in up to `FILE_LIMITS.parts` parts.
   { name: "part-ip", perIP: true, limit: 200, seconds: 3600 },
@@ -354,7 +363,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       const ip = (request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for") || "").trim();
       if (!isIP(ip) || !kept.limiter) return reply(503, { error: "service_unavailable" });
       let retry;
-      try { retry = await reserve(kept.limiter, ip, method === "DELETE" ? DELETE_QUOTAS : QUOTAS, fetcher); }
+      try { retry = await reserve(kept.limiter, ip, method === "DELETE" ? DELETE_QUOTAS : method === "PUT" ? UPDATE_QUOTAS : QUOTAS, fetcher); }
       catch { return reply(503, { error: "service_unavailable" }); }
       if (retry > 0) return reply(429, { error: "rate_limited" }, { "Retry-After": String(retry) });
     }
@@ -607,7 +616,7 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       const ip = (request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for") || "").trim();
       if (!isIP(ip) || !kept.limiter) return reply(503, { error: "service_unavailable" });
       let retry;
-      try { retry = await reserve(kept.limiter, ip, method === "PUT" ? PART_QUOTAS : method === "POST" ? QUOTAS : DELETE_QUOTAS, fetcher); }
+      try { retry = await reserve(kept.limiter, ip, method === "PUT" ? PART_QUOTAS : method === "POST" ? UPDATE_QUOTAS : DELETE_QUOTAS, fetcher); }
       catch { return reply(503, { error: "service_unavailable" }); }
       if (retry > 0) return reply(429, { error: "rate_limited" }, { "Retry-After": String(retry) });
     }
