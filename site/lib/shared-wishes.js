@@ -242,6 +242,19 @@ export function cloudStore(env, fetcher = fetch) {
       if (!response.ok) throw new Error("Part unavailable");
       return Buffer.from(await response.arrayBuffer());
     },
+    // A page's file as it comes, passed on without being held whole: a big one (a game's map data, tens of MB) is more
+    // than a function's answer may hold at once, and more than it can read in the time a whole read is given.
+    async openFile(url) {
+      const address = new URL(url);
+      if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
+      const waiting = new AbortController();
+      const timer = setTimeout(() => waiting.abort(), 10000);
+      try {
+        const response = await fetcher(url, { redirect: "error", signal: waiting.signal });
+        if (!response.ok || !response.body) throw new Error("Part unavailable");
+        return { body: response.body, length: response.headers.get("content-length") };
+      } finally { clearTimeout(timer); }
+    },
     // The page and its card are cached by Vercel's CDN, tagged with the wish (see `cacheTags`): a change or a removal
     // takes them out at once rather than when they'd have run out.
     async forget(id) {
@@ -268,6 +281,7 @@ export function memoryStore() {
     async putFile(_id, _name, bytes) { return `data:application/octet-stream;base64,${bytes.toString("base64")}`; },
     async putPageFile(id, token, path, bytes) { const at = `memory:${id}/${token}/${path}`; pages.set(at, Buffer.from(bytes)); return at; },
     async readFile(url) { return url.startsWith("memory:") ? pages.get(url) : Buffer.from(url.slice(url.indexOf(",") + 1), "base64"); },
+    async openFile(url) { const bytes = await this.readFile(url); return { body: bytes, length: String(bytes.length) }; },
     async forget() {},
   };
 }
@@ -506,18 +520,24 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     const rebased = name === `${folder}/index.html` && !path.endsWith("/");
     const at = name ? files[name] : null;
     if (!at) return missing();
-    let bytes;
-    try { bytes = await (store ?? cloudStore(env, fetcher)).readFile(at); } catch { return new Response(null, { status: 503 }); }
-    if (rebased) {
-      const base = `<base href="/w/${id}/play/${version}/${folder.split("/").map(encodeURIComponent).join("/")}/">`;
-      const html = bytes.toString("utf8");
-      const head = html.search(/<head[^>]*>/i);
-      bytes = Buffer.from(head < 0 ? base + html : html.replace(/<head[^>]*>/i, (tag) => tag + base));
-    }
+    // Passed on as it comes from the store; only a folder's index.html given its base is read whole, to change it.
+    const kept = store ?? cloudStore(env, fetcher);
+    let bytes, length;
+    try {
+      if (rebased) {
+        const base = `<base href="/w/${id}/play/${version}/${folder.split("/").map(encodeURIComponent).join("/")}/">`;
+        const html = (await kept.readFile(at)).toString("utf8");
+        const head = html.search(/<head[^>]*>/i);
+        bytes = Buffer.from(head < 0 ? base + html : html.replace(/<head[^>]*>/i, (tag) => tag + base));
+      } else if (request.method !== "HEAD") {
+        ({ body: bytes, length } = await kept.openFile(at));
+      }
+    } catch { return new Response(null, { status: 503 }); }
     const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
     return new Response(request.method === "HEAD" ? null : bytes, {
       headers: {
         "Content-Type": pageType(name), "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+        ...(length ? { "Content-Length": length } : {}),
         // Framed only by the link's page; frame-ancestors takes the place of the site's X-Frame-Options.
         "Content-Security-Policy": `frame-ancestors ${site}`,
         "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id),
