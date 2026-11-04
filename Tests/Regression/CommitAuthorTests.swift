@@ -37,15 +37,16 @@ final class CommitAuthorTests: XCTestCase {
     }
 
     private func show(_ format: String, _ commit: String, in folder: URL) -> String {
-        Subprocess.runBlocking(git, ["show", "-s", "--format=" + format, commit], cwd: folder, mergeErrors: false, timeout: 30).output.trimmed
+        Subprocess.runBlocking(git, ["show", "-s", "--no-show-signature", "--format=" + format, commit], cwd: folder, mergeErrors: false, timeout: 30).output.trimmed
     }
 
     private func signed(_ commit: String, in folder: URL) -> Bool {
         Subprocess.runBlocking(git, ["cat-file", "commit", commit], cwd: folder, mergeErrors: false, timeout: 30).output.contains("\ngpgsig")
     }
 
+    /// Their own display settings (signatures shown with every commit) don't get in the way.
     func testSomeoneWhoSignsCommitsAsThemselvesWithTheirKey() async throws {
-        let folder = try repository(try signing())
+        let folder = try repository(try signing() + [("log.showSignature", "true")])
         let author = try await GitHubRepo.author(login: "someone", git: git, in: folder)
         XCTAssertTrue(author.signs)
         XCTAssertEqual(author.emails, ["signer@example.com"])

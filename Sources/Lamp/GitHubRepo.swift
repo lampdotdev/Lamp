@@ -731,17 +731,19 @@ enum GitHubRepo {
         let commit = arguments.first == "commit-tree" ? ran.output.trimmed
             : (await Subprocess.run(git, ["rev-parse", "HEAD"], cwd: folder, mergeErrors: false, timeout: 10)).output.trimmed
         guard let commit = Credits.validCommit(commit) else { throw Failure(message: "Couldn't make the commit.") }
-        // What the commit carries, as written: nothing is sent under an address that wasn't said.
-        let written = await Subprocess.run(git, ["show", "-s", "--format=%ae%n%ce", commit], cwd: folder, mergeErrors: false, timeout: 10)
-        let emails = written.output.split(separator: "\n").map { String($0).trimmed }
-        guard written.ok, emails.allSatisfy(author.emails.contains) else {
+        // What the commit carries, as written, read from the object itself, which no display setting changes: nothing
+        // is sent under an address that wasn't said, nor unsigned when it should be signed.
+        let object = await Subprocess.run(git, ["cat-file", "commit", commit], cwd: folder, mergeErrors: false, timeout: 10)
+        let header = object.output.components(separatedBy: "\n\n").first ?? ""
+        let emails = header.split(separator: "\n").filter { $0.hasPrefix("author ") || $0.hasPrefix("committer ") }.compactMap { line -> String? in
+            guard let open = line.firstIndex(of: "<"), let close = line[open...].firstIndex(of: ">") else { return nil }
+            return String(line[line.index(after: open)..<close])
+        }
+        guard object.ok, emails.count == 2, emails.allSatisfy(author.emails.contains) else {
             throw Failure(message: "Git made the commit under \(emails.joined(separator: " and ")), which this didn't say, so it wasn't sent.")
         }
-        if author.signs {
-            let object = await Subprocess.run(git, ["cat-file", "commit", commit], cwd: folder, mergeErrors: false, timeout: 10)
-            guard object.ok, object.output.contains("\ngpgsig") else {
-                throw Failure(message: "Your git signs your commits, but this one came out unsigned, so it wasn't sent.")
-            }
+        if author.signs, !header.contains("\ngpgsig") {
+            throw Failure(message: "Your git signs your commits, but this one came out unsigned, so it wasn't sent.")
         }
         return commit
     }
