@@ -361,4 +361,31 @@ final class ContributeTests: XCTestCase {
         XCTAssertEqual(file("index.html", at: prepared.commit, in: prepared.clone), "<html>hello, again</html>\n")
         XCTAssertFalse(try git("git ls-tree -r --name-only \(prepared.commit)", in: prepared.clone).contains("Web/"))
     }
+
+    /// A plain site opened as it is has no folder of Lamp's in its repository: credit for work the remix adds still
+    /// goes, in a folder made for it.
+    func testCreditForAPlainSiteWithNoFolderOfLampsGoes() async throws {
+        let app = try escape.app()
+        var project = app.project
+        project.platform = .webApp
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Sources/App.swift"))
+        try ScreenKit.markSite(project)
+        try write(["Web/index.html": "<html>hello</html>\n", "APP.md": "# Site\n", ".gitignore": ".lamp/\n"], in: project.dir)
+        let repo = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-contribute-upstream-\(UUID().uuidString)")
+        folders.append(repo)
+        try write(["index.html": "<html>hello</html>\n"], in: repo)
+        let first = try git("git init -q -b main && git add -A && git -c user.name=Maker -c user.email=maker@example.com commit -qm First && git rev-parse HEAD", in: repo)
+        try write([Credits.file: #"{"remixOf":[{"name":"Site","url":"https://github.com/maker/drive","commit":"\#(first)"}],"upstream":[]}"#], in: project.dir)
+        let arrived = await Versions.save(project, message: "Imported from a shared file")
+        XCTAssertTrue(arrived)
+        try write(["Web/tiny.js": "// tiny\n"], in: project.dir)
+        try Credits.add(Credits(upstream: [Credits.Source(name: "Tiny", author: "Someone", url: "https://github.com/someone/tiny", license: "MIT")]), to: project)
+        let saved = await Versions.save(project, message: "Tiny")
+        XCTAssertTrue(saved)
+
+        let prepared = try await prepare(project, from: repo)
+        XCTAssertEqual(prepared.changed, [StaticSite.folder + "/" + Credits.file, "tiny.js"])
+        let credits = try XCTUnwrap(file(StaticSite.folder + "/" + Credits.file, at: prepared.commit, in: prepared.clone).flatMap { Credits.decoded(Data($0.utf8)) })
+        XCTAssertEqual(credits.upstream.map(\.name), ["Tiny"])
+    }
 }

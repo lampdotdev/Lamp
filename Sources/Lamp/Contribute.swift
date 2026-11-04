@@ -490,6 +490,9 @@ enum Contribute {
         let fm = FileManager.default
         var written: Set<String> = []
         let meta = clone.appendingPathComponent(change.meta)
+        // A site opened as it is may have no folder of Lamp's in its repository yet (`StaticSite.unpack`): the credits
+        // or the icon's pictures the change brings make it.
+        try fm.createDirectory(at: meta, withIntermediateDirectories: true)
         let manifestURL = meta.appendingPathComponent("lamp-app.json")
         if let data = try? Data(contentsOf: manifestURL), let theirs = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             guard let updated = manifest(theirs, ours: manifestOf(exported), change: change) else { return nil }
