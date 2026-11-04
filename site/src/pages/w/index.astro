@@ -198,7 +198,7 @@ import { together } from "../../lib/text";
       frame.className = "absolute inset-0 size-full border-0 bg-white";
       stage.prepend(frame);
       if (wish.shape === "fill") stage.classList.add("fills");
-      else if (typeof wish.shape === "number" && wish.shape > 0.2 && wish.shape < 5) stage.style.setProperty("--shape", String(wish.shape));
+      else if (typeof wish.shape === "number" && wish.shape >= 0.2 && wish.shape <= 5) stage.style.setProperty("--shape", String(wish.shape));
       stage.hidden = false;
       $<HTMLButtonElement>("[data-fullscreen]").addEventListener("click", () => stage.requestFullscreen?.());
     } else if (wish.picture) {
