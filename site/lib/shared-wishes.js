@@ -466,14 +466,17 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     if (!isID(id) || !Number.isInteger(version)) return missing();
     let record;
     try { record = await (store ?? cloudStore(env, fetcher)).get(id); } catch { return new Response(null, { status: 503 }); }
-    const at = record?.page?.version === version ? record.page.files[path] : null;
+    // A page's other .html files are asked for by their clean names (the site's `cleanUrls` redirects to them).
+    const files = record?.page?.version === version ? record.page.files : {};
+    const name = files[path] ? path : files[`${path}.html`] ? `${path}.html` : files[`${path}/index.html`] ? `${path}/index.html` : null;
+    const at = name ? files[name] : null;
     if (!at) return missing();
     let bytes;
     try { bytes = await (store ?? cloudStore(env, fetcher)).readFile(at); } catch { return new Response(null, { status: 503 }); }
     const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
     return new Response(request.method === "HEAD" ? null : bytes, {
       headers: {
-        "Content-Type": pageType(path), "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+        "Content-Type": pageType(name), "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
         // Framed only by the link's page; frame-ancestors takes the place of the site's X-Frame-Options.
         "Content-Security-Policy": `frame-ancestors ${site}`,
         "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id),

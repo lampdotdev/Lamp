@@ -61,7 +61,9 @@ function previewTags(wish, origin) {
  * which opens the card. So whoever has the link tries the wish first, and remixes it after.
  */
 function playView(wish, origin) {
-  const src = `${origin}/w/${wish.id}/play/${wish.page.version}/index.html`;
+  // The folder, not index.html: the site's clean URLs send a .html address to its name without .html, which would
+  // put the page's own files one folder up.
+  const src = `${origin}/w/${wish.id}/play/${wish.page.version}/`;
   return `<div id="shared-play" class="shared-play">
 <iframe src="${escape(src)}" title="${escape(wish.name)}" allow="fullscreen; gamepad; autoplay; clipboard-write"
   sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads"></iframe>

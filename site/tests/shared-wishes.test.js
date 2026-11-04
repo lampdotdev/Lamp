@@ -250,7 +250,9 @@ test("a link's page plays only from the play host, framed by the site, and Remix
 
   const ideas = "<html><head><title>Ideas</title></head><body></body></html>";
   const page = await (await createPageHandler({ store, env, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
-  assert.match(page, new RegExp(`<iframe src="https://${own}/w/${id}/play/1/index.html"`));
+  assert.match(page, new RegExp(`<iframe src="https://${own}/w/${id}/play/1/"`));
+  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=`))).status, 200, "the folder is its index.html");
+  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index`))).status, 200, "a .html file by its clean name");
   assert.match(page, /data-remix-shared/);
   assert.match(page, /"play":true/);
   const without = await (await createPageHandler({ store, env: {}, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
