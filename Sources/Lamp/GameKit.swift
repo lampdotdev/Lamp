@@ -422,8 +422,9 @@ enum GameKit {
 
     /// What a game's Mac binary is compiled from: its Swift, Package.swift and build.sh, and the developer tools that compile
     /// it. Lamp remembers it at each Mac build that succeeds (`Runtime.markSwiftBuilt`), so a step that changed only the
-    /// page has build.sh copy the binary from then (`LAMP_SWIFT_BUILT`) rather than run swift build for nothing.
-    static func swiftStamp(_ project: LampProject) -> String {
+    /// page has build.sh copy the binary from then (`LAMP_SWIFT_BUILT`) rather than run swift build for nothing. Nil when
+    /// which version of the tools compiles it can't be told: then it's compiled every time, as before.
+    static func swiftStamp(_ project: LampProject) -> String? {
         var hasher = SHA256()
         for name in ["Package.swift", "build.sh"] {
             hasher.update(data: Data(name.utf8))
@@ -435,10 +436,28 @@ enum GameKit {
             hasher.update(data: Data(file.path.utf8))
             hasher.update(data: AppFile.read(file, in: project) ?? Data())
         }
-        // Which Xcode, and which version of it: an update in place keeps the path.
-        for folder in Sandbox.developerFolders() {
+        // Which tools, and which version of them, since an update in place keeps the path: an Xcode's version.plist, or for
+        // the Command Line Tools, which have none, their compiler and each SDK's settings as they are on disk.
+        let folders = Sandbox.developerFolders()
+        guard !folders.isEmpty else { return nil }
+        for folder in folders {
+            let root = URL(fileURLWithPath: folder)
             hasher.update(data: Data(folder.utf8))
-            hasher.update(data: (try? Data(contentsOf: URL(fileURLWithPath: folder).appendingPathComponent("Contents/version.plist"))) ?? Data())
+            if let version = try? Data(contentsOf: root.appendingPathComponent("Contents/version.plist")) {
+                hasher.update(data: version)
+                continue
+            }
+            let sdks = root.appendingPathComponent("SDKs")
+            let marks = [root.appendingPathComponent("usr/bin/swift-frontend")]
+                + ((try? FileManager.default.contentsOfDirectory(atPath: sdks.path)) ?? []).sorted().map { sdks.appendingPathComponent($0).appendingPathComponent("SDKSettings.json") }
+            var known = false
+            for mark in marks {
+                let values = try? mark.resolvingSymlinksInPath().resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                guard let size = values?.fileSize, let date = values?.contentModificationDate else { continue }
+                hasher.update(data: Data("\(mark.path) \(size) \(date.timeIntervalSince1970)".utf8))
+                known = true
+            }
+            guard known else { return nil }
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }

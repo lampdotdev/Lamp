@@ -9287,14 +9287,14 @@ final class Store: ObservableObject {
         let inputs = env["LAMP_LIVE"] == "1" ? LiveReload.inputs(project) : nil
         // A web game's Mac build compiles only its Swift, which a change of its page leaves as it was: build.sh copies the
         // binary of the last build that compiled these same inputs (`GameKit.swiftStamp`).
-        let swiftStamp = game && GameKit.engine(project) == .web && command.hasSuffix(" mac") && env["LAMP_PLAYER"] == nil
-            ? GameKit.swiftStamp(project) : nil
+        let compilesSwift = game && GameKit.engine(project) == .web && command.hasSuffix(" mac") && env["LAMP_PLAYER"] == nil
+        let swiftStamp = compilesSwift ? GameKit.swiftStamp(project) : nil
         if let swiftStamp, Runtime.swiftBuilt(project) == swiftStamp { env["LAMP_SWIFT_BUILT"] = "1" }
         let status = await Self.buildSparing(command, for: project, env: env,
                                              started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output = $0 }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
-        if swiftStamp != nil { Runtime.markSwiftBuilt(project, from: status == 0 ? swiftStamp : nil) }
+        if compilesSwift { Runtime.markSwiftBuilt(project, from: status == 0 ? swiftStamp : nil) }
         guard status != 0 else {
             if let inputs { LiveReload.noteBuilt(project, inputs: inputs) }
             Runtime.markBuilt(project, from: fingerprint)

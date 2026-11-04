@@ -521,7 +521,8 @@ phones join. The agent plays a game only when the person asks it to try, play or
 (`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing), only the files that changed since they
 last passed (`PageScan`), since each is checked on its own and a page can hold a data module tens of megabytes big; a
 game bundled from TypeScript is checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it
-in (`pageInPlace`). A game with Swift of its own skips `swift build` when its Swift, Package.swift, build.sh and Xcode are
+in (`pageInPlace`). A game with Swift of its own skips `swift build` when its Swift, Package.swift, build.sh and developer tools (an Xcode's
+version, or the Command Line Tools' compiler and SDKs) are
 as they were at its last Mac build that succeeded (`GameKit.swiftStamp`, `LAMP_SWIFT_BUILT`): build.sh copies the binary
 that build made, whose path it kept in `.build/lamp-mac-bin`, so a change of the page alone isn't held up by a second or
 two of the compiler doing nothing. A step
