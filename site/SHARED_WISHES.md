@@ -40,7 +40,8 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   newest first, with when it went out and the plain lines Lamp wrote for it and the sharer kept. The page's header says
   "updated <date of the newest>" after the name and who it's by, when there are any, and opens the list under it (a
   popover). Until this browser has opened it since the newest release (`lamp.shared.seen.<id>` in localStorage), it's
-  darker with a sparkle; after, gray like the byline. A change from a Lamp that doesn't send `releases` keeps the ones
+  darker with a sparkle, which twinkles twice as the page comes in (still where less motion is asked for); after, gray
+  like the byline. A change from a Lamp that doesn't send `releases` keeps the ones
   the link has.
 - The preview card (`/w/<id>/card.png`, `lib/wish-card.js`, `api/wish-card.js`): 1200×630, drawn by `@vercel/og`
   with Geist (`lib/fonts`, SIL Open Font License) on the first-idea section's night sky. The page names it in
