@@ -2,7 +2,6 @@
 import Base from "../../layouts/Base.astro";
 import LampLockup from "../../components/LampLockup.astro";
 import { DOWNLOAD_URL } from "../../lib/download";
-import { together } from "../../lib/text";
 ---
 
 <!--
@@ -62,8 +61,8 @@ import { together } from "../../lib/text";
         <div class="make-edge make-edge-right" aria-hidden="true"></div>
         <div class="make-face flex flex-col gap-3 p-5">
           <h2 id="make-own" class="text-[1.375rem] leading-tight font-black tracking-[-0.02em]">Make this your own using Lamp</h2>
-          <!-- On a Mac: Lamp opens this wish (the exact one, when it came with the link), with what to change in its box. -->
-          <div data-mac hidden class="flex flex-col gap-3">
+          <!-- What to change, and Remix, which takes it to Lamp: there only once something's written. -->
+          <div class="flex flex-col gap-3">
             <!-- The changes Lamp suggests for it, as it suggests them beside the app: one puts its words in the box. -->
             <div data-ideas hidden class="flex flex-wrap gap-2"></div>
             <textarea
@@ -74,12 +73,8 @@ import { together } from "../../lib/text";
               placeholder="What would you change? You can say later, too."
               class="w-full resize-none rounded-[6px] bg-white p-3 text-[16px] leading-relaxed ring-2 ring-tape/80 transition placeholder:text-[#6f6857] focus:ring-tape focus:outline-none"
             ></textarea>
-            <button type="button" data-remix class="shared-button cursor-pointer">Remix</button>
+            <button type="button" data-remix disabled class="shared-button cursor-pointer disabled:cursor-default disabled:opacity-35 disabled:hover:translate-y-0">Remix</button>
           </div>
-          <a href={DOWNLOAD_URL} data-download data-download-place="shared" class="shared-button shared-button-outline">
-            <span data-download-label>Download Lamp</span>
-          </a>
-          <p data-next class="text-center text-sm text-[#4a463c]">{together("Free, for Macs with Apple Silicon and macOS 14 or later")}</p>
         </div>
         </div>
         </div>
@@ -91,9 +86,9 @@ import { together } from "../../lib/text";
     </footer>
     <div class="stripe-foot h-6" aria-hidden="true"></div>
 
-    <!-- Remix: what Lamp is, for someone who may not have it, and the two ways on, opening it or getting it. Dressed as
-         the homepage's remix dialog (RemixDialog.astro): a slab with the stripes up its left edge, rising in when it
-         opens and leaning toward the pointer. Its box is the panel's, carried over and kept in step with it. -->
+    <!-- Remix: the change asked for, what Lamp is, for someone who may not have it, and the two ways on, side by side:
+         opening it (on a Mac) or getting it. Dressed as the homepage's remix dialog (RemixDialog.astro): a slab with the
+         stripes up its left edge, rising in when it opens and leaning toward the pointer. -->
     <dialog data-remix-dialog aria-labelledby="remix-title" class="remix-popup make-host">
       <div class="make-slab">
       <div class="make-back" aria-hidden="true"></div>
@@ -108,13 +103,10 @@ import { together } from "../../lib/text";
         </button>
         <div class="remix-popup-body">
           <div class="remix-popup-words">
-            <h2 id="remix-title" class="remix-popup-title"><span class="remix-popup-word">Remix</span> <span data-remix-name></span></h2>
+            <h2 id="remix-title" class="remix-popup-title"><span class="remix-popup-word">Change</span> <span data-remix-name></span> <span data-remix-to class="remix-popup-to"></span></h2>
             <p data-remix-made class="remix-popup-text"></p>
-            <p class="remix-popup-text">{together("Lamp is an easy-to-use Mac app for making things like this, with no coding knowledge.")}</p>
-            <label for="remix-change" class="remix-popup-ask">YOUR CHANGE</label>
-            <textarea id="remix-change" data-remix-change rows="2" placeholder="What would you change? You can say later, too." class="remix-popup-change"></textarea>
             <div class="remix-popup-rows">
-              <div class="remix-popup-row">
+              <div data-remix-open class="remix-popup-row">
                 <span>Already have Lamp?</span>
                 <a data-open href="/" class="shared-button">Open</a>
               </div>
@@ -123,7 +115,8 @@ import { together } from "../../lib/text";
                 <a href={DOWNLOAD_URL} data-download data-download-place="shared-remix" class="shared-button shared-button-lit"><span data-download-label>Download</span></a>
               </div>
             </div>
-            <p data-next class="remix-popup-note" role="status" aria-live="polite">{together("Free, for Macs with Apple Silicon and macOS 14 or later")}</p>
+            <!-- Empty until Download is pressed, when it says how the wish waits for Lamp. -->
+            <p data-next class="remix-popup-note empty:hidden" role="status" aria-live="polite"></p>
           </div>
         </div>
       </div>
@@ -207,7 +200,7 @@ import { together } from "../../lib/text";
   .make-edge-left { top: 0; left: 0; width: var(--deep); height: 100%; transform-origin: left; transform: rotateY(90deg); }
   .make-edge-right { top: 0; right: 0; width: var(--deep); height: 100%; transform-origin: right; transform: rotateY(-90deg); }
 
-  /* The homepage's buttons: ink with paper-colored words, or outlined in ink. */
+  /* The homepage's buttons: ink with paper-colored words. */
   .shared-button {
     display: inline-flex; align-items: center; justify-content: center; min-height: 3.25rem; padding: 0 1.625rem;
     border-radius: 6px; background: var(--color-tape); color: var(--color-paper); font-size: 1.125rem; font-weight: 800;
@@ -215,7 +208,6 @@ import { together } from "../../lib/text";
   }
   .shared-button:hover { translate: 0 -2px; }
   .shared-button:focus-visible { outline: 3px solid #1f8a4a; outline-offset: 3px; }
-  .shared-button-outline { background: transparent; color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); }
   /* The yellow of the stripes, as the homepage's remix dialog has its Download. */
   .shared-button-lit { background: #f6b81c; color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); }
 
@@ -255,21 +247,12 @@ import { together } from "../../lib/text";
   .remix-popup-title > span { display: block; }
   .remix-popup-word { margin-bottom: 0.1em; font-family: var(--font-marker); font-size: 0.6em; font-weight: 400; letter-spacing: 0; }
   .remix-popup-text { margin: 1rem 0 0; font-size: 1.0625rem; line-height: 1.5; color: #4a463c; }
-  .remix-popup-ask { margin: 1.5rem 0 0.5rem; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; color: #a8361f; }
-  .remix-popup-change {
-    width: 100%; resize: none; padding: 0.75rem 0.875rem; border-radius: 6px; background: #fff;
-    box-shadow: inset 0 0 0 2px var(--color-tape); color: var(--color-tape); font-size: 1.0625rem; line-height: 1.45;
-  }
-  .remix-popup-change::placeholder { color: #6f6857; }
-  .remix-popup-change:focus-visible { outline: 3px solid #1f8a4a; outline-offset: 2px; }
-  .remix-popup-rows { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1.5rem; }
-  .remix-popup-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-size: 1.0625rem; font-weight: 700; }
-  .remix-popup-row .shared-button { min-width: 9.5rem; flex: none; }
-  /* On a phone, each question over its button, as wide as the dialog. */
-  @media (max-width: 30rem) {
-    .remix-popup-rows { gap: 1.25rem; }
-    .remix-popup-row { flex-direction: column; align-items: stretch; gap: 0.5rem; }
-  }
+  /* The change itself, under the name in the same lettering, smaller, since it can run long. */
+  .remix-popup-to { margin-top: 0.2em; font-size: 0.55em; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+  /* The two ways on, side by side and as wide as each other: each question over its button. Off a Mac, only getting it. */
+  .remix-popup-rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+  .remix-popup-row { display: flex; flex-direction: column; align-items: stretch; gap: 0.5rem; font-size: 1.0625rem; font-weight: 700; }
+  .remix-popup-row[hidden] { display: none; }
   .remix-popup-note { margin: 1rem 0 0; font-size: 0.875rem; color: #4a463c; }
 </style>
 
@@ -329,7 +312,7 @@ import { together } from "../../lib/text";
       const chip = document.createElement("button");
       chip.type = "button";
       chip.textContent = idea;
-      chip.className = "cursor-pointer rounded-full bg-white px-3.5 py-1.5 text-left text-[14px] leading-snug font-semibold text-tape ring-1 ring-tape/25 transition ring-inset hover:ring-tape/60 focus-visible:outline-2 focus-visible:outline-tape";
+      chip.className = "cursor-pointer rounded-full bg-white px-3.5 py-1.5 text-left text-[16px] leading-snug font-semibold text-tape ring-1 ring-tape/25 transition ring-inset hover:ring-tape/60 focus-visible:outline-2 focus-visible:outline-tape";
       chip.addEventListener("click", () => {
         change.value = idea;
         change.dispatchEvent(new Event("input"));
@@ -340,27 +323,22 @@ import { together } from "../../lib/text";
     }
     ideas.hidden = !wish.ideas?.length;
 
-    // A page can't tell whether Lamp is installed, so a Mac gets Remix beside Download: a dialog that says what Lamp is,
-    // with Open for whoever has it and Download for whoever doesn't. Open is the exact wish when it came with the link,
-    // so the copy follows it (`Following` in Lamp); else its words.
+    // Remix takes the change to Lamp, so it's there once something's written. It opens a dialog with the change, what
+    // Lamp is, and, since a page can't tell whether Lamp is installed, Open for whoever has it (on a Mac) beside
+    // Download for whoever doesn't. Open is the exact wish when it came with the link, so the copy follows it
+    // (`Following` in Lamp); else its words.
+    const remix = $<HTMLButtonElement>("[data-remix]");
+    const ready = () => { remix.disabled = !change.value.trim(); };
+    change.addEventListener("input", ready);
+    ready();
     const mac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
-    $<HTMLElement>("[data-mac]").hidden = !mac;
+    $<HTMLElement>("[data-remix-open]").hidden = !mac;
     const dialog = $<HTMLDialogElement>("[data-remix-dialog]");
     $<HTMLElement>("[data-remix-name]").textContent = wish.name;
-    $<HTMLElement>("[data-remix-made]").textContent = `${wish.name} was made with Lamp, which you can use to tweak it and make it your own.`;
-    // The dialog's box is the panel's: what was written there is carried over when it opens, and a change made in the
-    // dialog goes back to it, so Open and Download take whichever was written last.
-    const remixChange = $<HTMLTextAreaElement>("[data-remix-change]");
-    const fitRemix = () => { remixChange.style.height = "auto"; remixChange.style.height = `${remixChange.scrollHeight + 4}px`; };
-    remixChange.addEventListener("input", () => {
-      change.value = remixChange.value;
-      change.dispatchEvent(new Event("input"));
-      fitRemix();
-    });
-    $<HTMLButtonElement>("[data-remix]").addEventListener("click", () => {
-      remixChange.value = change.value;
+    $<HTMLElement>("[data-remix-made]").textContent = `${wish.name} was made with Lamp, a free Mac app you can use to tweak it and make it your own with no coding knowledge at all.`;
+    remix.addEventListener("click", () => {
+      $<HTMLElement>("[data-remix-to]").textContent = `→ ${change.value.trim()}`;
       dialog.showModal();
-      fitRemix();
     });
     $<HTMLButtonElement>("[data-remix-close]").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
@@ -370,21 +348,19 @@ import { together } from "../../lib/text";
     change.addEventListener("input", () => { open.href = link(); });
     open.addEventListener("click", () => track("idea_sent", { idea: wish.name, place: "shared-remix" }));
 
-    // Each Download (the panel's and the dialog's) copies the wish (and the change) with Lamp's mark, for Lamp to find
-    // when it first opens, and says so under it.
-    for (const download of document.querySelectorAll<HTMLAnchorElement>("[data-download]")) {
-      const holder = download.closest(".make-face")!;
-      const next = holder.querySelector<HTMLElement>("[data-next]")!;
-      download.addEventListener("click", () => {
-        track("idea_download", { idea: wish.name, place: download.dataset.downloadPlace ?? "shared" });
-        copyWish(withAsk(wish.wish, change.value)).then((copied) => {
-          download.querySelector<HTMLElement>("[data-download-label]")!.textContent = "Downloading…";
-          next.textContent = copied === "marked" ? "Open Lamp when it's ready. This wish will be there."
-            : copied === "plain" ? "The wish is copied. Paste it into Lamp when it's ready."
-            : "Copy the wish's name, and ask Lamp for it when it's ready.";
-        });
+    // Download copies the wish (and the change) with Lamp's mark, for Lamp to find when it first opens, and says so
+    // under it.
+    const download = $<HTMLAnchorElement>("[data-download]");
+    const next = $<HTMLElement>("[data-next]");
+    download.addEventListener("click", () => {
+      track("idea_download", { idea: wish.name, place: "shared-remix" });
+      copyWish(withAsk(wish.wish, change.value)).then((copied) => {
+        $<HTMLElement>("[data-download-label]").textContent = "Downloading…";
+        next.textContent = copied === "marked" ? "Open Lamp when it's ready. This wish will be there."
+          : copied === "plain" ? "The wish is copied. Paste it into Lamp when it's ready."
+          : "Copy the wish's name, and ask Lamp for it when it's ready.";
       });
-    }
+    });
     track("idea_opened", { idea: wish.name, place: "shared" });
 
     // Put together once there's something to grow to: at once for a page that plays (its frame has its size), when the

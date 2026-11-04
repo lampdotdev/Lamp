@@ -47,7 +47,7 @@ on the homepage's paper but without its menu bar, footer or tapes: "Made with" L
 top, "Made with Lamp" in plain ink at the bottom, and the stripes as one band across the page's foot. The thing someone
 made comes first, as big as the window allows and only as big as it is (a playing page in the shape Lamp sends with the link, else 16:9, the stage a web game is drawn on);
 under it its name, with who it's by and what it does under the name, and a card for making one's own with the changes
-Lamp suggests as plain pills and a Remix that opens a dialog dressed as the homepage's remix dialog (what Lamp is, the change box carried over, Open and Download), a slab with thickness that leans toward the pointer as the remix dialog does. The page puts itself together as it opens: the wish
+Lamp suggests as plain pills and a Remix, there once a change is written, that opens a dialog dressed as the homepage's remix dialog ("Change" in marker over the name and the change, what Lamp is, and Open and Download side by side), a slab with thickness that leans toward the pointer as the remix dialog does. The page puts itself together as it opens: the wish
 opens from no height, cropped rather than squeezed (a page that plays loads only once it's all in view, so it starts at
 the size it plays at), its name fades in halfway through, and the card drops in from above the window as the boxes do in
 Lamp's welcome, running a little past its place and back; the wish's frame is black until the page in it draws; where less motion is asked for, it's simply there. The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the

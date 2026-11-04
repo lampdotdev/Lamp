@@ -27,9 +27,10 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   or as its picture, only as big as it is (a page that plays takes the shape sent with it: it can't say its shape
   from inside its frame, and the picture is of its Mac window); under it its icon, name, who it's by and what it does, and the ways to make one's own: a box
   for what to change with the changes Lamp suggests for it above it (`RemixSuggestions`, sent with the link; one puts its
-  words in the box), **Remix** on a Mac, a dialog that says what Lamp is, with the box again and **Open** for whoever has it (`lamp://wish?shared=<id>` with the change, so the copy follows the
-  link, or `lamp://wish?text=…` for a link without the wish's file) and **Download** for whoever doesn't, and **Download Lamp**
-  under the box; each Download copies the wish and the change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
+  words in the box), and **Remix**, there once something's written, which opens a dialog with the change, what
+  Lamp is, and two ways on side by side: **Open** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy follows
+  the link, or `lamp://wish?text=…` for a link without the wish's file) and **Download**, which copies the wish and the
+  change with Lamp's mark (FIRST_IDEA.md). A request the link brought (`?ask=`) waits in the box. The function
   serves the built page (`dist/w/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish`
   (its play address in `play`) and its own title, description and preview tags in place of the built page's; `npm run
   dev` gives it its own server's. On its own, `/w/` goes to the ideas page.
