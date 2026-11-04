@@ -183,7 +183,18 @@ enum Upstream {
         }
         if keptMark != theirsMark { _ = await run("git update-ref \(ref) \(keptMark)", in: project) }
         if ref == Upstream.ref, let commit = Credits.validCommit(package.credits?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit) {
-            _ = await run("git update-ref \(snapshot(commit)) \(keptMark)", in: project)
+            // With the manifest that came with it beside the files (a version's tree as a shared file carries it leaves
+            // it out), so a change of the line, the kind or the apps since is measured from what the update said.
+            var mark = keptMark
+            let manifest = package.folder.appendingPathComponent("lamp-app.json")
+            if FileManager.default.fileExists(atPath: manifest.path) {
+                let index = Sandbox.quoted(indexes.appendingPathComponent("snapshot").path)
+                let made = await run("blob=$(git hash-object -w -- \(Sandbox.quoted(manifest.path))) && rm -f \(index) && GIT_INDEX_FILE=\(index) git read-tree \(keptMark) "
+                                     + "&& GIT_INDEX_FILE=\(index) git update-index --add --cacheinfo 100644,$blob,lamp-app.json "
+                                     + "&& \(signed) commit-tree $(GIT_INDEX_FILE=\(index) git write-tree) -p \(keptMark) -m 'With its manifest'", in: project)
+                if made.status == 0, let withManifest = Credits.validCommit(made.output.split(separator: "\n").last.map(String.init)) { mark = withManifest }
+            }
+            _ = await run("git update-ref \(snapshot(commit)) \(mark)", in: project)
         }
         // The icon's pictures live outside the versions: the package's go in when its icon changed upstream, for the
         // design as git merged it (icon.json is in the files), never in place of a design changed here. The

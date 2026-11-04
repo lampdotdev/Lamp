@@ -83,12 +83,6 @@ enum Contribute {
         guard let version = await Task.detached(operation: { Versions.savedVersion(of: project.dir) }).value else {
             throw Failure(message: "\(project.name) has changes that aren't saved yet. Try again once Lamp has saved them.")
         }
-        // An Android app's code is moved into this Mac's own package as it arrives (`AndroidFiles`), so its paths here
-        // aren't the repository's.
-        let (root, parts) = Sharing.layout(of: project)
-        if ([root] + parts).contains(where: { $0.platform.target.recipe.language == .kotlin }) {
-            throw Failure(message: "Lamp can't send an Android app's changes back yet.")
-        }
         let folder = Sharing.workFolder.appendingPathComponent("lamp-contribute-\(UUID().uuidString)")
         var done = false
         defer { if !done { try? fm.removeItem(at: folder) } }
@@ -104,11 +98,6 @@ enum Contribute {
         guard await Task.detached(operation: { Versions.savedVersion(of: project.dir) }).value == version else {
             throw Failure(message: "\(project.name) changed while Lamp was looking. Try again.")
         }
-        let change = try await self.change(of: project, at: version, exported: exported, in: folder)
-        guard !change.paths.isEmpty || change.describes else {
-            throw Failure(message: "\(project.name) has no changes of its own to send since it last took anything from \(source.owner)/\(source.name).")
-        }
-
         let clone = folder.appendingPathComponent("clone")
         try fm.createDirectory(at: clone, withIntermediateDirectories: true)
         func run(_ arguments: [String], in cwd: URL = clone, env: [String: String]? = nil, input: Data? = nil, timeout: TimeInterval = 120) async -> Subprocess.Result {
@@ -128,15 +117,34 @@ enum Contribute {
         let branch = "lamp/\(Publish.slug(project.name))-\(UUID().uuidString.prefix(6).lowercased())"
         _ = try must(await run(["checkout", "-q", "-b", branch, tip]))
 
-        let replayed = try await replay(change, in: clone, tip: tip, git: git)
-        guard replayed.conflicts.isEmpty else {
-            let files = replayed.conflicts.prefix(3).joined(separator: ", ") + (replayed.conflicts.count > 3 ? " and \(replayed.conflicts.count - 3) more" : "")
-            throw Failure(message: "\(source.owner)/\(source.name) changed the same parts of \(files) since \(project.name) last took anything from it. "
-                          + "Check for Updates… to bring their changes in, then send yours.")
+        var change = try await self.change(of: project, at: version, exported: exported, repository: clone, in: folder)
+        // A wish that arrived before Lamp kept the manifest it came with is measured against the repository's at the
+        // commit its credits name, else at its latest (only what differs from that goes).
+        if change.manifest == nil {
+            var said: Data? = nil
+            if let commit = change.namedCommit, await run(access + ["fetch", "-q", "--depth", "1", "upstream", commit], timeout: 120).ok {
+                let shown = await run(["show", "\(commit):lamp-app.json"])
+                if shown.ok { said = Data(shown.output.utf8) }
+            }
+            said = said ?? (try? Data(contentsOf: clone.appendingPathComponent("lamp-app.json")))
+            change.manifest = said.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         }
+        let ours = manifestOf(exported)
+        guard !change.paths.isEmpty || !manifestChanges(ours: ours, base: change.manifest ?? [:]).isEmpty else {
+            throw Failure(message: "\(project.name) has no changes of its own to send since it last took anything from \(source.owner)/\(source.name).")
+        }
+
+        func stopped(_ files: [String]) -> Failure {
+            let named = files.prefix(3).joined(separator: ", ") + (files.count > 3 ? " and \(files.count - 3) more" : "")
+            return Failure(message: "\(source.owner)/\(source.name) changed the same parts of \(named) since \(project.name) last took anything from it. "
+                           + "Check for Updates… to bring their changes in, then send yours.")
+        }
+        let replayed = try await replay(change, in: clone, tip: tip, git: git)
+        guard replayed.conflicts.isEmpty else { throw stopped(replayed.conflicts) }
         _ = try must(await run(["read-tree", "--reset", "-u", replayed.tree]))
         var touched = Set(change.paths)
-        touched.formUnion(try finish(change, in: clone, exported: exported))
+        guard let finished = try finish(change, in: clone, exported: exported) else { throw stopped(["lamp-app.json"]) }
+        touched.formUnion(finished)
         try remakeSharedFile(in: clone, touched: touched, work: folder)
 
         _ = try must(await run(["add", "-A"]))
@@ -240,14 +248,16 @@ enum Contribute {
         var ours: URL
         /// The paths it touches in the repository, in order.
         var paths: [String]
-        /// The wish's line, when the change gives it a new one (`AppDescription`).
-        var description: String?
-        var describes = false
+        /// The manifest the change is measured from (`baseManifest`); nil when Lamp didn't keep it, and the
+        /// repository's stands in.
+        var manifest: [String: Any]?
+        /// The commit of the repository the version's credits name, for the repository's manifest to stand in.
+        var namedCommit: String?
         /// Credits for work the change newly uses, as the repository will name it.
         var credits = Credits()
     }
 
-    static func change(of project: LampProject, at version: String, exported: URL, in folder: URL) async throws -> Change {
+    static func change(of project: LampProject, at version: String, exported: URL, repository: URL, in folder: URL) async throws -> Change {
         let fm = FileManager.default
         let indexes = project.dir.appendingPathComponent(".lamp/contribute")
         try? fm.removeItem(at: indexes)
@@ -278,21 +288,39 @@ enum Contribute {
         defer { try? fm.removeItem(at: raw) }
 
         // The wish's paths as the repository has them: the app at the file's root loses its folder (`Sharing.export`).
-        let (root, _) = Sharing.layout(of: project)
+        let (root, parts) = Sharing.layout(of: project)
         let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
         func inRepository(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
         let carried = Set(regularFiles(in: exported))
+
+        // An Android app's code here is in this Mac's package for it (`AndroidFiles.install`), and the repository's in
+        // the one its build file names: each touched file goes back to that one, its path and the package in it, with
+        // the id Lamp set for this Mac taken out of the build file.
+        var androids: [(prefix: String, ours: String, theirs: String)] = []
+        for app in [root] + parts where app.platform.target.recipe.language == .kotlin {
+            let prefix = app.id == root.id ? "" : app.dir.lastPathComponent + "/"
+            let build = repository.appendingPathComponent(prefix + Template.androidAppFolder + "/build.gradle.kts")
+            guard let text = try? String(contentsOf: build, encoding: .utf8), let theirs = AndroidFiles.namespace(in: text) else { continue }
+            androids.append((prefix, Template.androidPackage(for: app), theirs))
+        }
+        func toRepository(_ target: String, _ file: URL?) throws -> (path: String, text: String?) {
+            guard let android = androids.first(where: { target.hasPrefix($0.prefix + Template.androidAppFolder + "/") }),
+                  AndroidFiles.codeExtensions.contains((target as NSString).pathExtension.lowercased()) else { return (target, nil) }
+            let inApp = String(target.dropFirst(android.prefix.count))
+            let path = android.prefix + AndroidFiles.movedPath(inApp, from: android.ours, to: android.theirs)
+            guard let file, let text = try? String(contentsOf: file, encoding: .utf8) else { return (path, nil) }
+            var renamed = text
+            if inApp == Template.androidAppFolder + "/build.gradle.kts" {
+                renamed = renamed.replacingOccurrences(of: AndroidFiles.applicationIDBlock(android.ours), with: "")
+            }
+            return (path, AndroidFiles.renamePackage(in: renamed, from: android.ours, to: android.theirs))
+        }
+
         var change = Change(base: folder.appendingPathComponent("base"), ours: folder.appendingPathComponent("ours"), paths: [])
         for (status, path) in statuses {
             let from = raw.appendingPathComponent("base/" + path), to = raw.appendingPathComponent("ours/" + path)
-            if path == AppDescription.file {
-                // The line travels in the manifest; one the wish arrived with and changed since is the change's.
-                if status == "M" || status == "D" {
-                    change.describes = true
-                    change.description = status == "D" ? nil : AppDescription.description(at: to)
-                }
-                continue
-            }
+            // The line travels in the manifest, which the export of this version says (`manifest`).
+            if path == AppDescription.file { continue }
             let target = inRepository(path)
             let removed = status == "D"
             guard removed || carried.contains(target) else { continue }
@@ -301,14 +329,18 @@ enum Contribute {
                let after = try? JSONSerialization.jsonObject(with: Data(contentsOf: to)) as? NSObject, before.isEqual(after) {
                 continue
             }
-            for (side, file) in [(change.base, from), (change.ours, to)] where (try? file.checkResourceIsReachable()) == true
-                || (try? fm.destinationOfSymbolicLink(atPath: file.path)) != nil {
-                let place = side.appendingPathComponent(target)
+            var mapped = target
+            for (side, file) in [(change.base, from), (change.ours, to)] {
+                let present = (try? file.checkResourceIsReachable()) == true || (try? fm.destinationOfSymbolicLink(atPath: file.path)) != nil
+                let back = try toRepository(target, present ? file : nil)
+                mapped = back.path
+                guard present else { continue }
+                let place = side.appendingPathComponent(back.path)
                 try fm.createDirectory(at: place.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? fm.removeItem(at: place)
-                try fm.copyItem(at: file, to: place)
+                if let text = back.text { try text.write(to: place, atomically: false, encoding: .utf8) } else { try fm.copyItem(at: file, to: place) }
             }
-            change.paths.append(target)
+            change.paths.append(mapped)
         }
         change.paths = Array(Set(change.paths)).sorted()
 
@@ -320,7 +352,42 @@ enum Contribute {
         let added = Set(statuses.filter { $0.status != "D" }.map { inRepository($0.path) }).intersection(change.paths)
         change.credits = Credits(upstream: ours.upstream.filter { source in !theirs.upstream.contains { $0.sameWork(as: source) } },
                                  generated: ours.generated.filter { added.contains($0.file) })
+        change.manifest = await baseManifest(of: project, base: base)
+        let named = await Upstream.run("git show \(version):\(Credits.file)", in: project)
+        change.namedCommit = Credits.validCommit(Credits.decoded(Data(named.output.utf8))?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit)
         return change
+    }
+
+    /// The manifest the wish's change is measured from: the one its last update came with (kept beside the update's
+    /// snapshot, `Upstream.snapshot`), or the one it last arrived with (`Sharing.arrivedManifest`) when it's measured
+    /// from its arrival. Nil when Lamp kept neither.
+    static func baseManifest(of project: LampProject, base: String) async -> [String: Any]? {
+        let kept = await Upstream.run("git show \(base):lamp-app.json", in: project)
+        if kept.status == 0, let manifest = try? JSONSerialization.jsonObject(with: Data(kept.output.utf8)) as? [String: Any] { return manifest }
+        let arrival = await Versions.list(project).first { Store.arrivalMessages.contains($0.message) }?.id
+        guard base == arrival, let data = try? Data(contentsOf: project.dir.appendingPathComponent(Sharing.arrivedManifest)) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// What a manifest says of the app that a change can change: its line, its kind, the device it opens on first, its
+    /// other apps and whether it's a plain site. Its identity, name, format and date are the file's own.
+    static let manifestKeys = ["description", "platform", "family", "parts", "site"]
+
+    static func manifestOf(_ folder: URL) -> [String: Any] {
+        (try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    }
+
+    private static func same(_ one: Any?, _ other: Any?) -> Bool {
+        switch (one, other) {
+        case (nil, nil): true
+        case let (one?, other?): (one as AnyObject).isEqual(other)
+        default: false
+        }
+    }
+
+    /// The keys the wish changed since `base`.
+    static func manifestChanges(ours: [String: Any], base: [String: Any]) -> [String] {
+        manifestKeys.filter { !same(ours[$0], base[$0]) }
     }
 
     /// Every regular file in a folder, by its path in it.
@@ -378,13 +445,14 @@ enum Contribute {
     /// What the change says beyond its files, written into the clone's tree: the manifest's line, format and apps; the
     /// credits for work it newly uses; and the icon's pictures when its design changed. Each file is left as the
     /// repository has it unless something in it changes. The paths written.
-    static func finish(_ change: Change, in clone: URL, exported: URL) throws -> Set<String> {
+    /// Nil when the repository changed something in the manifest the wish changed too, to something else.
+    static func finish(_ change: Change, in clone: URL, exported: URL) throws -> Set<String>? {
         let fm = FileManager.default
         var written: Set<String> = []
         let manifestURL = clone.appendingPathComponent("lamp-app.json")
         if let data = try? Data(contentsOf: manifestURL), let theirs = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let ours = ((try? Data(contentsOf: exported.appendingPathComponent("lamp-app.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) ?? [:]
-            if let updated = manifest(theirs, ours: ours, change: change) {
+            guard let updated = manifest(theirs, ours: manifestOf(exported), change: change) else { return nil }
+            if !(updated as NSDictionary).isEqual(to: theirs) {
                 try JSONSerialization.data(withJSONObject: updated, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
                     .write(to: manifestURL, options: .atomic)
                 written.insert("lamp-app.json")
@@ -415,22 +483,22 @@ enum Contribute {
         return written
     }
 
-    /// The repository's manifest with what the change says of the app: its line when the change gave it a new one, the
-    /// format the code now needs, and an app the change adds in a folder of its own. Its identity, name and date stay
-    /// the repository's. Nil when none of it changes.
+    /// The repository's manifest with what the wish changed in it since the change's base (`manifestKeys`: its line,
+    /// kind, device, apps), each taken as the wish has it, and the format the code now needs. Its identity, name and
+    /// date stay the repository's. Nil when the repository changed one of those keys since, to something other than
+    /// the wish did.
     static func manifest(_ theirs: [String: Any], ours: [String: Any], change: Change) -> [String: Any]? {
+        let base = change.manifest ?? theirs
         var updated = theirs
-        if change.describes {
-            if let line = change.description { updated["description"] = line } else { updated.removeValue(forKey: "description") }
+        let changed = manifestChanges(ours: ours, base: base)
+        for key in changed {
+            guard same(theirs[key], base[key]) || same(theirs[key], ours[key]) else { return nil }
+            if let value = ours[key] { updated[key] = value } else { updated.removeValue(forKey: key) }
         }
-        if !change.paths.isEmpty, let format = ours["format"] as? Int, format > (theirs["format"] as? Int ?? 0) { updated["format"] = format }
-        let listed = Set(((theirs["parts"] as? [[String: Any]]) ?? []).compactMap { $0["folder"] as? String })
-        let adding = ((ours["parts"] as? [[String: Any]]) ?? []).filter { part in
-            guard let folder = part["folder"] as? String, !listed.contains(folder) else { return false }
-            return change.paths.contains { $0.hasPrefix(folder + "/") }
+        if !change.paths.isEmpty || !changed.isEmpty, let format = ours["format"] as? Int, format > (theirs["format"] as? Int ?? 0) {
+            updated["format"] = format
         }
-        if !adding.isEmpty { updated["parts"] = ((theirs["parts"] as? [[String: Any]]) ?? []) + adding }
-        return (updated as NSDictionary).isEqual(to: theirs) ? nil : updated
+        return updated
     }
 
     /// The shared file beside the repository's code, when it has one, made again with the change in it: each file the

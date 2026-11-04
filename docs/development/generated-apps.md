@@ -457,11 +457,14 @@ licenses and keys); a settings file Lamp writes (`icon.json`, `capabilities.json
 changed (`Contribute.change`). The repository's latest commit is fetched into a folder of Lamp's with the person's
 sign-in, and git replays the change on it three ways (`Contribute.replay`, `git merge-tree`): files the wish didn't
 touch stay as the owner has them, and a file both changed in the same place stops it, asking for Check for Updates…
-first. The manifest keeps the repository's identity, name and date and takes only the line, format or new app the
-change brings (`Contribute.manifest`); credits.json keeps its chain and takes only work the change newly uses; the
+first. An Android app's touched files go back to the repository's package (its build file's namespace): their paths,
+the package in them, and the build file without the id Lamp set for this Mac. The manifest keeps the repository's
+identity, name and date and takes the line, kind, device and apps wherever the wish changed them since its base
+(`Contribute.manifest`): measured from the manifest kept with the last update's snapshot or the one the wish last
+arrived with (`Sharing.arrivedManifest`), else, for a wish that arrived before Lamp kept it, the repository's at the
+commit its credits name; a key the repository also changed, differently, stops it like a file does; credits.json keeps its chain and takes only work the change newly uses; the
 icon's pictures go when its design changed; and a shared file beside the code is made again from the tree with the
-change in it, zipped so the same files make the same bytes (`Contribute.remakeSharedFile`, `Sharing.zip`). An
-Android app isn't sent yet (its code moves into this Mac's package as it arrives). The fork is made with `gh` when
+change in it, zipped so the same files make the same bytes (`Contribute.remakeSharedFile`, `Sharing.zip`). The fork is made with `gh` when
 the person has none (`Contribute.fork`), and the one commit is pushed to a branch of it and a pull request opened on
 the repository (`Contribute.send`). The request's text (`Contribute.summary`) is the wish's line, the names its
 versions since it arrived were given (never the requests themselves, never the chat) and the files changed. The person's own repository is refused (Put on GitHub updates it).

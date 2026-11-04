@@ -41,7 +41,7 @@ final class ContributeTests: XCTestCase {
         try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
         _ = try git("git init -q -b main", in: repo)
         let base: [String: String] = [
-            "lamp-app.json": #"{"app":"6F1C1E44-0000-4000-8000-000000000001","exportedAt":"2026-01-01T00:00:00Z","format":2,"name":"Drive","description":"A drive"}"#,
+            "lamp-app.json": #"{"app":"6F1C1E44-0000-4000-8000-000000000001","exportedAt":"2026-01-01T00:00:00Z","format":2,"name":"Drive","description":"A drive","platform":"mac"}"#,
             Credits.file: #"{"remixOf":[{"name":"Drive","url":"https://github.com/maker/drive"}],"upstream":[]}"#,
             "README.md": "# Drive\n", "Package.swift": "// Drive\n", "build.sh": "# Drive\n", "Sources/LampSupport.swift": "// runtime 2\n",
             "icon.json": "{\"symbol\": \"car\"}\n",
@@ -58,7 +58,9 @@ final class ContributeTests: XCTestCase {
         let stage = repo.deletingLastPathComponent().appendingPathComponent("stage-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: stage) }
         for path in Contribute.regularFiles(in: repo) where !path.hasPrefix(".git/") && !path.hasSuffix(".lampapp") && !Self.notShared.contains(path) {
-            try write([path: try String(contentsOf: repo.appendingPathComponent(path), encoding: .utf8)], in: stage)
+            let to = stage.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: repo.appendingPathComponent(path), to: to)
         }
         let file = repo.appendingPathComponent("drive.lampapp")
         try? FileManager.default.removeItem(at: file)
@@ -154,7 +156,7 @@ final class ContributeTests: XCTestCase {
 
         let update = Sharing.workFolder.appendingPathComponent("update-\(UUID().uuidString)")
         try write(["Sources/App.swift": "a\nb\nC\n", "icon.json": "{\"symbol\": \"car\"}\n",
-                   "lamp-app.json": #"{"format": 2, "name": "Drive", "exportedAt": "2026-01-01T00:00:00Z"}"#,
+                   "lamp-app.json": #"{"format": 2, "name": "Drive", "exportedAt": "2026-01-01T00:00:00Z", "description": "A drive", "platform": "mac"}"#,
                    Credits.file: #"{"remixOf":[{"name":"Drive","url":"https://github.com/maker/drive","commit":"\#(brought)"}]}"#], in: update)
         let package = try Sharing.open(unpacked: update)
         defer { try? FileManager.default.removeItem(at: package.folder) }
@@ -214,5 +216,79 @@ final class ContributeTests: XCTestCase {
         XCTAssertEqual(file("README.md", at: prepared.commit, in: prepared.clone), "# Drive, now\n")
         let unpacked = try sharedFile(of: prepared)
         XCTAssertEqual(Contribute.regularFiles(in: unpacked), ["Sources/App.swift", "Sources/New.swift", Credits.file, "icon.json", "lamp-app.json"].sorted())
+    }
+
+    /// A new line for the app, written after an update was taken in, goes in the manifest; the repository's identity,
+    /// name and date stay.
+    func testTheLineChangedAfterAnUpdateGoes() async throws {
+        let repo = try repository(["Sources/App.swift": "a\nb\nc\n"])
+        let (project, arrival) = try await remix(of: ["Sources/App.swift": "a\nb\nc\n"], commit: try git("git rev-parse HEAD", in: repo))
+        let brought = try commit(repo, ["Sources/App.swift": "a\nb\nC\n"], "Capital")
+        let update = Sharing.workFolder.appendingPathComponent("update-\(UUID().uuidString)")
+        try write(["Sources/App.swift": "a\nb\nC\n",
+                   "lamp-app.json": #"{"format": 2, "name": "Drive", "exportedAt": "2026-01-01T00:00:00Z", "description": "A drive", "platform": "mac"}"#,
+                   Credits.file: #"{"remixOf":[{"name":"Drive","url":"https://github.com/maker/drive","commit":"\#(brought)"}]}"#], in: update)
+        let package = try Sharing.open(unpacked: update)
+        defer { try? FileManager.default.removeItem(at: package.folder) }
+        _ = try await Upstream.merge(package, into: project, from: nil, commit: nil, arrival: arrival)
+        try Credits.add(try XCTUnwrap(package.credits), to: project)
+        let saved = await Versions.save(project, message: "Merged the latest from GitHub")
+        XCTAssertTrue(saved)
+        try await change(project, [AppDescription.file: #"{"description":"A faster drive"}"#], "Faster")
+
+        let prepared = try await prepare(project, from: repo)
+        XCTAssertEqual(prepared.changed, ["drive.lampapp", "lamp-app.json"])
+        let manifest = try XCTUnwrap(file("lamp-app.json", at: prepared.commit, in: prepared.clone).flatMap {
+            try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+        })
+        XCTAssertEqual(manifest["description"] as? String, "A faster drive")
+        XCTAssertEqual(manifest["app"] as? String, "6F1C1E44-0000-4000-8000-000000000001")
+        XCTAssertEqual(manifest["exportedAt"] as? String, "2026-01-01T00:00:00Z")
+        XCTAssertEqual(manifest["platform"] as? String, "mac")
+    }
+
+    /// An Android remix's code is in this Mac's package for it: what it changed goes back in the repository's package,
+    /// at the repository's paths, and the id Lamp set for this Mac stays out of the build file.
+    func testAnAndroidRemixGoesBackInTheRepositorysPackage() async throws {
+        let app = try escape.app()
+        let sender = try Template.scaffold(name: "Tally", platform: .android, in: app.root.appendingPathComponent("Sender"))
+        let theirs = Template.androidPackage(for: sender)
+        let exported = try Sharing.export(sender)
+        defer { try? FileManager.default.removeItem(at: exported.deletingLastPathComponent()) }
+        let repo = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-contribute-upstream-\(UUID().uuidString)")
+        folders.append(repo)
+        _ = try git("mkdir -p \(Sandbox.quoted(repo.path)) && /usr/bin/ditto -x -k \(Sandbox.quoted(exported.path)) \(Sandbox.quoted(repo.path)) && git -C \(Sandbox.quoted(repo.path)) init -q -b main",
+                    in: app.root)
+        try write([Credits.file: #"{"remixOf":[{"name":"Tally","url":"https://github.com/maker/drive"}],"upstream":[]}"#], in: repo)
+        let first = try commit(repo, [:], "First")
+
+        var receiver = try Template.scaffold(name: "Counter", platform: .android, in: app.root.appendingPathComponent("Receiver"))
+        receiver.platform = .android
+        _ = try git("git init -q -b main && printf '.lamp/\\nbuild/\\n.gradle/\\n' > .gitignore", in: receiver.dir)
+        let package = try Sharing.open(unpacked: { () throws -> URL in
+            let folder = Sharing.workFolder.appendingPathComponent("arriving-\(UUID().uuidString)")
+            _ = try git("mkdir -p \(Sandbox.quoted(folder.path)) && git archive HEAD | tar -x -C \(Sandbox.quoted(folder.path))", in: repo)
+            return folder
+        }())
+        defer { try? FileManager.default.removeItem(at: package.folder) }
+        _ = try Sharing.install(package, into: receiver)
+        try write([Credits.file: #"{"remixOf":[{"name":"Tally","url":"https://github.com/maker/drive","commit":"\#(first)"}],"upstream":[]}"#], in: receiver.dir)
+        let arrived = await Versions.save(receiver, message: "Imported from a shared file")
+        XCTAssertTrue(arrived)
+
+        let ours = Template.androidPackage(for: receiver)
+        XCTAssertNotEqual(ours, theirs)
+        func folder(_ package: String) -> String { "app/src/main/kotlin/" + package.replacingOccurrences(of: ".", with: "/") }
+        let activity = receiver.dir.appendingPathComponent(folder(ours) + "/MainActivity.kt")
+        let text = try String(contentsOf: activity, encoding: .utf8)
+        try await change(receiver, [folder(ours) + "/MainActivity.kt": text + "\n// Counts by twos\n",
+                                    folder(ours) + "/Twos.kt": "package \(ours)\n\nval step = 2\n"], "Twos")
+
+        let prepared = try await prepare(receiver, from: repo)
+        XCTAssertEqual(prepared.changed, [folder(theirs) + "/MainActivity.kt", folder(theirs) + "/Twos.kt", "drive.lampapp"].sorted())
+        let sent = try XCTUnwrap(file(folder(theirs) + "/MainActivity.kt", at: prepared.commit, in: prepared.clone))
+        XCTAssertEqual(sent, (file(folder(theirs) + "/MainActivity.kt", at: first, in: prepared.clone) ?? "") + "\n// Counts by twos\n")
+        XCTAssertEqual(file(folder(theirs) + "/Twos.kt", at: prepared.commit, in: prepared.clone), "package \(theirs)\n\nval step = 2\n")
+        XCTAssertFalse(try git("git ls-tree -r --name-only \(prepared.commit)", in: prepared.clone).contains(ours.replacingOccurrences(of: ".", with: "/")))
     }
 }

@@ -962,7 +962,20 @@ enum Sharing {
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)
+        keepArrivedManifest(from: package.folder, in: project)
         return try installIcon(package, into: project)
+    }
+
+    /// Where the manifest a wish's files last arrived with is kept, in Lamp's own folder: what Send Changes Back measures a
+    /// change of the wish's line, kind or apps from (`Contribute.baseManifest`), since the files don't hold the manifest.
+    static let arrivedManifest = ".lamp/manifest-arrived.json"
+
+    static func keepArrivedManifest(from folder: URL, in project: LampProject) {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json")),
+              (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return }
+        let url = project.dir.appendingPathComponent(arrivedManifest)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
     }
 
     /// The shared icon into the app: its design (icon.json) and its artwork, which lives in Lamp's own folder outside
