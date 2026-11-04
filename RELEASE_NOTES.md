@@ -5,6 +5,17 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.34.0
+
+- Release Update replaces Update Link: Lamp writes a short "what's new" from your changes, which you can edit before it
+  goes. It shows on the link's page and under What's New… in the app's menu.
+- Paste someone's shared link into the chat and ask for the part you like ("pull in the water from this one"): Lamp
+  fetches their copy, brings that part into yours and notes where it came from.
+- Send Changes Back sends only what you changed, on top of the latest version of the original.
+- Share is always in the chat's toolbar now, next to ⋯.
+- Lamp calls what it makes an app, in plain words while you ask and while it works.
+- Messages sent in long chats go out right away again.
+
 ## 0.33.0
 
 - Share a link anyone can open in a browser: the game or app plays right on its page at lamp.dev, with who made it,
