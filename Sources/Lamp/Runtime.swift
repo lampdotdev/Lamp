@@ -38,6 +38,14 @@ enum Runtime {
         PageCopies.record(project, as: fingerprint)
     }
 
+    /// What a game's last Mac build that succeeded was compiled from (`GameKit.swiftStamp`), in Lamp's own folder.
+    private static func swiftBuiltURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("swift-built") }
+    static func swiftBuilt(_ project: LampProject) -> String? { AppFile.text(swiftBuiltURL(project), in: project) }
+    static func markSwiftBuilt(_ project: LampProject, from stamp: String?) {
+        guard let stamp else { return AppFolder.remove(swiftBuiltURL(project), in: project.dir) }
+        try? AppFolder.write(stamp, to: swiftBuiltURL(project), in: project.dir)
+    }
+
     /// A build that hasn't been installed because the person kept the app open when it was asked to quit. The
     /// copy that's open, and the one in the apps folder, are older than the build until it closes. Kept on
     /// disk, so the build still goes in after Lamp itself has been quit and opened again.

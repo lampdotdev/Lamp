@@ -9285,10 +9285,16 @@ final class Store: ObservableObject {
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1"; LiveSlots.expireGiveUps(project, appOpen: !macCopies(of: project).isEmpty) }   // a change can go into the open app (LiveReload)
         // What else goes into the app as this build starts, kept with what it compiled once it has built.
         let inputs = env["LAMP_LIVE"] == "1" ? LiveReload.inputs(project) : nil
+        // A web game's Mac build compiles only its Swift, which a change of its page leaves as it was: build.sh copies the
+        // binary of the last build that compiled these same inputs (`GameKit.swiftStamp`).
+        let swiftStamp = game && GameKit.engine(project) == .web && command.hasSuffix(" mac") && env["LAMP_PLAYER"] == nil
+            ? GameKit.swiftStamp(project) : nil
+        if let swiftStamp, Runtime.swiftBuilt(project) == swiftStamp { env["LAMP_SWIFT_BUILT"] = "1" }
         let status = await Self.buildSparing(command, for: project, env: env,
                                              started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output = $0 }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
+        if swiftStamp != nil { Runtime.markSwiftBuilt(project, from: status == 0 ? swiftStamp : nil) }
         guard status != 0 else {
             if let inputs { LiveReload.noteBuilt(project, inputs: inputs) }
             Runtime.markBuilt(project, from: fingerprint)
