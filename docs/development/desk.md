@@ -138,6 +138,17 @@ it, and says it wasn't checked by AI; building it takes a click, a request that 
 something compiled then waits for Apple's tools. A starter from the site opens once it's fetched, and only a wish from
 the site, which has to be made, goes on to the welcome's setup.
 
+Apple's tools count as there only when they can build a Mac app: a compiler, and the macOS SDK an app's build would
+take, found the way the build finds it (`SetupCheck.macSDKRepair`: `Shell.compatibleSDK`, then xcrun, in the build's
+environment, so with the Xcode Lamp chose for itself when it did). Tools that are there without one need repair, not
+Apple's installer (`SetupCheck.ToolsRepair`): the desk, the welcome and the chat of a wish that needs them say so before
+anything is asked, with the one thing that puts it right (installing the Command Line Tools again, accepting Xcode's
+terms, Xcode from the App Store), and setup looks again every few seconds until they can build. The developer folder is
+looked at apart from any `SDKROOT` Lamp was started with: one that isn't there is said as that setting, never as tools
+to reinstall, and the Command Line Tools are removed for reinstalling only after a fresh look still finds them without an SDK. Lamp never changes
+which Xcode the Mac uses. A build looks again just before it starts and after it fails (`Store.appleToolsBroke`): tools
+that broke meanwhile hold the build until they're put right, and their failure never goes to the agent as its code's.
+
 **Starters are fetched when they're first opened.** Lamp's bundle carries only what the desk lists each one by
 (`Starters.Listed`, in `listing/` beside its starter.md: its line, credits, picture and icon, and the commit object
 the fetch is checked against), so on the first launch every starter is under Starter apps and none is on the desk yet.

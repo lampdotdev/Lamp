@@ -304,10 +304,13 @@ public struct SidebarIdea: Codable, Equatable, Identifiable {
 public struct SidebarBanner: Codable, Equatable {
     public var text: String
     public var button: String?
+    /// Nothing goes on by itself: the person's click is what puts it right (Apple's tools needing repair).
+    public var needsYou: Bool?
 
-    public init(text: String, button: String?) {
+    public init(text: String, button: String?, needsYou: Bool? = nil) {
         self.text = text
         self.button = button
+        self.needsYou = needsYou
     }
 }
 

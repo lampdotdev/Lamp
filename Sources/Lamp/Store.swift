@@ -1243,7 +1243,7 @@ final class Store: ObservableObject {
         // During the welcome, Apple's installer waits for the step that explains it, and while what builds is still to
         // be chosen it waits too, so there's one thing to do at a time.
         // Only for a request that waits for them: a Mac that makes only games and screens never needs them.
-        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && setup.hasBuilder
+        if !setup.hasBuildTools && setup.repair == nil && !setup.installRequested && Onboarding.isDone && setup.hasBuilder
             && waitsForAppleTools { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
         prepareStarters()   // the prebuilt ones need no build tools, nor do games and screens
@@ -1275,13 +1275,49 @@ final class Store: ObservableObject {
 
     /// Waits for Apple's tools, asking for them if nobody has yet, while the turn that builds goes on; false once it
     /// was stopped or the app went away meanwhile.
+    /// Tools that are there but need repair aren't installed over: the notice says what to do, and the wait ends once done.
     private func waitForAppleTools(_ project: LampProject, in turn: Turn?) async -> Bool {
-        if !setup.installRequested { requestBuildTools() }
-        log(project, .status, "Waiting for Apple's app-building tools…")
+        if setup.repair == nil, !setup.installRequested { requestBuildTools() }
+        log(project, .status, setup.repair == nil ? "Waiting for Apple's app-building tools…" : "Waiting for Apple's app-building tools to be repaired…")
+        pollSetup()
         while !setup.hasBuildTools {
             if turn?.stopped == true || !exists(project) { return false }
             try? await Task.sleep(for: .seconds(2))
         }
+        return true
+    }
+
+    /// What the notice's button does: Apple's installer, or what puts tools that are there but can't build right.
+    func fixBuildTools() {
+        switch setup.repair {
+        case nil:
+            if setup.installRequested { SetupCheck.showInstaller() } else { requestBuildTools() }
+        case .reinstallTools:
+            Task {
+                // Apple's installer won't put them there again while they're there.
+                guard await SetupCheck.removeIncompleteTools() else { return }
+                requestBuildTools()
+                await recheckSetup()
+            }
+        case .xcodeAgreement(let developer):
+            // Xcode asks for its terms as it opens.
+            NSWorkspace.shared.open(URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent())
+        case .reinstallXcode:
+            NSWorkspace.shared.open(URL(string: "macappstore://itunes.apple.com/app/id497799835")!)
+        case .sdkSetting:
+            Task { await recheckSetup() }
+        }
+        pollSetup()   // looks again until they can build, whatever put them right
+    }
+
+    /// Looks again, just before a build, at whether Apple's tools can build a Mac app: they can break after setup looked
+    /// (an update, a removed Xcode). True when they can't, with the notice showing; the build then waits for them.
+    private func appleToolsBroke() async -> Bool {
+        guard setup.hasBuildTools else { return true }
+        guard let repair = await Task.detached(operation: { SetupCheck.macSDKRepair() }).value else { return false }
+        setup.repair = repair
+        setup.hasBuildTools = false
+        pollSetup()
         return true
     }
 
@@ -4246,7 +4282,7 @@ final class Store: ObservableObject {
         if !ready || queueWaitsForReload(in: project) || lasts { message = keptForLater(message) }
         if !setup.hasBuilder || !setup.hasAgent {
             askForSetup(project)
-        } else if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested {
+        } else if !ready, needsAppleTools(project), !setup.hasBuildTools, setup.repair == nil, !setup.installRequested {
             requestBuildTools()
         }
         let files = message.attachments, pointed = message.pointed
@@ -9332,8 +9368,9 @@ final class Store: ObservableObject {
             return problem
         }
         // Something compiled, on a Mac whose Apple tools are still to come (a wish the agent made a Mac app of before they
-        // arrived): the build waits for them, as a request for it would have. Lamp's player needs none.
-        if !project.onAndroid, !GameKit.usesPlayer(project), !setup.hasBuildTools {
+        // arrived) or can't build as they are: the build waits for them, as a request for it would have. Lamp's player needs none.
+        let compiledHere = !project.onAndroid && !GameKit.usesPlayer(project)
+        if compiledHere, await appleToolsBroke() {
             guard await waitForAppleTools(project, in: owner) else { return "Stopped." }
         }
         let game = GameKit.isGame(project)
@@ -9373,8 +9410,17 @@ final class Store: ObservableObject {
         let compilesSwift = game && GameKit.engine(project) == .web && command.hasSuffix(" mac") && env["LAMP_PLAYER"] == nil
         let swiftStamp = compilesSwift ? GameKit.swiftStamp(project) : nil
         if let swiftStamp, Runtime.swiftBuilt(project) == swiftStamp { env["LAMP_SWIFT_BUILT"] = "1" }
-        let status = await Self.buildSparing(command, for: project, env: env,
+        var status = await Self.buildSparing(command, for: project, env: env,
                                              started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output = $0 }
+        // Failed because Apple's tools broke while it built, not because of the app's code: never told to the agent as its
+        // errors. Built again once they're put right.
+        while status != 0, compiledHere, exists(project), await appleToolsBroke() {
+            turns[project.id]?.build = nil
+            guard await waitForAppleTools(project, in: owner) else { return "Stopped." }
+            output = []
+            status = await Self.buildSparing(command, for: project, env: env,
+                                             started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output = $0 }
+        }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         if compilesSwift { Runtime.markSwiftBuilt(project, from: status == 0 ? swiftStamp : nil) }

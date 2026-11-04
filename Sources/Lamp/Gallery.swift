@@ -114,6 +114,13 @@ enum Gallery {
             state.waitingForSetup = true
             state.lines = []
         },
+        screen("Apple's tools need repair", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
+            let repair = SetupCheck.ToolsRepair.reinstallTools
+            state.banner = SidebarBanner(text: repair.text + " Anything you ask for starts once they can.", button: repair.button, needsYou: true)
+            state.queued = [SidebarQueued(id: UUID(), text: "make the design more modern", attachments: [])]
+            state.waitingForSetup = true
+            state.lines = []
+        },
         screen("A message answered while building", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
             state.busy = true
             var answering = SidebarQueued(id: UUID(), text: "Can the title be bigger too?", attachments: [])

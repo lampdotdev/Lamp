@@ -162,5 +162,5 @@ the choice (`EngineUseRow`: its download, what failed with Try Again, its sign-i
 through (`EngineUse`); the request stays waiting until that's done. A device's
 step opens its setup window, and an iPhone or Android setup line its kind's setup. A new wish's empty chat shows its
 intro (`SidebarIntro`, `ChatLook.Intro`: its icon, its name to change, what to do, and ideas that go into the message
-box), and Apple's tools installing shows above every chat (`SidebarBanner`). A sidebar built by an earlier Lamp reads
+box), and Apple's tools installing, or needing repair, shows above every chat (`SidebarBanner`). A sidebar built by an earlier Lamp reads
 an older shape of the state, and Lamp sends it what it can read (`Connection.push`, by the version it says in `hello`).
