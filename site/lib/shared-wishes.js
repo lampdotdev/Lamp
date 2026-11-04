@@ -565,6 +565,11 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
         ...(length ? { "Content-Length": length } : {}),
         // Framed only by the link's page; frame-ancestors takes the place of the site's X-Frame-Options.
         "Content-Security-Policy": `frame-ancestors ${site}`,
+        // The play host is the same site as lamp.dev, so without this Chrome runs the framed page in the site's own
+        // process, sharing its memory with the page around it and other lamp.dev tabs: a big game ran out there and
+        // crashed the tab, while the same game opened on its own didn't. Asking for an agent cluster of its own lets
+        // Chrome give the play host's origin a process of its own.
+        "Origin-Agent-Cluster": "?1",
         "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id),
       },
     });
