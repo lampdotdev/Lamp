@@ -206,6 +206,11 @@ import { DOWNLOAD_URL } from "../../lib/download";
     const icon = $<HTMLImageElement>("[data-icon]");
     if (wish.icon) { icon.src = wish.icon; icon.hidden = false; }
 
+    // Keys reach a framed page only while its frame has focus. On GitHub Pages the game is the page and has them from
+    // the start, so here the frame takes focus when it loads and again after the page's own buttons, unless the person
+    // is typing in the box.
+    let focusPlay = () => {};
+
     if (wish.play) {
       // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
       const stage = $<HTMLElement>("[data-play]");
@@ -218,15 +223,21 @@ import { DOWNLOAD_URL } from "../../lib/download";
       if (wish.shape === "fill") stage.classList.add("fills");
       else if (typeof wish.shape === "number" && wish.shape >= 0.2 && wish.shape <= 5) stage.style.setProperty("--shape", String(wish.shape));
       stage.hidden = false;
+      focusPlay = () => { if (document.activeElement !== $<HTMLInputElement>("[data-change]")) frame.focus(); };
+      frame.addEventListener("load", focusPlay);
       frame.src = wish.play;
       // The same button takes the wish out of full screen, and shows which way it goes.
       const button = $<HTMLButtonElement>("[data-fullscreen]");
-      button.addEventListener("click", () => (document.fullscreenElement === stage ? document.exitFullscreen() : stage.requestFullscreen?.()));
+      button.addEventListener("click", () => {
+        (document.fullscreenElement === stage ? document.exitFullscreen() : stage.requestFullscreen?.())?.catch?.(() => {});
+        focusPlay();
+      });
       document.addEventListener("fullscreenchange", () => {
         const full = document.fullscreenElement === stage;
         button.setAttribute("aria-label", full ? "Exit full screen" : "Full screen");
         button.querySelector<SVGPathElement>("[data-enter]")!.toggleAttribute("hidden", full);
         button.querySelector<SVGPathElement>("[data-exit]")!.toggleAttribute("hidden", !full);
+        focusPlay();
       });
     } else if (wish.picture) {
       const picture = $<HTMLImageElement>("[data-picture]");
@@ -252,6 +263,7 @@ import { DOWNLOAD_URL } from "../../lib/download";
       const hidden = $<HTMLElement>("[data-page]").dataset.bars !== "hidden";
       bars(hidden);
       try { hidden ? localStorage.setItem(HIDDEN, "1") : localStorage.removeItem(HIDDEN); } catch {}
+      focusPlay();
     });
 
     // The box: a request brought by the link (a published page's Remix…) waits in it; otherwise the changes Lamp
