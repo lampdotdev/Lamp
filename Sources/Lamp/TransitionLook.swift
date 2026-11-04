@@ -154,6 +154,9 @@ enum LampTransition {
                 Self.place(stripe, index: index, roll: 0, across: across, along: along)
                 stripes.addSublayer(stripe)
             }
+            // Laid out again while the app stands still (its window resized, or put in full screen): the new stripes take up
+            // the roll where it is, from when it began.
+            if let began = turning { rollStripes(from: began, turns: .infinity, every: Self.turnEvery) }
         }
 
         /// Where a stripe's edges are at a point of the roll, from 0 to 2π: the stripes lie side by side round a drum
