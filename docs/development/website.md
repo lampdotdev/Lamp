@@ -43,14 +43,17 @@ installed, so Open in Lamp watches whether Lamp answered: if the browser keeps i
 dialog turns to getting Lamp, with Download first, and turns back should Lamp open late. Closed, it takes its
 parameters out of the address, so a reload doesn't bring it back. The ideas page keeps its own card
 (`WishDialog.astro`). A wish shared as a link has a page of its own (`src/pages/w/index.astro`, SHARED_WISHES.md),
-on the homepage's paper but without its menu bar, footer or tapes: "Made with" Lamp's lockup and "Learn more" at the
-top, "Made with Lamp" in plain ink at the bottom, and the stripes as one band across the page's foot. The thing someone
-made comes first, as big as the window allows and only as big as it is (a playing page in the shape Lamp sends with the link, else 16:9, the stage a web game is drawn on);
-under it its name, with who it's by and what it does under the name, and a card for making one's own with the changes
-Lamp suggests as plain pills and a Remix, there once a change is written, that opens a dialog dressed as the homepage's remix dialog ("Change" in marker over the name and the change, what Lamp is, and Open and Download side by side), a slab with thickness that leans toward the pointer as the remix dialog does. The page puts itself together as it opens: the wish
-opens from no height, cropped rather than squeezed (a page that plays loads only once it's all in view, so it starts at
-the size it plays at), its name fades in halfway through, and the card drops in from above the window as the boxes do in
-Lamp's welcome, running a little past its place and back; the wish's frame is black until the page in it draws; where less motion is asked for, it's simply there. The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
+is for playing it, and Lamp and remixing stay out of the way. Unlike the rest of the site it's plain and neutral, in
+the manner of shadcn/ui: the wish on black, as games are best seen, between white bars of grays and thin borders,
+with no paper, tapes, stripes or color of its own, so nothing competes with it. A header has the wish's name and who it's by on the left and "Made with Lamp" in gray on the
+right, then the thing someone made fills the rest of the window, only as big as it is (a playing page in the shape Lamp
+sends with the link, else 16:9, the stage a web game is drawn on). What it does isn't on the page (it's in the link's
+preview). Making one's own is a slim band at the foot: a box that reads as a prompt box, with the changes Lamp suggests
+turning in it as its placeholder and a send button that opens Remix with what's written, or else the change it shows.
+A chevron at the window's right, centered on the band, slides it and the header out of the window together (remembered in that
+browser), the wish growing to the whole window on black, and from the same place brings both back. Remix's dialog is a plain white card: the change, one line on Lamp, and
+Get Lamp and Open in Lamp (on a Mac). As the page opens the wish fades up and the band after it; the wish's frame is
+black until the page in it draws; where less motion is asked for, it's simply there. The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
 lamp's bright orange with white words, about 3:1 at their lightest, a faint shadow under the words. That trade-off
 was weighed and accepted: the brightness is the point of the button, and the label is large, bold and the same
 wherever it appears. About 3:1 is the floor for those buttons, so a change that goes below it is a regression;

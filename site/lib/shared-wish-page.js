@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { cacheTags, findWish, isID, linkFor, playOrigin as playOriginFor, wishIDFrom } from "./shared-wishes.js";
 
 // The page a shared wish's link opens (lamp.dev/w/<id>): a page of its own (src/pages/w/index.astro) with the wish
-// itself as big as the window allows, playing when Lamp sent its page, else its picture, then its name, what it does,
-// and the ways to make one's own: Open in Lamp on a Mac, and Download, which copies it with Lamp's mark. The site is
+// itself as big as the window allows, playing when Lamp sent its page, else its picture, under its name, and a slim
+// band for making one's own: Open in Lamp on a Mac, and Get Lamp, which copies it with Lamp's mark. The site is
 // static and the wish is only known when the page is asked for, so the page is the built one (vercel.json bundles it
 // with the function) with the wish and its preview put in here.
 
