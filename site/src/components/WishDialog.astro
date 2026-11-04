@@ -94,7 +94,7 @@ const { place } = Astro.props;
   text.addEventListener("input", fit);
 
   // A wish whose words name its device (the TV, a watch) needs no platform: Lamp goes by the words.
-  type Idea = { name: string; about: string; wish: string; platform?: string; picture: string; icon: string; file?: string; fileSize?: number; shared?: string };
+  type Idea = { name: string; about: string; wish: string; platform?: string; picture: string; icon: string; file?: string; fileSize?: number; shared?: string; play?: boolean };
   const fileLink = dialog.querySelector<HTMLAnchorElement>("[data-file]")!;
   const device = dialog.querySelector<HTMLElement>("[data-device]")!;
   const stage = dialog.querySelector<HTMLElement>("[data-stage]")!;
@@ -162,10 +162,16 @@ const { place } = Astro.props;
   if (shared || asked) {
     const idea: Idea = shared ? (JSON.parse(shared) as Idea) : { name: "Your wish", about: "From an app made with Lamp", wish: "", picture: "", icon: "" };
     if (asked) idea.wish = withAsk(idea.wish, asked);
-    open(idea, "", shared ? "shared" : "remix");
-    // Opened while the page is still loading, the box is sized again once it has its width.
-    requestAnimationFrame(fit);
-    addEventListener("load", fit, { once: true });
+    // A wish to play is tried first: its card waits for the bar's Remix… (lib/shared-wish-page.js), unless a request
+    // came with the link.
+    const show = () => {
+      open(idea, "", shared ? "shared" : "remix");
+      // Opened while the page is still loading, the box is sized again once it has its width.
+      requestAnimationFrame(fit);
+      addEventListener("load", fit, { once: true });
+    };
+    document.querySelector("[data-remix-shared]")?.addEventListener("click", show);
+    if (!idea.play || asked) show();
   }
 
   dialog.querySelector("[data-close]")!.addEventListener("click", () => dialog.close());

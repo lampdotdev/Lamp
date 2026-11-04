@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { cacheTags, findWish, isID } from "./shared-wishes.js";
 
-// The page a shared wish's link opens (lamp.dev/w/<id>): the ideas page with that wish's card open on it, the same
+// The page a shared wish's link opens (lamp.dev/w/<id>): the wish itself to play or use, when Lamp sent its page, with
+// Remix… opening its card; else the ideas page with that wish's card open on it, the same
 // card the ideas page's wishes open in (WishDialog.astro), so a shared wish takes the site's one
 // way into Lamp: Download copies it with Lamp's mark, and on a Mac the link under it opens Lamp with it. Closed, the card leaves the visitor among more ideas. The site is static
 // and the wish is only known when the page is asked for, so the page is the built ideas page (vercel.json bundles
@@ -54,8 +55,35 @@ function previewTags(wish, origin) {
   ].join("");
 }
 
-/** The ideas page with the shared wish's card open on it. Null when the page isn't the shape this expects. */
-export function wishPage(template, wish, { origin }) {
+/**
+ * A wish whose page can be played or used (sent by Lamp with its file, `createFileHandler`'s `what=page`): it fills the
+ * page, framed from the play host (`createPlayHandler`), with a slim bar under it naming the wish and offering Remix…,
+ * which opens the card. So whoever has the link tries the wish first, and remixes it after.
+ */
+function playView(wish, playOrigin) {
+  const src = `${playOrigin}/w/${wish.id}/play/${wish.page.version}/index.html`;
+  return `<div id="shared-play" class="shared-play">
+<iframe src="${escape(src)}" title="${escape(wish.name)}" allow="fullscreen; gamepad; autoplay; clipboard-write"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads"></iframe>
+<div class="shared-play-bar"><span class="shared-play-name">${escape(wish.name)}</span><span class="shared-play-line">${escape(wish.line ?? "")}</span>
+<button type="button" data-remix-shared class="shared-play-remix">Remix…</button></div>
+</div>
+<style>
+.shared-play { position: fixed; inset: 0; z-index: 2147483000; background: #111; }
+.shared-play iframe { position: absolute; top: 0; left: 0; width: 100%; height: calc(100% - 52px); border: 0; display: block; background: #fff; }
+.shared-play-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 52px; box-sizing: border-box;
+  display: flex; align-items: center; gap: 12px; padding: 0 16px; background: #1d1d1f; color: #f5f5f7;
+  font: 15px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.shared-play-name { font-weight: 600; white-space: nowrap; }
+.shared-play-line { color: #a1a1a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.shared-play-remix { margin-left: auto; padding: 6px 16px; border: 0; border-radius: 999px; background: #e8711a; color: #fff;
+  font: inherit; font-weight: 600; cursor: pointer; }
+</style>`;
+}
+
+/** The ideas page with the shared wish's card open on it, or its page to play with the card behind Remix…. Null when the
+ * page isn't the shape this expects. `playOrigin` is the play host; without one, nothing is played. */
+export function wishPage(template, wish, { origin, playOrigin = null }) {
   if (!template || !template.includes("</head>") || !template.includes("</body>")) return null;
   // Only the head's own: the page's icons carry titles of their own.
   const end = template.indexOf("</head>");
@@ -63,15 +91,17 @@ export function wishPage(template, wish, { origin }) {
     .replace(/<title>[\s\S]*?<\/title>/, "")
     .replace(/<meta (?:name|property)="(?:description|og:[^"]*|twitter:[^"]*)"[^>]*>/g, "")
     .replace(/<link rel="canonical"[^>]*>/, "") + template.slice(end);
+  const plays = Boolean(wish.page && wish.file?.url && playOrigin);
   // The card's own shape (WishDialog's Idea), its words kept from closing the script early.
   const card = JSON.stringify({
     id: wish.id, name: wish.name, about: wish.line, wish: wish.words,
     picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
     ...(wish.file?.url ? { file: wish.file.url, fileSize: wish.file.size, shared: wish.id } : {}),
+    ...(plays ? { play: true } : {}),
   }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   return head
     .replace("</head>", () => `${previewTags(wish, origin)}</head>`)
-    .replace("</body>", () => `<script type="application/json" id="shared-wish">${card}</script></body>`);
+    .replace("</body>", () => `${plays ? playView(wish, playOrigin) : ""}<script type="application/json" id="shared-wish">${card}</script></body>`);
 }
 
 /** The page for a link that leads nowhere: never shared, or taken down by the person who shared it. */
@@ -114,13 +144,13 @@ const gonePolicy = (nonce) => `default-src 'none'; style-src 'nonce-${nonce}'; i
  * `template` gives the ideas page as built: by default the one bundled with the function; `npm run dev` passes its
  * own server's.
  */
-export function createPageHandler({ env = process.env, fetcher = fetch, store, template = async () => builtIdeasPage() } = {}) {
+export function createPageHandler({ env = process.env, fetcher = fetch, store, template = async () => builtIdeasPage(), playOrigin = env.LAMP_PLAY_ORIGIN || null } = {}) {
   return async (request) => {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
     const id = url.searchParams.get("id");
     const wish = isID(id) ? await findWish(id, { env, fetcher, store }) : null;
-    const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin });
+    const page = wish && wishPage(await template(url.origin), wish, { origin: url.origin, playOrigin: typeof playOrigin === "function" ? playOrigin(url) : playOrigin });
     if (!page) {
       const nonce = randomBytes(16).toString("base64");
       const unavailable = wish !== null;

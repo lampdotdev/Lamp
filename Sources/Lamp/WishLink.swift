@@ -21,7 +21,7 @@ enum WishLink {
         /// The wish's file goes in parts of at most this many bytes (a request to the site's function holds 4.5 MB), and
         /// is at most `fileTotal`.
         static let filePart = 3_000_000
-        static let fileTotal = 16_000_000
+        static let fileTotal = 48_000_000
     }
     /// The picture is sent as a JPEG this many pixels on its long side at most, the icon as a PNG of this side.
     static let pictureSide: CGFloat = 1600
@@ -190,22 +190,49 @@ enum WishLink {
         return Latest(name: answer["name"] as? String, version: version, file: file)
     }
 
-    /// Where the wish's file goes: beside the link's API (`site/api/wish-file.js`).
-    private static func fileAddress(for id: String, part: Int? = nil, of count: Int? = nil) -> URL {
+    /// Where the wish's file goes: beside the link's API (`site/api/wish-file.js`). `page` is its playable page instead.
+    private static func fileAddress(for id: String, part: Int? = nil, of count: Int? = nil, page: Bool = false) -> URL {
         var parts = URLComponents(url: endpoint.deletingLastPathComponent().appendingPathComponent("wish-file"), resolvingAgainstBaseURL: false)!
         parts.queryItems = [URLQueryItem(name: "id", value: id)]
             + (part.map { [URLQueryItem(name: "part", value: String($0)), URLQueryItem(name: "of", value: String(count ?? 1))] } ?? [])
+            + (page ? [URLQueryItem(name: "what", value: "page")] : [])
         return parts.url!
     }
 
+    /// The wish's page, to play or use right on its link's page (a web app's, a web game's, a screen's: `Publish.hasPage`),
+    /// zipped: the page Put on GitHub puts on GitHub Pages (`Publish.copyPage`), what it saves kept under the link
+    /// (`LAMP_PAGE_SCOPE`), searched for keys and secrets as that one is. Nil for a wish with no such page.
+    static func playablePage(of project: LampProject, id: String) throws -> Data? {
+        guard Publish.hasPage(project) else { return nil }
+        let fm = FileManager.default
+        let work = Sharing.workFolder.appendingPathComponent("lamp-link-page-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: work) }
+        let site = work.appendingPathComponent("page")
+        _ = try Publish.copyPage(of: project, into: site, scope: "w-\(id)")
+        try? fm.removeItem(at: site.appendingPathComponent(".nojekyll"))
+        if let leak = ShareCheck.secrets(in: site, known: Sharing.knownSecrets(project)).first {
+            throw Failure(message: "\(project.name)'s page can't go with its link: it holds a key or a password, in \(leak). Ask Lamp to take it out.")
+        }
+        let zip = work.appendingPathComponent("page.zip")
+        let made = Process()
+        made.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        made.arguments = ["-c", "-k", "--norsrc", site.path, zip.path]
+        try made.run()
+        made.waitUntilExit()
+        guard made.terminationStatus == 0 else { throw Failure(message: "Lamp couldn't prepare \(project.name)'s page.") }
+        return try Data(contentsOf: zip)
+    }
+
     /// Sends the wish's file with its link, in parts, and has the site put them together in place of any file it had.
-    static func uploadFile(_ data: Data, for shared: Shared) async throws {
+    /// `page` sends its playable page (`playablePage`), which the site unpacks and serves on the link's page.
+    static func uploadFile(_ data: Data, for shared: Shared, page: Bool = false) async throws {
         guard data.count <= Limit.fileTotal else {
-            throw Failure(message: "This wish is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB). Share the link without it.")
+            throw Failure(message: page ? "This wish's page is too big to play on its link (over \(Limit.fileTotal / 1_000_000) MB)."
+                          : "This wish is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB). Share the link without it.")
         }
         let count = max(1, (data.count + Limit.filePart - 1) / Limit.filePart)
         for n in 0..<count {
-            var request = URLRequest(url: fileAddress(for: shared.id, part: n, of: count))
+            var request = URLRequest(url: fileAddress(for: shared.id, part: n, of: count, page: page))
             request.httpMethod = "PUT"
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
@@ -213,7 +240,7 @@ enum WishLink {
             let (_, status) = try await send(request)
             guard status == 204 else { throw fileFailure(status) }
         }
-        var finish = URLRequest(url: fileAddress(for: shared.id))
+        var finish = URLRequest(url: fileAddress(for: shared.id, page: page))
         finish.httpMethod = "POST"
         finish.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
         let (_, status) = try await send(finish)
@@ -382,6 +409,11 @@ enum WishLink {
                         return try Data(contentsOf: file)
                     }.value
                     try await WishLink.uploadFile(data, for: shared)
+                    // Its page, so whoever opens the link plays or uses it right there, before anything else.
+                    let id = shared.id
+                    if let page = try await Task.detached(priority: .userInitiated, operation: { try WishLink.playablePage(of: project, id: id) }).value {
+                        try await WishLink.uploadFile(page, for: shared, page: true)
+                    }
                 } else if card.shared?.shown.file == true {
                     try await WishLink.removeFile(for: shared)
                 }
