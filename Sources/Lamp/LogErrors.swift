@@ -26,6 +26,9 @@ enum LogErrors {
         /// Errors the log held before the turn's first change: never said to be new.
         var known: Set<String>
         var mark = Mark()
+        /// The sources of the latest change: a mark for sources already marked (an install that only acknowledges a
+        /// change that went in live, a page that was unchanged) would pass over the errors that change brought.
+        var sources = ""
         /// When the latest change began to go in.
         var marked = Date()
         /// What the agent has been told since that change, so no answer says it twice.
@@ -51,15 +54,20 @@ enum LogErrors {
 
     private static let stamp = #"^\[[0-9]+(\.[0-9]+)? s\] "#
 
+    /// Android's logcat line prefix as Lamp has it written (`Adb.logcat`, `-v brief`: `E/AndroidRuntime(12345): `).
+    private static let logcat = #"^[VDIWEF]/[^(]*\(\s*[0-9]+\):\s*"#
+
     /// A line that says something failed: a page's console error or an uncaught one ("Error: …", lamp-game.js's log with
-    /// its time before it), a script's own error types, Swift's fatal errors, an exception nothing caught, Android's.
+    /// its time before it), a script's own error types, Swift's fatal errors, an exception nothing caught, Android's
+    /// (its logcat prefix aside).
     /// A warning, or a line that only mentions an error ("Refresh failed: Error Domain=…"), isn't one: an app logs those
     /// as it goes, and only what stops something from working is the agent's to look at.
     static func isError(_ line: Substring) -> Bool {
         let text = line.replacingOccurrences(of: stamp, with: "", options: .regularExpression)
+            .replacingOccurrences(of: logcat, with: "", options: .regularExpression)
         let starts = #"^(Error|Uncaught|Unhandled|TypeError|ReferenceError|SyntaxError|RangeError|FATAL EXCEPTION|libc\+\+abi: terminating)\b"#
         return text.range(of: starts, options: [.regularExpression, .caseInsensitive]) != nil
-            || text.contains("Fatal error:") || text.contains("E AndroidRuntime")
+            || text.contains("Fatal error:") || line.hasPrefix("E/AndroidRuntime(")
     }
 
     /// The same error however its numbers came out (the time it was logged, a line in the code that moved, an address).

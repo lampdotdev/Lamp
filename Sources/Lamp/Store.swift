@@ -5444,12 +5444,11 @@ final class Store: ObservableObject {
                     }
                 }
                 project = current(project) ?? project
-                if !fixing.isEmpty {
-                    switch await Versions.commitAll(committed ? "-q --amend --no-edit" : "-qm 'Fix an error'", in: project.dir) {
-                    case .saved: (committed, unsaved) = (true, false)
-                    case .failed: unsaved = true
-                    case .nothingToSave: break
-                    }
+                // Saved whatever was built: a step or a look in the fix may have built and put in the repair already.
+                switch await Versions.commitAll(committed ? "-q --amend --no-edit" : "-qm 'Fix an error'", in: project.dir) {
+                case .saved: (committed, unsaved) = (true, false)
+                case .failed: unsaved = true
+                case .nothingToSave: break
                 }
                 for app in fixing {
                     guard let app = current(app), !owner.stopped else { continue }
@@ -5545,7 +5544,7 @@ final class Store: ObservableObject {
 
     /// Whether the app has logged errors since the turn's latest change that it never did before.
     func hasNewLogErrors(_ project: LampProject, in turn: Turn?) -> Bool {
-        guard let turn, let watch = turn.logWatch[Runtime.logURL(project).path],
+        guard Privacy.sharesLog, let turn, let watch = turn.logWatch[Runtime.logURL(project).path],
               let data = AppFile.read(Runtime.logURL(project), in: project) else { return false }
         return !LogErrors.errors(in: LogErrors.since(watch.mark, in: data), besides: watch.known).isEmpty
     }
@@ -6261,6 +6260,9 @@ final class Store: ObservableObject {
             let known = [data, before].compactMap { $0.map { String(decoding: $0, as: UTF8.self) } }.map(LogErrors.keys)
             return LogErrors.Watch(project: project, known: known.reduce(into: Set()) { $0.formUnion($1) })
         }()
+        let sources = Runtime.fingerprint(project)
+        if turn.logWatch[key] != nil, watch.sources == sources { return }
+        watch.sources = sources
         watch.project = project
         watch.mark = LogErrors.mark(of: data)
         watch.marked = Date()
@@ -6270,7 +6272,9 @@ final class Store: ObservableObject {
 
     /// The errors each of the turn's apps logged since its latest change and never before, by app.
     func newLogErrors(in turn: Turn) -> [(key: String, id: String, name: String, found: [LogErrors.Found])] {
-        turn.logWatch.sorted { $0.key < $1.key }.compactMap { key, watch in
+        // Asked again each time: the person may stop sharing what the app prints while the turn goes on.
+        guard Privacy.sharesLog else { return [] }
+        return turn.logWatch.sorted { $0.key < $1.key }.compactMap { key, watch in
             guard let data = AppFile.read(URL(fileURLWithPath: key), in: watch.project) else { return nil }
             let found = LogErrors.errors(in: LogErrors.since(watch.mark, in: data), besides: watch.known)
             let app = current(watch.project) ?? watch.project
