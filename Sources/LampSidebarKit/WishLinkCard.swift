@@ -1,10 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// Share Link: what a wish's link will show anyone who has it, laid out to be read and changed before anything leaves
-/// the Mac (the picture, which may show the person's own things, can be left out or taken again), then the link and
-/// what can be done with it. Drawn from plain values, so Lamp's window (a sheet), the chat beside the app (in the
-/// chat's place) and the gallery all show the same card.
+/// Share Link: what a wish's link will show anyone who has it (its name, its picture and what it does), laid out to be
+/// read and changed before anything leaves the Mac (the picture, which may show the person's own things, can be left out
+/// or taken again), then the link and what can be done with it. Drawn from plain values, so its window
+/// (`WishLinkWindows`) and the gallery show the same card.
 public struct WishLinkCard: View {
     /// What the person can change on the card.
     public struct Values: Equatable {
@@ -12,7 +12,7 @@ public struct WishLinkCard: View {
         public var line: String
         public var words: String
         public var includePicture: Bool
-        /// The wish itself goes with the link, for anyone with Lamp to open that exact one.
+        /// The wish itself goes with the link, for anyone with Lamp to open that exact one: always, when it can.
         public var includeFile: Bool
 
         public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool = false) {
@@ -23,9 +23,10 @@ public struct WishLinkCard: View {
             self.includeFile = includeFile
         }
 
-        /// The card can share only a wish with a name and words.
+        /// The card can share only a wish with a name, and something to make one's own version from: what it does,
+        /// or else its first request (`words`, which the card doesn't show).
         public var isComplete: Bool { !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            && !(line + words).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     /// The most each field holds, in characters (`WishLink.Limit`).
@@ -61,16 +62,16 @@ public struct WishLinkCard: View {
     /// Takes the picture again, while the app is open on this Mac; nil otherwise.
     let retake: (() -> Void)?
     let retaking: Bool
-    /// The wish can go with its link as a file (its kind can be shared as one): the card offers it.
+    /// The wish goes with its link as a file (its kind can be shared as one).
     let canIncludeFile: Bool
-    /// Said under Include the wish itself while it's ticked: the work in the wish that came with no license.
+    /// Said while the wish goes with its link: the work in the wish that came with no license.
     let noLicense: String?
     /// Copy Link the first time, Update Link after a change: shares what's on the card and copies the link.
     let share: () -> Void
     let copy: () -> Void
     let stop: () -> Void
     let close: () -> Void
-    /// The sheet's width; nil fills the room it's given (the chat beside the app).
+    /// The card's width; nil fills the room it's given.
     let width: CGFloat?
 
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
@@ -98,6 +99,9 @@ public struct WishLinkCard: View {
 
     private var sending: Bool { stage == .sending }
 
+    /// Where the title starts, right of the icon: what's under the title lines up with it.
+    private static let indent: CGFloat = 56 + 12
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
@@ -106,52 +110,38 @@ public struct WishLinkCard: View {
                     .padding(.top, -4)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Share a Link to This Wish").font(.title3.bold())
-                    // What the person accepts by sharing: who sees it, and that nothing else goes.
-                    Text(values.includeFile && canIncludeFile
-                         ? "Anyone with the link sees what's here, and anyone with Lamp can open this exact wish: its code and files go too."
-                         : "Anyone with the link sees what's here, and can make the wish with Lamp. Nothing else leaves your Mac.")
+                    Text("Share a Link to \(values.name)").font(.title3.bold())
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Let others use it and make their own version.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if let picture { pictureRow(picture) }
-            field("Name") {
-                TextField("Name", text: clipped(\.name, limits.name), prompt: Text("The wish's name"))
-                    .textFieldStyle(.roundedBorder)
-            }
-            field("What it does") {
-                TextField("What it does", text: clipped(\.line, limits.line), prompt: Text("One line, optional"))
-                    .textFieldStyle(.roundedBorder)
-            }
-            field("The wish") {
-                TextEditor(text: clipped(\.words, limits.words))
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .frame(height: 110)
-                    .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
-                    .accessibilityLabel("The wish")
-            }
-            .disabled(sending)
-            if canIncludeFile {
-                Toggle("Include the wish itself, so people with Lamp get this exact one and your updates", isOn: $values.includeFile)
-                    .toggleStyle(.checkbox)
-                    .help("Its code and files go with the link, as when you share the wish as a file. Lamp checks them for keys first. Never your chat or the app's data.")
-                if values.includeFile, let noLicense {
+            VStack(alignment: .leading, spacing: 16) {
+                if let picture { pictureRow(picture) }
+                field("What it does") {
+                    TextField("What it does", text: clipped(\.line, limits.line), prompt: Text("A line or two, optional"), axis: .vertical)
+                        .lineLimit(3, reservesSpace: true)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 8).padding(.vertical, 6)
+                        .background(Paper.card, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+                }
+                // The wish always goes with its link when it can: what the person must know before it does.
+                if canIncludeFile, let noLicense {
                     Text(noLicense).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            if let link { linkRow(link) }
-            if case .failed(let message) = stage {
-                Label {
-                    Text(message).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                if let link { linkRow(link) }
+                if case .failed(let message) = stage {
+                    Label {
+                        Text(message).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                    .font(.callout)
                 }
-                .font(.callout)
             }
+            .padding(.leading, Self.indent)
             buttons.cardButtons()
         }
         .disabled(sending)
@@ -162,36 +152,46 @@ public struct WishLinkCard: View {
 
     private func pictureRow(_ picture: NSImage) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Image(nsImage: picture).resizable().scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: 180)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
-                .opacity(values.includePicture ? 1 : 0.3)
-                .overlay { if retaking { ProgressView().controlSize(.small) } }
-                .accessibilityLabel("Picture of the wish")
             HStack {
-                Toggle("Include this picture", isOn: $values.includePicture).toggleStyle(.checkbox)
+                Toggle("Include this picture", isOn: $values.includePicture).toggleStyle(.switch).controlSize(.small)
                 Spacer(minLength: 8)
                 if let retake {
                     Button("Take Again", action: retake).disabled(retaking)
                         .help("Take a new picture of the app as it is now")
                 }
             }
+            // As big as the picture is, up to its box's height: the box hugs it rather than leaving bands either side.
+            Image(nsImage: picture).resizable().interpolation(.high).scaledToFit()
+                .frame(maxHeight: 180)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+                .opacity(values.includePicture ? 1 : 0.3)
+                .overlay { if retaking { ProgressView().controlSize(.small) } }
+                .accessibilityLabel("Picture of the wish")
         }
     }
 
+    /// The link that's out, and a button beside it that copies it, a tick for a moment once it has.
     private func linkRow(_ link: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: copied ? "checkmark.circle.fill" : "link")
-                .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
-                .accessibilityHidden(true)
-            Text(link).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
-            if copied { Text("Copied").foregroundStyle(.secondary) }
-            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                Image(systemName: "link").foregroundStyle(.secondary).accessibilityHidden(true)
+                Text(link).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .font(.callout)
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(Paper.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Paper.rule))
+            Button(action: copy) {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 13, weight: .semibold))
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(PaperButtonStyle(.outline, height: 34, square: true))
+            .help(copied ? "Copied" : "Copy the link")
+            .accessibilityLabel(copied ? "Copied" : "Copy Link")
         }
-        .font(.callout)
-        .padding(10)
-        .background(Paper.card, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Paper.rule))
     }
 
     @ViewBuilder private var buttons: some View {

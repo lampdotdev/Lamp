@@ -1,10 +1,10 @@
 # Wishes shared as links
 
-Lamp's Share Wish menu has **Share Link…**: the person reviews what the link will show (the wish's name, its line,
-its words and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
-on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words. If the
-person ticks **Include the wish itself**, the wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
-license and key checks) goes too, and the page offers that exact wish to anyone with Lamp (Open in Lamp, on a Mac), which reviews it
+The chat's Share Wish popover has **Make a Link…** (**Edit Link…** under the link once it has one): the person reviews what the link will show (the wish's name, what it
+does and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
+on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words, which Lamp sends as what the wish does (its first request when that's empty). The
+wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
+license and key checks) goes too, whenever its kind can go as a file, and the page offers that exact wish to anyone with Lamp (Open in Lamp, on a Mac), which reviews it
 before it opens, as any shared file, and makes a copy that follows the link. Never the chat or the app's data.
 
 - The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen plays at the top of

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import CryptoKit
 import LampFileLook
+import LampSidebarKit
 import UniformTypeIdentifiers
 
 extension UTType {
@@ -75,11 +76,80 @@ enum Sharing {
         }
     }
 
+    @MainActor private static var popover: NSPopover?
+
+    /// Share…: the popover the chat's Share button opens (`SharePopover`), from the control it was chosen with: the
+    /// wish's link to copy, the Mac's ways to send it, and the rest of sharing.
     @MainActor static func share(_ project: LampProject, from origin: Origin) {
-        guard let window = NSApp.keyWindow, let content = window.contentView, askToShare(project) else { return }
-        // Where the command was clicked, for when its control has gone by the time the file is ready.
+        guard let window = NSApp.keyWindow, let content = window.contentView else { return }
+        // Where the command was clicked, for when its control has gone, as a menu's row has once the menu closes.
         let clicked = NSRect(origin: content.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil),
                              size: NSSize(width: 1, height: 1))
+        let link = WishLink.kept(for: project)?.url
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: SharePopover(link: link, canContribute: Contribute.canContribute(project)) { action in
+            chose(action, for: project, link: link, origin: origin, window: window, clicked: clicked)
+        })
+        self.popover?.close()
+        self.popover = popover
+        if let anchor = anchor(for: origin, in: window) {
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        } else {
+            popover.show(relativeTo: clicked, of: content, preferredEdge: .minY)
+        }
+    }
+
+    /// What was chosen in the popover. Copying the link keeps it open, saying Copied; anything else closes it. The
+    /// Share Link card has a window of its own; Put on GitHub opens in the wish's chat, where it lives.
+    @MainActor private static func chose(_ action: SharePopover.Action, for project: LampProject, link: URL?, origin: Origin,
+                                         window: NSWindow, clicked: NSRect) {
+        if action == .copyLink {
+            guard let link else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link.absoluteString, forType: .string)
+            return
+        }
+        popover?.close()
+        popover = nil
+        let store = Store.shared
+        switch action {
+        case .copyLink: break
+        case .makeLink, .editLink: WishLinkCards.shared.open(project)
+        case .github:
+            GitHubRepoCards.shared.open(project)
+            store.showChat(project.id)
+        case .contribute: store.sendChangesBack(project)
+        case .copyFile: store.copyAppFile(project)
+        case .export: store.chooseExport(project)
+        case .send(let way):
+            // The link goes when there is one; without it, the wish's file.
+            if let link {
+                DispatchQueue.main.async { send(way, items: [link], from: origin, in: window, clicked: clicked) }
+            } else {
+                sendFile(project, way: way, from: origin, in: window, clicked: clicked)
+            }
+        }
+    }
+
+    /// Sends with one of the Mac's ways, or shows the system's list for More from where Share… was chosen.
+    @MainActor private static func send(_ way: SharePopover.Way, items: [Any], from origin: Origin, in window: NSWindow, clicked: NSRect) {
+        if let service = way.service { return service.perform(withItems: items) }
+        guard let content = window.contentView else { return }
+        let picker = NSSharingServicePicker(items: items)
+        self.picker = picker
+        // The picker opens from the control, as the system's own Share menus do; a rectangle with no
+        // size isn't a place to it, and it opens beside the window instead.
+        if let anchor = anchor(for: origin, in: window) {
+            picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        } else {
+            picker.show(relativeTo: clicked, of: content, preferredEdge: .minY)
+        }
+    }
+
+    /// The wish's file, made first, for a wish with no link.
+    @MainActor private static func sendFile(_ project: LampProject, way: SharePopover.Way, from origin: Origin, in window: NSWindow, clicked: NSRect) {
+        guard askToShare(project) else { return }
         let request = UUID()
         shareRequest = request
         Task {
@@ -93,15 +163,7 @@ enum Sharing {
                 guard shareRequest == request, window.isVisible else { return }
                 // Separate native items keep the opening instructions beside the attachment in Mail and Messages,
                 // and the picture before it, so it shows large where the file alone is a blank document.
-                let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev"] + [picture, file].compactMap { $0 })
-                self.picker = picker
-                // The picker opens from the control, as the system's own Share menus do; a rectangle with no
-                // size isn't a place to it, and it opens beside the window instead.
-                if let anchor = anchor(for: origin, in: window) {
-                    picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-                } else {
-                    picker.show(relativeTo: clicked, of: content, preferredEdge: .minY)
-                }
+                send(way, items: ["Open this with Lamp https://lamp.dev"] + [picture, file].compactMap { $0 }, from: origin, in: window, clicked: clicked)
             } catch {
                 guard shareRequest == request, window.isVisible else { return }
                 NSAlert(error: error).runModal()

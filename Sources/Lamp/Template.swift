@@ -7373,7 +7373,8 @@ enum Template {
             let front = Array(windows.prefix(3))
             let seen = capturable()
             let shots = front.map { seen ? shot(of: $0) : nil }
-            let previewShot = previewWindow.flatMap { seen ? shot(of: $0) : nil }
+            // The desk's picture is never sent to the model, and a Share Link shows it large: taken sharper than the rest.
+            let previewShot = previewWindow.flatMap { seen ? shot(of: $0, longest: 2048) : nil }
             // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name: read
             // now, with the window as it's pictured, and written with the pictures, so a later snapshot's text never
             // lands beside this one's pictures.
@@ -7473,9 +7474,9 @@ enum Template {
         }
 
         @MainActor
-        static func shot(of window: NSWindow) -> Shot? {
+        static func shot(of window: NSWindow, longest: CGFloat = 1024) -> Shot? {
             guard window.windowNumber > 0, let view = window.contentView?.superview ?? window.contentView else { return nil }
-            return Shot(number: window.windowNumber, size: view.bounds.size, scale: scale(of: window))
+            return Shot(number: window.windowNumber, size: view.bounds.size, scale: scale(of: window, longest: longest))
         }
 
         /// The window server's picture of a window, as a PNG at the size every picture of it is sent at.
@@ -7497,12 +7498,12 @@ enum Template {
                 && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) }
         }
 
-        /// Picture pixels per window point: at most 1024 pixels on the long side, a size models see unscaled and read
+        /// Picture pixels per window point: at most 1024 pixels on the long side unless asked for more, a size models see unscaled and read
         /// a window's words in, at half the bytes and tokens of 1400: every picture is sent again with each request.
         @MainActor
-        static func scale(of window: NSWindow) -> CGFloat {
+        static func scale(of window: NSWindow, longest: CGFloat = 1024) -> CGFloat {
             let size = (window.contentView?.superview ?? window.contentView)?.bounds.size ?? window.frame.size
-            return min(window.backingScaleFactor, 1024 / max(size.width, size.height))
+            return min(window.backingScaleFactor, longest / max(size.width, size.height))
         }
 
         /// The window with its title bar, at most 1024 pixels on the long side. It's the window as the system

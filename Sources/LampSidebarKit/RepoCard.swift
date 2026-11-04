@@ -156,7 +156,7 @@ public struct RepoCard: View {
                         // Without a Share Link the README offers the shared file and Lamp's site; the link is what lets someone without Lamp make it.
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("Remix link").foregroundStyle(.secondary).frame(width: 92, alignment: .leading)
-                            Button("Make Share Link…", action: makeLink).controlSize(.small)
+                            Button("Make a Link…", action: makeLink).controlSize(.small)
                             Spacer(minLength: 0)
                         }
                         .font(.callout)
