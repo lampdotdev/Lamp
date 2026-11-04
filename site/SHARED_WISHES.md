@@ -9,7 +9,7 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
 
 - The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen (the wish's own, or its
   one app's when that's in a part of its own, `Publish.pageApp`) plays at the top of
-  the link's page, nearly as tall as the window, with a button for full screen, so whoever opens the link tries it
+  the link's page, as large as the window allows in its picture's shape, with a button for full screen, so whoever opens the link tries it
   first. Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Put on GitHub puts on
   GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
   unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
@@ -20,9 +20,10 @@ before it opens, as any shared file, and makes a copy that follows the link. Nev
   version counts up for the link (`pageVersion`), so an address never plays two different pages. The page goes with
   the wish's file: taking the file away takes the page too. Without a play host, the page shows the wish's picture.
 - The page (`/w/<id>`, `src/pages/w/index.astro` filled by `lib/shared-wish-page.js`, served by `api/wish-page.js`
-  through a rewrite in `vercel.json`): a page of the wish's own, about the thing someone made, on the homepage's paper
-  between its menu bar and footer, with the wish's own sleeve beside the ways to remix it. The wish fills the top, playing or as its
-  picture on a blurred copy of itself; under it its icon, name, who it's by and what it does, and the ways to make one's own: a box
+  through a rewrite in `vercel.json`): a page of the wish's own, about the thing someone made, on the homepage's paper,
+  with Lamp only "Made with Lamp" at the top ("Learn more" beside it) and the bottom. The wish fills the top, playing
+  or as its picture, only as big as it is (a page that plays takes its picture's shape, since it can't say its size
+  from inside its frame); under it its icon, name, who it's by and what it does, and the ways to make one's own: a box
   for what to change with the changes Lamp suggests for it above it (`RemixSuggestions`, sent with the link; one puts its
   words in the box), **Open in Lamp** on a Mac (`lamp://wish?shared=<id>` with the change, so the copy follows the
   link, or `lamp://wish?text=…` for a link without the wish's file), and **Download Lamp**, which copies the wish and
