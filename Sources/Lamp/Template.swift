@@ -8041,6 +8041,7 @@ enum Template {
             }
 
             /// The app stands still taking the change in: the stripes roll up the window once, the smoke and the glow staying
+
             /// until `reveal`. Where motion is reduced, the glow alone stays, as while it was built.
             func turn(still: Bool) {
                 layoutSubtreeIfNeeded()
