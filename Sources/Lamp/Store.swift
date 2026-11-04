@@ -756,6 +756,9 @@ final class Store: ObservableObject {
         /// Stop was pressed at some point in this turn. `stopped` is cleared once the agent has stopped, so the
         /// turn can go on; this stays, for what the turn's end reports (`Analytics`).
         var wasStopped = false
+        /// How many times Stop has been pressed in this turn: work that began before a Stop (`Staging`) can tell one
+        /// pressed since, which `stopped` can't once the agent's run has cleared it.
+        var stops = 0
         /// The Mac app built but the last install couldn't put it in place or open it: logged, not a crash, so
         /// the turn still counts as a change. Kept so a new app's first run isn't counted when it never opened.
         var didNotOpen = false
@@ -937,6 +940,7 @@ final class Store: ObservableObject {
         @discardableResult func cancel() -> [pid_t] {
             stopped = true
             wasStopped = true
+            stops += 1
             allowAll = false
             var pids: [pid_t] = []
             if let agent { pids += Subprocess.terminateTree(agent) }
@@ -4934,7 +4938,7 @@ final class Store: ObservableObject {
         let held = Runtime.holdsBuild(project)
         if held { await DataSnapshots.take(project) }
         do {
-            try await deploy(project)
+            try await deploy(project, owner: turns[project.id])
             if held { await DataSnapshots.wentIn(project) }
             // A build that waited for the app to close goes in the same way, and is the app's stamp from now on.
             if Runtime.holdsBuild(project) {
@@ -8411,7 +8415,7 @@ final class Store: ObservableObject {
     private func prepare(_ project: LampProject) async {
         // One brought up to a newer starter is built again only while it's closed: opened, it's built as it opens.
         if broughtUp.remove(project.id) != nil, isRunning(project) || !Runtime.sourcesChanged(project) { return }
-        guard begin(project) != nil else { return }
+        guard let turn = begin(project) else { return }
         preparing.insert(project.id)
         let before = Set((logs[project.id] ?? []).map(\.id))
         var made = false
@@ -8423,11 +8427,12 @@ final class Store: ObservableObject {
         if ready {
             await prepareIcon(project)
             do {
-                try await deploy(project)
+                try await deploy(project, owner: turn)
                 heldInstalls.installed(project.id)
                 Runtime.releaseBuild(project)
                 stamps[project.id] = BuildStamp.read(project.installedURL)
                 made = true
+            } catch is Staging.Stopped {
             } catch {
                 log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             }
@@ -10381,7 +10386,10 @@ final class Store: ObservableObject {
         if !asked {
             note("Installing \(project.name)…", for: project)
             do {
-                staged = try await stageSigned(project)
+                staged = try await stageSigned(project, owner: owner)
+            } catch is Staging.Stopped {
+                owner?.didNotOpen = true
+                return "The app was stopped before it opened."
             } catch {
                 log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
                 owner?.didNotOpen = true
@@ -10406,6 +10414,11 @@ final class Store: ObservableObject {
             return nil
         }
         guard exists(project) else { copy.discard(); return nil }   // deleted while its old copy was quitting
+        guard !copy.staging.stopped else {
+            copy.discard()
+            owner?.didNotOpen = true
+            return "The app was stopped before it opened."
+        }
         // The old copy glowed while this was built, or this is the change it held for Reload (its glow let go when
         // the change was held): the new copy, with the change, shows it going in.
         let glowed = AppTransition.isGlowing(project.id) || reload
@@ -10419,6 +10432,9 @@ final class Store: ObservableObject {
             await DataSnapshots.wentIn(project)
             heldInstalls.installed(project.id)
             Runtime.releaseBuild(project)
+        } catch is Staging.Stopped {
+            owner?.didNotOpen = true
+            return "The app was stopped before it opened."
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             owner?.didNotOpen = true
@@ -11961,11 +11977,14 @@ final class Store: ObservableObject {
     /// came out signed with the team's certificate. The certificate is looked up after Xcode's signing, which makes
     /// one when this Mac has none for the team yet.
     nonisolated static func signForTeam(_ app: URL, for project: LampProject, team: String,
-                                        env: [String: String]) async throws -> Bool {
+                                        env: [String: String], staging: Staging) async throws -> Bool {
         let fm = FileManager.default
         var output: [String] = []
-        let (plan, planDir) = try await TeamSigning.plan(for: project, team: team, place: .mac, destination: "platform=macOS") { output.append($0) }
+        let (plan, planDir) = try await TeamSigning.plan(for: project, team: team, place: .mac, destination: "platform=macOS",
+                                                         started: { staging.started($0) }) { output.append($0) }
+        try await staging.ended()
         guard let identity = await Devices.signingIdentity(for: team) else { return false }
+        try await staging.check()
         guard let piece = plan.app else { throw TeamSigning.Problem(message: "Lamp couldn't tell what to sign it with.") }
         // Nothing that runs but the app's own program and the chat Lamp put in it.
         try TeamSigning.checkCode(in: app, allowing: [app, Sidebar.extensionURL(in: app)])
@@ -11973,10 +11992,14 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: embedded)
         if let profile = piece.profile { try fm.copyItem(at: planDir.appendingPathComponent(profile), to: embedded) }
         let entitlements = planDir.appendingPathComponent(piece.entitlements)
-        let signed = await Shell.run(AppSigning.universalCommand, cwd: FileManager.default.temporaryDirectory,
-                                     env: env.merging(["LAMP_APP": app.path, "LAMP_IDENTITY": identity, "LAMP_APP_ENTITLEMENTS": entitlements.path]) { $1 }) {
+        let status = await Shell.run(AppSigning.universalCommand, cwd: FileManager.default.temporaryDirectory,
+                                     env: env.merging(["LAMP_APP": app.path, "LAMP_IDENTITY": identity, "LAMP_APP_ENTITLEMENTS": entitlements.path]) { $1 },
+                                     started: { staging.started($0) }) {
             output.append($0)
-        } == 0 && AppSigning.isCertificateSigned(app)
+        }
+        // A codesign ended by Stop is no failure to sign.
+        try await staging.ended()
+        let signed = status == 0 && AppSigning.isCertificateSigned(app)
         if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
         return signed
     }
@@ -11986,6 +12009,8 @@ final class Store: ObservableObject {
     private struct SignedCopy {
         let app: URL
         let signed: Bool
+        /// The turn it was staged for: a Stop pressed since keeps it from going in (`swapIn`).
+        let staging: Staging
         /// What the installed copy it replaces was signed as, and what this one is: a change clears the app's permissions.
         let replaced: String?
         let requirement: String?
@@ -11996,10 +12021,42 @@ final class Store: ObservableObject {
         func discard() { try? FileManager.default.removeItem(at: app) }
     }
 
+    /// The turn a copy is staged for (`stageSigned`), as the staging sees it. Each command the staging runs is the
+    /// turn's build while it runs, so Stop ends it and everything it started (`Turn.cancel`), and only it: another
+    /// app's signing goes on. A Stop pressed since the staging began ends it at its next step, before anything else is
+    /// signed or swapped: its copy is thrown away and the installed app is left as it was. A Stop pressed before it
+    /// began doesn't count (a turn goes on to install what was made before it). With no turn, nothing stops it.
+    @MainActor final class Staging {
+        struct Stopped: LocalizedError { var errorDescription: String? { "The install was stopped." } }
+        let turn: Turn?
+        private let stops: Int
+        private var running: Process?
+        init(for turn: Turn?) {
+            self.turn = turn
+            stops = turn?.stops ?? 0
+        }
+        var stopped: Bool { (turn?.stops ?? 0) != stops }
+        func check() throws { if stopped { throw Stopped() } }
+        /// For `Shell.run(started:)`.
+        func started(_ process: Process) {
+            running = process
+            turn?.build = process
+            // Stop pressed between the command's start and this: it had nothing to end yet.
+            if stopped { Subprocess.terminateTree(process) }
+        }
+        /// After each command: gives the turn's build back, and throws when Stop ended the command, so its exit isn't
+        /// taken for a failure to sign (and another signature tried).
+        func ended() throws {
+            if let running, turn?.build === running { turn?.build = nil }
+            running = nil
+            try check()
+        }
+    }
+
     /// Copies the freshly built bundle into the apps folder, puts the icon in, signs it and swaps it in place of
     /// the installed copy. The swap is atomic, so it's safe even while the app is running.
-    private func deploy(_ project: LampProject) async throws {
-        try await swapIn(try await stageSigned(project), for: project)
+    private func deploy(_ project: LampProject, owner: Turn?) async throws {
+        try await swapIn(try await stageSigned(project, owner: owner), for: project)
     }
 
     /// Apps whose installed copy is to be made again from the build on disk once they quit (`refreshInstalled`).
@@ -12018,11 +12075,11 @@ final class Store: ObservableObject {
               setAsideChanges[project.id] == nil, reloadWatches[project.id] == nil, !liveBuildFailed.contains(project.id),
               !Runtime.holdsBuild(project) else { return }
         guard !isRunning(project) else { refreshWhenQuit.insert(project.id); return }
-        guard begin(project) != nil else { refreshWhenQuit.insert(project.id); return }
+        guard let turn = begin(project) else { refreshWhenQuit.insert(project.id); return }
         Task {
             defer { finish(project) }
             do {
-                let staged = try await stageSigned(project)
+                let staged = try await stageSigned(project, owner: turn)
                 guard let current = current(project), !isRunning(current), setAsideChanges[project.id] == nil, reloadWatches[project.id] == nil else {
                     staged.discard()
                     refreshWhenQuit.insert(project.id)
@@ -12036,12 +12093,14 @@ final class Store: ObservableObject {
     /// Everything `deploy` does before the swap: a copy of the build in the apps folder, finished and signed there.
     /// It touches nothing of the installed copy, so it's done while that copy is still open, before it's asked to quit:
     /// only the swap waits for the app to close.
-    private func stageSigned(_ project: LampProject) async throws -> SignedCopy {
+    private func stageSigned(_ project: LampProject, owner: Turn?) async throws -> SignedCopy {
         let fm = FileManager.default
+        let staging = Staging(for: owner)
         // An icon still being drawn (after a change that went into the open app, New Icon, new artwork) is finished
         // before it's copied in.
         await iconPreparations[project.id]?.value
         await iconRenders[project.id]?.value
+        try staging.check()
         let iconReady = (try? String(contentsOf: Icons.waitingURL(project), encoding: .utf8)) == Self.iconReady
         // Everything from here to the swap is done to a copy in the apps folder, which the agent's commands can't
         // write: the build folder is theirs, and a bundle there could be changed between Lamp's look at it and its
@@ -12071,7 +12130,9 @@ final class Store: ObservableObject {
             let reason = text.replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
             plist += "/usr/bin/plutil -replace \(key) -string '\(reason)' \"$P\"\n"
         }
-        _ = await Shell.run(plist, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_NAME": project.name]) { _ in }
+        _ = await Shell.run(plist, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_NAME": project.name],
+                            started: staging.started) { _ in }
+        try staging.ended()
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
             try fm.copyItem(at: Icons.icnsURL(project), to: resources.appendingPathComponent("AppIcon.icns"))
@@ -12084,7 +12145,8 @@ final class Store: ObservableObject {
                 : "{ /usr/bin/plutil -remove CFBundleIconName \"$LAMP_APP/Contents/Info.plist\" 2>/dev/null || true; }"
             _ = await Shell.run("""
                 /usr/bin/plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
-                """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
+                """, cwd: project.dir, env: ["LAMP_APP": app.path], started: staging.started) { _ in }
+            try staging.ended()
         }
         // The app's own files (Assets/) ship inside it, where LampAssets finds them; the chat's attachments
         // don't. A binary built by an older Lamp (a new icon installed without a rebuild) still looks for
@@ -12127,7 +12189,8 @@ final class Store: ObservableObject {
         // how apps silently ended up ad hoc. Strip them first.
         // The chat the app shows inside its window, signed with the app.
         try Sidebar.install(into: app, for: project, entitlementsIn: signing)
-        _ = await Shell.run("/usr/bin/xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
+        _ = await Shell.run("/usr/bin/xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": app.path], started: staging.started) { _ in }
+        try staging.ended()
         // A widget keeps its own signature inside the app's (AppSigning.command), with entitlements Lamp
         // writes beside the copy rather than takes from the build folder, where anything could have changed them.
         let widget = Template.widgetURL(in: app, of: project)
@@ -12158,13 +12221,22 @@ final class Store: ObservableObject {
         // For an app for both, the team's certificate is looked up only after Xcode has signed Lamp's own project, which
         // makes one the first time.
         let identity = project.platform == .universal ? "-" : await AppSigning.identity()
+        try staging.check()
         var signed = false
         if project.platform == .universal, !Devices.team.isEmpty {
-            signed = try await Self.signForTeam(app, for: project, team: Devices.team, env: signingEnv)
+            do {
+                signed = try await Self.signForTeam(app, for: project, team: Devices.team, env: signingEnv, staging: staging)
+            } catch {
+                // Xcode ended by Stop is a stop, not Xcode failing to sign.
+                try staging.check()
+                throw error
+            }
         } else {
             // A Mac app is signed for the person's Apple team when there is one: macOS runs an app's App Intents
             // (Siri, Shortcuts, Spotlight) only for an app signed with a team. Otherwise Lamp's own certificate.
-            if project.platform == .mac, let team = await Devices.signingIdentity(for: Devices.team) {
+            let team = project.platform == .mac ? await Devices.signingIdentity(for: Devices.team) : nil
+            try staging.check()
+            if let team {
                 // Signed for a team, the app and its extensions can share a folder, where the widget's buttons queue
                 // what they ask of the app (`LampWidget.perform`) and the share extension leaves what it was given
                 // (`LampShare`); each is told its name in its Info.plist.
@@ -12180,9 +12252,12 @@ final class Store: ObservableObject {
                     env["LAMP_APP_ENTITLEMENTS"] = appEntitlements.path
                 }
                 var output: [String] = []
-                signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, share: hasShare, ownKeychain: false,
-                                                            appEntitlements: hasWidget || hasShare),
-                                         cwd: project.dir, env: env) { output.append($0) } == 0
+                let status = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, share: hasShare, ownKeychain: false,
+                                                                appEntitlements: hasWidget || hasShare),
+                                             cwd: project.dir, env: env, started: staging.started) { output.append($0) }
+                // Ended by Stop: no failure to sign for the team, which would be remembered, nor a fallback to another signature.
+                try staging.ended()
+                signed = status == 0
                     && AppSigning.isCertificateSigned(app) && (!hasWidget || AppSigning.isCertificateSigned(widget))
                     && (!hasShare || AppSigning.isCertificateSigned(share))
                 if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
@@ -12210,7 +12285,8 @@ final class Store: ObservableObject {
             signingEnv["LAMP_IDENTITY"] = identity
             signingEnv["LAMP_KEYCHAIN"] = AppSigning.keychain
             signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget),
-                                     cwd: project.dir, env: signingEnv) { output.append($0) } == 0
+                                     cwd: project.dir, env: signingEnv, started: staging.started) { output.append($0) } == 0
+            try staging.ended()
             // Trust the result, not the exit status: check the app really carries the certificate.
             if signed && !(AppSigning.isCertificateSigned(app) && (!hasWidget || AppSigning.isCertificateSigned(widget))) {
                 signed = false
@@ -12222,7 +12298,9 @@ final class Store: ObservableObject {
         if !signed {
             // Ad hoc keeps the app installable, but macOS won't remember its permissions across rebuilds and
             // won't ask for Location Services at all, so the person is told, once.
-            _ = await Shell.run(AppSigning.command(adHoc: true, widget: hasWidget), cwd: project.dir, env: signingEnv) { _ in }
+            _ = await Shell.run(AppSigning.command(adHoc: true, widget: hasWidget), cwd: project.dir, env: signingEnv,
+                                started: staging.started) { _ in }
+            try staging.ended()
             if AppSigning.needsAdHocNotice(after: logs[project.id] ?? []) {
                 log(project, .status, AppSigning.adHocNotice(for: project.name))
             }
@@ -12240,8 +12318,9 @@ final class Store: ObservableObject {
         let previousID = NSDictionary(contentsOf: project.installedURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
         let replaced = previousID == project.bundleID ? await AppSigning.requirement(of: project.installedURL) : nil
         let requirement = replaced == nil ? nil : await AppSigning.requirement(of: app)
+        try staging.check()
         finished = true
-        return SignedCopy(app: app, signed: signed, replaced: replaced, requirement: requirement, iconReady: iconReady)
+        return SignedCopy(app: app, signed: signed, staging: staging, replaced: replaced, requirement: requirement, iconReady: iconReady)
     }
 
     /// The rest of `deploy`, once the app is closed: the signed copy takes the installed one's place.
@@ -12249,15 +12328,19 @@ final class Store: ObservableObject {
         let fm = FileManager.default, app = copy.app
         var swapped = false
         defer { if !swapped { copy.discard() } }
+        // Stopped since it was staged (while the old copy quit, or its data was copied): the installed app stays as it was.
+        try copy.staging.check()
         // Every install of a Mac app ends here (a build, a new icon, a refreshed copy): an update waiting for its review
         // is never put where it can be opened.
         guard AppUpdates.mayOpen(wish(of: project)) else { throw Sharing.ImportError(AppUpdates.notInstalledYet) }
-        // What Lamp signed as the app's sidebar, the one program it will talk to there.
-        Sidebar.remember(project, signed: app)
 
         // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
         // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
         await WidgetProcess.end(for: project)
+        // That can take seconds, and a Stop pressed meanwhile still keeps this copy out.
+        try copy.staging.check()
+        // What Lamp signed as the app's sidebar, the one program it will talk to there: only once this copy goes in.
+        Sidebar.remember(project, signed: app)
         if fm.fileExists(atPath: project.installedURL.path) {
             _ = try fm.replaceItemAt(project.installedURL, withItemAt: app)
         } else {
