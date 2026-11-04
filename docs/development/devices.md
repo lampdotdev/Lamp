@@ -518,8 +518,14 @@ differ each play. After a look with `on_device` (`Turn.gameOnDevice`: the simula
 device of the person's) `use_app` takes only what that place takes, and a
 controller move is refused with why; a game's phone page is never pressed (`Store.noPhoneUse`): only the person's
 phones join. The agent plays a game only when the person asks it to try, play or test it (`use_app`'s description, `Rules.gameTry`, the game skill's "Playtesting"), as with any app it uses in front of them: a request to change a game is built and looked at. The game's own modules are first parsed as modules by the Bun inside Lamp's pi
-(`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing); a game bundled from TypeScript is
-checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it in (`pageInPlace`). A step
+(`GameKit.codeProblem`: its transpiler, in the game's sandbox, running nothing), only the files that changed since they
+last passed (`PageScan`), since each is checked on its own and a page can hold a data module tens of megabytes big; a
+game bundled from TypeScript is checked by its bundling. Then the Mac's copy is built and put in as a turn's end puts it
+in (`pageInPlace`). A game with Swift of its own skips `swift build` when its Swift, Package.swift, build.sh and developer tools (an Xcode's
+version, or the Command Line Tools' compiler and SDKs) are
+as they were at its last Mac build that succeeded (`GameKit.swiftStamp`, `LAMP_SWIFT_BUILT`): build.sh copies the binary
+that build made, whose path it kept in `.build/lamp-mac-bin`, so a change of the page alone isn't held up by a second or
+two of the compiler doing nothing. A step
 that doesn't parse waits for the next save; one that parses but fails as it runs opens the page again from the
 snapshot, as it would at the turn's end. The app around the page on the Mac and in the simulator (`LampPageLive` in
 `LampPage.swift`) asks Lamp what has changed (`/app/page/live`, held up to 25 s, asked again at once; never on a phone,

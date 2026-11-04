@@ -2034,6 +2034,32 @@ enum PageScan {
         return false
     }
 
+    /// Each file's size and date now, for `pass` once every one of them has passed a check: taken before the check, so a
+    /// file saved while it ran is checked again next time.
+    static func stamps(_ files: [URL]) -> [URL: String] {
+        var stamps: [URL: String] = [:]
+        for file in files {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            if let size = values?.fileSize, let date = values?.contentModificationDate { stamps[file] = "\(size) \(date.timeIntervalSince1970)" }
+        }
+        return stamps
+    }
+
+    /// Whether the file passed the check `question` names as it is now (`pass`).
+    static func passed(_ file: URL, stamp: String?, asking question: String) -> Bool {
+        guard let stamp else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        return known[question + "\n" + file.path].map { $0.stamp == stamp && $0.found } ?? false
+    }
+
+    /// Remembers that these files, as stamped, passed the check `question` names, which looks at each file on its own.
+    static func pass(_ stamps: [URL: String], asking question: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        for (file, stamp) in stamps { known[question + "\n" + file.path] = (stamp, true) }
+    }
+
     /// Whether the bytes hold the word, by memmem: Swift's own search of a string that size took seconds.
     static func contains(_ data: Data, _ word: String) -> Bool {
         let needle = Array(word.utf8)

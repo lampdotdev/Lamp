@@ -420,6 +420,48 @@ enum GameKit {
     static let sourceFolder = "src"
     static let compiledFolder = "\(webFolder)/app"
 
+    /// What a game's Mac binary is compiled from: its Swift, Package.swift and build.sh, and the developer tools that compile
+    /// it. Lamp remembers it at each Mac build that succeeds (`Runtime.markSwiftBuilt`), so a step that changed only the
+    /// page has build.sh copy the binary from then (`LAMP_SWIFT_BUILT`) rather than run swift build for nothing. Nil when
+    /// which version of the tools compiles it can't be told: then it's compiled every time, as before.
+    static func swiftStamp(_ project: LampProject) -> String? {
+        var hasher = SHA256()
+        for name in ["Package.swift", "build.sh"] {
+            hasher.update(data: Data(name.utf8))
+            hasher.update(data: AppFile.read(project.dir.appendingPathComponent(name), in: project) ?? Data())
+        }
+        let root = project.dir.appendingPathComponent("Sources")
+        let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []).sorted { $0.path < $1.path }
+        for file in files {
+            hasher.update(data: Data(file.path.utf8))
+            hasher.update(data: AppFile.read(file, in: project) ?? Data())
+        }
+        // Which tools, and which version of them, since an update in place keeps the path: an Xcode's version.plist, or for
+        // the Command Line Tools, which have none, their compiler and each SDK's settings as they are on disk.
+        let folders = Sandbox.developerFolders()
+        guard !folders.isEmpty else { return nil }
+        for folder in folders {
+            let root = URL(fileURLWithPath: folder)
+            hasher.update(data: Data(folder.utf8))
+            if let version = try? Data(contentsOf: root.appendingPathComponent("Contents/version.plist")) {
+                hasher.update(data: version)
+                continue
+            }
+            let sdks = root.appendingPathComponent("SDKs")
+            let marks = [root.appendingPathComponent("usr/bin/swift-frontend")]
+                + ((try? FileManager.default.contentsOfDirectory(atPath: sdks.path)) ?? []).sorted().map { sdks.appendingPathComponent($0).appendingPathComponent("SDKSettings.json") }
+            var known = false
+            for mark in marks {
+                let values = try? mark.resolvingSymlinksInPath().resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                guard let size = values?.fileSize, let date = values?.contentModificationDate else { continue }
+                hasher.update(data: Data("\(mark.path) \(size) \(date.timeIntervalSince1970)".utf8))
+                known = true
+            }
+            guard known else { return nil }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     /// What src/ holds, to tell when it changed while it was being bundled. Nil for a game without it.
     static func sourceStamp(_ project: LampProject) -> String? {
         guard compilesSource(project) else { return nil }
@@ -454,7 +496,13 @@ enum GameKit {
                     && !path.hasPrefix("rapier/") && !(path.hasPrefix("lamp") && !path.contains("/"))
             }.sorted()
         guard !files.isEmpty else { return nil }
-        if modules, GameKit.isGame(project), let strict = strictProblem(in: files, of: web, project: project) { return strict }
+        // Each file is checked on its own, so one that passed and hasn't changed since passes again: a step checks only
+        // what the agent saved, not a data module tens of megabytes big at every change.
+        let question = "parses " + folder + (modules && GameKit.isGame(project) ? " strict" : "")
+        let stamps = PageScan.stamps(files.map { web.appendingPathComponent($0) })
+        let unchecked = files.filter { !PageScan.passed(web.appendingPathComponent($0), stamp: stamps[web.appendingPathComponent($0)], asking: question) }
+        guard !unchecked.isEmpty else { return nil }
+        if modules, GameKit.isGame(project), let strict = strictProblem(in: unchecked, of: web, project: project) { return strict }
         // Bun reads settings from every folder above where it runs, which the sandbox closes in the person's folders:
         // it runs in a scratch folder, reading the page's files by their paths.
         let scratch = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("lamp-check-\(project.id)-\(UUID().uuidString.prefix(8))")
@@ -465,9 +513,10 @@ enum GameKit {
         } catch { return nil }
         var said: [String] = []
         let command = "cd \"$LAMP_SCRATCH\" && BUN_BE_BUN=1 \(Sandbox.quoted(bun.path)) check.js \"$LAMP_WEB\" "
-            + files.map(Sandbox.quoted).joined(separator: " ")
+            + unchecked.map(Sandbox.quoted).joined(separator: " ")
         let status = await Sandbox.run(command, for: project, cwd: project.dir, env: ["LAMP_SCRATCH": scratch.path, "LAMP_WEB": web.path],
                                        opening: [scratch.path], reading: [bun.deletingLastPathComponent().path]) { said.append($0) }
+        if status == 0 { PageScan.pass(stamps.filter { unchecked.map(web.appendingPathComponent).contains($0.key) }, asking: question) }
         // A check that couldn't run says nothing of the code.
         guard status == 1 else { return nil }
         return said.first { !$0.isEmpty } ?? "a module doesn't parse"
@@ -933,8 +982,15 @@ enum GameKit {
     PLAYER="${LAMP_PLAYER:-}"
     [[ "$PLACE" == "ios" ]] && PLAYER=""
     if [[ -z "$PLAYER" ]]; then
-      BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
-      swift build "${FLAGS[@]}" 2>&1
+      # Lamp says the Swift and the tools are as they were at its last Mac build (LAMP_SWIFT_BUILT, a change of the page
+      # alone): the binary that build made, where it said it was, rather than a second or two of swift build doing nothing.
+      if [[ "$PLACE" != "ios" && -n "${LAMP_SWIFT_BUILT:-}" && -f .build/lamp-mac-bin ]] && BIN="$(<.build/lamp-mac-bin)" && [[ -x "$BIN" ]]; then
+        :
+      else
+        BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
+        swift build "${FLAGS[@]}" 2>&1
+        [[ "$PLACE" == "ios" ]] || print -r -- "$BIN" > .build/lamp-mac-bin
+      fi
     fi
     rm -rf "$APP"
     if [[ "$PLACE" == "ios" ]]; then
