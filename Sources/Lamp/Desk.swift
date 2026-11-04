@@ -558,7 +558,7 @@ struct DeskIdeas: View {
                             .font(.system(size: 24, weight: .medium))
                             .foregroundStyle(Color.accentColor)
                             .frame(width: 32, height: 32)
-                        Text("Help me find my wish")
+                        Text("Help me find one")
                             .font(.title3.weight(.semibold))
                             .lineLimit(4, reservesSpace: true)
                     }
