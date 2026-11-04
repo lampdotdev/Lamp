@@ -172,12 +172,15 @@ final class ContributeTests: XCTestCase {
         XCTAssertEqual(file("Sources/App.swift", at: prepared.commit, in: prepared.clone), "a\nb\nc\n")
     }
 
-    /// A change the repository already has leaves nothing to send.
+    /// A change the repository already has leaves nothing to send, even where its shared file was zipped as Lamp zipped
+    /// one before (with ditto), which remaking it would change.
     func testAChangeTheRepositoryHasIsNothingToSend() async throws {
         let repo = try repository(["Sources/App.swift": "a\nb\nc\n"])
         let (project, _) = try await remix(of: ["Sources/App.swift": "a\nb\nc\n"], commit: try git("git rev-parse HEAD", in: repo))
         try await change(project, ["Sources/App.swift": "a\nb\nC\n"], "Capital")
         try commit(repo, ["Sources/App.swift": "a\nb\nC\n"], "Capital too")
+        _ = try git("mkdir ../ditto-$$ && /usr/bin/ditto -x -k drive.lampapp ../ditto-$$ && rm drive.lampapp && /usr/bin/ditto -c -k --norsrc ../ditto-$$ drive.lampapp "
+                    + "&& rm -rf ../ditto-$$ && git add -A && git -c user.name=Maker -c user.email=maker@example.com commit -qm Zipped", in: repo)
         do {
             _ = try await prepare(project, from: repo)
             XCTFail("nothing should be prepared")
@@ -290,5 +293,72 @@ final class ContributeTests: XCTestCase {
         XCTAssertEqual(sent, (file(folder(theirs) + "/MainActivity.kt", at: first, in: prepared.clone) ?? "") + "\n// Counts by twos\n")
         XCTAssertEqual(file(folder(theirs) + "/Twos.kt", at: prepared.commit, in: prepared.clone), "package \(theirs)\n\nval step = 2\n")
         XCTAssertFalse(try git("git ls-tree -r --name-only \(prepared.commit)", in: prepared.clone).contains(ours.replacingOccurrences(of: ".", with: "/")))
+    }
+
+    /// What goes is the export's, which passed its checks for keys: a key in the version's capabilities.json, which the
+    /// export writes again from only what it declares, never goes.
+    func testAKeyTheExportLeavesOutNeverGoes() async throws {
+        let key = "sk-or-v1-made-up-key-for-the-test-0123456789abcdef"
+        let saved = Sharing.knownSecrets
+        defer { Sharing.knownSecrets = saved }
+        Sharing.knownSecrets = { _ in [key] }
+        let repo = try repository(["Sources/App.swift": "a\n"])
+        let (project, _) = try await remix(of: ["Sources/App.swift": "a\n"], commit: try git("git rev-parse HEAD", in: repo))
+        try await change(project, [Template.Capabilities.file: #"{"background": true, "apiKey": "\#(key)"}"#, "Sources/App.swift": "A\n"], "Background")
+
+        let prepared = try await prepare(project, from: repo)
+        XCTAssertTrue(prepared.changed.contains(Template.Capabilities.file))
+        let sent = try git("git grep -l \(Sandbox.quoted(key)) \(prepared.commit) || true", in: prepared.clone)
+        XCTAssertEqual(sent, "", "the key is in what would be pushed")
+        let capabilities = try XCTUnwrap(file(Template.Capabilities.file, at: prepared.commit, in: prepared.clone))
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(capabilities.utf8)) as? NSDictionary, ["background": true])
+        let unpacked = try sharedFile(of: prepared)
+        XCTAssertFalse(try String(contentsOf: unpacked.appendingPathComponent(Template.Capabilities.file), encoding: .utf8).contains(key))
+    }
+
+    /// Work credited here after the remix arrived keeps its credit, though Lamp's running record of credits has it too.
+    func testWorkCreditedHereKeepsItsCredit() async throws {
+        let repo = try repository(["Sources/App.swift": "a\n"])
+        let (project, _) = try await remix(of: ["Sources/App.swift": "a\n"], commit: try git("git rev-parse HEAD", in: repo))
+        try write(["Sources/Tiny.swift": "// tiny\n"], in: project.dir)
+        try Credits.add(Credits(upstream: [Credits.Source(name: "Tiny", author: "Someone", url: "https://github.com/someone/tiny", license: "MIT")]), to: project)
+        let saved = await Versions.save(project, message: "Tiny")
+        XCTAssertTrue(saved)
+
+        let prepared = try await prepare(project, from: repo)
+        XCTAssertEqual(prepared.changed, ["Sources/Tiny.swift", Credits.file, "drive.lampapp"])
+        let credits = try XCTUnwrap(file(Credits.file, at: prepared.commit, in: prepared.clone).flatMap { Credits.decoded(Data($0.utf8)) })
+        XCTAssertEqual(credits.upstream.map(\.name), ["Tiny"])
+        XCTAssertEqual(credits.remixOf.map(\.name), ["Drive"], "the repository's chain stays its own")
+    }
+
+    /// A plain site's repository has its page at the root and Lamp's files in its folder: a change to the page goes
+    /// there, not into a Web/ folder the repository doesn't have.
+    func testAPlainSitesPageGoesToTheRepositorysRoot() async throws {
+        let app = try escape.app()
+        var project = app.project
+        project.platform = .webApp
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Sources/App.swift"))
+        try ScreenKit.markSite(project)
+        try write(["Web/index.html": "<html>hello</html>\n", "Web/style.css": "body {}\n", "APP.md": "# Drive\n", ".gitignore": ".lamp/\n",
+                   AppDescription.file: #"{"description":"A drive"}"#], in: project.dir)
+        let exported = try Sharing.export(project)
+        defer { try? FileManager.default.removeItem(at: exported.deletingLastPathComponent()) }
+        let repo = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-contribute-upstream-\(UUID().uuidString)")
+        folders.append(repo)
+        _ = try git("mkdir -p \(Sandbox.quoted(repo.path))/.lamp-wish && cd \(Sandbox.quoted(repo.path)) && git init -q -b main "
+                    + "&& /usr/bin/unzip -q -p \(Sandbox.quoted(exported.path)) lamp-app.json > .lamp-wish/lamp-app.json", in: app.root)
+        try write(["index.html": "<html>hello</html>\n", "style.css": "body {}\n", ".lamp-wish/APP.md": "# Drive\n",
+                   ".lamp-wish/\(Credits.file)": #"{"remixOf":[{"name":"Drive","url":"https://github.com/maker/drive"}],"upstream":[]}"#], in: repo)
+        let first = try git("git add -A && git -c user.name=Maker -c user.email=maker@example.com commit -qm First && git rev-parse HEAD", in: repo)
+        try write([Credits.file: #"{"remixOf":[{"name":"Drive","url":"https://github.com/maker/drive","commit":"\#(first)"}],"upstream":[]}"#], in: project.dir)
+        let arrived = await Versions.save(project, message: "Imported from a shared file")
+        XCTAssertTrue(arrived)
+        try await change(project, ["Web/index.html": "<html>hello, again</html>\n", "Web/about.html": "<html>about</html>\n"], "About")
+
+        let prepared = try await prepare(project, from: repo)
+        XCTAssertEqual(prepared.changed, ["about.html", "index.html"])
+        XCTAssertEqual(file("index.html", at: prepared.commit, in: prepared.clone), "<html>hello, again</html>\n")
+        XCTAssertFalse(try git("git ls-tree -r --name-only \(prepared.commit)", in: prepared.clone).contains("Web/"))
     }
 }

@@ -183,16 +183,20 @@ enum Upstream {
         }
         if keptMark != theirsMark { _ = await run("git update-ref \(ref) \(keptMark)", in: project) }
         if ref == Upstream.ref, let commit = Credits.validCommit(package.credits?.origin(own: GitHubRepo.kept(for: project)?.url)?.commit) {
-            // With the manifest that came with it beside the files (a version's tree as a shared file carries it leaves
-            // it out), so a change of the line, the kind or the apps since is measured from what the update said.
+            // With the manifest and credits that came with it beside the files (a version's tree as a shared file
+            // carries it leaves them out), so a change of the line, the kind or the apps since, and work credited since,
+            // are measured from what the update said.
             var mark = keptMark
-            let manifest = package.folder.appendingPathComponent("lamp-app.json")
-            if FileManager.default.fileExists(atPath: manifest.path) {
+            let kept = ["lamp-app.json", Credits.file].filter { FileManager.default.fileExists(atPath: package.folder.appendingPathComponent($0).path) }
+            if !kept.isEmpty {
                 let index = Sandbox.quoted(indexes.appendingPathComponent("snapshot").path)
-                let made = await run("blob=$(git hash-object -w -- \(Sandbox.quoted(manifest.path))) && rm -f \(index) && GIT_INDEX_FILE=\(index) git read-tree \(keptMark) "
-                                     + "&& GIT_INDEX_FILE=\(index) git update-index --add --cacheinfo 100644,$blob,lamp-app.json "
-                                     + "&& \(signed) commit-tree $(GIT_INDEX_FILE=\(index) git write-tree) -p \(keptMark) -m 'With its manifest'", in: project)
-                if made.status == 0, let withManifest = Credits.validCommit(made.output.split(separator: "\n").last.map(String.init)) { mark = withManifest }
+                var command = "rm -f \(index) && GIT_INDEX_FILE=\(index) git read-tree \(keptMark)"
+                for name in kept {
+                    command += " && blob=$(git hash-object -w -- \(Sandbox.quoted(package.folder.appendingPathComponent(name).path)))"
+                        + " && GIT_INDEX_FILE=\(index) git update-index --add --cacheinfo 100644,$blob,\(name)"
+                }
+                let made = await run(command + " && \(signed) commit-tree $(GIT_INDEX_FILE=\(index) git write-tree) -p \(keptMark) -m 'With its manifest and credits'", in: project)
+                if made.status == 0, let withThem = Credits.validCommit(made.output.split(separator: "\n").last.map(String.init)) { mark = withThem }
             }
             _ = await run("git update-ref \(snapshot(commit)) \(mark)", in: project)
         }
