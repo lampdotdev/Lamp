@@ -474,8 +474,14 @@ enum WishLink {
                             try await WishLink.removeFile(for: shared, page: true)
                         }
                     } catch {
-                        pageProblem = Self.problem(error)
-                        try? await WishLink.removeFile(for: shared, page: true)
+                        // The old page goes, so the link shows the picture as the card says; if it can't be taken away,
+                        // the link still plays the earlier version, and the card says that instead.
+                        do {
+                            try await WishLink.removeFile(for: shared, page: true)
+                            pageProblem = Self.problem(error)
+                        } catch {
+                            pageProblem = "\(project.name)'s page couldn't be updated on its link, so the link still plays its earlier version. Try again in a moment."
+                        }
                     }
                 } else if card.shared?.shown.file == true {
                     try await WishLink.removeFile(for: shared)
