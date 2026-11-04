@@ -517,7 +517,13 @@ export function playOrigin(base, id) {
 export const DIRECT_FILE = 16_000_000;
 
 export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false, direct = DIRECT_FILE } = {}) {
-  return async (request) => {
+  // Every answer the play host gives, errors too (a browser settles an origin's cluster on its first answer): the
+  // play host is the same site as lamp.dev, so without this Chrome runs the framed page in the site's own process,
+  // sharing its memory with the page around it and other lamp.dev tabs. A big game ran out there and crashed the tab,
+  // while the same game opened on its own didn't. An agent cluster of its own lets Chrome give it a process of its own.
+  const isolated = (response) => { response.headers.set("Origin-Agent-Cluster", "?1"); return response; };
+  return async (request) => isolated(await play(request));
+  async function play(request) {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     const url = new URL(request.url);
     const id = url.searchParams.get("id"), version = Number(url.searchParams.get("v"));
@@ -565,11 +571,6 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
         ...(length ? { "Content-Length": length } : {}),
         // Framed only by the link's page; frame-ancestors takes the place of the site's X-Frame-Options.
         "Content-Security-Policy": `frame-ancestors ${site}`,
-        // The play host is the same site as lamp.dev, so without this Chrome runs the framed page in the site's own
-        // process, sharing its memory with the page around it and other lamp.dev tabs: a big game ran out there and
-        // crashed the tab, while the same game opened on its own didn't. Asking for an agent cluster of its own lets
-        // Chrome give the play host's origin a process of its own.
-        "Origin-Agent-Cluster": "?1",
         "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id),
       },
     });
