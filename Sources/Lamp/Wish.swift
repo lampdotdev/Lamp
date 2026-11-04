@@ -44,6 +44,25 @@ enum Wish {
         let text: String?
     }
 
+    /// A wish shared as a link with its file, named by the link (`lamp://wish?shared=<id>&text=…`, from its page on
+    /// lamp.dev, `sharedWishLink` in lib/wish.js): Lamp asks the site for the file's latest and reviews it as any shared
+    /// file, and the copy follows the link (`Following`). The id only as the site makes one.
+    struct Shared: Equatable {
+        let id: String
+        let text: String?
+    }
+
+    static func shared(from url: URL, scheme: String = Edition.urlScheme) -> Shared? {
+        guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == "wish", case let items = items(of: url),
+              let id = items.first(where: { $0.name == "shared" })?.value, isSharedID(id) else { return nil }
+        return Shared(id: id, text: tidy(items.first { $0.name == "text" }?.value))
+    }
+
+    /// A link's id as lamp.dev makes one (`newID` in lib/shared-wishes.js): ten of its letters and digits.
+    static func isSharedID(_ id: String) -> Bool {
+        id.count == 10 && id.allSatisfy { "23456789abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ".contains($0) }
+    }
+
     static func exact(from url: URL, scheme: String = Edition.urlScheme) -> Exact? {
         guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == "wish",
               case let items = items(of: url),

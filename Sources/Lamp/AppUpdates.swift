@@ -388,6 +388,7 @@ extension Store {
         Task {
             let tip = await AppUpdates.tip(of: source)
             updateChecks[key] = AppUpdates.Check(tip: tip, at: Date())
+            tellNew(from: key, tip: tip)
         }
     }
 

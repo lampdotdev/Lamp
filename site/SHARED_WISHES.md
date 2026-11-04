@@ -4,9 +4,20 @@ Lamp's Share Wish menu has **Share Link…**: the person reviews what the link w
 its words and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
 on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words. If the
 person ticks **Include the wish itself**, the wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
-license and key checks) goes too, and the page offers that exact wish to anyone with Lamp ("Or get this exact one, to
-open in Lamp", on a Mac), which reviews it before it opens, as any shared file. Never the chat or the app's data.
+license and key checks) goes too, and the page offers that exact wish to anyone with Lamp ("Or open this exact one in Lamp", on a Mac), which reviews it
+before it opens, as any shared file, and makes a copy that follows the link. Never the chat or the app's data.
 
+- The wish to play (`/w/<id>` for a wish sent with its page): a web app, a web game or a screen fills the page, so
+  whoever opens the link tries it first, with a slim bar under it (its name, its line, **Remix…**, which opens the card
+  below over it). Lamp sends the page with the wish's file (`WishLink.playablePage`: the page Put on GitHub puts on
+  GitHub Pages, what it saves kept under the link), zipped, in parts to `api/wish-file.js` with `what=page`; the site
+  unpacks it (`readPage`: index.html at its root, never a link or a path that steps up, at most 3,000 files) into Blob,
+  each version in a folder of its own, and drops the last one. Blob hands HTML out as a download and refuses frames, so
+  the files are served by `api/wish-play.js` (`/w/<id>/play/<version>/<path>`, `createPlayHandler`) only on the link's
+  own host under the play host (`playOrigin`: `<id in hex>.play.lamp.dev`), so one shared page can never read what
+  another saved in the browser, and never on lamp.dev itself; framed only by the site (`frame-ancestors`). A page's
+  version counts up for the link (`pageVersion`), so an address never plays two different pages. The page goes with
+  the wish's file: taking the file away takes the page too. Without a play host, the card shows as before.
 - The page (`/w/<id>`, `lib/shared-wish-page.js`, served by `api/wish-page.js` through a rewrite in `vercel.json`):
   the ideas page with the shared wish's card open on it, the same card (`WishDialog.astro`) the
   ideas page's wishes open in, so it has their Download Lamp (which copies the wish with Lamp's mark, FIRST_IDEA.md)
@@ -19,9 +30,15 @@ open in Lamp", on a Mac), which reviews it before it opens, as any shared file. 
   `og:image` and `twitter:image` with Twitter's large card.
 - The wish's file (`api/wish-file.js`, `createFileHandler` in `lib/shared-wishes.js`), only with the link's secret:
   `PUT ?id=&part=<n>&of=<count>` sends one part as raw bytes (at most 3 MB, since a request to a function holds 4.5 MB),
-  `POST ?id=` puts the parts together, checks the result is a zip whose listing names `lamp-app.json` and is at most 16 MB,
+  `POST ?id=` puts the parts together, checks the result is a zip whose listing names `lamp-app.json` and is at most 48 MB,
   and gives it to the link in place of any it had (in Blob, public at an address with a random part); `DELETE ?id=` takes
   it away. Parts go once they're together; everything goes with the link, and with `scripts/take-down-wish.js`.
+- Following (`GET /api/wishes?id=`, `latest` in `lib/shared-wishes.js`): public, with no quota, for the Lamps that
+  follow a link: `{format: 1, id, name, version, file}`, the file's version counting up each time it's sent again
+  (Update Link), 0 with no file. The count is the link's (`fileVersion`), so a file taken away and sent again later is
+  still newer than any before. The page's "Or open this exact one in Lamp" is `lamp://wish?shared=<id>`
+  (`sharedWishLink` in `lib/wish.js`): Lamp asks this for the file, and the copy it makes follows the link
+  (`Following` in Lamp).
 - The API Lamp talks to (`api/wishes.js`, `lib/shared-wishes.js`): `POST` shares and answers `{id, url, secret}`;
   `PUT ?id=` with `Authorization: Bearer <secret>` changes what the link shows and keeps the link; `DELETE ?id=`
   with the secret takes it down. Lamp keeps the secret in its own folder (`Wish Links.json`, readable only by the
@@ -41,7 +58,13 @@ In the **lamp** Vercel project:
    when `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` aren't set. Preview's records and counters are kept
    apart from production's.
 
-Without either, sharing answers 503 and Lamp says it couldn't share; links already made still open.
+3. Hosts of their own for the pages people play: add the wildcard domain **\*.play.lamp.dev** to the **lamp** project
+   (Vercel serves a wildcard only for a domain on its nameservers) and set `LAMP_PLAY_ORIGIN` to
+   `https://play.lamp.dev` for Production, and `LAMP_SITE_ORIGIN` to the site's (`https://lamp.dev`) if it isn't that.
+   Each link's page runs on a host of its own there, apart from every other link's and from lamp.dev's cookies and
+   API. Until it's set, links show their card and nothing plays.
+
+Without the first two, sharing answers 503 and Lamp says it couldn't share; links already made still open.
 
 ## Limits and privacy
 
@@ -49,8 +72,8 @@ Without either, sharing answers 503 and Lamp says it couldn't share; links alrea
   side) and a square PNG icon (300 KB), checked by their bytes; nothing else. Lamp holds the sharer to the same
   limits and sends the picture as a fresh JPEG, which leaves behind whatever the file carried besides its pixels.
 - `QUOTAS` in `lib/shared-wishes.js`: 10 shares or changes an hour per address, 200 an hour and 1,000 a day overall;
-  60 takedowns an hour per address. A file's parts: 40 an hour per address and 3,000 a day overall (`PART_QUOTAS`);
-  putting them together counts as a share. A file is at most 16 MB (`FILE_LIMITS`). As for bug reports, only expiring counters and a keyed hash of the address are
+  60 takedowns an hour per address. A file's and a page's parts: 200 an hour per address and 3,000 a day overall (`PART_QUOTAS`);
+  putting them together counts as a share. A file, and a page, is at most 48 MB (`FILE_LIMITS`). As for bug reports, only expiring counters and a keyed hash of the address are
   kept. Nothing a request holds is logged.
 - Only the hash of each secret is kept. The page is `noindex`; what the sharer wrote reaches it only as JSON in a
   script that isn't run, which the card reads as text.

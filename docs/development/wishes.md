@@ -362,6 +362,51 @@ like the welcome's wish) and opens as the welcome gives way to the desk, with no
 before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
 links are read as a browser's form writes them too (`Wish.items`: "+" is a space).
 
+#### Sharing a copy and following others
+
+Nobody's copy of a wish is the main one: everyone has their own, and nothing is upstream of anything (`Following`). A
+copy is shared as its Share Link with the wish itself included (`WishLink`, SHARED_WISHES.md in site/: `lamp.dev/w/<id>`,
+the file kept in lamp.dev's Blob store; the card ticks Include the wish itself whenever the wish can go as a file), and
+each Update Link sends the file again, which counts the link's version up. A wish with a page (a web app, a web
+game, a screen: `Publish.hasPage`) sends that too (`WishLink.playablePage`, the page Put on GitHub builds, which
+stays as it is), and its link opens on it, playing, with Remix… in a bar under it: whoever has the link tries the
+wish first and remixes it after (SHARED_WISHES.md). The version is what followers ask for (`latest` in
+lib/shared-wishes.js, `GET /api/wishes?id=`, `WishLink.latest`). The card's "Or open this exact one in Lamp" is `lamp://wish?shared=<id>`
+(`sharedWishLink` in lib/wish.js, `Wish.Shared`): Lamp asks for the file's latest, fetches it and reviews it as any shared
+file (`Store.takeShared`), and the copy it makes follows that link, marked as the one it started from, at the version it
+arrived as (`finishImport`, `Following.brought`).
+
+A wish opened from GitHub follows its repository as before (the chain's last link, `AppUpdates`, Update from GitHub…), so
+that commit moves with each update and goes back with Undo. Any other copy is followed by its link (Follow a Copy… in
+the desk's menu, which takes a Share Link, Lamp's own `wish?shared=`, or a repository's address,
+`Following.copy(fromLink:)`). What a wish follows is kept in Lamp's own folder by the wish's instance (`Following.json`,
+never the wish's folder, which the agent writes and versions carry), in a format that says its number
+(`Following.format`), each copy with its place's kind (`Following.Place`: `lamp` or `github`, so a kind added later reads
+beside them; one this Lamp doesn't know shows as one it can't reach), its sharer's name for it as its link last said, and
+what of theirs was last pulled in (`brought`: a link's version, a repository's commit).
+
+The desk's side panel lists what a wish follows (`FollowingList`, `Store.followingRows`): the copy it started from
+first, then the others, each with what was last heard of it and one button, Pull In once it has something new, else
+Check Again. Each is asked about at most daily, as updates are (a link of lamp.dev, a repository of GitHub with
+`git ls-remote`, nothing fetched), once a launch for every followed copy and every repository a wish came from
+(`Store.checkAllFollowed`), and a newer version of either is a notification, once for each (`Store.tellNew`: `told`, and
+`Following.originTold` for a repository). A link opened during the welcome keeps what it follows beside the waiting
+file (`WaitingImport.following(beside:)`). Pull In on a repository the wish came from is Review Update. On any
+other copy it goes through `Following.pullIn`, the one place the merge experience plugs in: today `ReviewThenMerge`,
+which fetches the copy, shows the review a shared wish gets, and on Update always merges it (`PendingImport.following`,
+`Store.mergeUpdate(…following:)`), never puts it in place, since it's someone else's copy. The merge keeps each copy's
+staged latest at a ref of its own (`Following.incomingRef`, passed to `Upstream.merge` and to the agent's note on
+conflicts), promoted to the copy's accepted ref (`Following.acceptedRef`, `promote`) only once the pull-in succeeded, and
+measures both sides against that once something was pulled in (a link's copy by that ref alone, never a repository
+both came from); before that, against what the two last shared: a repository both chains name, or this wish's own
+repository at the commit their chain names (`Following.base`), else the version this wish arrived as. What it brought
+counts (`brought`) only once it's saved: a clean merge as it's saved, one with conflicts once the agent's turn that
+settles it finished well, or a turn answering one of its questions (`Following.Pending`, `Store.settlePull`), so a
+pull-in that failed is offered again and measured as before. Only the credit for work it
+brings joins the wish's credits (`Mix.creditsTaken`), so where the wish came from stays as it was. A view that makes
+someone's changes understandable and lets the person take part of them takes the same `Following.Offer` in
+`ReviewThenMerge`'s place.
+
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp

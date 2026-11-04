@@ -80,6 +80,17 @@ export function withAsk(wish, ask) {
 }
 
 /**
+ * The link that opens Lamp, on a Mac that has it, on a wish shared as a link with its file (`/w/<id>`): Lamp asks the
+ * site for the file's latest, reviews it as any shared file, and the copy it makes follows that link, so the sharer's
+ * next Update Link is offered to it (`Wish.Shared` and `Following` in Lamp). A request, if one came, is for the box.
+ */
+export function sharedWishLink(id, ask) {
+  if (!id) return null;
+  const request = String(ask ?? "").trim().slice(0, ASK_LIMIT).trim();
+  return `lamp://wish?${query(request ? { shared: String(id), text: request } : { shared: String(id) })}`;
+}
+
+/**
  * The link that opens Lamp, on a Mac that has it, on the exact shared wish (its file's address) with a request in the
  * box: what a shared wish's page offers when a request came with its link. Null without a file, or without a request.
  */

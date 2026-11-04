@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
+import { inflateRawSync } from "node:zlib";
 import { redis, reserve } from "./quota.js";
 
 // A wish shared as a link (lamp.dev/w/<id>): the idea, as the sharer confirmed it in Lamp. Its name, its line,
@@ -22,7 +23,7 @@ export const LIMITS = {
 export const MAX_BODY_BYTES = 2_600_000;
 
 /** The wish itself, a shared file: sent in parts, since a request to a function holds 4.5 MB at most. */
-export const FILE_LIMITS = { part: 3_000_000, parts: 6, total: 16_000_000 };
+export const FILE_LIMITS = { part: 3_000_000, parts: 16, total: 48_000_000 };
 
 // Enough to share and reshare a few wishes in an hour; overall, a ceiling on what a flood could store in a day.
 export const QUOTAS = [
@@ -33,7 +34,8 @@ export const QUOTAS = [
 export const DELETE_QUOTAS = [{ name: "unshare-ip", perIP: true, limit: 60, seconds: 3600 }];
 /** A file's parts: a few files' worth an hour from one address. Putting the parts together counts as a share. */
 export const PART_QUOTAS = [
-  { name: "part-ip", perIP: true, limit: 40, seconds: 3600 },
+  // A share sends the file and its page, each in up to `FILE_LIMITS.parts` parts.
+  { name: "part-ip", perIP: true, limit: 200, seconds: 3600 },
   { name: "part-day", limit: 3000, seconds: 86400 },
 ];
 
@@ -118,10 +120,24 @@ export function readShare(body) {
 export const shown = (record) => record && ({
   id: record.id, name: record.name, line: record.line, words: record.words,
   picture: record.picture, icon: record.icon, file: record.file ?? null, updated: record.updated,
+  page: record.page ? { version: record.page.version } : null,
 });
 
 /** Every file kept for a record: its pictures, the wish's file and any parts of one still being sent. */
-const blobsOf = (record) => [record?.picture?.url, record?.icon?.url, record?.file?.url, ...Object.values(record?.parts?.urls ?? {})].filter(Boolean);
+const blobsOf = (record) => [record?.picture?.url, record?.icon?.url, record?.file?.url, ...Object.values(record?.parts?.urls ?? {}),
+  ...pageBlobs(record), ...Object.values(record?.pageParts?.urls ?? {})].filter(Boolean);
+const pageBlobs = (record) => Object.values(record?.page?.files ?? {});
+
+/**
+ * What anyone's Lamp asks of a link it follows (`GET /api/wishes?id=`): the format of the answer, and the version of
+ * the wish's file, which goes up each time the sharer sends it again (Update Link), with the file's address. Version 0
+ * and no file for a link that carries none. Never the secret or anything a follower doesn't need.
+ */
+export const FOLLOW_FORMAT = 1;
+export const latest = (record) => ({
+  format: FOLLOW_FORMAT, id: record.id, name: record.name,
+  version: record.file ? (record.file.version ?? 1) : 0, file: record.file?.url ?? null,
+});
 
 /** The link people pass around. */
 export const linkFor = (origin, id) => `${origin}/w/${id}`;
@@ -181,6 +197,15 @@ export function cloudStore(env, fetcher = fetch) {
       });
       return blob.url;
     },
+    // One file of a playable page, under the version's own random folder: read back by the play handler, never served
+    // from Blob itself (which hands HTML out as a download).
+    async putPageFile(id, token, path, bytes) {
+      const { put } = await import("@vercel/blob");
+      const blob = await put(`${scope}/w/${id}/page/${token}/${path}`, bytes, {
+        access: "public", contentType: "application/octet-stream", addRandomSuffix: false, cacheControlMaxAge: 300, ...auth,
+      });
+      return blob.url;
+    },
     async readFile(url) {
       const address = new URL(url);
       if (address.protocol !== "https:" || !address.hostname.endsWith(".public.blob.vercel-storage.com")) throw new Error("Not the store's");
@@ -201,7 +226,7 @@ export function cloudStore(env, fetcher = fetch) {
 
 /** Kept in memory, for `npm run dev` and the tests: pictures as data: URLs, so nothing else needs serving. */
 export function memoryStore() {
-  const records = new Map();
+  const records = new Map(), pages = new Map();
   return {
     limiter: null,
     records,
@@ -212,7 +237,8 @@ export function memoryStore() {
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
     async removeImages() {},
     async putFile(_id, _name, bytes) { return `data:application/octet-stream;base64,${bytes.toString("base64")}`; },
-    async readFile(url) { return Buffer.from(url.slice(url.indexOf(",") + 1), "base64"); },
+    async putPageFile(id, token, path, bytes) { const at = `memory:${id}/${token}/${path}`; pages.set(at, Buffer.from(bytes)); return at; },
+    async readFile(url) { return url.startsWith("memory:") ? pages.get(url) : Buffer.from(url.slice(url.indexOf(",") + 1), "base64"); },
     async forget() {},
   };
 }
@@ -254,12 +280,21 @@ const bearer = (request) => /^Bearer (\S+)$/.exec(request.headers.get("authoriza
 export function createShareHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
   return async (request) => {
     const method = request.method;
-    if (!["POST", "PUT", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "POST, PUT, DELETE" });
+    if (!["GET", "POST", "PUT", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "GET, POST, PUT, DELETE" });
     const url = new URL(request.url);
     const origin = request.headers.get("origin");
     if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
     const id = url.searchParams.get("id");
     if (method !== "POST" && !isID(id)) return reply(404, { error: "not_found" });
+    // Asked by the Lamps that follow this link: public, as the page is, and cheap (one read, no quota).
+    if (method === "GET") {
+      let kept;
+      try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
+      try {
+        const record = await kept.get(id);
+        return record ? reply(200, latest(record)) : reply(404, { error: "not_found" });
+      } catch { return reply(503, { error: "service_unavailable" }); }
+    }
 
     let share = null;
     if (method !== "DELETE") {
@@ -341,6 +376,112 @@ export async function takeDown(id, { env = process.env, fetcher = fetch } = {}) 
   return true;
 }
 
+// MARK: The wish's page
+
+/** The most a playable page may hold: as many bytes as the wish's file, in at most this many files. */
+export const PAGE_LIMITS = { files: 3000, total: FILE_LIMITS.total };
+
+/**
+ * A zip's files, read from its central directory: stored or deflated, never a link, a folder, an absolute path or one
+ * that steps up. Null for anything else, or past the limits, counting what they unpack to.
+ */
+export function readZip(bytes, limits = PAGE_LIMITS) {
+  if (bytes.length < 22 || bytes.readUInt32LE(0) !== 0x04034b50) return null;
+  const end = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (end < Math.max(0, bytes.length - 65_557)) return null;
+  const count = bytes.readUInt16LE(end + 10), size = bytes.readUInt32LE(end + 12), offset = bytes.readUInt32LE(end + 16);
+  if (offset + size > end || count > limits.files) return null;
+  const files = [];
+  let total = 0;
+  for (let at = offset, n = 0; n < count; n++) {
+    if (at + 46 > end || bytes.readUInt32LE(at) !== 0x02014b50) return null;
+    const method = bytes.readUInt16LE(at + 10), packed = bytes.readUInt32LE(at + 20), unpacked = bytes.readUInt32LE(at + 24);
+    const nameLength = bytes.readUInt16LE(at + 28), extra = bytes.readUInt16LE(at + 30), comment = bytes.readUInt16LE(at + 32);
+    const external = bytes.readUInt32LE(at + 38), local = bytes.readUInt32LE(at + 42);
+    const path = bytes.toString("utf8", at + 46, at + 46 + nameLength);
+    at += 46 + nameLength + extra + comment;
+    if (path.endsWith("/")) continue;
+    // A link (its Unix mode in the high bits) never goes up.
+    if (((external >>> 16) & 0o170000) === 0o120000) return null;
+    if (!path || path.startsWith("/") || path.includes("\\") || path.split("/").some((part) => part === ".." || part === "" || part === ".")) return null;
+    if (path.split("/").some((part) => part.startsWith(".")) || path.startsWith("__MACOSX/")) continue;
+    total += unpacked;
+    if (total > limits.total) return null;
+    if (local + 30 > bytes.length || bytes.readUInt32LE(local) !== 0x04034b50) return null;
+    const start = local + 30 + bytes.readUInt16LE(local + 26) + bytes.readUInt16LE(local + 28);
+    const data = bytes.subarray(start, start + packed);
+    let content;
+    try { content = method === 0 ? Buffer.from(data) : method === 8 ? inflateRawSync(data, { maxOutputLength: Math.max(1, unpacked) }) : null; }
+    catch { return null; }
+    if (!content || content.length !== unpacked) return null;
+    files.push({ path, bytes: content });
+  }
+  return files;
+}
+
+/** A playable page: a zip with index.html at its root (`WishLink.playablePage` in Lamp). Null for anything else. */
+export function readPage(bytes) {
+  const files = readZip(bytes);
+  return files && files.some((file) => file.path === "index.html") ? files : null;
+}
+
+/** What a page's file is served as, by its extension: anything unknown as bytes, never guessed from what's in it. */
+export function pageType(path) {
+  const types = {
+    html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", mjs: "text/javascript; charset=utf-8",
+    css: "text/css; charset=utf-8", json: "application/json", map: "application/json", txt: "text/plain; charset=utf-8",
+    svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+    avif: "image/avif", ico: "image/x-icon", wasm: "application/wasm", mp3: "audio/mpeg", ogg: "audio/ogg", wav: "audio/wav",
+    m4a: "audio/mp4", mp4: "video/mp4", webm: "video/webm", woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf",
+    glb: "model/gltf-binary", gltf: "model/gltf+json", bin: "application/octet-stream", xml: "application/xml",
+  };
+  return types[path.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream";
+}
+
+/**
+ * Where a link's page plays: a host of its own under the play host (`LAMP_PLAY_ORIGIN`, say https://play.lamp.dev),
+ * one for each link, so no shared page can read what another saved in the browser, nor anything of lamp.dev's. The id
+ * is written in hex, since a host name doesn't keep the id's upper and lower case apart. Null without a play host.
+ */
+export function playOrigin(base, id) {
+  if (!base || !isID(id)) return null;
+  const url = new URL(base);
+  return `${url.protocol}//${Buffer.from(id).toString("hex")}.${url.host}`;
+}
+
+/**
+ * The page a link plays, one file at a time (`/w/<id>/play/<version>/<path>`): only on that link's own play host
+ * (`playOrigin`), only into a frame on the site's own pages, and only the version the link has now. Each version's
+ * files never change, so the CDN keeps them.
+ */
+export function createPlayHandler({ env = process.env, fetcher = fetch, store, anyHost = false } = {}) {
+  return async (request) => {
+    if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
+    const url = new URL(request.url);
+    const id = url.searchParams.get("id"), version = Number(url.searchParams.get("v"));
+    const own = playOrigin(env.LAMP_PLAY_ORIGIN, id);
+    if (!anyHost && (!own || url.host !== new URL(own).host)) return new Response(null, { status: 404 });
+    const path = url.searchParams.get("path") || "index.html";
+    const missing = () => new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
+    if (!isID(id) || !Number.isInteger(version)) return missing();
+    let record;
+    try { record = await (store ?? cloudStore(env, fetcher)).get(id); } catch { return new Response(null, { status: 503 }); }
+    const at = record?.page?.version === version ? record.page.files[path] : null;
+    if (!at) return missing();
+    let bytes;
+    try { bytes = await (store ?? cloudStore(env, fetcher)).readFile(at); } catch { return new Response(null, { status: 503 }); }
+    const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
+    return new Response(request.method === "HEAD" ? null : bytes, {
+      headers: {
+        "Content-Type": pageType(path), "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+        // Framed only by the link's page; frame-ancestors takes the place of the site's X-Frame-Options.
+        "Content-Security-Policy": `frame-ancestors ${site}`,
+        "Cache-Control": "public, max-age=300, s-maxage=31536000", ...cacheTags(id),
+      },
+    });
+  };
+}
+
 // MARK: The wish itself
 
 /** A shared file Lamp made: a zip whose listing names lamp-app.json, the file every shared wish has at its root. */
@@ -380,6 +521,9 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
     if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
     const id = url.searchParams.get("id");
     if (!isID(id)) return reply(404, { error: "not_found" });
+    // The wish's file, or (`what=page`) its playable page, sent and put together the same way.
+    const page = url.searchParams.get("what") === "page";
+    const partsKey = page ? "pageParts" : "parts";
 
     let part = null;
     if (method === "PUT") {
@@ -410,36 +554,70 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       if (!record || !secretMatches(bearer(request), record.secret)) return reply(404, { error: "not_found" });
       if (method === "PUT") {
         // A new count starts a new file: parts of an earlier one that never came together go.
-        const parts = record.parts?.of === part.of ? record.parts : { of: part.of, urls: {} };
-        const stale = record.parts && record.parts !== parts ? Object.values(record.parts.urls) : [];
+        const earlier = record[partsKey];
+        const parts = earlier?.of === part.of ? earlier : { of: part.of, urls: {} };
+        const stale = earlier && earlier !== parts ? Object.values(earlier.urls) : [];
         const replaced = parts.urls[part.n];
-        const at = await kept.putFile(id, `part-${part.n}`, part.bytes);
+        const at = await kept.putFile(id, `${page ? "page-part" : "part"}-${part.n}`, part.bytes);
         uploaded.push(at);
         // Taken down while the part went up: nothing leads to it, so it goes now (the catch below takes it away).
-        if (!(await kept.replace({ ...record, parts: { of: parts.of, urls: { ...parts.urls, [part.n]: at } } }))) throw new Error("Gone");
+        if (!(await kept.replace({ ...record, [partsKey]: { of: parts.of, urls: { ...parts.urls, [part.n]: at } } }))) throw new Error("Gone");
         uploaded = [];
         await kept.removeImages([...stale, replaced].filter(Boolean));
         return reply(204);
       }
       if (method === "DELETE") {
-        const gone = [record.file?.url, ...Object.values(record.parts?.urls ?? {})].filter(Boolean);
-        const { file: _file, parts: _parts, ...rest } = record;
-        await kept.replace({ ...rest, file: null, updated: now().toISOString() });
+        // The page goes with the wish itself: a link that no longer carries the wish has nothing to play.
+        const gone = [...pageBlobs(record), ...Object.values(record.pageParts?.urls ?? {}),
+          ...(page ? [] : [record.file?.url, ...Object.values(record.parts?.urls ?? {})])].filter(Boolean);
+        const { page: _page, pageParts: _pageParts, ...rest } = record;
+        // The count stays with the link, so a file sent again later is newer to its followers than any before.
+        const next = { ...(page ? rest : { ...rest, file: null, parts: undefined, fileVersion: record.file?.version ?? record.fileVersion }),
+          pageVersion: record.page?.version ?? record.pageVersion };
+        await kept.replace({ ...next, updated: now().toISOString() });
         await kept.removeImages(gone);
         await kept.forget(id);
         return reply(204);
       }
-      const parts = record.parts;
+      const parts = record[partsKey];
       if (!parts || Object.keys(parts.urls).length !== parts.of) return reply(409, { error: "parts_missing" });
       const pieces = [];
       for (let n = 0; n < parts.of; n++) pieces.push(await kept.readFile(parts.urls[n]));
       const bytes = Buffer.concat(pieces);
       if (bytes.length > FILE_LIMITS.total) return reply(413, { error: "file_too_large" });
+      if (page) {
+        const files = readPage(bytes);
+        if (!files) return reply(400, { error: "invalid_page" });
+        // Each version in a folder of its own, under a random part, so an old one never mixes with a new one.
+        const token = randomBytes(12).toString("base64url");
+        const urls = {};
+        // A few at a time: a page can be hundreds of files.
+        for (let n = 0; n < files.length; n += 8) {
+          await Promise.all(files.slice(n, n + 8).map(async (file) => {
+            urls[file.path] = await kept.putPageFile(id, token, file.path, file.bytes);
+            uploaded.push(urls[file.path]);
+          }));
+        }
+        // The count is the link's (`pageVersion`), so a page taken away and sent again never reuses a play address.
+        const version = (record.page?.version ?? record.pageVersion ?? 0) + 1;
+        const { pageParts: _pageParts, ...rest } = record;
+        if (!(await kept.replace({ ...rest, page: { version, files: urls }, pageVersion: version, updated: now().toISOString() }))) {
+          await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
+          uploaded = [];
+          return reply(404, { error: "not_found" });
+        }
+        uploaded = [];
+        await kept.removeImages([...pageBlobs(record), ...Object.values(parts.urls)]);
+        await kept.forget(id);
+        return reply(200, { version, files: files.length });
+      }
       if (!isWishFile(bytes)) return reply(400, { error: "invalid_file" });
       const at = await kept.putFile(id, fileName(record.name), bytes);
       uploaded.push(at);
       const { parts: _parts, ...rest } = record;
-      if (!(await kept.replace({ ...rest, file: { url: at, size: bytes.length }, updated: now().toISOString() }))) {
+      // Each file sent counts up, so the Lamps that follow the link can tell a newer one (`latest`).
+      const version = (record.file?.version ?? (record.file ? 1 : record.fileVersion ?? 0)) + 1;
+      if (!(await kept.replace({ ...rest, file: { url: at, size: bytes.length, version }, fileVersion: version, updated: now().toISOString() }))) {
         // Taken down meanwhile: the file and its parts go with it.
         await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
         uploaded = [];

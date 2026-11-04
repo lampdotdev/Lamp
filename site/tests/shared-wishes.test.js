@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, createFileHandler, memoryStore, readShare, imageInfo, isID, isWishFile, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, createPlayHandler, memoryStore, readShare, imageInfo, isID, isWishFile, readZip, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -91,7 +91,8 @@ test("browsers on other sites, other kinds of body and oversized ones are refuse
   assert.equal((await send(handler, "POST", JSON.stringify(share), { type: "text/plain" })).status, 415);
   assert.equal((await send(handler, "POST", "{")).status, 400);
   assert.equal((await send(handler, "POST", { ...share, words: "x".repeat(3_000_000) })).status, 413);
-  assert.equal((await send(handler, "GET")).status, 405);
+  assert.equal((await send(handler, "PATCH")).status, 405);
+  assert.equal((await send(handler, "GET")).status, 404, "a follower asks by id");
 });
 
 test("without its store or quota it answers unavailable rather than sharing", async () => {
@@ -176,6 +177,20 @@ test("the wish itself goes with its link in parts, only as a file Lamp made, and
   const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.match(await page.text(), /"file":"data:application\/octet-stream;base64,[^"]+","fileSize":\d+/);
 
+  // Lamps that follow the link see the file's version, and each file sent again counts up; never the secret.
+  const latest = async () => (await handler(new Request(`https://lamp.dev/api/wishes?id=${id}`))).json();
+  assert.deepEqual(Object.keys(await latest()).sort(), ["file", "format", "id", "name", "version"]);
+  assert.equal((await latest()).version, 1);
+  assert.equal((await part(0, 1, file)).status, 204);
+  assert.equal((await finish()).status, 200);
+  assert.equal((await latest()).version, 2);
+  // Taken away and sent again, it's still newer than any before.
+  assert.equal((await files(new Request(`https://lamp.dev/api/wish-file?id=${id}`, { method: "DELETE", headers: { authorization: `Bearer ${secret}` } }))).status, 204);
+  assert.equal((await latest()).version, 0);
+  assert.equal((await part(0, 1, file)).status, 204);
+  assert.equal((await finish()).status, 200);
+  assert.equal((await latest()).version, 3);
+
   // A word-only update keeps the file; taking the link down takes it too.
   assert.equal((await send(handler, "PUT", { ...share, name: "Plant Friend" }, { id, secret })).status, 200);
   assert.ok(store.records.get(id).file);
@@ -202,4 +217,49 @@ test("the site and Lamp agree on the limits", () => {
   for (const [name, value] of Object.entries({ name: LIMITS.name, line: LIMITS.line, words: LIMITS.words })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }
+});
+
+test("a link's page plays only from the play host, framed by the site, and Remix… waits behind it", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const files = createFileHandler({ store, limited: false });
+  const { id, secret } = await (await send(handler, "POST", share)).json();
+  const send_ = (what, method, body, query = "") => files(new Request(`https://lamp.dev/api/wish-file?id=${id}${what}${query}`, {
+    method, headers: { authorization: `Bearer ${secret}`, ...(body ? { "content-type": "application/octet-stream" } : {}) }, ...(body ? { body } : {}),
+  }));
+  assert.equal((await send_("", "PUT", zip("lamp-app.json", Buffer.alloc(10, 1)), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("", "POST")).status, 200);
+  assert.equal(readZip(zip("../index.html", Buffer.from("x"))), null, "never a path that steps up");
+  assert.equal((await send_("&what=page", "PUT", zip("other.html", Buffer.from("x")), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "POST")).status, 400, "a page has index.html at its root");
+  const html = Buffer.from("<!doctype html><title>Plant Pal</title><script src=lamp.js></script>");
+  assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "POST")).status, 200);
+
+  const env = { LAMP_PLAY_ORIGIN: "https://play.lamp.dev", LAMP_SITE_ORIGIN: "https://lamp.dev" };
+  const play = createPlayHandler({ store, env });
+  const own = `${Buffer.from(id).toString("hex")}.play.lamp.dev`;
+  const served = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index.html`));
+  assert.equal(served.status, 200);
+  assert.match(served.headers.get("content-type"), /^text\/html/);
+  assert.equal(served.headers.get("content-security-policy"), "frame-ancestors https://lamp.dev");
+  assert.deepEqual(Buffer.from(await served.arrayBuffer()), html);
+  assert.equal((await play(new Request(`https://lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "never on the site's own host");
+  assert.equal((await play(new Request(`https://play.lamp.dev/api/wish-play?id=${id}&v=1&path=index.html`))).status, 404, "only on the link's own host");
+  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=2&path=index.html`))).status, 404, "only the version it has");
+
+  const ideas = "<html><head><title>Ideas</title></head><body></body></html>";
+  const page = await (await createPageHandler({ store, env, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.match(page, new RegExp(`<iframe src="https://${own}/w/${id}/play/1/index.html"`));
+  assert.match(page, /data-remix-shared/);
+  assert.match(page, /"play":true/);
+  const without = await (await createPageHandler({ store, env: {}, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
+  assert.doesNotMatch(without, /<iframe/, "with no play host, nothing plays");
+
+  // The page goes with the wish itself, and one sent again later plays at a new address.
+  assert.equal((await send_("", "DELETE")).status, 204);
+  assert.equal(store.records.get(id).page, undefined);
+  assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "POST")).status, 200);
+  assert.equal(store.records.get(id).page.version, 2);
 });

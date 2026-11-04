@@ -73,7 +73,7 @@ const { place } = Astro.props;
 </dialog>
 
 <script>
-  import { askFrom, copyWish, exactWishLink, withAsk, wishLink } from "../../lib/wish.js";
+  import { askFrom, copyWish, exactWishLink, sharedWishLink, withAsk, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
 
   const dialog = document.querySelector<HTMLDialogElement>("[data-wish]")!;
@@ -94,7 +94,7 @@ const { place } = Astro.props;
   text.addEventListener("input", fit);
 
   // A wish whose words name its device (the TV, a watch) needs no platform: Lamp goes by the words.
-  type Idea = { name: string; about: string; wish: string; platform?: string; picture: string; icon: string; file?: string; fileSize?: number };
+  type Idea = { name: string; about: string; wish: string; platform?: string; picture: string; icon: string; file?: string; fileSize?: number; shared?: string; play?: boolean };
   const fileLink = dialog.querySelector<HTMLAnchorElement>("[data-file]")!;
   const device = dialog.querySelector<HTMLElement>("[data-device]")!;
   const stage = dialog.querySelector<HTMLElement>("[data-stage]")!;
@@ -133,11 +133,11 @@ const { place } = Astro.props;
     fileLink.hidden = !current.file || openLink.hidden;
     if (current.file) {
       const size = current.fileSize ? ` (${Math.max(1, Math.round(current.fileSize / 1_000_000))} MB)` : "";
-      // A request that came with the link goes with the exact wish: Lamp opens on the link, fetches the file itself,
-      // reviews it as any shared file, and has the request in the box (`Wish.Exact` in Lamp).
-      const direct = asked ? exactWishLink(current.file, asked) : null;
+      // A wish shared as a link opens in Lamp by the link itself, so the copy follows it (`sharedWishLink`); a request
+      // that came with the link goes with it. Without the link's id, the file's own address (`Wish.Exact` in Lamp).
+      const direct = current.shared ? sharedWishLink(current.shared, asked) : asked ? exactWishLink(current.file, asked) : null;
       fileLink.href = direct ?? current.file;
-      fileLink.textContent = direct ? `Or open this exact one in Lamp, with your request${size}` : `Or get this exact one, to open in Lamp${size}`;
+      fileLink.textContent = direct ? `Or open this exact one in Lamp${asked ? ", with your request" : ""}${size}` : `Or get this exact one, to open in Lamp${size}`;
     }
     go.textContent = "Download Lamp";
     if (requirement) requirement.hidden = true;
@@ -162,10 +162,16 @@ const { place } = Astro.props;
   if (shared || asked) {
     const idea: Idea = shared ? (JSON.parse(shared) as Idea) : { name: "Your wish", about: "From an app made with Lamp", wish: "", picture: "", icon: "" };
     if (asked) idea.wish = withAsk(idea.wish, asked);
-    open(idea, "", shared ? "shared" : "remix");
-    // Opened while the page is still loading, the box is sized again once it has its width.
-    requestAnimationFrame(fit);
-    addEventListener("load", fit, { once: true });
+    // A wish to play is tried first: its card waits for the bar's Remix… (lib/shared-wish-page.js), unless a request
+    // came with the link.
+    const show = () => {
+      open(idea, "", shared ? "shared" : "remix");
+      // Opened while the page is still loading, the box is sized again once it has its width.
+      requestAnimationFrame(fit);
+      addEventListener("load", fit, { once: true });
+    };
+    document.querySelector("[data-remix-shared]")?.addEventListener("click", show);
+    if (!idea.play || asked) show();
   }
 
   dialog.querySelector("[data-close]")!.addEventListener("click", () => dialog.close());
