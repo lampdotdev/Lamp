@@ -18,11 +18,42 @@ struct SetupCheck {
     var installerSeen = false
     /// The person came back to Lamp while it was open: they've been through its buttons, so it's installing.
     var backFromInstaller = false
+    /// Apple's tools are on this Mac but can't build a Mac app with them as they are (`hasBuildTools` is then false).
+    var repair: ToolsRepair?
+
+    /// Why the tools an app's build uses can't build a Mac app, each with the one thing that sets it right. None of them is
+    /// the app's code: a build that fails for one of these waits for it to be put right rather than going to the agent.
+    enum ToolsRepair: Equatable {
+        /// The Command Line Tools in use have no macOS SDK, as an update that stopped halfway or a removed folder leaves
+        /// them: installed again, they have one.
+        case reinstallTools
+        /// The Xcode builds use still has Apple's terms to accept.
+        case xcodeAgreement(developer: String)
+        /// The Xcode builds use has no macOS SDK, or is gone: installed again, it has one where it was.
+        case reinstallXcode
+
+        var text: String {
+            switch self {
+            case .reinstallTools: return "Apple's app-building tools on this Mac are incomplete. Reinstall them to build apps."
+            case .xcodeAgreement: return "Xcode needs you to accept Apple's terms before apps can be built."
+            case .reinstallXcode: return "Xcode on this Mac can't build Mac apps as it is. Reinstall it from the App Store."
+            }
+        }
+
+        var button: String {
+            switch self {
+            case .reinstallTools: return "Reinstall…"
+            case .xcodeAgreement: return "Open Xcode"
+            case .reinstallXcode: return "Open App Store"
+            }
+        }
+    }
 
     /// Where the install of the tools has got to, for the screens that show it.
-    enum InstallStage { case notAsked, inApplesWindow, installing, failed, installed }
+    enum InstallStage { case notAsked, inApplesWindow, installing, failed, installed, needsRepair }
     var installStage: InstallStage {
         if hasBuildTools { return .installed }
+        if repair != nil { return .needsRepair }
         if !installRequested { return .notAsked }
         if installerOpen { return backFromInstaller ? .installing : .inApplesWindow }
         // Closed again, or never opened: either way the person needs Try Again, not instructions.
@@ -44,9 +75,12 @@ struct SetupCheck {
         await EngineSignIn.refresh(olderThan: 5)
         let engine = Builder.engine
         let signedOut = await MainActor.run { engine != .pi && EngineSignIn.known[engine] == false }
-        var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(),
+        let installed = buildToolsInstalled()
+        let repair = installed ? macSDKRepair() : nil
+        var check = SetupCheck(checked: true, hasBuildTools: installed && repair == nil,
                                builderProblem: Builder.problem() ?? (signedOut ? "Sign in to \(engine.title) to build." : nil),
                                hasAgent: Agent.executable != nil)
+        check.repair = repair
         check.installerOpen = installerIsOpen()
         return check.keeping(previous)
     }
@@ -73,6 +107,48 @@ struct SetupCheck {
         guard select.ok, !developer.isEmpty else { return false }
         return fm.isExecutableFile(atPath: developer + "/usr/bin/swift")
             || fm.isExecutableFile(atPath: developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift")
+    }
+
+    /// Whether the developer folder and macOS SDK an app's build would take are there and work: the same lines the build
+    /// starts with (`Shell.compatibleSDK`), then the SDK xcrun names, in the environment the build gets (`Pretend`'s
+    /// folder, the Xcode Lamp chose for itself in `DEVELOPER_DIR`). nil when they do, or when the look itself couldn't
+    /// be made: then the build is left to say. Asked only once a compiler was found (`buildToolsInstalled`): on a Mac
+    /// with no tools at all, xcrun opens Apple's installer. Never xcrun's cache, which the agent's commands can write.
+    static func macSDKRepair(env: [String: String] = Pretend.buildEnvironment,
+                             run: ([String: String]) -> Subprocess.Result = { env in
+                                 Subprocess.runBlocking("/bin/zsh", ["-f", "-c", sdkLook], env: env, mergeErrors: false, timeout: 30)
+                             }) -> ToolsRepair? {
+        let look = run(env)
+        guard !look.ok, !look.timedOut, look.status != -1 else { return nil }
+        return repair(developer: DeveloperTools.folder(env: env), said: look.output + look.errors)
+    }
+
+    /// What sets right a developer folder whose macOS SDK can't be found, from where it is and what xcrun said.
+    static func repair(developer: String, said: String) -> ToolsRepair {
+        // A folder inside an app is Xcode's, even once the app is gone: installed again, it's back where it was.
+        guard developer.contains(".app/") else { return .reinstallTools }
+        return said.lowercased().contains("license") ? .xcodeAgreement(developer: developer) : .reinstallXcode
+    }
+
+    /// Prints the SDK a build would use, or fails as the build would.
+    static let sdkLook = Shell.compatibleSDK + #"""
+    sdk="${SDKROOT:-$(/usr/bin/xcrun --no-cache --sdk macosx --show-sdk-path)}" || exit 1
+    [[ -n "$sdk" && ( -e "$sdk/SDKSettings.json" || -e "$sdk/SDKSettings.plist" ) ]] || { print -u2 "No macOS SDK at '$sdk'."; exit 1 }
+    print -r -- "$sdk"
+
+    """#
+
+    /// The folder Apple's installer puts the Command Line Tools in.
+    static let commandLineTools = "/Library/Developer/CommandLineTools"
+
+    /// Takes away Command Line Tools that have no macOS SDK, after macOS asks the person for their password, so Apple's
+    /// installer puts them there again: it won't while they're there. Only that folder, and only while it's the one
+    /// builds use. False when the person said no or it couldn't be removed.
+    static func removeIncompleteTools() async -> Bool {
+        guard DeveloperTools.folder(env: Pretend.buildEnvironment) == commandLineTools else { return true }
+        let script = "do shell script \"/bin/rm -rf \(commandLineTools)\" with administrator privileges"
+            + " with prompt \"Lamp needs to remove Apple's incomplete app-building tools to install them again.\""
+        return await Subprocess.run("/usr/bin/osascript", ["-e", script], timeout: nil).ok
     }
 
     /// The app macOS opens for `xcode-select --install`: the Command Line Tools' own installer.

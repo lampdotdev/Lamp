@@ -141,7 +141,7 @@ extension ChatLook {
         }
     }
 
-    /// Something every chat waits on (Apple's tools installing), above the chat, with its button.
+    /// Something every chat waits on (Apple's tools installing, or needing repair), above the chat, with its button.
     public struct Banner: View {
         let banner: SidebarBanner
         let action: () -> Void
@@ -153,7 +153,11 @@ extension ChatLook {
 
         public var body: some View {
             HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
+                if banner.needsYou == true {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
                 Text(banner.text).font(.callout).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 if let button = banner.button { Button(button, action: action).controlSize(.small) }

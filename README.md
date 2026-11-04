@@ -171,6 +171,7 @@ Local models are slower and much less capable than the best cloud models for who
 ## Troubleshooting
 
 - **`xcrun: error: invalid active developer path`**: the Command Line Tools are missing or broken after a macOS update. Run `xcode-select --install`.
+- **Lamp says Apple's app-building tools are incomplete, or that Xcode can't build Mac apps**: the tools Lamp builds with have no macOS SDK it can use. Click the button beside the notice (Reinstall…, Open Xcode or Open App Store); Lamp checks again by itself and builds once they work.
 - **Builds fail with "You have not agreed to the Xcode license"** (full Xcode only): run `sudo xcodebuild -license accept`.
 - **Builds fail with "plugin for module 'SwiftUIMacros' not found"**: the macOS 27 SDK needs a compiler plugin that only ships with full Xcode. With just the Command Line Tools, Lamp builds against the newest older SDK they include, so this only happens when there isn't one. Install Xcode, or an older Command Line Tools SDK.
 - **`Downloading pi` fails during `./build.sh`**: GitHub must be reachable. The download is cached in `vendor/` afterwards.

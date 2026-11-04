@@ -468,7 +468,10 @@ final class SidebarServer {
         state.intro = log.isEmpty && (store.queued[project.id] ?? []).isEmpty ? intro(for: project, busy: busy, draft: draft.text) : nil
         // Only for a wish that needs them, once they're asked for: a wish that's only being used doesn't, nor is a game
         // or a screen made with them.
-        if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project)
+        // Tools that need repair are said before anything is asked: nothing would build until they're put right.
+        if store.setup.checked, let repair = store.setup.repair, store.needsAppleTools(project) {
+            state.banner = SidebarBanner(text: repair.text + " Anything you ask for starts once they can.", button: repair.button, needsYou: true)
+        } else if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project)
             && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) {
             state.banner = SidebarBanner(text: "Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.",
                                          button: store.setup.installRequested ? "Show Installer" : "Install…")
@@ -1391,7 +1394,7 @@ final class SidebarServer {
         case .moreIdeas:
             ideaDecks[project.id]?.more()
         case .banner:
-            if store.setup.installRequested { SetupCheck.showInstaller() } else { store.requestBuildTools() }
+            store.fixBuildTools()
         case .scrolled(let line):
             readingAt[project.id] = line
         case .hello:

@@ -34,8 +34,9 @@ struct ContentView: View {
 
     private var main: some View {
         VStack(spacing: 0) {
-            // While they install, or while a request waits for them: games and screens are made without them.
-            if store.setup.checked && !store.setup.hasBuildTools && (store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) { BuildToolsBanner() }
+            // While they install, while a request waits for them, or while they need repair: games and screens are made without them.
+            if store.setup.checked && !store.setup.hasBuildTools
+                && (store.setup.repair != nil || store.setup.installRequested || (store.setup.hasBuilder && store.waitsForAppleTools)) { BuildToolsBanner() }
             WishDesk()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -283,14 +284,17 @@ struct BuildToolsBanner: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
-            Text("Installing Apple's app-building tools. Apps that need them start as soon as they're in.")
-                .font(.callout)
-            Spacer()
-            Button(store.setup.installRequested ? "Show Installer" : "Install…") {
-                if store.setup.installRequested { SetupCheck.showInstaller() } else { store.requestBuildTools() }
+            if let repair = store.setup.repair {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(repair.text).font(.callout)
+            } else {
+                ProgressView().controlSize(.small)
+                Text("Installing Apple's app-building tools. Apps that need them start as soon as they're in.")
+                    .font(.callout)
             }
-            .controlSize(.small)
+            Spacer()
+            Button(store.setup.repair?.button ?? (store.setup.installRequested ? "Show Installer" : "Install…"), action: store.fixBuildTools)
+                .controlSize(.small)
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
         .background(.bar)

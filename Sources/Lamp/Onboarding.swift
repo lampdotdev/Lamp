@@ -351,7 +351,7 @@ private struct SetupStep: View {
         }
         .onAppear {
             if store.setup.hasBuildTools { Analytics.capture(.welcomeToolsReady, ["already_installed": true]) }
-            if !store.setup.hasBuildTools && !store.setup.installRequested {
+            if !store.setup.hasBuildTools && store.setup.repair == nil && !store.setup.installRequested {
                 store.requestBuildTools()
                 Analytics.capture(.welcomeToolsInstall, ["by": "automatic"])
             }
@@ -438,6 +438,9 @@ private struct ToolsCard: View {
                 case .failed:
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.system(size: 20)).foregroundStyle(.white, .orange)
+                case .needsRepair:
+                    Button(store.setup.repair?.button ?? "Reinstall…", action: store.fixBuildTools)
+                        .buttonStyle(PaperButtonStyle(.ink))
                 case .notAsked:
                     Button("Install") {
                         store.requestBuildTools()
@@ -471,6 +474,8 @@ private struct ToolsCard: View {
             }
         case .installed:
             Text("Installed.")
+        case .needsRepair:
+            Text(store.setup.repair?.text ?? "")
         }
     }
 }
