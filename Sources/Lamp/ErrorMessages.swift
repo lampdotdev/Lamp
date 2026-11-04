@@ -23,6 +23,33 @@ enum ErrorMessages {
     /// A turn's change that was made but couldn't be saved as a version.
     static let versionNotSaved = "Lamp couldn't save this change as a version. It's in your app, and your next change will save both."
 
+    /// The person's chat (its lines, what's typed in its box, a file sent with it) couldn't be written. It's still in
+    /// Lamp's memory, above every chat and on the desk until Try Again writes it (`Store.saveTrouble`).
+    static let chatNotSavedDiskFull = "Lamp couldn't save your chat. Free up disk space, then click Try Again."
+    static let chatNotSaved = "Lamp couldn't save your chat. Click Try Again."
+
+    /// A failed write whose own error, or one beneath it, says the disk is full; or one that says nothing of why, on a
+    /// disk with next to nothing left.
+    static func isOutOfSpace(_ error: Error) -> Bool {
+        var said: [String] = []
+        var next: NSError? = error as NSError
+        while let current = next {
+            if current.domain == NSPOSIXErrorDomain, [Int(ENOSPC), Int(EDQUOT)].contains(current.code) { return true }
+            if current.domain == NSCocoaErrorDomain, current.code == NSFileWriteOutOfSpaceError { return true }
+            said.append(current.localizedDescription)
+            next = current.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return isOutOfSpace(said)
+    }
+
+    /// The disk is full: something said so, or there's next to nothing left on it.
+    static func isOutOfSpace(_ output: [String]) -> Bool {
+        if output.contains(where: { $0.localizedCaseInsensitiveContains("no space left") || $0.contains("os error 28") }) { return true }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let free = (try? home.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity
+        return free.map { $0 < 200_000_000 } ?? false
+    }
+
     /// A connection that didn't work, whatever Lamp was fetching: callers look things up as well as download them.
     static let noConnection = "Lamp couldn't connect. Check your internet connection and try again."
 

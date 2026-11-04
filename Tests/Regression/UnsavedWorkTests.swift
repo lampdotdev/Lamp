@@ -1,0 +1,154 @@
+import XCTest
+@testable import Lamp
+
+/// The person's chat, what's typed in its box and the files sent with it, when their files can't be written: each is
+/// kept in memory, every chat and the desk say so (`Store.saveTrouble`), a full disk is told apart from other failures,
+/// and the notice goes only once Try Again has written them.
+@MainActor
+final class UnsavedWorkTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-unsaved-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        if let root { try? FileManager.default.removeItem(at: root) }
+    }
+
+    private func setWritable(_ folder: URL, _ writable: Bool) throws {
+        try FileManager.default.setAttributes([.posixPermissions: writable ? 0o755 : 0o555], ofItemAtPath: folder.path)
+    }
+
+    /// Waits for the chat queue's writes, then for what they told the main thread.
+    private func settle(_ store: Store) async {
+        store.flushChats()
+        for _ in 0..<5 { try? await Task.sleep(for: .milliseconds(20)) }
+    }
+
+    func testAChatThatCantBeWrittenIsKeptAndSavedOnTryAgain() async throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.current(wish))
+        let lamp = project.dir.appendingPathComponent(".lamp")
+        let chat = lamp.appendingPathComponent("chat.json")
+        try setWritable(lamp, false)
+        defer { try? setWritable(lamp, true) }
+
+        store.log(project, .user, "Count my cups of tea")
+        await settle(store)
+        let trouble = try XCTUnwrap(store.saveTrouble, "a chat that wasn't written says so")
+        XCTAssertFalse(trouble.diskFull, "a folder that can't be written isn't a full disk")
+        XCTAssertEqual(trouble.text, ErrorMessages.chatNotSaved)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: chat.path))
+        XCTAssertEqual(store.logs[project.id]?.last?.text, "Count my cups of tea", "kept in memory")
+
+        store.retrySaving()
+        await settle(store)
+        XCTAssertNotNil(store.saveTrouble, "a try that fails again leaves the notice up")
+
+        try setWritable(lamp, true)
+        store.retrySaving()
+        XCTAssertNotNil(store.saveTrouble, "not cleared before the write has landed")
+        await settle(store)
+        XCTAssertNil(store.saveTrouble)
+        let saved = try JSONDecoder().decode([LogLine].self, from: Data(contentsOf: chat))
+        XCTAssertEqual(saved.last?.text, "Count my cups of tea")
+    }
+
+    func testADraftThatCantBeWrittenKeepsItsWordsAndWhatItReplaces() async throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.current(wish))
+        let lamp = project.dir.appendingPathComponent(".lamp")
+        try setWritable(lamp, false)
+        defer { try? setWritable(lamp, true) }
+
+        let replaced = UUID()
+        store.saveDraft(Store.Draft(text: "Make it blue", replacing: replaced, setAsideText: "Earlier words"), for: project)
+        store.flushDrafts()
+        XCTAssertNotNil(store.saveTrouble)
+        XCTAssertEqual(store.draft(for: project).text, "Make it blue", "kept in memory")
+
+        try setWritable(lamp, true)
+        store.retrySaving()
+        XCTAssertNil(store.saveTrouble)
+        func read(_ name: String) throws -> String { try String(contentsOf: lamp.appendingPathComponent(name), encoding: .utf8) }
+        XCTAssertEqual(try read("draft.txt"), "Make it blue")
+        XCTAssertEqual(try read("draft-replaces"), replaced.uuidString)
+        XCTAssertEqual(try read("draft-set-aside.txt"), "Earlier words")
+    }
+
+    func testAFileThatCantBeCopiedGoesToItsMessageOnTryAgain() async throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        let store = Store(testingAt: root)
+        let project = try XCTUnwrap(store.current(wish))
+        let attachments = project.dir.appendingPathComponent(Attachments.folder)
+        try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("mockup.png")
+        try Data([1, 2, 3]).write(to: file)
+        try setWritable(attachments, false)
+        defer { try? setWritable(attachments, true) }
+
+        let saved = store.post([QueuedMessage(text: "Like this", attachments: [file])], to: project)
+        XCTAssertEqual(saved, [])
+        XCTAssertNotNil(store.saveTrouble)
+        let line = try XCTUnwrap(store.logs[project.id]?.last)
+        XCTAssertEqual(line.text, "Like this")
+        XCTAssertNil(line.attachments)
+
+        try setWritable(attachments, true)
+        store.retrySaving()
+        await settle(store)
+        XCTAssertNil(store.saveTrouble)
+        XCTAssertEqual(store.logs[project.id]?.first { $0.id == line.id }?.attachments, ["mockup.png"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: attachments.appendingPathComponent("mockup.png").path))
+    }
+
+    /// A real full disk: a small disk image filled to the last byte.
+    func testAFullDiskIsToldApartAndTryAgainSavesOnceThereIsRoom() async throws {
+        let image = root.appendingPathComponent("small.dmg"), mount = root.appendingPathComponent("volume")
+        try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
+        guard Self.hdiutil(["create", "-size", "40m", "-fs", "HFS+", "-volname", "LampFull", image.path]),
+              Self.hdiutil(["attach", "-nobrowse", "-mountpoint", mount.path, image.path]) else {
+            throw XCTSkip("couldn't make a disk image here")
+        }
+        defer { _ = Self.hdiutil(["detach", "-force", mount.path]) }
+
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: mount)
+        let store = Store(testingAt: mount)
+        let project = try XCTUnwrap(store.current(wish))
+        let filler = mount.appendingPathComponent("filler")
+        FileManager.default.createFile(atPath: filler.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: filler)
+        let block = Data(count: 256 * 1024)
+        while (try? handle.write(contentsOf: block)) != nil {}
+        let byte = Data(count: 1)
+        while (try? handle.write(contentsOf: byte)) != nil {}
+        try handle.close()
+
+        store.log(project, .user, String(repeating: "A long request. ", count: 2000))
+        await settle(store)
+        XCTAssertEqual(store.saveTrouble?.diskFull, true)
+        XCTAssertEqual(store.saveTrouble?.text, ErrorMessages.chatNotSavedDiskFull)
+
+        try FileManager.default.removeItem(at: filler)
+        store.retrySaving()
+        await settle(store)
+        XCTAssertNil(store.saveTrouble)
+        let saved = try JSONDecoder().decode([LogLine].self, from: Data(contentsOf: project.dir.appendingPathComponent(".lamp/chat.json")))
+        XCTAssertEqual(saved.last?.text.hasPrefix("A long request."), true)
+    }
+
+    private static func hdiutil(_ arguments: [String]) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+}

@@ -92,6 +92,13 @@ struct WishDesk: View {
         HStack(spacing: 0) {
             sidebar
             VStack(alignment: .leading, spacing: 14) {
+                // Above every chat too, so it's seen wherever the person is, not only in the chat that couldn't save.
+                if let trouble = store.saveTrouble {
+                    ChatLook.Banner(banner: SidebarBanner(text: trouble.text, button: Store.SaveTrouble.button, needsYou: true)) {
+                        store.retrySaving()
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
                 header
                 list.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { listWidth = $0 }
             }
