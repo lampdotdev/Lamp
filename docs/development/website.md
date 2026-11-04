@@ -50,7 +50,7 @@ under it its name, with who it's by and what it does under the name, and a card 
 Lamp suggests as plain pills, a slab with thickness that leans toward the pointer as the remix dialog does. The page puts itself together as it opens: the wish
 opens from no height, cropped rather than squeezed (a page that plays loads only once it's all in view, so it starts at
 the size it plays at), its name fades in halfway through, and the card drops in from above the window as the boxes do in
-Lamp's welcome; where less motion is asked for, it's simply there. The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
+Lamp's welcome, running a little past its place and back; the wish's frame is black until the page in it draws; where less motion is asked for, it's simply there. The ideas page's Download buttons (`DownloadButton.astro`, in its first-idea section and opened wishes) are the
 lamp's bright orange with white words, about 3:1 at their lightest, a faint shadow under the words. That trade-off
 was weighed and accepted: the brightness is the point of the button, and the label is large, bold and the same
 wherever it appears. About 3:1 is the floor for those buttons, so a change that goes below it is a regression;

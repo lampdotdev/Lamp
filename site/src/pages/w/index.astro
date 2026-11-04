@@ -27,7 +27,7 @@ import { together } from "../../lib/text";
            squeezed: it's its own size all along, and its row grows to show it from the top down. -->
       <section data-stage class="stage-grow grid px-3 pt-2 sm:px-6" aria-label="The wish">
         <div class="stage-clip flex min-h-0 items-start justify-center">
-        <div data-play hidden class="play-frame relative overflow-hidden rounded-[10px] bg-[#111] ring-1 ring-tape/15">
+        <div data-play hidden class="play-frame relative overflow-hidden rounded-[10px] bg-black ring-1 ring-tape/15">
           <button
             type="button"
             data-fullscreen
@@ -37,7 +37,7 @@ import { together } from "../../lib/text";
             <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-[1.6] [stroke-linecap:round] [stroke-linejoin:round]"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></svg>
           </button>
         </div>
-        <img data-picture hidden alt="" class="block max-h-[calc(100dvh-12rem)] w-auto max-w-full rounded-[10px] ring-1 ring-tape/15" />
+        <img data-picture hidden alt="" class="block max-h-[calc(100dvh-12rem)] w-auto max-w-full rounded-[10px] bg-black ring-1 ring-tape/15" />
         </div>
       </section>
 
@@ -119,40 +119,54 @@ import { together } from "../../lib/text";
 
   /* The page puts itself together once the wish is in it (`.built`, from the script): the wish opens from no height,
      its name and what it is fade in about halfway through, and a moment after the panel drops in from above the window,
-     as the boxes do in Lamp's welcome (WelcomeScene.swift). Without the script, or where less motion is asked for,
+     as the boxes do in Lamp's welcome (WelcomeScene.swift), running a little past where it rests and back. Without the script, or where less motion is asked for,
      it's simply there. */
   @media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
     .stage-grow { grid-template-rows: 0fr; transition: grid-template-rows 1s cubic-bezier(0.65, 0, 0.35, 1); }
     .build-info { opacity: 0; translate: 0 10px; transition: opacity 0.6s ease 0.5s, translate 0.6s cubic-bezier(0.22, 0.8, 0.2, 1) 0.5s; }
-    .build-panel { opacity: 0; translate: 0 calc(-100dvh - 100%); transition: opacity 0.2s ease 0.8s, translate 0.75s cubic-bezier(0, 0, 0.58, 1) 0.8s; }
+    .build-panel { opacity: 0; translate: 0 calc(-100dvh - 100%); }
     .built .stage-grow { grid-template-rows: 1fr; }
     .built :is(.build-info, .build-panel) { opacity: 1; translate: 0 0; }
+    .built .build-panel { animation: panel-drop 0.6s 0.7s both; }
+  }
+  /* It comes down fast and slows, runs a little past where it rests, and comes back to it. The overshoot is a set
+     distance rather than a share of the fall, which is as long as the window is tall. */
+  @keyframes panel-drop {
+    0% { opacity: 0; translate: 0 calc(-100dvh - 100%); animation-timing-function: cubic-bezier(0.2, 0.75, 0.4, 1); }
+    10% { opacity: 1; }
+    68% { translate: 0 22px; animation-timing-function: cubic-bezier(0.45, 0, 0.35, 1); }
+    100% { opacity: 1; translate: 0 0; }
   }
   /* The ring round the wish stays whole while the row it's in clips it. */
   .stage-clip { overflow: clip; overflow-clip-margin: 2px; }
 
-  /* The slab, as the remix dialog's: it rests turned a little, so its thickness shows, and leans further as --lean-x
+  /* The slab, as the remix dialog's but chunkier: it rests turned a little more, so its thickness shows, and leans further as --lean-x
      and --lean-y say (the pointer, from the script). */
-  .make-host { --depth: 22px; perspective: 1800px; }
+  .make-host { --depth: 60px; perspective: 1800px; }
   .make-slab {
     position: relative; transform-style: preserve-3d;
-    transform: rotateX(calc(3deg + var(--lean-x, 0deg))) rotateY(calc(-6deg + var(--lean-y, 0deg)));
+    transform: rotateX(calc(4deg + var(--lean-x, 0deg))) rotateY(calc(-10deg + var(--lean-y, 0deg)));
     transition: transform 0.35s ease-out;
   }
   @media (prefers-reduced-motion: reduce) {
     .make-slab { transform: none; transition: none; }
   }
-  .make-face { position: relative; border-radius: 3px; background: #f7f2e3; transform: translateZ(0); }
+  /* Square corners, so the edges meet the face and the back without a gap, and a transparent outline on each part,
+     which has the browser smooth the borders of a layer turned in 3D rather than leave them stepped. */
+  .make-face, .make-back, .make-edge { outline: 1px solid transparent; }
+  .make-face { position: relative; background: #f7f2e3; transform: translateZ(0); }
   .make-back {
-    position: absolute; inset: 0; border-radius: 3px; background: var(--color-tape);
+    position: absolute; inset: 0; background: var(--color-tape);
     transform: translateZ(calc(-1 * var(--depth))); box-shadow: 0 40px 80px -20px rgb(0 0 0 / 0.5);
   }
-  /* Each edge stands out of the face's own edge and runs back to the back, lit from above. */
-  .make-edge { position: absolute; background: #2e2a24; }
-  .make-edge-top { top: 0; left: 0; width: 100%; height: var(--depth); transform-origin: top; transform: rotateX(-90deg); background: #4a443b; }
-  .make-edge-bottom { bottom: 0; left: 0; width: 100%; height: var(--depth); transform-origin: bottom; transform: rotateX(90deg); background: #14130f; }
-  .make-edge-left { top: 0; left: 0; width: var(--depth); height: 100%; transform-origin: left; transform: rotateY(90deg); }
-  .make-edge-right { top: 0; right: 0; width: var(--depth); height: 100%; transform-origin: right; transform: rotateY(-90deg); }
+  /* Each edge stands out of the face's own edge and runs back to the back, a hair longer than the slab is deep so no
+     seam shows where they meet. Lit from above: the top is the paper in light, which also keeps it from reading as a
+     dashed line where it's seen nearly side on against the face; the others are in shade. */
+  .make-edge { position: absolute; background: #2e2a24; --deep: calc(var(--depth) + 1px); }
+  .make-edge-top { top: 0; left: 0; width: 100%; height: var(--deep); transform-origin: top; transform: rotateX(-90deg); background: #e4dcc5; }
+  .make-edge-bottom { bottom: 0; left: 0; width: 100%; height: var(--deep); transform-origin: bottom; transform: rotateX(90deg); background: #14130f; }
+  .make-edge-left { top: 0; left: 0; width: var(--deep); height: 100%; transform-origin: left; transform: rotateY(90deg); }
+  .make-edge-right { top: 0; right: 0; width: var(--deep); height: 100%; transform-origin: right; transform: rotateY(-90deg); }
 
   /* The homepage's buttons: ink with paper-colored words, or outlined in ink. */
   .shared-button {
@@ -195,7 +209,7 @@ import { together } from "../../lib/text";
       frame.title = wish.name;
       frame.allow = "fullscreen; gamepad; autoplay; clipboard-write";
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
-      frame.className = "absolute inset-0 size-full border-0 bg-white";
+      frame.className = "absolute inset-0 size-full border-0 bg-black";
       stage.prepend(frame);
       if (wish.shape === "fill") stage.classList.add("fills");
       else if (typeof wish.shape === "number" && wish.shape >= 0.2 && wish.shape <= 5) stage.style.setProperty("--shape", String(wish.shape));
