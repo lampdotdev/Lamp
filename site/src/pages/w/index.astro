@@ -13,7 +13,7 @@ import { together } from "../../lib/text";
   empty and the server puts the wish in as #shared-wish (lib/shared-wish-page.js).
 -->
 <Base title="A wish · Lamp" description="A wish made with Lamp." bare>
-  <div class="shared-page flex min-h-dvh flex-col overflow-x-clip bg-paper text-tape">
+  <div data-page class="shared-page flex min-h-dvh flex-col overflow-x-clip bg-paper text-tape">
     <header class="flex h-16 items-center justify-between gap-4 px-4 sm:px-6">
       <a href="/" class="inline-flex items-center gap-[0.4em] rounded-sm text-[17px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-tape">
         Made with <LampLockup size={26} />
@@ -22,9 +22,11 @@ import { together } from "../../lib/text";
     </header>
 
     <main class="flex flex-1 flex-col">
-      <!-- The thing itself, only as big as it is: a playing page in the shape web games are drawn in, as large as the
-           window allows, and a picture as it is. -->
-      <section data-stage class="flex justify-center px-3 pt-2 sm:px-6" aria-label="The wish">
+      <!-- The thing itself, only as big as it is: a playing page in the shape Lamp sent with it, as large as the window
+           allows, and a picture as it is. It opens from nothing as the page is put together (`.built`), cropped rather than
+           squeezed: it's its own size all along, and its row grows to show it from the top down. -->
+      <section data-stage class="stage-grow grid px-3 pt-2 sm:px-6" aria-label="The wish">
+        <div class="stage-clip flex min-h-0 items-start justify-center">
         <div data-play hidden class="play-frame relative overflow-hidden rounded-[10px] bg-[#111] ring-1 ring-tape/15">
           <button
             type="button"
@@ -36,10 +38,11 @@ import { together } from "../../lib/text";
           </button>
         </div>
         <img data-picture hidden alt="" class="block max-h-[calc(100dvh-12rem)] w-auto max-w-full rounded-[10px] ring-1 ring-tape/15" />
+        </div>
       </section>
 
       <section class="mx-auto grid w-full max-w-[72rem] gap-x-14 gap-y-10 px-5 pt-12 pb-16 sm:px-8 md:grid-cols-[1fr_minmax(18rem,25rem)] md:items-start">
-        <div class="flex min-w-0 items-start gap-4">
+        <div class="build-info flex min-w-0 items-start gap-4">
           <img data-icon alt="" width="72" height="72" class="size-[72px] shrink-0" hidden />
           <div class="min-w-0 pt-1">
             <h1 data-name class="text-[clamp(2.5rem,6vw,4.25rem)] leading-[0.95] font-black tracking-[-0.04em] text-balance"></h1>
@@ -50,7 +53,7 @@ import { together } from "../../lib/text";
 
         <!-- A slab with real thickness, as the homepage's remix dialog is (RemixDialog.astro): its face is the panel,
              with a back and four edges behind it in 3D, leaning a little toward the pointer. -->
-        <div class="make-host">
+        <div class="build-panel make-host">
         <div data-slab class="make-slab">
         <div class="make-back" aria-hidden="true"></div>
         <div class="make-edge make-edge-top" aria-hidden="true"></div>
@@ -114,6 +117,20 @@ import { together } from "../../lib/text";
   }
   .play-frame.fills { width: min(100%, 100rem); height: max(22rem, calc(100dvh - 12rem)); aspect-ratio: auto; }
 
+  /* The page puts itself together once the wish is in it (`.built`, from the script): the wish opens from no height,
+     its name and what it is fade in about halfway through, and a moment after the panel drops in from above the window,
+     as the boxes do in Lamp's welcome (WelcomeScene.swift). Without the script, or where less motion is asked for,
+     it's simply there. */
+  @media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+    .stage-grow { grid-template-rows: 0fr; transition: grid-template-rows 1s cubic-bezier(0.65, 0, 0.35, 1); }
+    .build-info { opacity: 0; translate: 0 10px; transition: opacity 0.6s ease 0.5s, translate 0.6s cubic-bezier(0.22, 0.8, 0.2, 1) 0.5s; }
+    .build-panel { opacity: 0; translate: 0 calc(-100dvh - 100%); transition: opacity 0.2s ease 0.8s, translate 0.75s cubic-bezier(0, 0, 0.58, 1) 0.8s; }
+    .built .stage-grow { grid-template-rows: 1fr; }
+    .built :is(.build-info, .build-panel) { opacity: 1; translate: 0 0; }
+  }
+  /* The ring round the wish stays whole while the row it's in clips it. */
+  .stage-clip { overflow: clip; overflow-clip-margin: 2px; }
+
   /* The slab, as the remix dialog's: it rests turned a little, so its thickness shows, and leans further as --lean-x
      and --lean-y say (the pointer, from the script). */
   .make-host { --depth: 22px; perspective: 1800px; }
@@ -175,7 +192,6 @@ import { together } from "../../lib/text";
       // The page plays from the link's own host (`playOrigin`), so it can't reach the site or another wish's storage.
       const stage = $<HTMLElement>("[data-play]");
       const frame = document.createElement("iframe");
-      frame.src = wish.play;
       frame.title = wish.name;
       frame.allow = "fullscreen; gamepad; autoplay; clipboard-write";
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups allow-modals allow-downloads");
@@ -239,6 +255,30 @@ import { together } from "../../lib/text";
       });
     });
     track("idea_opened", { idea: wish.name, place: "shared" });
+
+    // Put together once there's something to grow to: at once for a page that plays (its frame has its size), when the
+    // picture has loaded (or failed to, or taken too long), and at once without either. Two frames first, so the
+    // closed state is drawn before it opens. A page that plays starts only once it's all in view, so it starts at the
+    // size it plays at.
+    const opening = $<HTMLElement>("[data-stage]");
+    const play = () => {
+      const frame = opening.querySelector("iframe");
+      if (frame && wish.play && !frame.src) frame.src = wish.play;
+    };
+    const build = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+      $<HTMLElement>("[data-page]").classList.add("built");
+      if (getComputedStyle(opening).transitionDuration.split(",").every((time) => parseFloat(time) === 0)) return play();
+      opening.addEventListener("transitionend", (event) => { if (event.target === opening) play(); });
+      setTimeout(play, 1400);
+    }));
+    const shown = $<HTMLImageElement>("[data-picture]");
+    if (!wish.play && wish.picture && !shown.complete) {
+      let started = false;
+      const once = () => { if (!started) { started = true; build(); } };
+      shown.addEventListener("load", once);
+      shown.addEventListener("error", once);
+      setTimeout(once, 2500);
+    } else build();
 
     // The panel leans toward the pointer, as the remix dialog does: turned toward it across, tipped back from it up and
     // down, by how far it is from the panel's middle (half a window away at most).
