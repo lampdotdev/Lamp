@@ -466,13 +466,24 @@ export function createPlayHandler({ env = process.env, fetcher = fetch, store, a
     if (!isID(id) || !Number.isInteger(version)) return missing();
     let record;
     try { record = await (store ?? cloudStore(env, fetcher)).get(id); } catch { return new Response(null, { status: 503 }); }
-    // A page's other .html files are asked for by their clean names (the site's `cleanUrls` redirects to them).
+    // A page's other .html files are asked for by their clean names (the site's `cleanUrls` redirects to them), and a
+    // folder's index.html by the folder, with its slash or without (a rewrite may not keep it): without, the page is
+    // given its folder as its base, so its own files resolve there and not one folder up.
     const files = record?.page?.version === version ? record.page.files : {};
-    const name = files[path] ? path : files[`${path}.html`] ? `${path}.html` : files[`${path}/index.html`] ? `${path}/index.html` : null;
+    const folder = path.replace(/\/$/, "");
+    const name = path.endsWith("/") ? (files[`${path}index.html`] ? `${path}index.html` : null)
+      : files[path] ? path : files[`${path}.html`] ? `${path}.html` : files[`${folder}/index.html`] ? `${folder}/index.html` : null;
+    const rebased = name === `${folder}/index.html` && !path.endsWith("/");
     const at = name ? files[name] : null;
     if (!at) return missing();
     let bytes;
     try { bytes = await (store ?? cloudStore(env, fetcher)).readFile(at); } catch { return new Response(null, { status: 503 }); }
+    if (rebased) {
+      const base = `<base href="/w/${id}/play/${version}/${folder.split("/").map(encodeURIComponent).join("/")}/">`;
+      const html = bytes.toString("utf8");
+      const head = html.search(/<head[^>]*>/i);
+      bytes = Buffer.from(head < 0 ? base + html : html.replace(/<head[^>]*>/i, (tag) => tag + base));
+    }
     const site = env.LAMP_SITE_ORIGIN || (anyHost ? url.origin : "https://lamp.dev");
     return new Response(request.method === "HEAD" ? null : bytes, {
       headers: {

@@ -141,6 +141,22 @@ test("the card is a 1200×630 PNG, with or without a picture", async () => {
   }
 });
 
+/** A zip holding stored files. */
+function zipOf(entries) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const [name, data] of entries) {
+    const nameBytes = Buffer.from(name), local = Buffer.alloc(30), central = Buffer.alloc(46);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt32LE(crc32(data), 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(nameBytes.length, 26);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt32LE(crc32(data), 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(nameBytes.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBytes, data); centrals.push(central, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const directory = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10); end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+
 /** A zip holding one stored file, as Lamp's shared files are zips with lamp-app.json at their root. */
 function zip(name, data) {
   const nameBytes = Buffer.from(name), local = Buffer.alloc(30), central = Buffer.alloc(46), end = Buffer.alloc(22);
@@ -233,7 +249,7 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.equal((await send_("&what=page", "PUT", zip("other.html", Buffer.from("x")), "&part=0&of=1")).status, 204);
   assert.equal((await send_("&what=page", "POST")).status, 400, "a page has index.html at its root");
   const html = Buffer.from("<!doctype html><title>Plant Pal</title><script src=lamp.js></script>");
-  assert.equal((await send_("&what=page", "PUT", zip("index.html", html), "&part=0&of=1")).status, 204);
+  assert.equal((await send_("&what=page", "PUT", zipOf([["index.html", html], ["dir/index.html", html]]), "&part=0&of=1")).status, 204);
   assert.equal((await send_("&what=page", "POST")).status, 200);
 
   const env = { LAMP_PLAY_ORIGIN: "https://play.lamp.dev", LAMP_SITE_ORIGIN: "https://lamp.dev" };
@@ -253,6 +269,9 @@ test("a link's page plays only from the play host, framed by the site, and Remix
   assert.match(page, new RegExp(`<iframe src="https://${own}/w/${id}/play/1/"`));
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=`))).status, 200, "the folder is its index.html");
   assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=index`))).status, 200, "a .html file by its clean name");
+  const folder = await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir`));
+  assert.match(await folder.text(), new RegExp(`<base href="/w/${id}/play/1/dir/">`), "a folder without its slash keeps its own files in place");
+  assert.equal((await play(new Request(`https://${own}/api/wish-play?id=${id}&v=1&path=dir/`))).status, 200);
   assert.match(page, /data-remix-shared/);
   assert.match(page, /"play":true/);
   const without = await (await createPageHandler({ store, env: {}, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`))).text();
