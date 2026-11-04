@@ -171,6 +171,25 @@ enum WishLink {
         return Shared(id: id, url: link, secret: secret, shown: words)
     }
 
+    /// What a followed link has now (`latest` in lib/shared-wishes.js): its name, its file's version (0 with no file),
+    /// and the file's address. Nil when it can't be asked, or is gone. Asked with nothing of the person's.
+    struct Latest: Equatable {
+        let name: String?
+        let version: Int
+        let file: URL?
+    }
+
+    static func latest(_ id: String) async -> Latest? {
+        guard let answered = try? await send(URLRequest(url: address(for: id))), answered.1 == 200,
+              let answer = try? JSONSerialization.jsonObject(with: answered.0) as? [String: Any],
+              (answer["format"] as? Int) == 1, let version = answer["version"] as? Int else { return nil }
+        // The file only from where the site keeps them: https, never this Mac or an address the answer could pick.
+        let file = (answer["file"] as? String).flatMap(URL.init(string:)).flatMap { url in
+            url.scheme == "https" || (url.scheme == "data" && endpoint.scheme == "http") ? url : nil
+        }
+        return Latest(name: answer["name"] as? String, version: version, file: file)
+    }
+
     /// Where the wish's file goes: beside the link's API (`site/api/wish-file.js`).
     private static func fileAddress(for id: String, part: Int? = nil, of count: Int? = nil) -> URL {
         var parts = URLComponents(url: endpoint.deletingLastPathComponent().appendingPathComponent("wish-file"), resolvingAgainstBaseURL: false)!
@@ -297,7 +316,7 @@ enum WishLink {
                                                       includeFile: $0.shown.file == true && Self.canIncludeFile(project)) }
             ?? WishLinkCard.Values(name: WishLink.clip(project.untitled ? "" : project.name, WishLink.Limit.name),
                                    line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
-                                   includePicture: picture != nil)
+                                   includePicture: picture != nil, includeFile: Self.canIncludeFile(project))
         var card = Card(values: values, pictureDigest: digest, shared: shared, inSidebar: inSidebar)
         card.picture = picture
         // The picture the link shows is the one it was made with, as long as the app's own hasn't changed since.

@@ -91,11 +91,6 @@ test("a remix names only a starter's id or a github.com repository, and Lamp's l
     "?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=--upload-pack", "?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=abc1234", "?ask=x"]) {
     assert.equal(remixFrom(bad), null, bad);
   }
-  // A shared copy's page goes only to its owner's own GitHub Pages.
-  assert.equal(remixFrom("?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&page=https%3A%2F%2Fa.github.io%2Fb%2F").page, "https://a.github.io/b/");
-  for (const page of ["https%3A%2F%2Fevil.github.io%2Fb%2F", "http%3A%2F%2Fa.github.io%2Fb%2F", "https%3A%2F%2Fa.github.io.evil%2Fb%2F", "javascript%3Aalert(1)"]) {
-    assert.equal(remixFrom(`?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&page=${page}`).page, undefined, page);
-  }
   assert.equal(remixLink({ starter: "newyork" }, "Snow + ice"), "lamp://wish?starter=newyork&text=Snow%20%2B%20ice");
   const link = new URL(remixLink({ starter: "newyork" }, " Make it snow "));
   assert.equal(link.protocol, "lamp:");

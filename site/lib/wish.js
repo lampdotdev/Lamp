@@ -80,6 +80,17 @@ export function withAsk(wish, ask) {
 }
 
 /**
+ * The link that opens Lamp, on a Mac that has it, on a wish shared as a link with its file (`/w/<id>`): Lamp asks the
+ * site for the file's latest, reviews it as any shared file, and the copy it makes follows that link, so the sharer's
+ * next Update Link is offered to it (`Wish.Shared` and `Following` in Lamp). A request, if one came, is for the box.
+ */
+export function sharedWishLink(id, ask) {
+  if (!id) return null;
+  const request = String(ask ?? "").trim().slice(0, ASK_LIMIT).trim();
+  return `lamp://wish?${query(request ? { shared: String(id), text: request } : { shared: String(id) })}`;
+}
+
+/**
  * The link that opens Lamp, on a Mac that has it, on the exact shared wish (its file's address) with a request in the
  * box: what a shared wish's page offers when a request came with its link. Null without a file, or without a request.
  */
@@ -93,9 +104,7 @@ export function exactWishLink(file, ask) {
  * What a remix starts from, read off a link (`?starter=newyork`, or `?repo=https://github.com/owner/name&commit=…`, beside
  * `ask`): a published page's Remix panel names it when the page is a starter's or a wish on GitHub (`RemixLink.Origin` in
  * Lamp). Only a starter's plain id, or an https github.com repository with a full 40-digit commit (a shallow fetch takes no abbreviation); null for anything else, and
- * for both at once. Lamp checks it all again (`Wish.remix`). A repository's link may also name its page (`page=`), where
- * it can be tried in a browser: only https on `<owner>.github.io` for the repository's own owner, as Lamp writes it
- * (`Following.shareLink`), so a link never sends anyone elsewhere.
+ * for both at once. Lamp checks it all again (`Wish.remix`).
  */
 export function remixFrom(search) {
   const params = new URLSearchParams(search ?? "");
@@ -109,21 +118,9 @@ export function remixFrom(search) {
     const name = found[2].replace(/\.git$/, "");
     if (!name) return null;
     const origin = { repo: `https://github.com/${found[1]}/${name}`, owner: found[1], name };
-    const page = pagesAddress(params.get("page"), found[1]);
-    if (page) origin.page = page;
     return commit === null ? origin : { ...origin, commit: commit.toLowerCase() };
   }
   return null;
-}
-
-/** A GitHub Pages address on the owner's own `<owner>.github.io`, or null. */
-function pagesAddress(text, owner) {
-  if (!text) return null;
-  let url;
-  try { url = new URL(text); } catch { return null; }
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.port) return null;
-  if (url.hostname.toLowerCase() !== `${owner.toLowerCase()}.github.io`) return null;
-  return url.href;
 }
 
 /** A remix's origin as the parameters Lamp reads, in its link and in the mark's value. */

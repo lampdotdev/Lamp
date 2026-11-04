@@ -53,7 +53,6 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
       <textarea id="remix-text" data-text rows="3" placeholder="Say what you'd change"></textarea>
       <div class="remix-buttons">
         <button type="button" data-open hidden class="remix-button remix-button-ink">Open in Lamp</button>
-        <a data-try-page hidden target="_blank" rel="noopener" class="remix-button remix-button-lit">Try it in your browser</a>
         <a href={DOWNLOAD_URL} data-download-place="remix" data-download class="remix-button remix-button-lit">Download for Mac</a>
       </div>
       <p data-status class="remix-status" role="status" aria-live="polite">{together("For Macs with Apple Silicon and macOS 14 Sonoma or later")}</p>
@@ -146,10 +145,6 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
         shot.src = picture.src;
       };
       shot.alt = origin.name;
-      // A web app's or game's page, where anyone tries it with nothing installed (`page=`, checked by `remixFrom`).
-      const tryIt = q<HTMLAnchorElement>("[data-try-page]");
-      tryIt.hidden = !origin.page;
-      if (origin.page) tryIt.href = origin.page;
       shot.addEventListener("load", () => { shot.hidden = false; written.hidden = true; }, { signal });
       shot.addEventListener("error", next, { signal });
       next();
@@ -194,7 +189,7 @@ const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) 
     // Closed, the page is the homepage again: a reload doesn't bring the dialog back.
     dialog.addEventListener("close", () => {
       const url = new URL(location.href);
-      for (const name of ["ask", "starter", "repo", "commit", "page", "from"]) url.searchParams.delete(name);
+      for (const name of ["ask", "starter", "repo", "commit", "from"]) url.searchParams.delete(name);
       history.replaceState(history.state, "", url);
     }, { signal });
     q("[data-close]").addEventListener("click", () => dialog.close(), { signal });

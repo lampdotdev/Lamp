@@ -722,10 +722,9 @@ struct DeskWishMenu: View {
             }
             .disabled(busy)
         }
-        // Its link, once it's on GitHub as it is now (Put on GitHub… puts it there), and following someone's copy of it.
+        // Following someone's copy of it, by the link they shared.
         if project.scaffolded {
             Divider()
-            if Following.shareLink(for: project) != nil { Button("Copy Link to This Version") { store.copyShareLink(project) } }
             Button("Follow a Copy…") { store.askToFollow(for: project) }
         }
         Divider()
@@ -805,10 +804,6 @@ struct FollowingList: View {
                             .font(.system(size: 12)).foregroundStyle(Paper.muted)
                     }
                     Spacer(minLength: 4)
-                    if let page = row.page.flatMap(URL.init(string:)) {
-                        Button("Try It") { NSWorkspace.shared.open(page) }
-                            .buttonStyle(PaperButtonStyle(.outline, height: 26))
-                    }
                     if row.state != .unreachable {
                         Button(row.state == .new ? "Pull In" : "Check Again") { row.state == .new ? pullIn(row.id) : check(row.id) }
                             .buttonStyle(PaperButtonStyle(.outline, height: 26))

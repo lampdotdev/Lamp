@@ -136,7 +136,7 @@ public struct WishLinkCard: View {
             }
             .disabled(sending)
             if canIncludeFile {
-                Toggle("Include the wish itself, so people with Lamp get this exact one", isOn: $values.includeFile)
+                Toggle("Include the wish itself, so people with Lamp get this exact one and your updates", isOn: $values.includeFile)
                     .toggleStyle(.checkbox)
                     .help("Its code and files go with the link, as when you share the wish as a file. Lamp checks them for keys first. Never your chat or the app's data.")
                 if values.includeFile, let noLicense {

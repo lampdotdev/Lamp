@@ -123,6 +123,17 @@ export const shown = (record) => record && ({
 /** Every file kept for a record: its pictures, the wish's file and any parts of one still being sent. */
 const blobsOf = (record) => [record?.picture?.url, record?.icon?.url, record?.file?.url, ...Object.values(record?.parts?.urls ?? {})].filter(Boolean);
 
+/**
+ * What anyone's Lamp asks of a link it follows (`GET /api/wishes?id=`): the format of the answer, and the version of
+ * the wish's file, which goes up each time the sharer sends it again (Update Link), with the file's address. Version 0
+ * and no file for a link that carries none. Never the secret or anything a follower doesn't need.
+ */
+export const FOLLOW_FORMAT = 1;
+export const latest = (record) => ({
+  format: FOLLOW_FORMAT, id: record.id, name: record.name,
+  version: record.file ? (record.file.version ?? 1) : 0, file: record.file?.url ?? null,
+});
+
 /** The link people pass around. */
 export const linkFor = (origin, id) => `${origin}/w/${id}`;
 
@@ -254,12 +265,21 @@ const bearer = (request) => /^Bearer (\S+)$/.exec(request.headers.get("authoriza
 export function createShareHandler({ env = process.env, fetcher = fetch, store, limited = true, now = () => new Date() } = {}) {
   return async (request) => {
     const method = request.method;
-    if (!["POST", "PUT", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "POST, PUT, DELETE" });
+    if (!["GET", "POST", "PUT", "DELETE"].includes(method)) return reply(405, { error: "method_not_allowed" }, { Allow: "GET, POST, PUT, DELETE" });
     const url = new URL(request.url);
     const origin = request.headers.get("origin");
     if (origin && origin !== url.origin) return reply(403, { error: "origin_not_allowed" });
     const id = url.searchParams.get("id");
     if (method !== "POST" && !isID(id)) return reply(404, { error: "not_found" });
+    // Asked by the Lamps that follow this link: public, as the page is, and cheap (one read, no quota).
+    if (method === "GET") {
+      let kept;
+      try { kept = store ?? cloudStore(env, fetcher); } catch { return reply(503, { error: "service_unavailable" }); }
+      try {
+        const record = await kept.get(id);
+        return record ? reply(200, latest(record)) : reply(404, { error: "not_found" });
+      } catch { return reply(503, { error: "service_unavailable" }); }
+    }
 
     let share = null;
     if (method !== "DELETE") {
@@ -439,7 +459,9 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       const at = await kept.putFile(id, fileName(record.name), bytes);
       uploaded.push(at);
       const { parts: _parts, ...rest } = record;
-      if (!(await kept.replace({ ...rest, file: { url: at, size: bytes.length }, updated: now().toISOString() }))) {
+      // Each file sent counts up, so the Lamps that follow the link can tell a newer one (`latest`).
+      const version = (record.file?.version ?? (record.file ? 1 : 0)) + 1;
+      if (!(await kept.replace({ ...rest, file: { url: at, size: bytes.length, version }, updated: now().toISOString() }))) {
         // Taken down meanwhile: the file and its parts go with it.
         await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
         uploaded = [];

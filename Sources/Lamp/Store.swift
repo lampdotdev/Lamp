@@ -1840,6 +1840,7 @@ final class Store: ObservableObject {
             guard let remix = Wish.remix(from: url) else { return refuseRemix() }
             return take(remix: remix)
         }
+        if let shared = Wish.shared(from: url) { return takeShared(shared) }
         if let exact = Wish.exact(from: url) { return take(exact: exact) }
         if let wish = Wish.from(link: url) { return take(wish: wish) }
         guard url.scheme == Edition.urlScheme,
@@ -1878,21 +1879,45 @@ final class Store: ObservableObject {
         // A link that names where a wish lives on GitHub: fetched as a repository, not as a file.
         if let source = RepoImport.source(from: exact.file) { return importRepository(source, request: exact.text) }
         NSApp.activate()
+        Task { await fetchAndImport(exact.file, text: exact.text) }
+    }
+
+    /// A shared file at `address` fetched and opened as one opened by hand, review included, with `text` beside it for
+    /// the box. `updating` and `following` go to its review (`importApp`).
+    private func fetchAndImport(_ address: URL, text: String?, updating target: String? = nil, following: Following.Followed? = nil) async {
+        let folder = Sharing.workFolder.appendingPathComponent(Self.fetchedPrefix + UUID().uuidString)
+        do {
+            var request = URLRequest(url: address)
+            request.timeoutInterval = 60
+            let data = try await Self.fetch(request, upTo: Sharing.maxArchiveBytes)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appendingPathComponent("Shared Wish.lampapp")
+            try data.write(to: file)
+            if let text { try text.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
+            importApp(from: file, updating: target, following: following)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    /// A wish shared as a link (`Wish.Shared`): the site is asked for its file's latest, which is fetched and reviewed
+    /// as any shared file. Opened afresh, the copy follows the link it started from (`finishImport`); asked for by a
+    /// wish that follows it (`updating`, Pull In), Update merges it into that wish (`mergeUpdate`).
+    func takeShared(_ shared: Wish.Shared, updating target: String? = nil, following: Following.Followed? = nil) {
+        NSApp.activate()
         Task {
-            let folder = Sharing.workFolder.appendingPathComponent(Self.fetchedPrefix + UUID().uuidString)
-            do {
-                var request = URLRequest(url: exact.file)
-                request.timeoutInterval = 60
-                let data = try await Self.fetch(request, upTo: Sharing.maxArchiveBytes)
-                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                let file = folder.appendingPathComponent("Shared Wish.lampapp")
-                try data.write(to: file)
-                if let text = exact.text { try text.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
-                importApp(from: file)
-            } catch {
-                try? FileManager.default.removeItem(at: folder)
-                NSAlert(error: error).runModal()
+            guard let latest = await WishLink.latest(shared.id), let file = latest.file else {
+                let alert = NSAlert()
+                alert.messageText = "Lamp couldn't get the shared wish"
+                alert.informativeText = "The link may be old, the wish may have been taken down, or it was shared without the wish itself."
+                alert.runModal()
+                return
             }
+            var followed = following ?? Following.Followed(place: .lamp(shared.id), startedFrom: true)
+            followed.name = latest.name
+            followed.pulling = String(latest.version)
+            await fetchAndImport(file, text: shared.text, updating: target, following: followed)
         }
     }
 
@@ -3726,7 +3751,7 @@ final class Store: ObservableObject {
             }
             return
         }
-        finishImport(pending.package, request: pending.request)
+        finishImport(pending.package, request: pending.request, following: pending.following)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -3928,9 +3953,10 @@ final class Store: ObservableObject {
         var source = origin?.url.flatMap(RepoImport.source(from:))
         var commit = origin?.commit
         var ref = Upstream.ref
-        // Their latest, as the fetched package's chain names it (`RepoImport.naming`).
+        // Their latest: the link's file version it was fetched at, or the commit the fetched package's chain names
+        // (`RepoImport.naming`).
         let pulled = following.flatMap { followed in
-            package.credits?.remixOf.last { $0.url.map(AppUpdates.key) == followed.id }?.commit
+            followed.pulling ?? package.credits?.remixOf.last { $0.url.map(AppUpdates.key) == followed.id }?.commit
         }
         if let following {
             let base = Following.base(for: following, ours: Credits.load(project), theirs: package.credits, own: GitHubRepo.kept(for: project)?.url)
@@ -3939,7 +3965,7 @@ final class Store: ObservableObject {
             ref = Following.ref(for: following)
         }
         let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
-        let place = following.map { Following.title(of: $0.place) }
+        let place = following.map { Following.title(of: $0) }
             ?? (original != nil ? "the original" : source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish")
         let merged: Upstream.Merged
         do {
@@ -3953,7 +3979,7 @@ final class Store: ObservableObject {
             if let credits = package.credits { try Credits.add(following == nil ? credits : Mix.creditsTaken(credits), to: project) }
             if let original { try Starters.keepFile(of: original, in: project) }
             if let following, let pulled {
-                Following.update(following.id, for: project) { $0.brought = pulled; $0.told = pulled }
+                Following.brought(pulled, from: following, into: project)
                 followingRevision += 1
             }
         } catch {
@@ -4058,7 +4084,8 @@ final class Store: ObservableObject {
         await rebuildParts(of: current(project) ?? project, onlyChanged: true)
     }
 
-    private func finishImport(_ package: Sharing.Package, request: String? = nil) {
+    /// `following` is the link it was opened by (`takeShared`), which the new wish follows from now on.
+    private func finishImport(_ package: Sharing.Package, request: String? = nil, following: Following.Followed? = nil) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -4078,6 +4105,7 @@ final class Store: ObservableObject {
             return
         }
 
+        if let following, let version = following.pulling { Following.brought(version, from: following, into: project) }
         reload()
         showChat(project.id)
         // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the

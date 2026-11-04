@@ -91,7 +91,8 @@ test("browsers on other sites, other kinds of body and oversized ones are refuse
   assert.equal((await send(handler, "POST", JSON.stringify(share), { type: "text/plain" })).status, 415);
   assert.equal((await send(handler, "POST", "{")).status, 400);
   assert.equal((await send(handler, "POST", { ...share, words: "x".repeat(3_000_000) })).status, 413);
-  assert.equal((await send(handler, "GET")).status, 405);
+  assert.equal((await send(handler, "PATCH")).status, 405);
+  assert.equal((await send(handler, "GET")).status, 404, "a follower asks by id");
 });
 
 test("without its store or quota it answers unavailable rather than sharing", async () => {
@@ -175,6 +176,14 @@ test("the wish itself goes with its link in parts, only as a file Lamp made, and
 
   const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.match(await page.text(), /"file":"data:application\/octet-stream;base64,[^"]+","fileSize":\d+/);
+
+  // Lamps that follow the link see the file's version, and each file sent again counts up; never the secret.
+  const latest = async () => (await handler(new Request(`https://lamp.dev/api/wishes?id=${id}`))).json();
+  assert.deepEqual(Object.keys(await latest()).sort(), ["file", "format", "id", "name", "version"]);
+  assert.equal((await latest()).version, 1);
+  assert.equal((await part(0, 1, file)).status, 204);
+  assert.equal((await finish()).status, 200);
+  assert.equal((await latest()).version, 2);
 
   // A word-only update keeps the file; taking the link down takes it too.
   assert.equal((await send(handler, "PUT", { ...share, name: "Plant Friend" }, { id, secret })).status, 200);

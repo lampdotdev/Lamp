@@ -4,8 +4,8 @@ Lamp's Share Wish menu has **Share Link…**: the person reviews what the link w
 its words and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
 on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words. If the
 person ticks **Include the wish itself**, the wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
-license and key checks) goes too, and the page offers that exact wish to anyone with Lamp ("Or get this exact one, to
-open in Lamp", on a Mac), which reviews it before it opens, as any shared file. Never the chat or the app's data.
+license and key checks) goes too, and the page offers that exact wish to anyone with Lamp ("Or open this exact one in Lamp", on a Mac), which reviews it
+before it opens, as any shared file, and makes a copy that follows the link. Never the chat or the app's data.
 
 - The page (`/w/<id>`, `lib/shared-wish-page.js`, served by `api/wish-page.js` through a rewrite in `vercel.json`):
   the ideas page with the shared wish's card open on it, the same card (`WishDialog.astro`) the
@@ -22,6 +22,11 @@ open in Lamp", on a Mac), which reviews it before it opens, as any shared file. 
   `POST ?id=` puts the parts together, checks the result is a zip whose listing names `lamp-app.json` and is at most 16 MB,
   and gives it to the link in place of any it had (in Blob, public at an address with a random part); `DELETE ?id=` takes
   it away. Parts go once they're together; everything goes with the link, and with `scripts/take-down-wish.js`.
+- Following (`GET /api/wishes?id=`, `latest` in `lib/shared-wishes.js`): public, with no quota, for the Lamps that
+  follow a link: `{format: 1, id, name, version, file}`, the file's version counting up each time it's sent again
+  (Update Link), 0 with no file. The page's "Or open this exact one in Lamp" is `lamp://wish?shared=<id>`
+  (`sharedWishLink` in `lib/wish.js`): Lamp asks this for the file, and the copy it makes follows the link
+  (`Following` in Lamp).
 - The API Lamp talks to (`api/wishes.js`, `lib/shared-wishes.js`): `POST` shares and answers `{id, url, secret}`;
   `PUT ?id=` with `Authorization: Bearer <secret>` changes what the link shows and keeps the link; `DELETE ?id=`
   with the secret takes it down. Lamp keeps the secret in its own folder (`Wish Links.json`, readable only by the
