@@ -78,10 +78,14 @@ enum ShareCheck {
     }
 
     /// Share-alike licenses for data rather than code (OpenStreetMap's ODbL, CDLA-Sharing): the data stays under them,
-    /// not the remix as a whole.
+    /// not the remix as a whole. An expression is one only when each share-alike license in it is for data, in any
+    /// order: "ODbL-1.0 AND GPL-3.0-only" still makes the remix GPL.
     static func isDataLicence(_ id: String?) -> Bool {
-        guard let id = id?.uppercased() else { return false }
-        return id.hasPrefix("ODBL-") || id.hasPrefix("CDLA-SHARING-")
+        let ids = (id ?? "").split(whereSeparator: { " ()".contains($0) }).map(String.init)
+            .filter { !["AND", "OR", "WITH"].contains($0.uppercased()) }
+        func isData(_ id: String) -> Bool { id.uppercased().hasPrefix("ODBL-") || id.uppercased().hasPrefix("CDLA-SHARING-") }
+        let shareAlike = ids.filter { single($0) == .shareAlike }
+        return !shareAlike.isEmpty && shareAlike.allSatisfy(isData)
     }
 
     private static func single(_ id: String) -> Licence {
