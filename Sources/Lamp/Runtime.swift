@@ -482,9 +482,26 @@ enum Runtime {
     /// The last lines of the latest launch's output.
     static func logTail(_ project: LampProject, lines: Int = 30) -> String? {
         guard let data = AppFile.read(logURL(project), in: project, last: 8_000) else { return nil }
-        let tail = String(decoding: data.suffix(8_000), as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n").trimmed
+        let tail = newestOfEach(String(decoding: data.suffix(8_000), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines)).joined(separator: "\n").trimmed
         return tail.isEmpty ? nil : tail
+    }
+
+    /// What a log tail repeats without saying anything new, kept once, the newest, where it stands: Lamp's own report of
+    /// how the game kept to its frames, written every ten seconds (lamp-game.js's "Lamp: N frames a second"), and a line
+    /// printed again word for word, its time aside. The agent reads every look's log tail again with each request, and
+    /// thirty lines of the same report said nothing the last one didn't. Any other line is kept, whatever it repeats:
+    /// lines that differ in their numbers (statuses, missing files, places in the code) are each evidence.
+    static func newestOfEach<Lines: Collection>(_ lines: Lines) -> [Substring] where Lines.Element == Substring {
+        let stamp = #"^\[[0-9]+(\.[0-9]+)? s\] "#
+        let shapes = lines.map { line -> String in
+            let text = line.replacingOccurrences(of: stamp, with: "", options: .regularExpression)
+            return text.hasPrefix("Lamp: ") && text.contains(" frames a second") ? "Lamp: frames a second" : text
+        }
+        var seen = Set<String>()
+        var kept: [Substring] = []
+        for (line, shape) in zip(lines, shapes).reversed() where line.isEmpty || seen.insert(shape).inserted { kept.append(line) }
+        return kept.reversed()
     }
 
     /// How much the app has printed so far, to tell later what's new.
@@ -495,8 +512,8 @@ enum Runtime {
     /// What the app has printed since its log was `offset` bytes long, at most the last 30 lines. nil if nothing.
     static func log(of project: LampProject, from offset: Int) -> String? {
         guard let data = AppFile.read(logURL(project), in: project), data.count > offset else { return nil }
-        let lines = String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(separator: "\n").trimmed
+        let lines = newestOfEach(String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).suffix(30)).joined(separator: "\n").trimmed
         return lines.isEmpty ? nil : lines
     }
 

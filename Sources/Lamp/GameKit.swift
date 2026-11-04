@@ -741,30 +741,33 @@ enum GameKit {
     /// open yet, and its first requested edit is when it adopts this.
     static func unregistered(_ project: LampProject) -> [String] {
         guard isGame(project), engine(project) == .web, !ownsLoop(project) else { return [] }
-        let code = sourceText(project)
-        func has(_ pattern: String) -> Bool { code.range(of: pattern, options: .regularExpression) != nil }
-        let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]")
+        let files = sourceFiles(project)
+        // Each pattern is looked for file by file, which finds what it would in the files joined: none spans two.
+        // `needing`: the plain text each pattern can't match without.
+        func has(_ pattern: String, needing words: [String]) -> Bool {
+            PageScan.any(files, in: project, asking: pattern, needing: words) { $0.range(of: pattern, options: .regularExpression) != nil }
+        }
+        let flat = has("from\\s*['\"]\\./lamp-phaser\\.js['\"]", needing: ["lamp-phaser.js"])
         var left: [String] = []
-        if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])") && !has("\\.keep\\(\\s*['\"]renderer['\"]") { left.append("its renderer (live.renderer)") }
-        if !flat, !has("\\.camera\\(\\s*['\"]") && !has("\\.keep\\(\\s*['\"][^'\"]*[Cc]amera") { left.append("its camera (live.camera)") }
-        if !has("\\.state\\(\\s*['\"]") && !(has("\\bsnapshot\\b") && has("\\b(restore|pendingRestore)\\b")) { left.append(unregisteredState) }
+        if !flat, !has("\\.renderer\\(\\s*(async|\\(|[A-Za-z_$])", needing: [".renderer("]) && !has("\\.keep\\(\\s*['\"]renderer['\"]", needing: [".keep("]) { left.append("its renderer (live.renderer)") }
+        if !flat, !has("\\.camera\\(\\s*['\"]", needing: [".camera("]) && !has("\\.keep\\(\\s*['\"][^'\"]*[Cc]amera", needing: [".keep("]) { left.append("its camera (live.camera)") }
+        if !has("\\.state\\(\\s*['\"]", needing: [".state("]) && !(has("\\bsnapshot\\b", needing: ["snapshot"]) && has("\\b(restore|pendingRestore)\\b", needing: ["restore", "Restore"])) { left.append(unregisteredState) }
         return left
     }
 
     /// The game's own code: its modules in Web/ or its TypeScript in src/, without Lamp's files or what's bundled.
-    private static func sourceText(_ project: LampProject) -> String {
-        var text = ""
+    private static func sourceFiles(_ project: LampProject) -> [URL] {
+        var files: [URL] = []
         for folder in [webFolder, "src"] {
             let root = project.dir.appendingPathComponent(folder)
             for name in ((try? FileManager.default.subpathsOfDirectory(atPath: root.path)) ?? []).sorted()
             where name.hasSuffix(".js") || name.hasSuffix(".mjs") || name.hasSuffix(".ts") {
                 let first = name.split(separator: "/").first.map(String.init) ?? name
                 if ["three", "rapier", "phaser", "app"].contains(first) || first.hasPrefix("lamp") { continue }
-                text += AppFile.text(root.appendingPathComponent(name), in: project) ?? ""
-                text += "\n"
+                files.append(root.appendingPathComponent(name))
             }
         }
-        return text
+        return files
     }
 
     /// Goes with a request: what isn't registered yet, before the agent changes the game, which may be a part of the wish.

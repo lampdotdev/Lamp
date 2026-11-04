@@ -514,8 +514,7 @@ enum Parts {
         added or changed (`make_app_for`) or taken away (`remove_app`) when the person asks, each named by its folder in their `app` ("." for \
         the one in the wish's own folder). Before you write or change one in a folder of \
         its own, open its rules with `read_skill` (once per conversation) and follow them for the files in its folder. \
-        `look_at_app` and `use_app` take `part` to say which app: look at each one you changed before finishing, \
-        except a web game at home on the Mac, which its rules say to look at only when the person asks.
+        `look_at_app` and `use_app` take `part` to say which app; when to look is as for one app, for each one you changed.
         """ + (apps.filter { WishRooms.joins($0.platform) }.count >= 2 ? Agent.Rules.wishTalk : "") + Targets.all.flatMap { kind in
             // A rule naming its device is said for each device's app; any other once for its kind.
             let rules = apps.filter { $0.platform == kind.platform }.compactMap { app in kind.part?.wishRule.map { deviceNamed($0, for: app) } }
