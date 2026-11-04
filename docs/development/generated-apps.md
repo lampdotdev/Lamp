@@ -273,7 +273,13 @@ A private repository, which Lamp can't fetch without a sign-in, offers the Share
 card stages again when a new repository is made private (`setPrivate`). A public repository with no website of its own
 gets the remix link as its website, or its page once it's up (`offerWebsite`, `from=github`); one the person set is left alone. One commit per Put on GitHub, on top of
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
-own history, which holds every version and the chat's attachments. The repository is remembered by the wish's instance
+own history, which holds every version and the chat's attachments. Its commits, the page's and Send Changes Back's
+are made as `GitHubRepo.author` says: someone whose git signs commits (`commit.gpgSign`, read in the folder the commit is
+made in, so conditional settings count) gets them as their git makes them, their name, address and key, since GitHub
+verifies a signature only under an address its key names (signed under the private address, it reads `bad_email`);
+everyone else gets their GitHub name and private address, unsigned. A signature that fails, or a commit that comes out
+unsigned, stops it (`GitHubRepo.commit`), and an address other than the private one is said on the card before anything
+goes; one that changed since the card showed it stops it too. The repository is remembered by the wish's instance
 in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to, and where its page
 plays, `Repo.page`). `gh`, the sign-in, the repository name and the page come from `Publish`, which shares them. The file's credits
 name the repository on the chain's last link (`Credits.Remix.url`, `Sharing.export(repository:)`), so a remix opened

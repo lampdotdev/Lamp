@@ -54,6 +54,8 @@ enum Contribute {
         let changed: [String]
         let title: String
         let body: String
+        /// Who the commit is made as, which the card says when its address goes out with it.
+        let author: GitHubRepo.Author
     }
 
     /// The person's fork of `source`, when they have one: "login/name". Asked of GitHub.
@@ -66,7 +68,7 @@ enum Contribute {
 
     /// Works out what would go: the wish's change since it last took anything in, replayed on the repository's latest
     /// commit (fetched with the person's sign-in, so a private repository they can read works too), committed in their
-    /// name. Throws, saying why, when nothing would go or it can't go as it is.
+    /// name (`GitHubRepo.author`). Throws, saying why, when nothing would go or it can't go as it is.
     static func prepare(_ project: LampProject, from source: RepoImport.Source, gh: String, login: String) async throws -> Prepared {
         let upstream = "\(source.owner)/\(source.name)"
         let base = await Subprocess.run(gh, ["repo", "view", upstream, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], mergeErrors: false, timeout: 30)
@@ -172,11 +174,12 @@ enum Contribute {
         // The summary is the commit's message and the pull request's text, from files: it's prose, never arguments.
         let message = folder.appendingPathComponent("message.txt")
         try (summary.title + "\n\n" + summary.body).write(to: message, atomically: true, encoding: .utf8)
-        _ = try must(await run(GitHubRepo.identity(login: login) + ["commit", "-q", "-F", message.path]))
-        let commit = try must(await run(["rev-parse", "HEAD"]))
+        let author = try await GitHubRepo.author(login: login, git: git, in: clone)
+        let commit = try await GitHubRepo.commit(["commit", "-q", "-F", message.path], as: author, shown: nil, git: git,
+                                                 options: ["-c", "core.hooksPath=/dev/null"], in: clone)
         done = true
         return Prepared(folder: folder, clone: clone, version: version, tip: tip, baseBranch: baseBranch, commit: commit, changed: changed,
-                        title: summary.title, body: summary.body)
+                        title: summary.title, body: summary.body, author: author)
     }
 
     /// Opens the pull request with what `prepare` made: the fork made when there's none, the commit pushed to a branch
@@ -735,6 +738,7 @@ enum Contribute {
         if card.stage == .ready, card.fork == nil, let login = card.login, let source = card.source {
             notes.append("You have no fork of \(source.owner)/\(source.name) yet: Lamp makes one on your account (\(login)/\(source.name)) first.")
         }
+        if let note = card.prepared?.author.note { notes.append(note) }
         let size = card.prepared.map { $0.changed.count == 1 ? "1 file changed" : "\($0.changed.count) files changed" }
         return SidebarContribute(name: project.name, icon: card.icon, stage: card.stage,
                                  upstream: card.source.map { "\($0.owner)/\($0.name)" }, fork: card.fork ?? card.request?.fork,

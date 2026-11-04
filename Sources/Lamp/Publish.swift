@@ -328,7 +328,7 @@ enum Publish {
     /// Puts `site` on `repo`'s page branch as one commit of the difference on top of what's there, or none when it's the
     /// same, signed in through gh for these commands alone. Returns the branch's commit, which Pages builds, and whether
     /// it's a new one.
-    static func pushPage(_ site: URL, to repo: String, gh: String, login: String, message: String) async throws -> (commit: String, changed: Bool) {
+    static func pushPage(_ site: URL, to repo: String, gh: String, login: String, author shown: GitHubRepo.Author? = nil, message: String) async throws -> (commit: String, changed: Bool) {
         let git = GitHubRepo.git
         let signedIn = GitHubRepo.signedIn(gh: gh)
         let remote = "https://github.com/\(repo).git"
@@ -348,7 +348,9 @@ enum Publish {
             if try await run(["rev-parse", "FETCH_HEAD^{tree}"]) == tree { return (head, false) }
             parent = head
         }
-        let commit = try await run(GitHubRepo.identity(login: login) + ["commit-tree", tree] + (parent.map { ["-p", $0] } ?? []) + ["-m", message])
+        let author = try await GitHubRepo.author(login: login, git: git, in: site)
+        let commit = try await GitHubRepo.commit(["commit-tree", tree] + (parent.map { ["-p", $0] } ?? []) + ["-m", message], as: author, shown: shown,
+                                                 git: git, in: site)
         let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "\(commit):refs/heads/\(pageBranch)"], cwd: site, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take the page: \(pushed.output.trimmed.suffix(200))") }
         return (commit, true)
